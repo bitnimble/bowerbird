@@ -84,8 +84,7 @@ renders unwanted folders. It remains editable in per-library Settings.
 
 **"Read-only mode"** is a checkbox in the same dialog, ticked and disabled when the listing reports the folder is not writable (§4.1). Ticking it hides the bin-name field - and takes it out of the submit guard too, which otherwise leaves Add disabled for ever. A `READ_ONLY` from the create re-ticks the box rather than surfacing a bare error, since `access` can be wrong. In Settings the same flag is per library, beside a **bin folder name** field that renames the folder on disk (§4.1) and is disabled, with the reason, for a read-only library. The Bin page reads its line off the library: photographs moved into `<bin_name>`, or left exactly where they were when there is no bin. Restore stays visible but disabled for a photograph inside a read-only library's bin, and _Add to shoot_ is not offered at all - an album is the thing to reach for.
 
-Choose a shoot's folder directly on the Shoots page (§18.3.4). Its dialog asks only
-for a new folder's name and ordering; no duplicate folder picker.
+A new shoot's dialog asks for its name, an optional parent shoot and its ordering (§18.3.4).
 
 The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. The libraries come first, each a tile whose own settings open in a dialog at an address of its own (`/settings/libraries/<id>`, and `/sync` after it to open at Synced devices), then how photos open; the encoder sizes, qualities, HDR grade and server knobs are numbers tuned once, so they sit behind the later tabs - Rendering, Scanning, System - which lay their groups out in two columns wherever the page is wide enough. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
 
@@ -374,7 +373,9 @@ may focus an arbitrary mounted row and must not discard the retained cursor.
 The `+` menu on a row is where shoots come from:
 
 - **Add as shoot** (untracked rows only) adopts the folder as it stands, photos and all (§8.5).
-- **Create shoot in subfolder** (every folder row) opens a dialog for a name and an ordering, and makes the folder.
+- **Create shoot in subfolder** (every folder row) opens the same dialog as **Create shoot**, its parent set to that row's folder, and makes the folder.
+
+The dialog asks for a name, an optional parent shoot and an ordering. The parent is a select over the library's shoots, nested as the sidebar nests them, with **None** for the library root; the folder is made inside the parent's, and the server derives `parent_id` from where it lands (§4.3).
 
 Deleting a shoot asks what happens to the photographs rather than assuming, since one answer is reversible and the other is not: keep them in the library, or remove them from it. The second states plainly that the files stay on disk, that ratings and verdicts go, and how many photos it is about to be true of.
 

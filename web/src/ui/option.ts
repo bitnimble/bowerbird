@@ -28,4 +28,6 @@ export interface Option<T extends string> {
   // In a menu: a row that goes somewhere, drawn as this element (a router `Link`) so it opens in
   // a new tab like any other link. Selecting it follows the link rather than calling `onSelect`.
   link?: ReactElement;
+  // In a select: how far the row is nested under the rows above it.
+  depth?: number;
 }

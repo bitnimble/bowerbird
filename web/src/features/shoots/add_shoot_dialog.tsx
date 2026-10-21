@@ -1,13 +1,15 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { type Ordering } from '../../../../src/schemas/common';
-import { usePresenters, useShootsStore } from '../../app/stores_context';
+import type { ShootNode } from '../../app/sidebar_store';
+import { usePresenters, useShootsStore, useSidebarStore } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { DialogActions, DialogBody } from '../../ui/dialog_layout';
 import { ErrorBanner } from '../../ui/error_banner';
 import { Field } from '../../ui/field';
 import { Modal } from '../../ui/modal';
 import { ModalStrings } from '../../ui/modal.strings';
+import type { Option } from '../../ui/option';
 import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
@@ -15,9 +17,21 @@ import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { ORDERINGS } from '../photos/grid/grid_controls';
 import { AddShootStrings } from './add_shoot_dialog.strings';
 
-// Only what a folder cannot answer. Where the shoot goes is decided by the row its + menu was
-// opened from (§18.3.2), so this dialog needs no picker of its own: the page is already a view
-// of the folders.
+function parentOptions(trees: ShootNode[], parentPath: string): Option<string>[] {
+  const options: Option<string>[] = [{ value: '', label: AddShootStrings.noParentShoot() }];
+  const walk = (nodes: ShootNode[], depth: number): void => {
+    for (const { shoot, children } of nodes) {
+      options.push({ value: shoot.folder_path, label: shoot.name, depth });
+      walk(children, depth + 1);
+    }
+  };
+  walk(trees, 0);
+  // Opened from a plain folder's or a hidden shoot's row, which no shoot option names.
+  if (!options.some((option) => option.value === parentPath))
+    options.splice(1, 0, { value: parentPath, label: parentPath });
+  return options;
+}
+
 export const AddShootDialog = observer(function AddShootDialog({
   libraryId,
   parentPath,
@@ -26,30 +40,34 @@ export const AddShootDialog = observer(function AddShootDialog({
   onCreated,
 }: {
   libraryId: string;
-  /** Root-relative folder the new folder is created in; `''` is the library root. */
+  /** Root-relative folder the parent field starts on; `''` is the library root. */
   parentPath: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: (shootId: string) => void;
 }): JSX.Element {
   const store = useShootsStore();
-  const { shoots } = usePresenters();
+  const sidebar = useSidebarStore();
+  const { shoots, sidebar: sidebarPresenter } = usePresenters();
   const [name, setName] = useState('');
+  const [parent, setParent] = useState(parentPath);
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName('');
+    setParent(parentPath);
     setOrdering('taken_asc');
     // Including whatever the last attempt failed with, which is answered by this
     // attempt rather than still standing over it.
     shoots.clearError();
-  }, [open, shoots]);
+    void sidebarPresenter.loadShoots(libraryId);
+  }, [open, parentPath, libraryId, shoots, sidebarPresenter]);
 
   async function submit(): Promise<void> {
     setSaving(true);
-    const shootId = await shoots.create(libraryId, name.trim(), parentPath, ordering);
+    const shootId = await shoots.create(libraryId, name.trim(), parent, ordering);
     setSaving(false);
     if (shootId == null) return;
     onCreated?.(shootId);
@@ -73,12 +91,24 @@ export const AddShootDialog = observer(function AddShootDialog({
           <Text variant="mono" as="p">
             {AddShootStrings.makesTheFolderBefore()}
             <code>
-              {parentPath === ''
+              {parent === ''
                 ? name || AddShootStrings.unnamed()
-                : `${parentPath}/${name || AddShootStrings.unnamed()}`}
+                : `${parent}/${name || AddShootStrings.unnamed()}`}
             </code>
             {AddShootStrings.makesTheFolderAfter()}
           </Text>
+        </Field>
+
+        <Field>
+          <Text variant="label" as="span">
+            {AddShootStrings.parentShoot()}
+          </Text>
+          <Select
+            label={AddShootStrings.parentShoot()}
+            options={parentOptions(sidebar.shootTrees.get(libraryId) ?? [], parentPath)}
+            value={parent}
+            onChange={setParent}
+          />
         </Field>
 
         <Field>

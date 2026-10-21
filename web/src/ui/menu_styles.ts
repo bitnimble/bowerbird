@@ -43,6 +43,7 @@ export const menuStyles = stylex.create({
     outline: 'none',
     userSelect: 'none',
   },
+  indent: (depth: number) => ({ paddingInlineStart: `${9 + depth * 16}px` }),
   destructive: {
     color: color.rose,
   },

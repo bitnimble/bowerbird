@@ -66,7 +66,10 @@ export function Select<T extends string>({
                 <BaseSelect.Item
                   value={option.value}
                   disabled={option.disabled === true}
-                  {...stylex.props(menuStyles.item)}
+                  {...stylex.props(
+                    menuStyles.item,
+                    option.depth != null && menuStyles.indent(option.depth),
+                  )}
                 >
                   <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
                   <BaseSelect.ItemIndicator {...stylex.props(menuStyles.check)}>

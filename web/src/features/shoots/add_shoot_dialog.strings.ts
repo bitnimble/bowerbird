@@ -1,6 +1,8 @@
 export const AddShootStrings = {
   title: () => 'New shoot',
   shootName: () => 'Shoot name',
+  parentShoot: () => 'Parent shoot',
+  noParentShoot: () => 'None',
   /** The folder path is a `<code>` between these two, so the sentence is in two pieces. */
   makesTheFolderBefore: () => 'Creates the folder ',
   makesTheFolderAfter: () => '. Renaming the shoot leaves this folder in place.',
