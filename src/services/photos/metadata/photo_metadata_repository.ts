@@ -3,15 +3,25 @@ import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { HeaderMetadata } from '../../processing/analysis/metadata';
 import { stamp } from '../../replication/stamps';
 import { IS_A_FILE } from '../paths/photo_paths_repository';
-import type { ScanModification } from '../scan/photo_scan_repository';
 import type { PhotoProcessingRepository } from '../renditions/photo_processing_repository';
 
-// Everything a re-read of the RAW header can refresh: no hash, no timestamps of
-// our own, nothing that says the file changed.
-export type PhotoMetadataFields = Omit<
-  ScanModification,
-  'file_hash' | 'file_size' | 'date_updated' | 'metadata_provisional' | 'media_image_id'
->;
+export interface PhotoMetadataFields {
+  width: number;
+  height: number;
+  orientation: number;
+  date_taken: string | null;
+  date_taken_offset: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  iso: number | null;
+  shutter_speed: number | null;
+  aperture: number | null;
+  focal_length: number | null;
+  camera_make: string | null;
+  camera_model: string | null;
+  lens_model: string | null;
+  capture_sequence: string | null;
+}
 
 export function metadataFieldsOf(header: HeaderMetadata): PhotoMetadataFields {
   return {

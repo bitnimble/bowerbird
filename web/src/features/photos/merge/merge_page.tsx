@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useDeviceSettingsStore, usePresenters } from '../../../app/stores_context';
 import { MOST_FEATHER } from '../../../../../src/schemas/assembly';
+import { describe } from '../../../errors';
 import { Button } from '../../../ui/button';
 import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
 import { EmptyState } from '../../../ui/empty_state';
@@ -268,7 +269,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
         photoId != null ? await presenter.commitExisting(photoId) : await presenter.commit();
       navigate(photoPath(saved.photoId, source));
     } catch (err) {
-      toasts.showError(err instanceof Error ? err.message : String(err));
+      toasts.showError(describe(err));
     } finally {
       setCommitting(false);
     }

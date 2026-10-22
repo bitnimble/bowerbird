@@ -35,12 +35,10 @@ import { LogsDialogStrings } from '../logs/logs_dialog.strings';
 import { renditionLabel } from '../photos/renditions';
 import { AddReplicaDialog } from '../replication/add_replica_dialog';
 import { AddReplicaStrings } from '../replication/add_replica_dialog.strings';
-import { ToastsStrings } from '../toasts/toasts.strings';
 import { UpdatesStrings } from '../updates/updates.strings';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { EmptyState } from '../../ui/empty_state';
-import { ErrorBanner } from '../../ui/error_banner';
 import { fileSizeLabel, longDate, relativeTime } from '../../ui/format';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
@@ -52,7 +50,7 @@ import { Select } from '../../ui/select';
 import { SegmentedControl } from '../../ui/segmented_control';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
-import { LibraryList } from './library_list';
+import { LibrariesError, LibraryList } from './library_list';
 import {
   GroupTitle,
   NumberSetting,
@@ -780,6 +778,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const navigate = useNavigate();
   const params = useParams();
   const tab = tabFromPath(params.tab);
+  const libraryDialogOpen = params.libraryId != null && store.byId.has(params.libraryId);
   const thin = isThinShell();
   const devicePhotos = useDevicePhotosStore();
 
@@ -806,13 +805,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
       {tab === 'libraries' && (
         <>
-          {/* An open library's settings show it themselves, over this. */}
-          {store.error != null && params.libraryId == null && (
-            <ErrorBanner>
-              <span>{store.error}</span>
-              <Button onClick={libraries.clearError}>{ToastsStrings.dismiss()}</Button>
-            </ErrorBanner>
-          )}
+          {!libraryDialogOpen && <LibrariesError />}
 
           <PageHead>
             <Spacer />

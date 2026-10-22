@@ -85,7 +85,7 @@ export function isComposite(photo: PhotoStamps | null | undefined): boolean {
 }
 
 /** Whether this row stands for several photographs and shows one of them. */
-export function isStack(photo: PhotoSummary): boolean {
+export function isStack(photo: PhotoSummary): photo is PhotoSummary & { stack_id: string } {
   return photo.stack_id != null && photo.stack_size > 1;
 }
 

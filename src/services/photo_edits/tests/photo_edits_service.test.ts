@@ -269,13 +269,10 @@ describe('PhotoEditsService.paste', () => {
     ).run(OTHER);
     photos = photoProcessing();
     edits = new PhotoEditsRepository(db);
-    const both = {
-      getById: (id: string) => (id === PHOTO || id === OTHER ? { id, library_id: 'lib' } : null),
-    } as unknown as PhotoListingRepository;
     service = new PhotoEditsService(
       db,
       edits,
-      both,
+      new PhotoListingRepository(db),
       () => {},
       () => {},
       () => {},
@@ -377,20 +374,6 @@ describe('PhotoEditsService.paste', () => {
     ).run(fresh);
     db.query(`UPDATE renditions SET needs_build = 1 WHERE photo_id = ? AND variant = 'full'`).run(
       OTHER,
-    );
-    const known = {
-      getById: (id: string) => ({ id, library_id: 'lib' }),
-    } as unknown as PhotoListingRepository;
-    service = new PhotoEditsService(
-      db,
-      edits,
-      known,
-      () => {},
-      () => {},
-      () => {},
-      () => 'galosh',
-      () => true,
-      (ids, shown) => void photos.queuePasted(ids, shown),
     );
 
     service.paste([OTHER, fresh], { exposure: 1 });

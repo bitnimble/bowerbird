@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readDeviceFile, shellInvoke, writeDeviceFile, type Invoke } from '../api/transport';
+import { describe } from '../errors';
 import { Logger } from '../features/logs/page_log';
 
 const log = new Logger('storage');
@@ -176,7 +177,7 @@ export function serveFiles(port: MessagePort, files: () => DeviceFiles = () => o
       else await files().save(ask.name, ask.contents);
       port.postMessage(FileAnswerSchema.parse({ id: ask.id, contents, error: null }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = describe(error);
       port.postMessage(FileAnswerSchema.parse({ id: ask.id, contents: null, error: message }));
     }
   };

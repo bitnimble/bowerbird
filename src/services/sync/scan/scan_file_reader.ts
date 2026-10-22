@@ -147,7 +147,7 @@ const EXIF_ORIENTATION_OF_DEGREES = new Map([
   [270, 8],
 ]);
 
-/** What a row holds until its tile job reads the header: the stat, and whatever the device's index knows. */
+/** What a new row holds until its header is read: the stat, and whatever the device's index knows. */
 function provisionalMetadata(file: Scanned, entry: MediaEntry | undefined): FileMetadata {
   const unread: FileMetadata = {
     width: 0,
@@ -167,7 +167,6 @@ function provisionalMetadata(file: Scanned, entry: MediaEntry | undefined): File
     sequence: null,
     mtime: file.stats.mtime.toISOString(),
     fileSize: file.stats.size,
-    provisional: true,
   };
   // Not a RAW: the index reports the sensor's size, and its thumbnail isn't the picture the grid shows.
   if (entry == null || entry.size !== file.stats.size || !isRendered(file.relPath)) return unread;

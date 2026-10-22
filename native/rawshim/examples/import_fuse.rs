@@ -1,4 +1,4 @@
-//! Which bytes of a RAW each pass of an import actually reads.
+//! Which bytes of a RAW a header read, a grid tile, and both off one open each touch.
 //!
 //! ```text
 //! import_fuse <dir-of-raws> [--limit 3] [--skip N] [--out DIR]
@@ -51,8 +51,8 @@ fn main() {
     }
 }
 
-/// Pass 1, exactly as the scan worker reaches it (`readHeaderFields` -> `bb_read_header`).
-fn scan(raw: &str) {
+/// Pass 1, exactly as the header worker reaches it (`readHeaderFields` -> `bb_read_header`).
+fn read_header(raw: &str) {
     header::read_path(raw).expect("the header reads");
 }
 
@@ -123,8 +123,8 @@ fn regions(raw: &str, out_dir: &Path) {
 
     println!("{raw}");
     evict(raw);
-    scan(raw);
-    let after_scan = show("pass 1");
+    read_header(raw);
+    let after_header = show("pass 1");
 
     evict(raw);
     tile(raw, &out(out_dir, "split", raw));
@@ -137,7 +137,7 @@ fn regions(raw: &str, out_dir: &Path) {
     // What pass 2 wants that pass 1 did not already bring in. The rest is the second trip fusing
     // removes; this is the part it would have to make anyway.
     let covered = |at: usize, len: usize| {
-        after_scan
+        after_header
             .iter()
             .any(|(from, size)| at >= *from && at + len <= from + size)
     };

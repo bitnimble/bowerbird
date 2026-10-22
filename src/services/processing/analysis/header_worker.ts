@@ -1,17 +1,17 @@
-import { extractMetadata, type FileMetadata } from './metadata';
+import { extractMetadata, type HeaderMetadata } from './metadata';
 
 // Bun worker thread: the header read of one file, off the main thread.
 //
 // A thread rather than a promise because `bb_read_header` is a synchronous FFI call
-// (§10.4). Awaiting several of them on one thread interleaves the `stat` either side
-// and nothing else - the read itself holds the thread, and on a library over a network
+// (§10.4). Awaiting several of them on one thread interleaves only the EXIF zone read
+// after each - the header read itself holds the thread, and on a library over a network
 // mount that read is a round trip per page.
 
 export interface HeaderRequest {
   absPath: string;
 }
 
-export type HeaderReply = { metadata: FileMetadata } | { error: string };
+export type HeaderReply = { metadata: HeaderMetadata } | { error: string };
 
 declare const self: {
   onmessage: ((event: MessageEvent<HeaderRequest>) => void) | null;

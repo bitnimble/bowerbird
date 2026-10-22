@@ -245,7 +245,7 @@ interface MoveEntry {
 Process in this order within a database transaction:
 
 1. **Moves:** Update the recipe's path for each moved photo (§4.2.1). Clear `is_missing` if it was set. **Reconcile shoot membership from the destination path:** if `newFilePath` falls under a known shoot's `folder_path`, set the photo's `shoot_id` to the **most-specific (longest-matching) `folder_path`** shoot (so a file under `NYC/Day1` maps to `Day1`, not the ancestor `NYC`); if it moved out to the library root (or a non-shoot folder), clear `shoot_id`. This keeps DB shoot membership consistent with files the user relocated on disk directly (rather than via the shoots API).
-2. **Modifications:** Update `file_hash`, `date_updated`, and both pending flags for each modified photo, and reset its header columns to provisional (§11.2), since the file they describe has changed. Clear `is_missing` if it was set.
+2. **Modifications:** Update `file_hash`, `date_updated`, `file_size` and both pending flags for each modified photo, and mark it provisional (§11.2) so its header is read again. Its header columns keep what the last read wrote, so a peer never receives blanks for a photograph it already has, and `stamp_imported` moves only if the size changed. Clear `is_missing` if it was set.
 3. **Additions:** Insert new photo records:
    - `id` = a new entity ID, drawn through `withNewId` (§3)
    - `library_id` = the library being synced
@@ -355,7 +355,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
 
 ### 9.8 Sync Triggers: Creation, Manual, Scoped Watcher, Polled Root, Daily Backstop
 
-`scanLibrary` runs in six ways:
+`scanLibrary` runs in seven ways:
 
 0. **On creation**, from `LibrariesService`'s lifecycle listener. A full scan, not awaited by the create: the request answers as soon as the row exists, and a first import is minutes of statting and inserting that the status endpoint reports on like any other run (§9.6). A library nobody has imported holds nothing, so making that import a second, separate button leaves the answer to "where are my photographs" sitting behind one - and the settings a create asks for (subfolders, the bin name) are exactly the ones that decide what this scan brings in, which is why they are on the dialog rather than in Settings afterwards (§18.3).
 1. **Manual**, `POST /api/libraries/:id/sync`. A full scan (whole tree).
@@ -368,6 +368,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
    - What it cannot see is a file rewritten in place under an unchanged name, which moves no folder's mtime. The daily reconcile catches those, as it does the events a watch drops.
 4. **Daily full reconcile**, `DailyScan` runs `scanAll()` once a day at `SYNC_FULL_AT` (local `HH:MM`, default `03:00`, `""` disables), overlap-guarded and re-scheduled each day so it holds its wall-clock time across DST. This is the correctness **backstop** for anything the event-driven watcher missed: dropped or coalesced events, and every edit made while the server was down. It's overnight by default because a full scan holds the library mutex (§9.9) for its whole duration.
 5. **Startup**, `scanAll('startup')` once when the server starts (§9.6), catching every edit made while it was down.
+6. **On a root change**, from `LibrariesService`'s update listener (`ScanService.onLibraryUpdated`), when a `PATCH` moves `root_path` (§13.1). A full scan of the new root; if another run holds the lease, the scan is owed and runs when that run ends.
 
 **The watcher is `@parcel/watcher`, not `node:fs` and not `chokidar`.** Two independent requirements, and only one library meets both.
 
@@ -433,7 +434,7 @@ For every supported format, metadata comes from **a header parse in `native/raws
 
 `width`/`height` are the **display (upright) dimensions**, i.e. after the orientation is applied. What the dummy decode reports is still in **sensor orientation**, so the reader swaps the two axes itself for EXIF orientations 5 to 8. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately only as informational metadata; **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
 
-**`orientation` is the EXIF tag, 1 to 8, and it did not always mean that.** LibRaw handed over dcraw's `flip` encoding - 0/3/5/6 - and rows written before the decoder changed still hold it; nothing rewrites them, because the column is informational and a re-scan of a changed file overwrites it anyway. The name has stayed put through both, so read it as "whatever the reader of the day recorded" rather than as one encoding.
+**`orientation` is the EXIF tag, 1 to 8, and it did not always mean that.** LibRaw handed over dcraw's `flip` encoding - 0/3/5/6 - and rows written before the decoder changed still hold it; nothing rewrites them, because the column is informational and a changed file's header is read again and overwrites it anyway. The name has stayed put through both, so read it as "whatever the reader of the day recorded" rather than as one encoding.
 
 ```typescript
 interface FileMetadata {
@@ -441,6 +442,7 @@ interface FileMetadata {
   height: number; // display/upright height (post-orientation)
   orientation: number; // EXIF orientation, 1 to 8; informational only (see note above)
   dateTaken: string | null; // ISO datetime
+  dateTakenOffset: string | null; // OffsetTimeOriginal, from exif_zone.ts (§11.1)
   latitude: number | null;
   longitude: number | null;
   iso: number | null;
@@ -450,13 +452,16 @@ interface FileMetadata {
   cameraMake: string | null;
   cameraModel: string | null;
   lensModel: string | null;
+  sequence: CaptureSequence | null;
   mtime: string; // filesystem mtime, ISO datetime; hash input (§9.2) and date_updated source (§9.4)
   fileSize: number; // bytes; hash input (§9.2)
-  provisional?: boolean; // the header is still to be read (§11.2)
+  mediaImageId?: number; // MediaStore id, Android (§10.3)
 }
 
-async function extractMetadata(filePath: string): Promise<FileMetadata> {
-  // stat() + the rawshim header parse, no unpack
+type HeaderMetadata = Omit<FileMetadata, 'mtime' | 'fileSize' | 'mediaImageId'>;
+
+async function extractMetadata(filePath: string): Promise<HeaderMetadata> {
+  // the rawshim header parse and the EXIF zone read, no unpack
 }
 ```
 
@@ -470,9 +475,9 @@ The FFI header is our `#[repr(C)]` struct, size-checked on first call. Layout ch
 
 ### 11.2 Provisional rows
 
-**The scan never reads a header.** A new or changed file's row is written off its stat alone (§9.1): `width` and `height` 0, `orientation` 1, every EXIF column NULL, and `metadata_provisional = 1`. On Android a finished picture the media index describes takes its size, orientation and capture time from the index instead (§10.3), still provisional. On a library over a network share a header read is a round trip per page touched, so this is what makes an import's rows land at the stat rate.
+**The scan never reads a header.** A new file's row is written off its stat alone (§9.1): `width` and `height` 0, `orientation` 1, every EXIF column NULL, and `metadata_provisional = 1`. On Android a new finished picture the media index describes takes its size, orientation and capture time from the index instead (§10.3), still provisional. A changed file's row keeps the header columns its last read wrote and is only marked provisional (§9.4), so peers never receive blanks. On a library over a network share a header read is a round trip per page touched, so this is what makes an import's rows land at the stat rate.
 
-**The header is read where the file is opened anyway.** The tile job asks for it (`Job::header`) whenever its row is provisional and reports it off the same open as the embedded preview, and `fillProvisional` writes it over provisional rows only, clearing the flag. Two reads can race - the tile job and the one below - and whichever lands first is the one kept.
+**The header is read where the file is opened anyway.** The tile job asks for it (`Job::header`) whenever its row is provisional and reports it off the same open as the embedded preview, and `fillProvisional` writes it over provisional rows only, clearing the flag and stamping `imported` only when the header it read differs from the one held. Two reads can race - the tile job and the one below - and whichever lands first is the one kept.
 
 **The detail read does not wait for the tile pass.** `GET /api/photos/:id` reads a provisional row's header on a `HeaderPool` worker before answering, so the viewer, the editor and print never see a 0 by 0 photograph. The grid lays a 0 by 0 tile out at its own 3:2 cell, and a row with no `date_taken` sorts after the dated ones, so an import's photos settle into place as the tile pass reaches them. Binned and hidden rows get no tiles, so theirs is read when they come back or when they are opened.
 

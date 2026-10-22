@@ -4,11 +4,11 @@ import { type PhotoTarget } from '../../../../src/schemas/photos';
 import { type Shoot } from '../../../../src/schemas/shoots';
 import { librariesApi } from '../../api/libraries';
 import { photosApi } from '../../api/photos';
-import { ApiError } from '../../api/request';
 import { shootsApi } from '../../api/shoots';
 import { CollectionListPresenter } from '../../app/collection_list_presenter';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import type { SidebarPresenter } from '../../app/sidebar_presenter';
+import { describe } from '../../errors';
 import type { ShootsStore, ShootView } from './shoots_store';
 
 const VIEW_KEY = 'bowerbird.shoots.view';
@@ -17,10 +17,6 @@ const SHOW_HIDDEN_KEY = 'bowerbird.shoots.showHidden';
 function parentOf(folderPath: string): string {
   const slash = folderPath.lastIndexOf('/');
   return slash < 0 ? '' : folderPath.slice(0, slash);
-}
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
 }
 
 export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
@@ -81,7 +77,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
         this.store.loading = false;
       });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
     }
   }
 
@@ -142,7 +138,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
     try {
       await shootsApi.update(shootId, { is_hidden: hidden });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.reload();
@@ -174,7 +170,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
       runInAction(() => this.store.resolved.set(shootId, shoot));
       return shoot;
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return null;
     }
   }
@@ -196,7 +192,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
         ordering,
       });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return null;
     }
     await this.load(libraryId);
@@ -222,7 +218,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
     try {
       await shootsApi.update(shootId, { name });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.reload();
@@ -234,7 +230,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
     try {
       await shootsApi.update(shootId, { ordering });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.reload();
@@ -247,7 +243,7 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
     try {
       await shootsApi.delete(shootId, photos);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.reload();

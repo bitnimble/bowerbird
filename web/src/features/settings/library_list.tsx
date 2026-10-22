@@ -28,7 +28,7 @@ import {
 import { FolderBrowser } from '../browse/folder_browser';
 import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import { libraryLabel } from '../libraries/library_label';
-import { newLibraryStart } from '../libraries/new_library_start';
+import { commonParent } from '../libraries/common_parent';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { BackupPanel } from '../backup/backup_panel';
 import { BackupStrings } from '../backup/backup_panel.strings';
@@ -130,6 +130,18 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
         ))}
       </div>
     </>
+  );
+});
+
+export const LibrariesError = observer(function LibrariesError(): JSX.Element | null {
+  const store = useLibrariesStore();
+  const { libraries } = usePresenters();
+  if (store.error == null) return null;
+  return (
+    <ErrorBanner>
+      <span>{store.error}</span>
+      <Button onClick={libraries.clearError}>{ToastsStrings.dismiss()}</Button>
+    </ErrorBanner>
   );
 });
 
@@ -258,12 +270,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         }
       >
         <DialogBody wide>
-          {libraryStore.error != null && (
-            <ErrorBanner>
-              <span>{libraryStore.error}</span>
-              <Button onClick={libraries.clearError}>{ToastsStrings.dismiss()}</Button>
-            </ErrorBanner>
-          )}
+          <LibrariesError />
           <DialogColumns>
             <div>
               {!thin && <FolderSettings library={library} />}
@@ -430,7 +437,7 @@ const RootPathField = observer(function RootPathField({
         store={browser.store}
         presenter={browser.presenter}
         label={SettingsStrings.libraryFolder()}
-        start={newLibraryStart([library.root_path])}
+        start={commonParent([library.root_path])}
         onPathChange={(path) => void choose(path)}
       />
     </SettingRow>

@@ -1,5 +1,5 @@
-// Integration test for filesystem-watch auto-scan. Requires LibRaw -> runs under
-// Bun in the container: docker exec bowerbird-dev bun test test/integration
+// Integration test for filesystem-watch auto-scan.
+//   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { copyFileSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

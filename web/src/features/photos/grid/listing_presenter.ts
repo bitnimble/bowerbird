@@ -9,6 +9,7 @@ import { albumsApi } from '../../../api/albums';
 import { type PhotoListParams, photosApi } from '../../../api/photos';
 import { shootsApi } from '../../../api/shoots';
 import { inMobileApp } from '../../../api/transport';
+import { describe } from '../../../errors';
 import type { ScrollRailPresenter } from './scroll_rail_presenter';
 import type { ListingStore } from './listing_store';
 import { BLOCK, columnsAtZoom, tileWidthForColumns } from './grid_layout';
@@ -22,10 +23,6 @@ import type { ViewerStore } from '../viewer/viewer_store';
 import type { SelectionPresenter } from './selection_presenter';
 import type { StackActionsPresenter } from './stack_actions_presenter';
 import type { ViewerPresenter } from '../viewer/viewer_presenter';
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
 // photos would otherwise accumulate every row it passed; two and a half thousand
@@ -371,7 +368,7 @@ export class ListingPresenter {
       if (counting) this.needsCount = true;
       if (controller.signal.aborted || generation !== this.generation) return;
       this.blocks.delete(block); // a failed block is not a loaded one; scrolling back asks again
-      runInAction(() => (this.listing.error = message(err)));
+      runInAction(() => (this.listing.error = describe(err)));
     } finally {
       // Only if this request is still the one registered: a block dropped and
       // scrolled back to has a second request out by now, and the straggler

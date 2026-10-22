@@ -1,5 +1,4 @@
 import { AppError } from '../../../errors';
-import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
@@ -75,24 +74,8 @@ export function applyChanges(
     for (const md of result.modified) {
       photoScan.applyModification(md.photoId, {
         file_hash: md.newHash,
-        width: md.metadata.width,
-        height: md.metadata.height,
-        orientation: md.metadata.orientation,
-        date_taken: md.metadata.dateTaken,
-        date_taken_offset: md.metadata.dateTakenOffset,
         date_updated: md.metadata.mtime,
         file_size: md.metadata.fileSize,
-        latitude: md.metadata.latitude,
-        longitude: md.metadata.longitude,
-        iso: md.metadata.iso,
-        shutter_speed: md.metadata.shutterSpeed,
-        aperture: md.metadata.aperture,
-        focal_length: md.metadata.focalLength,
-        camera_make: md.metadata.cameraMake,
-        camera_model: md.metadata.cameraModel,
-        lens_model: md.metadata.lensModel,
-        capture_sequence: sequenceColumn(md.metadata.sequence),
-        metadata_provisional: md.metadata.provisional,
         media_image_id: md.metadata.mediaImageId,
       });
       batch.touched?.push(md.photoId);

@@ -3,11 +3,6 @@ import { color, derivedSize, size } from '../../../ui/tokens.stylex';
 import { editSheet } from '../../raw_edit/edit_sheet.stylex';
 
 export const styles = stylex.create({
-  menuRating: {
-    paddingTop: '4px',
-    paddingInline: '9px',
-    paddingBottom: '6px',
-  },
   page: {
     height: '100%',
     display: 'flex',

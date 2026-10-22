@@ -2,9 +2,6 @@ import { afterAll, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../../../config';
-import { AppError } from '../../../errors';
-import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
-import { StackMembership } from '../../stacks/stack_membership';
 import {
   LIB,
   makeLibrary,
@@ -22,12 +19,7 @@ afterAll(() => {
 
 function serviceFor(peer: Peer): { service: LibrariesService; repo: LibrariesRepository } {
   const repo = new LibrariesRepository(peer.db);
-  const service = new LibrariesService(
-    repo,
-    peer.photoScan,
-    new PhotoPathsRepository(peer.db, new StackMembership(peer.db)),
-    UNRESTRICTED_WRITES,
-  );
+  const service = new LibrariesService(repo, peer.photoScan, peer.photoPaths, UNRESTRICTED_WRITES);
   service.addLifecycleListener(peer.scan);
   return { service, repo };
 }
@@ -150,12 +142,10 @@ describe('changing a library root', () => {
     mkdirSync(path.join(target, 'Taken'), { recursive: true });
 
     const scanned = nextScan(peer);
-    const refusal = await service
-      .update(LIB, { root_path: target, bin_name: 'Taken' })
-      .catch((err: unknown) => err);
+    const refused = service.update(LIB, { root_path: target, bin_name: 'Taken' });
+    await expect(refused).rejects.toMatchObject({ code: 'CONFLICT' });
     await scanned;
 
-    expect((refusal as AppError).code).toBe('CONFLICT');
     expect(repo.getById(LIB)?.root_path).toBe(target);
   });
 
@@ -179,9 +169,7 @@ describe('changing a library root', () => {
       [other, 'CONFLICT'],
       [`${other}/`, 'CONFLICT'],
     ] as const) {
-      const refusal = await service.update(LIB, { root_path }).catch((err: unknown) => err);
-      expect(refusal).toBeInstanceOf(AppError);
-      expect((refusal as AppError).code).toBe(code);
+      await expect(service.update(LIB, { root_path })).rejects.toMatchObject({ code });
     }
     expect(repo.getById(LIB)?.root_path).toBe(peer.root);
     expect(repo.getBinIdentity(LIB)).toEqual({ dev: 1, ino: 2, birthtime: 3 });

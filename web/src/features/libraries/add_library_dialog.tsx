@@ -26,7 +26,7 @@ import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
-import { newLibraryStart } from './new_library_start';
+import { commonParent } from './common_parent';
 
 const NEW_LIBRARY = CreateLibraryRequestSchema.omit({ root_path: true }).parse({});
 
@@ -90,7 +90,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     }
     const next = newFolderBrowser();
     setBrowser(next);
-    void next.presenter.open(newLibraryStart(store.libraries.map((library) => library.root_path)));
+    void next.presenter.open(commonParent(store.libraries.map((library) => library.root_path)));
   }, [open, libraries, store, preset]);
 
   // The folder name is the library's name until the user types one of their own.

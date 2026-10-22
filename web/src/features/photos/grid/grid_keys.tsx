@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { focusToward, type Direction } from '../../../app/remote_navigation';
 import { useListingStore, useMarksStore, usePresenters } from '../../../app/stores_context';
 import { onTv } from '../../../app/tv';
-import { photoPath } from '../photos_store';
+import { isStack, photoPath } from '../photos_store';
 
 // The grid's keyboard layer. Separate component so a keystroke that only moves
 // the cursor re-renders the two affected tiles, not the page.
@@ -102,8 +102,7 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
           if (!fromGrid || onControl) return;
           const focused = marks.focusedPhoto;
           if (focused == null) return;
-          if (focused.stack_id != null && focused.stack_size > 1)
-            void photos.toggleBand(focused.stack_id, marks.focusIndex);
+          if (isStack(focused)) void photos.toggleBand(focused.stack_id, marks.focusIndex);
           else navigate(photoPath(focused.id, listing.source));
           break;
         }

@@ -5,7 +5,6 @@ import type { PastedEdits } from '../../schemas/photos';
 import {
   EditDocSchema,
   diffEdits,
-  neutralEdits,
   pastableEdits,
   type CameraTone,
   type Denoiser,
@@ -148,7 +147,7 @@ export class PhotoEditsService {
     edits: Record<string, unknown>,
     open: { shown?: string; editing?: string } = {},
   ): PastedEdits {
-    const patch = pastableEdits(EditDocSchema.parse({ ...neutralEdits(), ...edits }));
+    const patch = pastableEdits(EditDocSchema.parse(edits));
     const session = newId();
     const named = [...new Set(photoIds)];
     const pasted = named.filter((photoId) => photoId !== open.editing);

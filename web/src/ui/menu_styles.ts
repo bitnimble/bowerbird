@@ -116,4 +116,9 @@ export const menuStyles = stylex.create({
     paddingInline: '9px',
     paddingBottom: '4px',
   },
+  sectionControl: {
+    paddingTop: '4px',
+    paddingInline: '9px',
+    paddingBottom: '6px',
+  },
 });

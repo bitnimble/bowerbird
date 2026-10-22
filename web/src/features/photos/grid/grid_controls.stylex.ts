@@ -19,13 +19,9 @@ export const styles = stylex.create({
   count: {
     justifyContent: 'flex-end',
   },
-  // The inset is the item padding either side, so the panel lines up with the labels around it.
   menuPanel: {
     display: 'grid',
     gap: '8px',
-    paddingTop: '4px',
-    paddingInline: '9px',
-    paddingBottom: '6px',
   },
   // The popup is sized by its widest row, and a track at its natural width leaves the panel
   // narrower than the section headings it sits under.

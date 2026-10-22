@@ -181,6 +181,6 @@ export async function readCaptureOffset(filePath: string): Promise<string | null
     // slice() is lazy, so only the window is ever read off disk.
     return parseCaptureOffset(await Bun.file(filePath).slice(0, WINDOW_BYTES).bytes());
   } catch {
-    return null; // an unreadable header is not a reason to fail the whole scan
+    return null; // an unreadable zone is not a reason to fail the header read
   }
 }

@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import type { ReplicationPresenter } from '../../../replication/replication_presenter';
 import { editOption, fetchOriginalThenEdit } from '../edit_option';
 
 const base = {
@@ -44,13 +43,10 @@ test('says why an original cannot be fetched', () => {
 
 test('opens the editor only once the original has landed', async () => {
   const edited: string[] = [];
-  const replication = (fetched: boolean): ReplicationPresenter =>
-    ({ fetchOriginalAndWait: async () => fetched }) as unknown as ReplicationPresenter;
+  const replication = (fetched: boolean) => ({ fetchOriginalAndWait: async () => fetched });
 
-  fetchOriginalThenEdit(replication(false), 'p1', () => edited.push('p1'));
-  fetchOriginalThenEdit(replication(true), 'p2', () => edited.push('p2'));
-  await Promise.resolve();
-  await Promise.resolve();
+  await fetchOriginalThenEdit(replication(false), 'p1', () => edited.push('p1'));
+  await fetchOriginalThenEdit(replication(true), 'p2', () => edited.push('p2'));
 
   expect(edited).toEqual(['p2']);
 });

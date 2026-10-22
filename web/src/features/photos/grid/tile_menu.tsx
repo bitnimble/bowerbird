@@ -1,15 +1,6 @@
 import { Menu } from '@base-ui-components/react/menu';
 import * as stylex from '@stylexjs/stylex';
-import {
-  ClipboardCopy,
-  ClipboardPaste,
-  Download,
-  ExternalLink,
-  FolderOpen,
-  Image,
-  RotateCw,
-  Trash2,
-} from 'lucide-react';
+import { ClipboardCopy, ClipboardPaste, ExternalLink } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -32,8 +23,7 @@ import { Rating } from '../marks';
 import { isComposite, isStack, type TileSubject } from '../photos_store';
 import { editPath } from '../viewer/detail_mode';
 import { editOption, fetchOriginalThenEdit } from '../viewer/edit_option';
-import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
-import { verdictOptions } from './bulk_bar';
+import { photoOptions, verdictOptions } from './bulk_bar';
 import { BulkBarStrings } from './bulk_bar.strings';
 import { InStrip, StripOpensEditor, useOpenPhoto } from './photo_tile';
 import { TileMenuContext, type OpenTileMenu } from './tile_menu_context';
@@ -41,7 +31,6 @@ import { TileMenuStrings } from './tile_menu.strings';
 
 type OpenAction = 'open' | 'edit';
 type EditsAction = 'copy' | 'paste';
-type PhotoAction = 'export' | 'reveal' | 'thumbnails' | 'metadata' | 'bin';
 
 interface Opened {
   x: number;
@@ -51,14 +40,6 @@ interface Opened {
   count: number;
   selected: boolean;
 }
-
-const styles = stylex.create({
-  rating: {
-    paddingTop: '4px',
-    paddingInline: '9px',
-    paddingBottom: '6px',
-  },
-});
 
 export const TileMenu = observer(function TileMenu({
   children,
@@ -178,7 +159,7 @@ const TileMenuItems = observer(function TileMenuItems({
     : [];
   const fetchThenEdit = (): void => {
     const from = window.location.pathname;
-    fetchOriginalThenEdit(replication, photo.id, () => {
+    void fetchOriginalThenEdit(replication, photo.id, () => {
       if (window.location.pathname !== from) return;
       close();
       navigate(editHref, { replace: inViewer });
@@ -202,26 +183,12 @@ const TileMenuItems = observer(function TileMenuItems({
       tooltip: clipboard.copied == null ? TileMenuStrings.nothingCopied() : undefined,
     },
   ];
-  const acting: Option<PhotoAction>[] = [
-    { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <Download size={ICON} /> },
-    ...(single && canRevealFile() && !isComposite(photo)
-      ? [
-          {
-            value: 'reveal' as const,
-            label: PhotoDetailStrings.openContainingFolder(),
-            icon: <FolderOpen size={ICON} />,
-          },
-        ]
-      : []),
-    { value: 'thumbnails', label: BulkBarStrings.rebuildThumbnails(), icon: <Image size={ICON} /> },
-    { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
-    {
-      value: 'bin',
-      label: count < 2 ? BulkBarStrings.moveToBin() : BulkBarStrings.moveCountToBin(count),
-      icon: <Trash2 size={ICON} />,
-      destructive: true,
-    },
-  ];
+  const acting = photoOptions({
+    bin: count < 2 ? BulkBarStrings.moveToBin() : BulkBarStrings.moveCountToBin(count),
+    revealable: single && canRevealFile() && !isComposite(photo),
+    hide: null,
+    unhide: null,
+  });
 
   return (
     <Sections>
@@ -239,7 +206,7 @@ const TileMenuItems = observer(function TileMenuItems({
           rating={rating}
           onSet={(stars) => void photos.markPhotos(target, { rating: stars })}
           focusable={false}
-          style={styles.rating}
+          style={menuStyles.sectionControl}
         />
       </Section>
       <Section key="edits">
@@ -264,7 +231,7 @@ const TileMenuItems = observer(function TileMenuItems({
             else if (action === 'reveal') void photos.revealOriginal(photo.id);
             else if (action === 'thumbnails') void photos.rebuildTiles(target);
             else if (action === 'metadata') void photos.refreshMetadata(target);
-            else void photos.deletePhotos(target);
+            else if (action === 'bin') void photos.deletePhotos(target);
           }}
         />
       </Section>

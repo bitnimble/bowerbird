@@ -54,12 +54,10 @@ export function editOption({
 }
 
 /** Opens the editor once the original has landed, where `edit` still wants it to. */
-export function fetchOriginalThenEdit(
-  replication: ReplicationPresenter,
+export async function fetchOriginalThenEdit(
+  replication: Pick<ReplicationPresenter, 'fetchOriginalAndWait'>,
   photoId: string,
   edit: () => void,
-): void {
-  void replication.fetchOriginalAndWait(photoId).then((fetched) => {
-    if (fetched) edit();
-  });
+): Promise<void> {
+  if (await replication.fetchOriginalAndWait(photoId)) edit();
 }

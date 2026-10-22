@@ -18,6 +18,7 @@ import type {
   PhotoPathsRepository,
 } from '../paths/photo_paths_repository';
 import type { PhotoReadService } from '../listing/photo_read_service';
+import { inChunks } from '../photo_batches';
 import { photoLog as log } from '../photo_service_log';
 
 // Ids per `WHERE id IN (...)`, well under SQLite's variable limit.
@@ -28,10 +29,6 @@ export const ID_CHUNK = 500;
 // enough that a million-photo bin is a couple of thousand commits and not a
 // million.
 export const DELETE_CHUNK = 500;
-
-export function* inChunks<T>(items: readonly T[], size: number): Generator<T[]> {
-  for (let from = 0; from < items.length; from += size) yield items.slice(from, from + size);
-}
 
 export class PhotoMutationService {
   constructor(

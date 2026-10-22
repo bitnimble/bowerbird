@@ -1,5 +1,6 @@
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
+import { describe } from '../../../errors';
 import { newId } from '../../../../../src/schemas/id';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import type { AppSettingsPresenter } from '../../settings/app_settings_presenter';
@@ -7,10 +8,6 @@ import { sourceKey, type PhotoSource } from '../photos_store';
 import type { ListingStore } from '../grid/listing_store';
 import type { ViewerPresenter } from './viewer_presenter';
 import type { ViewerStore } from './viewer_store';
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export class DetailPresenter {
   constructor(
@@ -97,7 +94,7 @@ export class DetailPresenter {
       // On the open photo rather than in the store's shared error slot, which a
       // list fetch also writes: a library that failed to load must not read as
       // this photo being missing from the catalogue.
-      this.viewer.detailMissing(photoId, message(err));
+      this.viewer.detailMissing(photoId, describe(err));
     }
   }
 

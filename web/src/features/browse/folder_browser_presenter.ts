@@ -3,6 +3,7 @@ import { type BrowseResponse } from '../../../../src/schemas/browse';
 import { browseApi } from '../../api/browse';
 import { canPickFolder, pickFolder } from '../../api/pick_folder';
 import { PickFolderStrings } from '../../api/pick_folder.strings';
+import { describe } from '../../errors';
 import { FolderBrowserStore } from './folder_browser_store';
 
 export interface FolderBrowserParts {
@@ -44,7 +45,7 @@ export class FolderBrowserPresenter {
           return;
       }
     } catch (err) {
-      this.fail(err instanceof Error ? err.message : String(err));
+      this.fail(describe(err));
     }
   }
 
@@ -76,7 +77,7 @@ export class FolderBrowserPresenter {
       this.landed(listing);
       return true;
     } catch (err) {
-      if (walk === this.walk) this.fail(err instanceof Error ? err.message : String(err));
+      if (walk === this.walk) this.fail(describe(err));
       return false;
     }
   }

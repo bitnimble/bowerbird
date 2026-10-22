@@ -3,13 +3,9 @@ import { type Album } from '../../../../src/schemas/albums';
 import { type Ordering } from '../../../../src/schemas/common';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import { albumsApi } from '../../api/albums';
-import { ApiError } from '../../api/request';
 import { CollectionListPresenter } from '../../app/collection_list_presenter';
+import { describe } from '../../errors';
 import type { AlbumsStore } from './albums_store';
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
 
 export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
   async load(): Promise<void> {
@@ -21,7 +17,7 @@ export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
         this.store.loading = false;
       });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
     }
   }
 
@@ -30,7 +26,7 @@ export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
     try {
       album = await albumsApi.create({ name, ordering });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return null;
     }
     await this.load();
@@ -45,7 +41,7 @@ export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
     try {
       await albumsApi.update(albumId, { name });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.load();
@@ -57,7 +53,7 @@ export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
     try {
       await albumsApi.update(albumId, { ordering });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.load();
@@ -67,7 +63,7 @@ export class AlbumsPresenter extends CollectionListPresenter<AlbumsStore> {
     try {
       await albumsApi.delete(albumId);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.load();

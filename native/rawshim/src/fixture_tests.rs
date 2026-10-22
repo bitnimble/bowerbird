@@ -4606,11 +4606,12 @@ mod tile_header {
     }
 
     /// **The catalogue's answer cannot depend on which pass read the file.** A tile job reports
-    /// these fields off the source it lifts the preview from, where the scan reads them through
-    /// `header::read_path` - so a field that came back differently would date, orient or credit a
-    /// photograph according to whether the media index answered for it first.
+    /// these fields off the source it lifts the preview from, where the `HeaderPool` read behind
+    /// the detail route and "Update photo details" goes through `header::read_path` - so a field
+    /// that came back differently would date, orient or credit a photograph according to which read
+    /// wrote it.
     #[test]
-    fn the_tile_jobs_header_is_the_one_the_scan_would_have_read() {
+    fn the_tile_jobs_header_is_the_one_a_header_read_gives() {
         let path = sony();
         let out = std::env::temp_dir().join("bb-tile-header.avif");
         let reported = crate::job::run(&tile_job(&path, &out.to_string_lossy(), true))

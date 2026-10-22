@@ -17,6 +17,7 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { MemoryRouter, Route, Routes, useLocation } = await import('react-router-dom');
 const { LibraryList } = await import('../library_list');
+const { SettingsPage } = await import('../settings_page');
 const { StoresProvider, useLibrariesStore } = await import('../../../app/stores_context');
 const { TooltipProvider } = await import('../../../ui/tooltip');
 
@@ -87,7 +88,7 @@ function Where(): null {
   return null;
 }
 
-async function openAt(path: string): Promise<void> {
+async function openAt(path: string, page: JSX.Element = <LibraryList />): Promise<void> {
   render(
     <MemoryRouter initialEntries={[path]}>
       <StoresProvider>
@@ -95,7 +96,7 @@ async function openAt(path: string): Promise<void> {
         <Where />
         <TooltipProvider delay={0}>
           <Routes>
-            <Route path="/settings/:tab?/:libraryId?/:section?" element={<LibraryList />} />
+            <Route path="/settings/:tab?/:libraryId?/:section?" element={page} />
           </Routes>
         </TooltipProvider>
       </StoresProvider>
@@ -121,6 +122,13 @@ test('the settings button opens the dialog and closing it returns to the librari
 
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
   expect(location).toBe('/settings/libraries');
+});
+
+test("an address naming no library still shows why the libraries didn't load", async () => {
+  librariesApi.list = () => Promise.reject(new Error('The server is not answering.'));
+  await openAt('/settings/libraries/missing', <SettingsPage />);
+
+  await waitFor(() => expect(screen.getByText('The server is not answering.')).toBeTruthy());
 });
 
 test('desktop library paths are links with a tooltip that opens their root folder', async () => {

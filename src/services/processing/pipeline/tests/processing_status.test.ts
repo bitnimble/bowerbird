@@ -19,7 +19,7 @@ import type { PrepareAnswer, PrepareAsk } from '../../workers/prepare_worker';
 import { PhotoRenditionService } from '../../../photos/renditions/photo_rendition_service';
 import { PhotoMetadataRepository } from '../../../photos/metadata/photo_metadata_repository';
 import { localOriginals } from '../../../blobs/originals_for_testing';
-import type { FileMetadata } from '../../analysis/metadata';
+import type { HeaderMetadata } from '../../analysis/metadata';
 import type { RenderTiming } from '../../../../schemas/render_stages';
 import { RenderTimingsFile } from '../../renditions/render_timings_file';
 import { RenderBenchmark } from '../render_benchmark';
@@ -241,11 +241,7 @@ describe('live library processing status', () => {
     db.query('UPDATE photos SET width = 0, height = 0, metadata_provisional = 1 WHERE id = ?').run(
       'a',
     );
-    const read = jest.fn(async (): Promise<FileMetadata> => ({
-      ...HEADER,
-      mtime: '2026-01-01T00:00:00.000Z',
-      fileSize: 3,
-    }));
+    const read = jest.fn(async (): Promise<HeaderMetadata> => HEADER);
     const renditions = new PhotoRenditionService(
       new PhotoPathsRepository(db, new StackMembership(db)),
       new PhotoListingRepository(db),
@@ -387,7 +383,7 @@ describe('live library processing status', () => {
 
   it('reports metadata reads separately and clears failed reads', async () => {
     add('a');
-    const metadata = Promise.withResolvers<FileMetadata>();
+    const metadata = Promise.withResolvers<HeaderMetadata>();
     const renditions = new PhotoRenditionService(
       new PhotoPathsRepository(db, new StackMembership(db)),
       new PhotoListingRepository(db),

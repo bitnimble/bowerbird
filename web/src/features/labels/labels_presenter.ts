@@ -4,7 +4,7 @@ import { type Label } from '../../../../src/schemas/labels';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { labelsApi } from '../../api/labels';
-import { ApiError } from '../../api/request';
+import { describe } from '../../errors';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { type DraftLabel, type LabelEditorStore, renamed } from './label_editor_store';
@@ -22,10 +22,6 @@ const LABEL_COLOURS = [
   '#d6409f',
 ];
 
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
-
 export class LabelsPresenter {
   private nextDraft = 0;
 
@@ -40,7 +36,7 @@ export class LabelsPresenter {
     try {
       this.setLabels(await labelsApi.list(activity));
     } catch (err) {
-      this.toasts.showError(LabelsPresenterStrings.couldNotLoadLabels(), message(err));
+      this.toasts.showError(LabelsPresenterStrings.couldNotLoadLabels(), describe(err));
     }
   }
 
@@ -51,7 +47,7 @@ export class LabelsPresenter {
     try {
       label = await labelsApi.create({ library_id: libraryId, name: name.trim(), colour });
     } catch (err) {
-      this.toasts.showError(LabelsPresenterStrings.couldNotCreateLabel(), message(err));
+      this.toasts.showError(LabelsPresenterStrings.couldNotCreateLabel(), describe(err));
       return null;
     }
     this.setLabels([...this.store.labels, label]);
@@ -65,7 +61,7 @@ export class LabelsPresenter {
         ? labelsApi.addPhotos(labelId, target)
         : labelsApi.removePhotos(labelId, target));
     } catch (err) {
-      this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), message(err));
+      this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), describe(err));
       return;
     }
     this.photos.photoLabelled(photoId, labelId, labelled);
@@ -80,7 +76,7 @@ export class LabelsPresenter {
     try {
       await labelsApi.addPhotos(labelId, target);
     } catch (err) {
-      this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), message(err));
+      this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), describe(err));
       return;
     }
     this.toasts.show(

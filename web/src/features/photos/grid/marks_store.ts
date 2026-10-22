@@ -3,6 +3,7 @@ import type { CaptureSequenceKind } from '../../../../../src/schemas/capture_seq
 import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
 import {
   isComposite,
+  isStack,
   MERGE_MAX_FRAMES,
   type MergeCandidate,
   type StackSelection,
@@ -185,7 +186,7 @@ export class MarksStore {
    */
   @computed get selectedLoadedPhotos(): PhotoSummary[] {
     return this.selectedLoadedRows.flatMap((row) => {
-      if (row.stack_size <= 1 || row.stack_id == null) return [row];
+      if (!isStack(row)) return [row];
       return this.stacks.stackMembers.get(row.stack_id) ?? [];
     });
   }

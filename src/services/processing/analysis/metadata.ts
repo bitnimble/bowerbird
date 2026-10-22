@@ -1,8 +1,6 @@
-import { stat } from 'node:fs/promises';
-import type { Stats } from 'node:fs';
 import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { readCaptureOffset } from './exif_zone';
-import { readRawHeader, type RawHeader } from '../rawshim/raw_decoder';
+import { readRawHeader } from '../rawshim/raw_decoder';
 
 // The native header parser (no pixel decode). See DESIGN §11.
 
@@ -26,50 +24,16 @@ export interface FileMetadata {
   sequence: CaptureSequence | null;
   mtime: string; // filesystem mtime, ISO datetime
   fileSize: number; // bytes
-  /** Taken from the stat and the device's media index rather than the file, so the tile pass reads the header. */
-  provisional?: boolean;
   /** Set only where the index entry matches the file's size. */
   mediaImageId?: number;
 }
 
-/** What a header read says about a photograph, without the file's own size and time. */
-export type HeaderMetadata = Omit<
-  FileMetadata,
-  'mtime' | 'fileSize' | 'provisional' | 'mediaImageId'
->;
+export type HeaderMetadata = Omit<FileMetadata, 'mtime' | 'fileSize' | 'mediaImageId'>;
 
-export async function extractMetadata(filePath: string): Promise<FileMetadata> {
-  const stats = await stat(filePath);
+export async function extractMetadata(filePath: string): Promise<HeaderMetadata> {
   const header = readRawHeader(filePath);
   // A second read of the same file, because the two answers come from different
   // places: `bb_read_header` for everything it parses, the raw EXIF for the one
   // tag it does not carry. Bounded to the header, so it costs a page or two.
-  const dateTakenOffset = await readCaptureOffset(filePath);
-  return fileMetadata(header, dateTakenOffset, stats);
-}
-
-function fileMetadata(
-  header: RawHeader,
-  dateTakenOffset: string | null,
-  stats: Stats,
-): FileMetadata {
-  return {
-    width: header.width,
-    height: header.height,
-    orientation: header.orientation,
-    dateTaken: header.dateTaken,
-    dateTakenOffset,
-    latitude: header.latitude,
-    longitude: header.longitude,
-    iso: header.iso,
-    shutterSpeed: header.shutterSpeed,
-    aperture: header.aperture,
-    focalLength: header.focalLength,
-    cameraMake: header.cameraMake,
-    cameraModel: header.cameraModel,
-    lensModel: header.lensModel,
-    sequence: header.sequence,
-    mtime: stats.mtime.toISOString(),
-    fileSize: stats.size,
-  };
+  return { ...header, dateTakenOffset: await readCaptureOffset(filePath) };
 }

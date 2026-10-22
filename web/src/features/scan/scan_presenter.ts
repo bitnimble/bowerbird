@@ -2,6 +2,7 @@ import { action, runInAction } from 'mobx';
 import { type LibraryScanStatus } from '../../../../src/schemas/libraries';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
+import { describe } from '../../errors';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ScanStore } from './scan_store';
@@ -12,10 +13,6 @@ const RATE_WINDOW_MS = 5000;
 // All a poll asks of the two presenters it drives.
 type GridToRefresh = Pick<PhotosPresenter, 'reload'>;
 type ListToRefresh = Pick<LibrariesPresenter, 'load'>;
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
 
 export class ScanPresenter {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -71,7 +68,7 @@ export class ScanPresenter {
         // A 409 means someone else is already scanning, which is not a failure
         // worth showing: the poll reports that run's progress.
         if (!(err instanceof ApiError && err.code === 'SYNC_IN_PROGRESS')) {
-          runInAction(() => (this.store.error = message(err)));
+          runInAction(() => (this.store.error = describe(err)));
         }
       },
     );
@@ -90,7 +87,7 @@ export class ScanPresenter {
       await librariesApi.cancelScan(libraryId);
     } catch (err) {
       runInAction(() => {
-        this.store.error = message(err);
+        this.store.error = describe(err);
         this.setStopping(libraryId, false);
       });
     }
@@ -144,7 +141,7 @@ export class ScanPresenter {
       wasBusy = running || unanswered || status.photos_processing > 0;
       placingRows = status.status === 'processing';
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      runInAction(() => (this.store.error = describe(err)));
       return;
     }
 

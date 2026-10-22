@@ -16,6 +16,7 @@ import { type Rendition } from '../../../../src/services/processing/renditions/r
 import { photosApi } from '../../api/photos';
 import { ApiError } from '../../api/request';
 import { stacksApi } from '../../api/stacks';
+import { describe } from '../../errors';
 import type { BurstScale, CompositeProgress } from '../../../../src/schemas/composition';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
@@ -91,10 +92,6 @@ function viewFilters(source: PhotoSource | null): PhotoSelection['filters'] {
     ...(source?.kind === 'missing' ? { is_missing: true } : {}),
     ...(source?.kind === 'no_shoot' ? { no_shoot: true } : {}),
   };
-}
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
 }
 
 // The code and status the message alone cannot carry. A bare "Unexpected error"
@@ -284,12 +281,9 @@ export class PhotosPresenter {
 
   /** Selected stack rows whose members this client does not hold yet. */
   @computed private get unresolvedSelectedStacks(): string[] {
-    return this.marks.selectedLoadedRows
-      .filter(
-        (row) =>
-          row.stack_size > 1 && row.stack_id != null && !this.stacks.stackMembers.has(row.stack_id),
-      )
-      .map((row) => row.stack_id!);
+    return this.marks.selectedLoadedRows.flatMap((row) =>
+      isStack(row) && !this.stacks.stackMembers.has(row.stack_id) ? [row.stack_id] : [],
+    );
   }
 
   /** One request a stack, at most once each: `stackMembers` is what says a stack is already known. */
@@ -1309,7 +1303,7 @@ export class PhotosPresenter {
   // failed rebuild or delete leaves the view perfectly renderable, so it belongs
   // in a toast that outlives the click and can be read at leisure.
   private fail(err: unknown): void {
-    this.toasts.showError(message(err), detail(err));
+    this.toasts.showError(describe(err), detail(err));
   }
 
   // The current selection as something a bulk request can carry: the collection,

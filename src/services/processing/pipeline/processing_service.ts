@@ -160,9 +160,7 @@ export class ProcessingService extends RenderService {
     this.announce(photoId, { stage: 'tile', version });
   }
 
-  // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
-  // builds it from. Returns how many were queued; ids that are missing or binned
-  // have no file to read.
+  // Returns how many were queued: ids that are missing or binned have no file to read.
   async rebuildTiles(photoIds: string[]): Promise<number> {
     const queued = this.photoProcessing.queueTileRebuild(photoIds);
     // Scoped to what was asked for: the caller is awaiting this, and a library
@@ -188,31 +186,34 @@ export class ProcessingService extends RenderService {
    * sweep at startup finds anything whose editor never got to say it had closed.
    */
   rebuildEdited(photoIds?: readonly string[]): number {
-    return this.drainEdited(this.photoProcessing.queueEditedSince(photoIds));
+    return this.drainQueued(
+      this.photoProcessing.queueEditedSince(photoIds),
+      'could not rebuild after an edit',
+    );
   }
 
   /** `rebuildEdited` for pasted edits: grid tiles, and the viewer's copy of `shown` alone. */
   rebuildPasted(photoIds: readonly string[], shown?: string): number {
-    return this.drainEdited(this.photoProcessing.queuePasted(photoIds, shown));
-  }
-
-  private drainEdited(queued: readonly string[]): number {
-    // Reported rather than thrown past: nothing is awaiting this, so an unhandled
-    // rejection is all a failure would otherwise produce.
-    if (queued.length > 0) {
-      void this.processUnprocessed({ photoIds: queued }).catch((err: unknown) =>
-        log.warn('could not rebuild after an edit', { photos: queued.length, err }),
-      );
-    }
-    return queued.length;
+    return this.drainQueued(
+      this.photoProcessing.queuePasted(photoIds, shown),
+      'could not rebuild after an edit',
+    );
   }
 
   /** Both derived stages of every photo denoised with `denoiser`, whose model has changed. */
   rebuildDenoisedWith(denoiser: Denoiser): number {
-    const queued = this.photoProcessing.queueDenoisedWith(denoiser);
+    return this.drainQueued(
+      this.photoProcessing.queueDenoisedWith(denoiser),
+      'could not rebuild after a model update',
+    );
+  }
+
+  private drainQueued(queued: readonly string[], failure: string): number {
+    // Reported rather than thrown past: nothing is awaiting this, so an unhandled
+    // rejection is all a failure would otherwise produce.
     if (queued.length > 0) {
       void this.processUnprocessed({ photoIds: queued }).catch((err: unknown) =>
-        log.warn('could not rebuild after a model update', { photos: queued.length, err }),
+        log.warn(failure, { photos: queued.length, err }),
       );
     }
     return queued.length;
@@ -268,11 +269,11 @@ export class ProcessingService extends RenderService {
 
   /** Which kinds of `pendingWork` a batch is building for this library now. */
   runningWork(libraryId: string): ProcessingWorkKind[] {
+    if (this.scanning(libraryId)) return [];
     const kinds = new Set<ProcessingWorkKind>();
     for (const [key, work] of this.running) {
       if (key !== '*' && key !== libraryId) continue;
       if (![...(this.active.get(key)?.values() ?? [])].includes(libraryId)) continue;
-      if (this.scanning(libraryId)) continue;
       for (const kind of work) kinds.add(kind);
     }
     return [...kinds];
@@ -737,7 +738,7 @@ export class ProcessingService extends RenderService {
 
   // One photo's import, split into the two stages it is worth running separately.
   //
-  // The grid tile is always the camera's embedded JPEG, which is what makes the
+  // The grid tile is the camera's embedded JPEG, which is what makes the
   // split pay: it is ~18ms where a render is ~1.5s, so doing every tile first
   // fills the whole grid of a 2000-frame shoot in about ten seconds rather than the
   // eleven minutes the renders take. A body that embeds no JPEG falls back to a render

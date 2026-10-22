@@ -163,34 +163,20 @@ type Action = 'edit' | 'editMerge' | 'metadata' | 'rerender' | 'hide' | 'delete'
 function actions({
   rerendering,
   renders,
-  editable,
-  fetchingOriginal,
-  readOnly,
-  unreachable,
-  editHref,
+  edit,
   hidden,
   merged,
 }: {
   rerendering: boolean;
   renders: boolean;
-  editable: boolean;
-  fetchingOriginal: boolean;
-  /** A library that cannot take the original, which a photo that is not editable has to fetch. */
-  readOnly: boolean;
-  unreachable: boolean;
-  editHref: string;
+  edit: Option<'edit'>;
   /** Whether this photograph is already put away, which is which way the one hide row points. */
   hidden: boolean;
   /** A row composed out of others, which is the only kind that has a merge to go back into. */
   merged: boolean;
 }): Option<Action>[] {
   return [
-    // There has to be something here to open, and for a photograph that is its own file: the
-    // pictures on this screen may have come from a peer's renditions (§7.9). A composite is
-    // editable without one - what it opens is the canvas its recipe composes, prepared where
-    // the frames are. Anything else fetches its original first, because what opening without
-    // one looks like from inside the editor is a 404 with no way out of it.
-    editOption({ editable, fetchingOriginal, readOnly, unreachable, editHref, replace: true }),
+    edit,
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
     // than by a field the viewer would have to carry.
@@ -284,6 +270,10 @@ export const DetailNav = observer(function DetailNav({
   const navigate = useNavigate();
   const mobile = useIsMobile();
   const photo = store.detailFor(photoId);
+  // A composite opens its recipe's canvas with its frames unchecked: no field here says they're
+  // on this device, and a missing one fails in the editor with the server's reason. Anything
+  // else needs its original here or on a backup (§14.4); `photo == null` until the detail
+  // arrives.
   const editable =
     isComposite(store.photoFor(photoId)) ||
     photo == null ||
@@ -426,26 +416,20 @@ export const DetailNav = observer(function DetailNav({
             options: actions({
               rerendering: store.buildingRendition,
               renders: store.rerenderTarget != null,
-              // A composite has no file of its own and is editable anyway: what it opens is the
-              // canvas its recipe composes, prepared where its frames are. Whether *those* are on
-              // this device is a stat per frame that no field here answers, so a composite whose
-              // frames have gone opens and fails inside the editor with the server's reason -
-              // which is worse than a disabled control and better than a bare 404.
-              //
-              // Everything else needs its original here or on a backup, which the editor's read
-              // fetches back (§14.4). Unknown until the detail arrives, and yes for almost every
-              // photograph: a library nobody replicates holds its own.
-              editable,
-              fetchingOriginal: replicationStore.fetching.has(photoId),
-              readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
-              unreachable: store.unreachable(photoId),
-              editHref,
+              edit: editOption({
+                editable,
+                fetchingOriginal: replicationStore.fetching.has(photoId),
+                readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
+                unreachable: store.unreachable(photoId),
+                editHref,
+                replace: true,
+              }),
               hidden: photo?.is_hidden ?? false,
               merged: isComposite(store.photoFor(photoId)),
             }),
             onSelect: (action) => {
               if (action === 'edit') {
-                fetchOriginalThenEdit(replication, photoId, () => {
+                void fetchOriginalThenEdit(replication, photoId, () => {
                   if (store.open?.id === photoId) navigate(editHref, { replace: true });
                 });
                 return;
@@ -477,7 +461,11 @@ export const DetailNav = observer(function DetailNav({
                 menuSection({
                   label: PhotoDetailStrings.rating(),
                   content: (
-                    <DetailRating photoId={photoId} focusable={false} style={styles.menuRating} />
+                    <DetailRating
+                      photoId={photoId}
+                      focusable={false}
+                      style={menuStyles.sectionControl}
+                    />
                   ),
                 }),
               ]),

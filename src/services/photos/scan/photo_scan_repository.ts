@@ -53,28 +53,11 @@ export interface ScanInsert {
 
 export interface ScanModification {
   file_hash: string;
-  width: number;
-  height: number;
-  orientation: number;
-  date_taken: string | null;
-  date_taken_offset: string | null;
   date_updated: string | null;
   file_size: number;
-  latitude: number | null;
-  longitude: number | null;
-  iso: number | null;
-  shutter_speed: number | null;
-  aperture: number | null;
-  focal_length: number | null;
-  camera_make: string | null;
-  camera_model: string | null;
-  lens_model: string | null;
-  capture_sequence: string | null;
-  metadata_provisional?: boolean;
   media_image_id?: number;
 }
 
-// Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
 /**
  * A scan row is a **file** the catalogue knows about, joined to the photograph it feeds.
  *
@@ -259,94 +242,34 @@ export class PhotoScanRepository {
       );
   }
   applyModification(photoId: string, fields: ScanModification): void {
-    if (fields.metadata_provisional === true) {
-      this.reprovision(photoId, fields);
-      return;
-    }
-    // The stamp only moves if the import facts did. A photograph whose original
-    // has just arrived from a peer has no local scan baseline yet - `file_hash`
-    // and `date_updated` are per-peer and do not replicate - so the next scan
-    // reads the same bytes as "modified" and would otherwise mint a stamp that
-    // re-broadcasts import facts nobody changed, and could beat the importer's own
-    // on nothing but a rounding difference (§5.4: write only if different).
-    const moved = this.importedUnitDiffers(photoId, fields) ? stamp(this.db) : null;
+    const resized = this.db
+      .query('SELECT 1 FROM photos WHERE id = ? AND file_size IS NOT ?')
+      .get(photoId, fields.file_size);
+    // Header columns are left for `fillProvisional`: zeroing them here would stamp the `imported`
+    // unit and replicate blanks to every peer.
     this.db
       .query(
-        `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?,
-            date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
-            aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?,
+        `UPDATE photos SET file_hash = ?, date_updated = ?, file_size = ?,
             -- rendition_source cleared with the flag that re-queues them, for the same reason
             -- queueRenditionRebuildForLibrary clears it: the column says what the *last* build
             -- used, and toStages reads it to decide whether a viewer rendition is owed at all.
             -- Left standing, a photo imported under an 'embedded' library and edited after the
             -- library moved to 'render' keeps resolving 'embedded', so no full rendition is
             -- ever built and the viewer asks for a file nothing writes.
-            rendition_source = NULL, is_missing = 0, metadata_provisional = 0, media_image_id = ?,
+            rendition_source = NULL, is_missing = 0, metadata_provisional = 1, media_image_id = ?,
             stamp_imported = COALESCE(?, stamp_imported) WHERE id = ?`,
       )
       .run(
         fields.file_hash,
-        fields.width,
-        fields.height,
-        fields.orientation,
-        fields.date_taken,
-        fields.date_taken_offset,
         fields.date_updated,
         fields.file_size,
-        fields.latitude,
-        fields.longitude,
-        fields.iso,
-        fields.shutter_speed,
-        fields.aperture,
-        fields.focal_length,
-        fields.camera_make,
-        fields.camera_model,
-        fields.lens_model,
-        fields.capture_sequence,
         fields.media_image_id ?? null,
-        moved,
+        // Same size is no new import fact: a peer-arrived original reads as modified on its first
+        // local scan (§5.4).
+        resized == null ? null : stamp(this.db),
         photoId,
       );
     // The file's pixels changed, so every derived copy of it is of the old one.
     this.processing.queueBothPasses(photoId);
-  }
-
-  // Header columns stay as the last read left them until `fillProvisional`: the provisional zeros
-  // written here would stamp the `imported` unit and replicate blanks to every peer.
-  private reprovision(photoId: string, fields: ScanModification): void {
-    const resized = this.db
-      .query('SELECT 1 FROM photos WHERE id = ? AND file_size IS NOT ?')
-      .get(photoId, fields.file_size);
-    this.db
-      .query(
-        `UPDATE photos SET file_hash = ?, date_updated = ?, file_size = ?, rendition_source = NULL,
-            is_missing = 0, metadata_provisional = 1, media_image_id = ?,
-            stamp_imported = COALESCE(?, stamp_imported) WHERE id = ?`,
-      )
-      .run(
-        fields.file_hash,
-        fields.date_updated,
-        fields.file_size,
-        fields.media_image_id ?? null,
-        resized == null ? null : stamp(this.db),
-        photoId,
-      );
-    this.processing.queueBothPasses(photoId);
-  }
-  // What the `imported` unit actually carries, against what the scan just read.
-  // `file_hash` and `date_updated` are per-peer and are not part of it.
-  private importedUnitDiffers(photoId: string, fields: ScanModification): boolean {
-    const held = this.db
-      .query(
-        `SELECT width, height, orientation, date_taken, date_taken_offset, file_size, latitude, longitude,
-                  iso, shutter_speed, aperture, focal_length, camera_make, camera_model, lens_model,
-                  capture_sequence
-             FROM photos WHERE id = ?`,
-      )
-      .get(photoId) as Record<string, unknown> | null;
-    if (held == null) return true;
-    return Object.entries(held).some(
-      ([column, value]) => value !== (fields as unknown as Record<string, unknown>)[column],
-    );
   }
 }

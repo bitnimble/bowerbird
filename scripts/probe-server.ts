@@ -17,11 +17,11 @@ rmSync(root, { recursive: true, force: true });
 mkdirSync(join(root, 'data'), { recursive: true });
 mkdirSync(join(root, 'photos'), { recursive: true });
 
-// A real RAW, so the scan has something to decode and the native library is
-// actually reached rather than merely present.
+// A real RAW, so the tile pass behind the scan has a header to read and the native
+// library is actually reached rather than merely present.
 const FIXTURE = join(import.meta.dir, '..', 'test', 'fixtures', 'DSC02981.ARW');
-if (existsSync(FIXTURE)) copyFileSync(FIXTURE, join(root, 'photos', 'probe.arw'));
-else console.log('no RAW fixture, so this run proves startup and the scan but not the decoder');
+if (!existsSync(FIXTURE)) throw new Error(`no RAW fixture at ${FIXTURE}`);
+copyFileSync(FIXTURE, join(root, 'photos', 'probe.arw'));
 
 const port = 24000 + (process.pid % 1000);
 const command = process.argv.slice(2);
@@ -55,14 +55,14 @@ async function waitForPhoto(libraryId: string, filePath: string): Promise<void> 
     const listed = await fetch(`${origin}/api/libraries/${libraryId}/photos?limit=10`);
     if (!listed.ok) throw new Error(await listed.text());
     const photos = PhotoListResponseSchema.parse(await listed.json());
-    if (photos.photos.some((photo) => photo.file_path === filePath)) {
+    if (photos.photos.some((photo) => photo.file_path === filePath && photo.width > 0)) {
       const status = await fetch(`${origin}/api/libraries/${libraryId}/sync/status`);
       if (!status.ok) throw new Error(await status.text());
       if (LibraryScanStatusSchema.parse(await status.json()).status === 'idle') return;
     }
     await Bun.sleep(250);
   }
-  throw new Error(`the server never catalogued ${filePath} and settled its scan`);
+  throw new Error(`the server never catalogued ${filePath}, read its header and settled its scan`);
 }
 
 try {
@@ -85,8 +85,8 @@ try {
   });
   if (!configured.ok) throw new Error(await configured.text());
 
-  // A library exercises the scan, which is where the worker threads and the native
-  // library are actually reached from.
+  // A library exercises the scan and the tile pass behind it, which is where the worker
+  // threads and the native library are actually reached from.
   const created = await fetch(`${origin}/api/libraries`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -101,7 +101,7 @@ try {
   const library = LibrarySchema.parse(await created.json());
 
   // Adding a library starts one of its own, so "already running" is the same good
-  // news as "started": either way the scan reached its worker threads.
+  // news as "started": either way a scan is under way.
   const synced = await fetch(`${origin}/api/libraries/${library.id}/sync`, { method: 'POST' });
   const body = await synced.text();
   const running = synced.ok || body.includes('SYNC_IN_PROGRESS');
@@ -109,7 +109,7 @@ try {
   if (!running) throw new Error(body);
 
   await waitForPhoto(library.id, 'probe.arw');
-  console.log('a RAW was decoded and catalogued: the native library loaded');
+  console.log("a RAW's header was read and its tile built: the native library loaded");
 
   const arriving = join(root, 'photos', 'watched.arw.part');
   copyFileSync(FIXTURE, arriving);

@@ -1,6 +1,6 @@
 // Integration test for the poll fallback, which is what a library on a filesystem
-// that reports no file events gets instead of a watch (§9.8). Requires LibRaw ->
-// runs under Bun in the container: docker exec bowerbird-dev bun test test/integration
+// that reports no file events gets instead of a watch (§9.8).
+//   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

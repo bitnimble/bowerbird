@@ -42,6 +42,7 @@ import { Button } from '../../../ui/button';
 import { useFolded } from '../../../ui/fold';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
+import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
 import { Submenu } from '../../../ui/submenu';
@@ -145,12 +146,6 @@ const styles = stylex.create({
     width: { default: 'auto', [NO_RESTORE_LABEL]: size.controlH },
     paddingInline: { default: '10px', [NO_RESTORE_LABEL]: 0 },
     justifyContent: 'center',
-  },
-  // A section's own control rather than one of its rows, so it takes the items' text column.
-  menuRating: {
-    paddingTop: '4px',
-    paddingInline: '9px',
-    paddingBottom: '6px',
   },
 });
 
@@ -277,11 +272,7 @@ const filingOptions = ({
     : [{ value: 'banner' as const, label: banner, icon: <ImagePlus size={ICON} /> }]),
 ];
 
-// The Bin entry says how many photographs it is about, because it is the one here
-// the reader has to be sure of before they pick it and the only one they reach
-// from behind a menu, with the tiles it is about out of sight - and a stack row
-// stands for several, so the selection on screen does not say the number either.
-const photoOptions = ({
+export const photoOptions = ({
   bin,
   revealable,
   hide,
@@ -383,6 +374,11 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
     collection == null || store.firstSelectedPhotoId == null
       ? null
       : bannerLabel(collection.kind, count < 2);
+  // The Bin entry says how many photographs it is about, because it is the one here
+  // the reader has to be sure of before they pick it and the only one they reach
+  // from behind a menu, with the tiles it is about out of sight - and a stack row
+  // stands for several, so the selection on screen does not say the number either.
+  //
   // "all" rather than a number for the whole collection, for the reason the bar's
   // own count carries none there: the stacks in the rows this client never held
   // stand for a number only the server knows.
@@ -513,7 +509,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                       rating={marks.rating}
                       onSet={(rating) => void photos.markSelection({ rating })}
                       focusable={false}
-                      style={styles.menuRating}
+                      style={menuStyles.sectionControl}
                     />
                   ),
                 }),

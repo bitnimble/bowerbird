@@ -10,7 +10,7 @@ import { isComposite } from '../../../schemas/recipes';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { MediaListing } from '../../libraries/media_listing';
 import { renditionCurrent, type RenditionFetchService } from '../../blobs/rendition_fetch_service';
-import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
+import { extractMetadata, type HeaderMetadata } from '../../processing/analysis/metadata';
 import type { ProcessingService } from '../../processing/pipeline/processing_service';
 import {
   renditionVariant,
@@ -54,7 +54,7 @@ export class PhotoRenditionService {
     private readonly libraries: LibrariesRepository,
     private readonly processing: ProcessingService,
     private readonly originals: Originals,
-    private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
+    private readonly extract: (filePath: string) => Promise<HeaderMetadata> = extractMetadata,
     private readonly fetchThrough: RenditionFetchService | null,
     private readonly activity: LibraryActivity = new LibraryActivity(),
     private readonly media: MediaListing | null = null,

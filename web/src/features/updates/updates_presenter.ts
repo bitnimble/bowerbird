@@ -2,8 +2,8 @@ import { action, runInAction } from 'mobx';
 import { type ModelsStatus } from '../../../../src/schemas/models';
 import { type UpdateStatus } from '../../../../src/schemas/updates';
 import { modelsApi } from '../../api/models';
-import { ApiError } from '../../api/request';
 import { updatesApi } from '../../api/updates';
+import { describe } from '../../errors';
 import { fileSizeLabel } from '../../ui/format';
 import type { ConfirmPresenter } from '../confirm/confirm_presenter';
 import { UpdatesStrings } from './updates.strings';
@@ -27,10 +27,6 @@ const RESTART_POLL_MS = 2000;
  * spinning for the rest of the session.
  */
 const RESTART_TIMEOUT_MS = 5 * 60 * 1000;
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
 
 /**
  * The two things about the restart that cannot be exercised as they stand: the page
@@ -96,7 +92,7 @@ export class UpdatesPresenter {
     try {
       this.putModels(await modelsApi.download());
     } catch (err) {
-      runInAction(() => (this.store.modelsFailure = message(err)));
+      runInAction(() => (this.store.modelsFailure = describe(err)));
     } finally {
       runInAction(() => (this.store.modelsDownloading = false));
     }
@@ -121,7 +117,7 @@ export class UpdatesPresenter {
     } catch (err) {
       runInAction(() => {
         this.store.install = 'idle';
-        this.store.failure = message(err);
+        this.store.failure = describe(err);
       });
       return;
     }
@@ -168,7 +164,7 @@ export class UpdatesPresenter {
     } catch (err) {
       // Recorded rather than toasted: this runs hourly whether or not anybody asked
       // (§23.5). Settings shows it; the sidebar simply has no badge.
-      runInAction(() => (this.store.failure = message(err)));
+      runInAction(() => (this.store.failure = describe(err)));
     }
   }
 
@@ -176,7 +172,7 @@ export class UpdatesPresenter {
     try {
       this.putModels(force ? await modelsApi.check() : await modelsApi.get());
     } catch (err) {
-      runInAction(() => (this.store.modelsFailure = message(err)));
+      runInAction(() => (this.store.modelsFailure = describe(err)));
     }
   }
 

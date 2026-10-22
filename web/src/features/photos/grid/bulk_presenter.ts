@@ -118,16 +118,6 @@ export class BulkPresenter {
     await this.hidePhotos(target, hidden);
   }
 
-  // The grid rendition alone, from the camera's JPEG an import builds it from
-  // (§10.2). The viewer's renditions are left where they are: they are of the
-  // same unchanged file, and rebuilding one is its own action in the viewer.
-  //
-  // The request only answers once every rendition is written and every row
-  // stamped, so the page is re-read from the collection rather than left to the
-  // announcements that arrived alongside it. They still move each tile as it
-  // lands, which is what fills the grid at the rebuild's pace - but one that goes
-  // missing left its tile stale until the user reloaded, with no second chance,
-  // and a bulk action reads back what it did (`bulk`).
   async rebuildGridRenditions(): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
@@ -139,6 +129,8 @@ export class BulkPresenter {
     try {
       const { queued } = await photosApi.rebuildTiles(target);
       await this.refreshDetail();
+      // Re-read rather than left to the per-tile announcements: one that goes missing leaves its
+      // tile stale until a reload.
       await this.refresh();
       this.toasts.show(PhotosPresenterStrings.rebuiltThumbnails(queued));
     } catch (err) {

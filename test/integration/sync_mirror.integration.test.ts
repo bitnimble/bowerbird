@@ -1,6 +1,5 @@
 // Mirroring folders into shoots, the folder rules that overrule it, and the
-// inode-based relocation that survives a rename. Needs LibRaw, so it runs under
-// Bun inside the container, NOT host jest:
+// inode-based relocation that survives a rename.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';

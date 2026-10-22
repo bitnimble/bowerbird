@@ -112,17 +112,7 @@ export class LibrariesService {
    * told about, so one that misses this can never acquire a watcher at all.
    */
   announceCreated(library: Library): void {
-    // Independent subscribers to one fact, so one failing is not the next one's
-    // business - and the watcher is registered last, so a loop that stops at the
-    // first throw is a loop that leaves the library unwatched. Same reasoning as
-    // the deletion side below.
-    for (const listener of this.listeners) {
-      try {
-        listener.onLibraryCreated(library);
-      } catch (err) {
-        log.error('a listener failed on a new library', { library: library.id, err });
-      }
-    }
+    this.notify(library.id, 'a new library', (l) => l.onLibraryCreated(library));
   }
 
   async create(request: CreateLibraryRequest): Promise<Library> {
@@ -144,10 +134,7 @@ export class LibrariesService {
     // assuming the root was writable, so it asked for something this root cannot
     // do (§4.1).
     if (!request.read_only && !isWritable(request.root_path)) {
-      throw new AppError(
-        'READ_ONLY',
-        `${request.root_path} is not writable; add it as a read-only library`,
-      );
+      throw new AppError('READ_ONLY', `${request.root_path} is not writable`);
     }
     // A bin is a folder the app makes under the root, which is exactly what the
     // flag forbids.
@@ -173,10 +160,7 @@ export class LibrariesService {
     const binPath = binName == null ? null : path.join(request.root_path, binName);
     const occupant = binPath == null ? null : statSync(binPath, { throwIfNoEntry: false });
     if (occupant != null && !occupant.isDirectory()) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        `${binPath} is a file, not a folder: choose another bin folder name`,
-      );
+      throw new AppError('VALIDATION_ERROR', `${binPath} is a file`);
     }
     const adopted = occupant != null;
     if (adopted)
@@ -258,9 +242,7 @@ export class LibrariesService {
   // Creation's own bin step, which cannot go through `ensureBinFolder`: the row
   // does not exist yet, so there is nothing to write the identity to. The
   // identity rides into the INSERT instead.
-  private async makeBinFolder(
-    library: Library,
-  ): Promise<{
+  private async makeBinFolder(library: Library): Promise<{
     path: string;
     identity: { dev: number | null; ino: number | null; birthtime: number | null };
   }> {
@@ -310,21 +292,27 @@ export class LibrariesService {
       // In `finally` because a moved root stays moved when a later step of the
       // same request is refused.
       const updated = this.repo.getById(libraryId);
-      if (updated != null) this.announceUpdated(updated, current);
+      // The watcher's scope is built from these settings, so a moved root, a changed
+      // `include_subfolders` or `include_non_raw`, or a renamed bin it would keep ignoring under the
+      // old name and watch under the new (§4.1), would keep waking syncs until a restart.
+      if (updated != null)
+        this.notify(libraryId, 'an updated library', (l) => l.onLibraryUpdated?.(updated, current));
     }
     return this.get(libraryId);
   }
 
-  // The watcher holds a scope built from these, so an excluded folder - or a
-  // renamed bin, which it would otherwise keep in its ignore list under the old
-  // name and then watch under the new one (§4.1) - would keep waking syncs
-  // until a restart. Each listener on its own, as `announceCreated` does.
-  private announceUpdated(library: Library, previous: Library): void {
+  private notify(
+    libraryId: string,
+    event: string,
+    call: (listener: LibraryLifecycleListener) => void,
+  ): void {
     for (const listener of this.listeners) {
+      // Each on its own: the watcher is registered last, so a loop that stopped at the first
+      // throw would leave a new library unwatched and a deleted one's state unreleased.
       try {
-        listener.onLibraryUpdated?.(library, previous);
+        call(listener);
       } catch (err) {
-        log.error('a listener failed on an updated library', { library: library.id, err });
+        log.error(`a listener failed on ${event}`, { library: libraryId, err });
       }
     }
   }
@@ -376,12 +364,12 @@ export class LibrariesService {
       if (rootPath === path.resolve(library.root_path)) return;
       const occupant = statRoot(rootPath);
       if (occupant != null && !occupant.isDirectory()) {
-        throw new AppError('VALIDATION_ERROR', `${rootPath} is a file, not a folder`);
+        throw new AppError('VALIDATION_ERROR', `${rootPath} is a file`);
       }
       // Resolved on both sides: `create` stores a root as it was typed.
       if (
         this.repo
-          .list()
+          .listConfigurations()
           .some((other) => other.id !== libraryId && path.resolve(other.root_path) === rootPath)
       ) {
         throw new AppError('CONFLICT', `library root already registered: ${rootPath}`);
@@ -392,14 +380,11 @@ export class LibrariesService {
         throw new AppError('VALIDATION_ERROR', (err as Error).message);
       }
       if (occupant != null && !library.read_only && !isWritable(rootPath)) {
-        throw new AppError(
-          'READ_ONLY',
-          `${rootPath} is not writable; make the library read-only before moving it there`,
-        );
+        throw new AppError('READ_ONLY', `${rootPath} is not writable`);
       }
 
       try {
-        this.photoScan.transaction(() => this.repo.setRootPath(libraryId, rootPath));
+        this.repo.setRootPath(libraryId, rootPath);
       } catch (err) {
         if (isUniqueViolation(err))
           throw new AppError('CONFLICT', `library root already registered: ${rootPath}`);
@@ -522,16 +507,10 @@ export class LibrariesService {
           // Recreating is right for a deleted folder and wrong for a moved one,
           // where it would orphan the real bin and leave §9.1.1 to adopt the orphan
           // and revert the name just set. A full sync distinguishes them (§12.3).
-          throw new AppError(
-            'IO_ERROR',
-            `the bin folder is not at ${from}: run a full sync, then retry`,
-          );
+          throw new AppError('IO_ERROR', `the bin folder is not at ${from}`);
         }
         if (code === 'EBUSY' || code === 'EPERM') {
-          throw new AppError(
-            'IO_ERROR',
-            `could not move ${from}: it may be a mount point, or open elsewhere`,
-          );
+          throw new AppError('IO_ERROR', `could not move ${from}`);
         }
         throw err;
       }
@@ -554,17 +533,7 @@ export class LibrariesService {
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     }
     log.info('library deleted', { library: libraryId, root: library?.root_path });
-    // One listener's failure is not the next one's business. They are independent
-    // subscribers to the same fact - a watcher to unsubscribe, replication to drop
-    // the state no foreign key reaches - and a loop that stops at the first throw
-    // leaks whatever the rest of them would have released.
-    for (const listener of this.listeners) {
-      try {
-        listener.onLibraryDeleted(libraryId);
-      } catch (err) {
-        log.error('a listener failed on a deleted library', { library: libraryId, err });
-      }
-    }
+    this.notify(libraryId, 'a deleted library', (l) => l.onLibraryDeleted(libraryId));
     if (library != null) await removeDataDirectory(library);
   }
 }

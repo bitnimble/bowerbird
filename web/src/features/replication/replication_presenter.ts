@@ -14,6 +14,7 @@ import { blobsApi } from '../../api/blobs';
 import { photoEditsApi } from '../../api/photo_edits';
 import { replicationApi } from '../../api/replication';
 import { ApiError } from '../../api/request';
+import { describe } from '../../errors';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { PhotosPresenter } from '../photos/photos_presenter';
@@ -28,16 +29,12 @@ const POLL_MS = 1000;
 type GridToRefresh = Pick<PhotosPresenter, 'reload'>;
 type Feedback = Pick<ToastsPresenter, 'show' | 'showError'>;
 
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
-
 function linkMessage(err: unknown): string {
   const detail =
     err instanceof ApiError ? LinkFailureDetailSchema.safeParse(err.details?.[0]) : null;
   return detail?.success === true
     ? ReplicationPresenterStrings.couldNotLink(detail.data.link)
-    : message(err);
+    : describe(err);
 }
 
 export class ReplicationPresenter {
@@ -95,7 +92,7 @@ export class ReplicationPresenter {
     try {
       this.putAllPeers((await replicationApi.listAllPeers(activity)).libraries);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), describe(err));
       return;
     }
     await this.loadConflicts(activity);
@@ -107,7 +104,7 @@ export class ReplicationPresenter {
     try {
       answer = await replicationApi.listPeers(libraryId, activity);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), describe(err));
       return;
     }
     this.putPeers(libraryId, answer);
@@ -125,7 +122,7 @@ export class ReplicationPresenter {
     try {
       ({ cancelled } = await replicationApi.setSyncOriginals(libraryId, value));
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotChangeWhatIsKept(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotChangeWhatIsKept(), describe(err));
       return;
     }
     if (cancelled > 0) {
@@ -140,7 +137,7 @@ export class ReplicationPresenter {
     try {
       await replicationApi.setAutoTransferOriginals(libraryId, value);
     } catch (err) {
-      this.toasts.showError(SettingsStrings.couldNotSaveSetting(), message(err));
+      this.toasts.showError(SettingsStrings.couldNotSaveSetting(), describe(err));
       return;
     }
     await this.loadPeers(libraryId);
@@ -150,7 +147,7 @@ export class ReplicationPresenter {
     try {
       this.setDeviceNameHeld((await replicationApi.deviceName()).name);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDeviceName(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDeviceName(), describe(err));
     }
   }
 
@@ -159,7 +156,7 @@ export class ReplicationPresenter {
     try {
       this.setDeviceNameHeld((await replicationApi.setDeviceName(name.trim())).name);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotRenameThisDevice(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotRenameThisDevice(), describe(err));
     }
   }
 
@@ -186,7 +183,7 @@ export class ReplicationPresenter {
     } catch (err) {
       this.toasts.showError(
         ReplicationPresenterStrings.couldNotWorkOutSoleHoldings(name),
-        message(err),
+        describe(err),
       );
       return;
     }
@@ -194,7 +191,7 @@ export class ReplicationPresenter {
     try {
       await replicationApi.forgetPeer(libraryId, peerId);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotForget(name), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotForget(name), describe(err));
       return;
     }
     await this.loadPeers(libraryId);
@@ -248,7 +245,7 @@ export class ReplicationPresenter {
       await this.loadPeers(libraryId);
       await this.loadConflicts();
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotSync(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotSync(), describe(err));
     } finally {
       this.busy(null);
     }
@@ -259,7 +256,7 @@ export class ReplicationPresenter {
     try {
       this.putConflicts(await photoEditsApi.listConflicts(undefined, activity));
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotReadConflicts(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotReadConflicts(), describe(err));
     }
   }
 
@@ -268,7 +265,7 @@ export class ReplicationPresenter {
     try {
       await photoEditsApi.keepCandidate(photoId, sessionId);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotResolveConflicts(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotResolveConflicts(), describe(err));
       return;
     }
     await this.loadConflicts();
@@ -286,7 +283,10 @@ export class ReplicationPresenter {
           : ReplicationPresenterStrings.queuedToSend(queued, name),
       );
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotQueueForDevice(name), message(err));
+      this.toasts.showError(
+        ReplicationPresenterStrings.couldNotQueueForDevice(name),
+        describe(err),
+      );
       return;
     }
     await this.refreshTransfers();
@@ -305,7 +305,7 @@ export class ReplicationPresenter {
     } catch (err) {
       this.toasts.showError(
         ReplicationPresenterStrings.couldNotQueueFromDevice(name),
-        message(err),
+        describe(err),
       );
       return;
     }
@@ -323,7 +323,7 @@ export class ReplicationPresenter {
     try {
       result = await blobsApi.evictOriginals(target, peerId);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotRemoveLocalCopies(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotRemoveLocalCopies(), describe(err));
       return;
     }
     const gone = result.evicted.length;
@@ -351,7 +351,7 @@ export class ReplicationPresenter {
       const transfer = await blobsApi.fetchOriginal(photoId);
       if (transfer != null) this.putTransfer(transfer);
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotFetchOriginal(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotFetchOriginal(), describe(err));
       return false;
     } finally {
       this.setRequestingPull(photoId, false);
@@ -412,7 +412,7 @@ export class ReplicationPresenter {
     try {
       await send();
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotChangeTransfer(), message(err));
+      this.toasts.showError(ReplicationPresenterStrings.couldNotChangeTransfer(), describe(err));
       return;
     }
     await this.refreshTransfers();
@@ -428,7 +428,7 @@ export class ReplicationPresenter {
       if (!this.queueUnreadable)
         this.toasts.showError(
           ReplicationPresenterStrings.couldNotReadTransferQueue(),
-          message(err),
+          describe(err),
         );
       this.queueUnreadable = true;
       // Kept asking: a fetch-and-edit waits on the pull this read would have seen finish.

@@ -16,6 +16,7 @@ import { MenuCheckItem } from '../../../ui/check_menu';
 import { textSection } from '../../../ui/fold';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
+import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
 import { SegmentedControl } from '../../../ui/segmented_control';
@@ -73,7 +74,7 @@ export const GridOverflow = observer(function GridOverflow({
       // picking one is picking against the other two.
       content: (
         <>
-          <div {...stylex.props(styles.menuPanel)}>
+          <div {...stylex.props(menuStyles.sectionControl, styles.menuPanel)}>
             {/* A menu focuses the first tabbable thing it holds, and either of these there
                 takes the focus its items need (§18.5). */}
             <SegmentedControl

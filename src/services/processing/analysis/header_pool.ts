@@ -1,5 +1,5 @@
 import { Logger } from '../../../logger';
-import { extractMetadata, type FileMetadata } from './metadata';
+import { extractMetadata, type HeaderMetadata } from './metadata';
 import type { HeaderReply, HeaderRequest } from './header_worker';
 import { workerEntry } from '../../worker_entry';
 
@@ -29,8 +29,8 @@ export class HeaderPool {
 
   constructor(private readonly concurrency: () => number) {}
 
-  read = (absPath: string): Promise<FileMetadata> =>
-    new Promise<FileMetadata>((resolve, reject) => {
+  read = (absPath: string): Promise<HeaderMetadata> =>
+    new Promise<HeaderMetadata>((resolve, reject) => {
       this.queue.push({
         absPath,
         settle: (reply) =>

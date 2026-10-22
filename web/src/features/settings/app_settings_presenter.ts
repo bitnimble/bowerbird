@@ -8,7 +8,7 @@ import {
   type ViewerRenditionMode,
 } from '../../../../src/schemas/settings';
 import { settingsApi } from '../../api/settings';
-import { ApiError } from '../../api/request';
+import { describe } from '../../errors';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { AppSettingsPresenterStrings } from './app_settings_presenter.strings';
 import type { AppSettingsStore } from './app_settings_store';
@@ -106,10 +106,7 @@ export class AppSettingsPresenter {
         };
       });
     } catch (err) {
-      this.toasts.showError(
-        AppSettingsPresenterStrings.couldNotBenchmark(),
-        err instanceof ApiError ? err.message : (err as Error).message,
-      );
+      this.toasts.showError(AppSettingsPresenterStrings.couldNotBenchmark(), describe(err));
     } finally {
       this.markBenchmarking(rendition, denoiser, false);
     }

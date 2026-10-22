@@ -3,6 +3,7 @@ import { pastableEdits, type EditDoc } from '../../../../../src/schemas/photo_ed
 import { type PhotoTarget } from '../../../../../src/schemas/photos';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
+import { describe } from '../../../errors';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import type { PhotosPresenter } from '../photos_presenter';
 import type { ViewerStore } from '../viewer/viewer_store';
@@ -14,10 +15,6 @@ export interface OpenEditor {
   photoId: string;
   doc: () => EditDoc | null;
   paste: (edits: Partial<EditDoc>) => void;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export class EditsClipboardPresenter {
@@ -45,7 +42,7 @@ export class EditsClipboardPresenter {
       this.copied(pastableEdits(open ?? (await photoEditsApi.get(photoId)).doc));
       this.toasts.show(EditsClipboardStrings.copied());
     } catch (err) {
-      this.toasts.showError(message(err));
+      this.toasts.showError(describe(err));
     }
   }
 
@@ -72,7 +69,7 @@ export class EditsClipboardPresenter {
       this.toasts.show(EditsClipboardStrings.pasted(pasted + alsoPasted));
       await this.photos.reload();
     } catch (err) {
-      this.toasts.showError(message(err));
+      this.toasts.showError(describe(err));
     }
   }
 

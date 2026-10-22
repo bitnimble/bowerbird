@@ -1,6 +1,7 @@
 import type { Database } from '../../../db/driver';
 import type { RenditionSource } from '../../../schemas/common';
 import type { Denoiser } from '../../../schemas/photo_edits';
+import { IN_CHUNK, inChunks } from '../../photos/photo_batches';
 import { EDITS_RENDER } from '../../photos/photo_edit_sql';
 import { renditionVariant, type RenditionVariant } from './renditions';
 
@@ -329,7 +330,8 @@ export class RenditionsRepository {
       // photographs as the peers have between them, and a first clone of a developed
       // library is all of them at once - which as one `IN (...)` is more bound variables
       // than SQLite will take, and throws over a clone that has committed.
-      for (const batch of inChunks(photoIds)) {
+      // Bound once per arm of TOUCHED_BY_EDITS, so a chunk is a third of the variable budget.
+      for (const batch of inChunks(photoIds, IN_CHUNK / 3)) {
         const touched = touchedBy(batch);
         owed(this.db.query(query(touched.sql)).all(...touched.binds));
       }
@@ -350,7 +352,8 @@ export class RenditionsRepository {
    * are frames of, nothing until their next edit or `liftDeferral`; `except` keeps its own.
    */
   deferViewerCopies(photoIds: readonly string[], except?: string): void {
-    for (const batch of inChunks(photoIds)) {
+    // Bound once per arm of TOUCHED_BY_EDITS, so a chunk is a third of the variable budget.
+    for (const batch of inChunks(photoIds, IN_CHUNK / 3)) {
       const touched = touchedBy(batch);
       this.db
         .query(
@@ -438,10 +441,4 @@ function touchedBy(batch: readonly string[]): { sql: string; binds: string[] } {
     return `AND ${column} IN (${placeholders})`;
   });
   return { sql, binds: Array.from({ length: arms }, () => batch).flat() };
-}
-
-// Splits a value list into runs that fit under SQLITE_MAX_VARIABLE_NUMBER (999 on
-// old builds), so a caller can pass an unbounded set to an IN (...) query.
-function* inChunks(values: readonly string[], size = 900): Generator<readonly string[]> {
-  for (let i = 0; i < values.length; i += size) yield values.slice(i, i + size);
 }

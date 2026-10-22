@@ -50,7 +50,7 @@ export class ScanService implements LibraryLifecycleListener {
      * Merged moves this peer has not made on disk yet (docs/replication.md §7.4).
      *
      * A seam rather than the runner, and defaulted, because a scan test must not
-     * also be a replication test - the same shape `extract` and `sidecars` take.
+     * also be a replication test - the same shape `sidecars` takes.
      */
     private readonly materialise: (libraryId: string) => Promise<number> = () => Promise.resolve(0),
     /**
