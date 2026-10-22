@@ -150,13 +150,23 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // settings that decide what is watched actually moved. Every other library
   // setting (a name, an ordering, what renditions to build) leaves it alone.
   onLibraryUpdated(library: Library): void {
+    if (this.watchedScopes.get(library.id) === scopeKey(this.scan.scopeFor(library))) return;
+    // A dropped watch waiting out its backoff, which a root re-pointed away from a missing drive
+    // is: watched now, rather than up to the whole delay later.
+    const retry = this.retryTimers.get(library.id);
+    if (retry != null) {
+      clearTimeout(retry);
+      this.retryTimers.delete(library.id);
+      this.retryDelays.delete(library.id);
+      this.watchLibrary(library);
+      return;
+    }
     if (
       !this.watchers.has(library.id) &&
       !this.ready.has(library.id) &&
       !this.polled.has(library.id)
     )
       return;
-    if (this.watchedScopes.get(library.id) === scopeKey(this.scan.scopeFor(library))) return;
     this.dropWatcher(library.id);
     this.watchLibrary(library);
   }
@@ -174,10 +184,8 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // spurious syncs) that onLibraryDeleted can never tear down again.
     //
     // And the row is *used* rather than only tested, because a retry carries the
-    // library as it was when the watch dropped. While one is pending this library
-    // is in neither `watchers` nor `ready`, so `onLibraryUpdated` returns early
-    // and a settings change made in that window is dropped - after which the
-    // retry re-establishes the old scope and it stays wrong until a restart.
+    // library as it was when the watch dropped; re-establishing that would keep
+    // the old scope until a restart.
     const library = this.libraries.getById(asked.id);
     if (library == null) return;
     const scope = this.scan.scopeFor(library);
@@ -573,6 +581,7 @@ function resolvedRoot(rootPath: string): string {
 // on ignoring until the process restarts.
 function scopeKey(scope: LibraryScope): string {
   return [
+    scope.rootPath,
     scope.includeSubfolders ? 1 : 0,
     scope.includeNonRaw ? 1 : 0,
     scope.binName,

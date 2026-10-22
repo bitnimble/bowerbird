@@ -778,7 +778,8 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const [adding, setAdding] = useState(false);
   const [joining, setJoining] = useState(false);
   const navigate = useNavigate();
-  const tab = tabFromPath(useParams().tab);
+  const params = useParams();
+  const tab = tabFromPath(params.tab);
   const thin = isThinShell();
   const devicePhotos = useDevicePhotosStore();
 
@@ -805,7 +806,8 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
       {tab === 'libraries' && (
         <>
-          {store.error != null && (
+          {/* An open library's settings show it themselves, over this. */}
+          {store.error != null && params.libraryId == null && (
             <ErrorBanner>
               <span>{store.error}</span>
               <Button onClick={libraries.clearError}>{ToastsStrings.dismiss()}</Button>

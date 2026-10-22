@@ -70,6 +70,8 @@ interface FolderBrowserProps extends FolderBrowserParts {
   placeholder?: string;
   canCreate?: boolean;
   onPathChange?: (path: string) => void;
+  /** Where the walk opens, over the selection. */
+  start?: string;
 }
 
 export const FolderBrowser = observer(function FolderBrowser({
@@ -79,6 +81,7 @@ export const FolderBrowser = observer(function FolderBrowser({
   placeholder,
   canCreate = false,
   onPathChange,
+  start,
 }: FolderBrowserProps): JSX.Element {
   const selection = store.selection;
   const [browser, setBrowser] = useState(newFolderBrowser);
@@ -108,7 +111,7 @@ export const FolderBrowser = observer(function FolderBrowser({
     setPath('');
     setConfirming(false);
     setChoosing(true);
-    void next.presenter.open(store.selectedPath || store.listing?.path);
+    void next.presenter.open(start ?? (store.selectedPath || store.listing?.path));
   }
 
   function close(): void {

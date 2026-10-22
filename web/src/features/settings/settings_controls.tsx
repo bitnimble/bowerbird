@@ -35,6 +35,10 @@ const styles = stylex.create({
   hint: {
     margin: 0,
   },
+  wideHint: {
+    gridColumn: '1 / -1',
+    overflowWrap: 'anywhere',
+  },
   value: {
     display: 'flex',
     alignItems: 'center',
@@ -94,12 +98,15 @@ export function showNumber(value: number, step?: number): string {
 export function SettingRow({
   label,
   hint,
+  wideHint = false,
   disabledReason,
   onReset,
   children,
 }: {
   label: string;
   hint?: ReactNode;
+  /** Runs the hint under the control too, for one too long for the label's column. */
+  wideHint?: boolean;
   disabledReason?: string;
   onReset?: () => void;
   children: ReactNode;
@@ -124,7 +131,11 @@ export function SettingRow({
           {children}
         </div>
         {hint != null && (
-          <Text variant="mono" as="p" style={[styles.left, styles.hint]}>
+          <Text
+            variant="mono"
+            as="p"
+            style={[styles.left, styles.hint, wideHint && styles.wideHint]}
+          >
             {hint}
           </Text>
         )}

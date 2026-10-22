@@ -168,6 +168,8 @@ export type SetFolderRuleRequest = z.infer<typeof SetFolderRuleRequestSchema>;
 // partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = z.object({
   name: z.string().trim().min(1).optional(),
+  // Re-points the library and moves nothing on disk.
+  root_path: z.string().trim().min(1).optional(),
   read_only: z.boolean().optional(),
   // On a library that already has one this is a **rename**, which moves the
   // folder (§4.1), not an error.

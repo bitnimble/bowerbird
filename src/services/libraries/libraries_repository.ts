@@ -156,6 +156,22 @@ export class LibrariesRepository {
     );
   }
 
+  // The folder identities recorded under the old root are another filesystem's, or folders this
+  // root has not shown yet: kept, an empty shoot whose folder is not there yet reads as deleted, and
+  // that deletion replicates. Each is recorded again when a scan first meets its folder.
+  setRootPath(id: string, rootPath: string): void {
+    this.db
+      .query(
+        'UPDATE libraries SET root_path = ?, bin_dev = NULL, bin_ino = NULL, bin_birthtime = NULL WHERE id = ?',
+      )
+      .run(rootPath, id);
+    this.db
+      .query(
+        'UPDATE shoots SET folder_dev = NULL, folder_ino = NULL, folder_birthtime = NULL WHERE library_id = ?',
+      )
+      .run(id);
+  }
+
   setOrdering(id: string, ordering: Ordering): boolean {
     return (
       this.db

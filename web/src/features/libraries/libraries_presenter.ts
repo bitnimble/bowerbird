@@ -172,6 +172,12 @@ export class LibrariesPresenter {
     }
   }
 
+  async setRootPath(libraryId: string, root_path: string): Promise<void> {
+    const next = root_path.trim();
+    if (next === '' || next === this.store.byId.get(libraryId)?.root_path) return;
+    await this.update(libraryId, { root_path: next });
+  }
+
   async setOrdering(libraryId: string, ordering: Ordering): Promise<void> {
     await this.update(libraryId, { ordering });
   }

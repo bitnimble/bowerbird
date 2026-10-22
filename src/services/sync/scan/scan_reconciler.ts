@@ -351,7 +351,8 @@ export class ScanReconciler {
   ): Promise<ScannedFile[] | null> {
     if (!rootIsDirectory(library.root_path)) return [];
     const abs = path.join(library.root_path, binRoot);
-    if (statSync(abs, { throwIfNoEntry: false })?.isDirectory() !== true) {
+    const bin = statSync(abs, { throwIfNoEntry: false });
+    if (bin?.isDirectory() !== true) {
       log.warn('the bin folder is not there; skipping the bin channel for this run', {
         library: library.id,
         bin: binRoot,
@@ -371,6 +372,14 @@ export class ScanReconciler {
         );
       }
       return null;
+    }
+    // None recorded, as after the root is re-pointed: the folder at the bin's name is the bin.
+    if (this.libraries.getBinIdentity(library.id)?.ino == null) {
+      this.libraries.setBinIdentity(library.id, {
+        dev: bin.dev,
+        ino: bin.ino,
+        birthtime: bin.birthtimeMs,
+      });
     }
     // Everything under the bin is the bin's, so the walk descends unconditionally:
     // the bin rule would skip the very tree this is walking, the bin mirrors

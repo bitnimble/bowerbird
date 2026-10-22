@@ -39,6 +39,7 @@ export const URL_OTHER_PHOTOS_DIR = path.join(E2E_ROOT, 'url-other-photos');
 // arrive empty of everything including itself.
 export const INDEX_PHOTOS_DIR = path.join(E2E_ROOT, 'index-photos');
 export const BACKUP_PHOTOS_DIR = path.join(E2E_ROOT, 'backup-photos');
+export const RELOCATE_PHOTOS_DIR = path.join(E2E_ROOT, 'relocate-photos');
 // The shell measures where a library's tiles sit against the window.
 export const SHELL_PHOTOS_DIR = path.join(E2E_ROOT, 'shell-photos');
 // The viewer's, and the reason these are five rather than one is the library's
@@ -239,6 +240,7 @@ export function prepareFixture(): void {
     URL_OTHER_PHOTOS_DIR,
     INDEX_PHOTOS_DIR,
     BACKUP_PHOTOS_DIR,
+    RELOCATE_PHOTOS_DIR,
     SHELL_PHOTOS_DIR,
     VIEWER_PHOTOS_DIR,
     RENDITION_PHOTOS_DIR,

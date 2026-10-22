@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync, type Stats } from 'node:fs';
 import { readdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -29,7 +29,7 @@ export interface LibraryLifecycleListener {
   onLibraryCreated(library: Library): void;
   onLibraryDeleted(libraryId: string): void;
   /** For listeners holding something derived from the library's settings. */
-  onLibraryUpdated?(library: Library): void;
+  onLibraryUpdated?(library: Library, previous: Library): void;
 }
 
 // Removing a library takes its generated files with it: renditions are keyed by
@@ -76,6 +76,15 @@ export function isWritable(dir: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+// A root that cannot be looked at (ENOTDIR, EACCES) is a refusal, not a 500.
+function statRoot(rootPath: string): Stats | undefined {
+  try {
+    return statSync(rootPath, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new AppError('VALIDATION_ERROR', `can't use ${rootPath}: ${(err as Error).message}`);
   }
 }
 
@@ -295,10 +304,40 @@ export class LibrariesService {
         'a library cannot be made read-only and have its bin renamed in one request',
       );
     }
+    try {
+      await this.apply(current, updates);
+    } finally {
+      // In `finally` because a moved root stays moved when a later step of the
+      // same request is refused.
+      const updated = this.repo.getById(libraryId);
+      if (updated != null) this.announceUpdated(updated, current);
+    }
+    return this.get(libraryId);
+  }
+
+  // The watcher holds a scope built from these, so an excluded folder - or a
+  // renamed bin, which it would otherwise keep in its ignore list under the old
+  // name and then watch under the new one (§4.1) - would keep waking syncs
+  // until a restart. Each listener on its own, as `announceCreated` does.
+  private announceUpdated(library: Library, previous: Library): void {
+    for (const listener of this.listeners) {
+      try {
+        listener.onLibraryUpdated?.(library, previous);
+      } catch (err) {
+        log.error('a listener failed on an updated library', { library: library.id, err });
+      }
+    }
+  }
+
+  private async apply(current: Library, updates: UpdateLibraryRequest): Promise<void> {
+    const libraryId = current.id;
+    // First, so the bin and writability below are read under the new root.
+    if (updates.root_path != null) await this.setRootPath(libraryId, updates.root_path);
+    const located = this.get(libraryId);
     // Both of these touch the tree, so both go first and under the mutex, before
     // anything that only writes a column.
-    if (updates.read_only != null && updates.read_only !== current.read_only) {
-      await this.setReadOnly(current, updates.read_only, updates.bin_name);
+    if (updates.read_only != null && updates.read_only !== located.read_only) {
+      await this.setReadOnly(located, updates.read_only, updates.bin_name);
     }
     // Skipped when clearing the flag just made a bin of that name: `setReadOnly`
     // has already written it, so this would be a no-op rename at best.
@@ -324,13 +363,54 @@ export class LibrariesService {
       this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
     if (updates.auto_stack_window_seconds != null)
       this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
-    const updated = this.get(libraryId);
-    // The watcher holds a scope built from these, so an excluded folder - or a
-    // renamed bin, which it would otherwise keep in its ignore list under the old
-    // name and then watch under the new one (§4.1) - would keep waking syncs
-    // until a restart.
-    for (const listener of this.listeners) listener.onLibraryUpdated?.(updated);
-    return updated;
+  }
+
+  // The new root may not exist yet: the folder can be moved there afterwards.
+  private async setRootPath(libraryId: string, requested: string): Promise<void> {
+    if (!path.isAbsolute(requested)) {
+      throw new AppError('VALIDATION_ERROR', `root_path must be absolute: ${requested}`);
+    }
+    const rootPath = path.resolve(requested);
+    await libraryMutex.run(libraryId, async () => {
+      const library = this.get(libraryId);
+      if (rootPath === path.resolve(library.root_path)) return;
+      const occupant = statRoot(rootPath);
+      if (occupant != null && !occupant.isDirectory()) {
+        throw new AppError('VALIDATION_ERROR', `${rootPath} is a file, not a folder`);
+      }
+      // Resolved on both sides: `create` stores a root as it was typed.
+      if (
+        this.repo
+          .list()
+          .some((other) => other.id !== libraryId && path.resolve(other.root_path) === rootPath)
+      ) {
+        throw new AppError('CONFLICT', `library root already registered: ${rootPath}`);
+      }
+      try {
+        assertNoDataDirectoryOverlap(rootPath);
+      } catch (err) {
+        throw new AppError('VALIDATION_ERROR', (err as Error).message);
+      }
+      if (occupant != null && !library.read_only && !isWritable(rootPath)) {
+        throw new AppError(
+          'READ_ONLY',
+          `${rootPath} is not writable; make the library read-only before moving it there`,
+        );
+      }
+
+      try {
+        this.photoScan.transaction(() => this.repo.setRootPath(libraryId, rootPath));
+      } catch (err) {
+        if (isUniqueViolation(err))
+          throw new AppError('CONFLICT', `library root already registered: ${rootPath}`);
+        throw err;
+      }
+      log.info('library root changed', {
+        library: libraryId,
+        from: library.root_path,
+        to: rootPath,
+      });
+    });
   }
 
   // **Setting it** keeps `bin_name` and moves nothing: new binnings are in place

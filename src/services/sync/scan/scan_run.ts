@@ -25,7 +25,7 @@ import { libraryMutex } from '../coordination/library_mutex';
 const log = new Logger('scan');
 
 /** Who asked for a run, so an unexplained scan in the log names its own cause. */
-export type ScanTrigger = 'api' | 'watcher' | 'daily' | 'created' | 'startup';
+export type ScanTrigger = 'api' | 'watcher' | 'daily' | 'created' | 'startup' | 'relocated';
 
 export class ScanRunner {
   constructor(

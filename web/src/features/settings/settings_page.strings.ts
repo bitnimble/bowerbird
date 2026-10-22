@@ -30,6 +30,8 @@ export const SettingsStrings = {
   libraryName: () => 'Library name',
 
   folders: () => 'Folders',
+  libraryFolder: () => 'Library folder',
+  libraryFolderHint: () => "Bowerbird doesn't move any files when you change this.",
   includeSubfolders: () => 'Include subfolders',
   includeNonRaw: () => 'Import JPEG, PNG, HEIC, and AVIF too',
   /** The flag and its one line, here and in the add-library dialog. */

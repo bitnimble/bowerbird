@@ -25,7 +25,10 @@ import {
   useReplicationStore,
   useScanStore,
 } from '../../app/stores_context';
+import { FolderBrowser } from '../browse/folder_browser';
+import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import { libraryLabel } from '../libraries/library_label';
+import { newLibraryStart } from '../libraries/new_library_start';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { BackupPanel } from '../backup/backup_panel';
 import { BackupStrings } from '../backup/backup_panel.strings';
@@ -33,9 +36,11 @@ import { BackupStrip } from '../backup/backup_strip';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
 import { SyncedDevicesStrings } from '../replication/synced_devices_panel.strings';
 import { ScanStrip } from '../scan/scan_strip';
+import { ToastsStrings } from '../toasts/toasts.strings';
 import { ActivityStrips } from '../activity/activity_strips';
 import { Button } from '../../ui/button';
 import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
+import { ErrorBanner } from '../../ui/error_banner';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
 import { TextLink } from '../../ui/link';
@@ -253,6 +258,12 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         }
       >
         <DialogBody wide>
+          {libraryStore.error != null && (
+            <ErrorBanner>
+              <span>{libraryStore.error}</span>
+              <Button onClick={libraries.clearError}>{ToastsStrings.dismiss()}</Button>
+            </ErrorBanner>
+          )}
           <DialogColumns>
             <div>
               {!thin && <FolderSettings library={library} />}
@@ -327,6 +338,8 @@ const FolderSettings = observer(function FolderSettings({
 
   return (
     <Panel title={SettingsStrings.folders()} flush={!hasRules}>
+      <RootPathField key={library.root_path} library={library} />
+
       <SettingRow
         label={SettingsStrings.includeSubfolders()}
         onReset={resetTo(
@@ -383,6 +396,44 @@ const FolderSettings = observer(function FolderSettings({
       <BinNameField library={library} draft={binDraft} onDraft={setBinDraft} />
       <FolderRuleList library={library} />
     </Panel>
+  );
+});
+
+const RootPathField = observer(function RootPathField({
+  library,
+}: {
+  library: Library;
+}): JSX.Element {
+  const { libraries } = usePresenters();
+  const [browser, setBrowser] = useState(newFolderBrowser);
+
+  async function choose(path: string): Promise<void> {
+    if (path === '') return;
+    await libraries.setRootPath(library.id, path);
+    // A refused or unchanged folder must not stay on show under the button.
+    setBrowser(newFolderBrowser());
+  }
+
+  return (
+    <SettingRow
+      label={SettingsStrings.libraryFolder()}
+      wideHint
+      hint={
+        <>
+          {library.root_path}
+          <br />
+          {SettingsStrings.libraryFolderHint()}
+        </>
+      }
+    >
+      <FolderBrowser
+        store={browser.store}
+        presenter={browser.presenter}
+        label={SettingsStrings.libraryFolder()}
+        start={newLibraryStart([library.root_path])}
+        onPathChange={(path) => void choose(path)}
+      />
+    </SettingRow>
   );
 });
 

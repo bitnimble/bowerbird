@@ -29,6 +29,7 @@ export class ScanService implements LibraryLifecycleListener {
   private readonly leases: ScanLeases;
   private readonly status: ScanStatus;
   private readonly rebuilds: ScanRebuilds;
+  private readonly rescansOwed = new Set<string>();
 
   constructor(
     private readonly photoScan: PhotoScanRepository,
@@ -99,6 +100,9 @@ export class ScanService implements LibraryLifecycleListener {
       this.status,
       this.rebuilds,
     );
+    this.status.onScanned((libraryId) => {
+      if (this.rescansOwed.delete(libraryId)) this.rescanMoved(libraryId);
+    });
   }
 
   // What this library contains, in the form the scan and the watcher both read
@@ -120,11 +124,31 @@ export class ScanService implements LibraryLifecycleListener {
     });
   }
 
+  onLibraryUpdated(library: Library, previous: Library): void {
+    if (library.root_path !== previous.root_path) this.rescanMoved(library.id);
+  }
+
+  // A run already holding the lease may be a scoped one over the old root's paths, so the full
+  // rescan waits for it rather than being dropped until the daily one.
+  private rescanMoved(libraryId: string): void {
+    void this.scanLibrary(libraryId, undefined, 'relocated').catch((err: unknown) => {
+      if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
+        log.error('the scan of a moved library failed', { library: libraryId, err });
+        return;
+      }
+      this.rescansOwed.add(libraryId);
+      // Released between the refusal and here: no settle is left to run it.
+      if (this.leases.expiresAt(libraryId) == null && this.rescansOwed.delete(libraryId))
+        this.rescanMoved(libraryId);
+    });
+  }
+
   // Drop the deleted library's in-memory status/generation so those maps don't
   // grow unbounded across create/delete cycles (mirrors the watcher's teardown).
   onLibraryDeleted(libraryId: string): void {
     this.leases.clear(libraryId);
     this.status.clear(libraryId);
+    this.rescansOwed.delete(libraryId);
   }
 
   async scanAll(trigger: ScanTrigger): Promise<void> {
