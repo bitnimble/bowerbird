@@ -99,10 +99,10 @@ const styles = stylex.create({
   },
 });
 
-export type MobileEditPanel = { id: string; title: string; content: ReactNode };
+export type EditPanel = { id: string; title: string; content: ReactNode };
 
 type Props = {
-  panels: readonly MobileEditPanel[];
+  panels: readonly EditPanel[];
   scope: string;
   notice?: ReactNode;
 };
