@@ -131,6 +131,11 @@ export class BulkPresenter {
   async rebuildGridRenditions(): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
+    await this.rebuildTiles(target);
+    this.dropConsumedSelection();
+  }
+
+  async rebuildTiles(target: PhotoTarget): Promise<void> {
     try {
       const { queued } = await photosApi.rebuildTiles(target);
       await this.refreshDetail();
@@ -139,7 +144,6 @@ export class BulkPresenter {
     } catch (err) {
       this.fail(err);
     }
-    this.dropConsumedSelection();
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.

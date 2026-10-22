@@ -4,6 +4,8 @@ import {
   DeletePhotosRequestSchema,
   HidePhotosRequestSchema,
   MarkPhotosRequestSchema,
+  PasteEditsRequestSchema,
+  PastedEditsSchema,
   PhotoDaysRequestSchema,
   PhotoDaysResponseSchema,
   PhotoDetailSchema,
@@ -27,6 +29,7 @@ import { AppError } from '../../errors';
 import { respond } from '../respond';
 import { takeAsLongAsItTakes } from '../long_requests';
 import { isRendition } from '../../services/processing/renditions/renditions';
+import type { PhotoEditsService } from '../../services/photo_edits/photo_edits_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { PhotoMutationService } from '../../services/photos/mutations/photo_mutation_service';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
@@ -43,6 +46,7 @@ export class PhotosApi {
     private readonly mutations: PhotoMutationService,
     private readonly renditions: PhotoRenditionService,
     private readonly processing: ProcessingService,
+    private readonly edits: PhotoEditsService,
   ) {
     const app = new Hono();
 
@@ -199,6 +203,16 @@ export class PhotosApi {
         respond(QueuedCountSchema, {
           queued: await this.processing.rebuildTiles(this.target(await c.req.json())),
         }),
+      );
+    });
+
+    app.post(route(PathSegment.photos(), PathSegment.pasteEdits()), async (c) => {
+      const { target, edits, shown, editing } = PasteEditsRequestSchema.parse(await c.req.json());
+      return c.json(
+        respond(
+          PastedEditsSchema,
+          this.edits.paste(this.read.resolve(target), edits, { shown, editing }),
+        ),
       );
     });
 

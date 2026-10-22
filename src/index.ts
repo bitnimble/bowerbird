@@ -323,6 +323,7 @@ const photoEditsService = new PhotoEditsService(
     // off a non-Bayer mosaic; reading it as non-Bayer would lock "Best" on every such photo.
     return !existsSync(original) || isUpscalable(original);
   },
+  (ids, shown) => processingService.rebuildPasted(ids, shown),
 );
 const shootsService = new ShootsService(
   shootsRepo,
@@ -506,6 +507,7 @@ const photosApi = new PhotosApi(
   photoMutationService,
   photoRenditionService,
   processingService,
+  photoEditsService,
 );
 const albumsApi = new AlbumsApi(albumsService, photoReadService);
 const shootsApi = new ShootsApi(shootsService, photoReadService);

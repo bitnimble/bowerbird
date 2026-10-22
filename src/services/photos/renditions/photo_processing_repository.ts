@@ -316,6 +316,14 @@ export class PhotoProcessingRepository {
   queueEditedSince(photoIds?: readonly string[]): string[] {
     return this.renditions.queueEditedSince(photoIds);
   }
+  /** `queueEditedSince` for pasted edits: grid tiles, and the viewer's copy of `shown` alone. */
+  queuePasted(photoIds: readonly string[], shown?: string): string[] {
+    this.renditions.deferViewerCopies(photoIds, shown);
+    return this.renditions.queueEditedSince(photoIds);
+  }
+  liftDeferral(photoId: string): void {
+    this.renditions.liftDeferral(photoId);
+  }
   queueDenoisedWith(denoiser: Denoiser): string[] {
     return this.renditions.queueDenoisedWith(denoiser);
   }

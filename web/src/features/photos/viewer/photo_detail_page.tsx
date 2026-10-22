@@ -83,7 +83,7 @@ type EditVisit = {
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
   const store = useViewerStore();
-  const { photos, appSettings } = usePresenters();
+  const { photos, appSettings, editsClipboard } = usePresenters();
   const device = useDeviceSettingsStore();
   const mobile = useIsMobile();
   const touch = useIsTouch();
@@ -223,6 +223,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     if (mode === 'print') presenter.setSoftProof(requestedPrint.current.proof);
     else presenter.restoreSoftProof();
     setOpened({ visit, presenter });
+    const detachClipboard =
+      mode === 'edit'
+        ? editsClipboard.attachEditor({
+            photoId,
+            doc: () => visit.edit.doc,
+            paste: presenter.edit.settle,
+          })
+        : null;
     let startingRotation: number | null = null;
     void presenter
       .open(
@@ -234,6 +242,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         startingRotation = visit.edit.doc?.rotate ?? 0;
       });
     return () => {
+      detachClipboard?.();
       presenter.close();
       // The editor saves through its own store, so the copy the Edits panel holds is behind
       // by however much was changed here.
@@ -243,7 +252,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           startingRotation != null && startingRotation !== visit.edit.doc?.rotate,
         );
     };
-  }, [mode, photoId, photos, touch, device, visit, visitKey, store]);
+  }, [mode, photoId, photos, editsClipboard, touch, device, visit, visitKey, store]);
   // Held over a step until the next photo's presenter replaces it, so nothing remounts between.
   const session =
     visit != null && opened?.visit === visit && visit.key === visitKey

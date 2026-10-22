@@ -306,20 +306,23 @@ export class RenditionsRepository {
     ]) {
       const stale = `(SELECT r.built_from FROM renditions r
           WHERE r.photo_id = p.id AND r.variant = ${variant})`;
-      const query = (narrowed: (column: string) => string): string =>
+      const deferred = `(SELECT r.deferred_from FROM renditions r
+          WHERE r.photo_id = p.id AND r.variant = ${variant})`;
+      const query = (touched: string): string =>
         `INSERT INTO renditions (photo_id, variant, needs_build)
-           SELECT p.id, ${variant}, 1 FROM (${TOUCHED_BY_EDITS(narrowed)}) t
+           SELECT p.id, ${variant}, 1 FROM (${touched}) t
              JOIN photos p ON p.id = t.id
              JOIN libraries l ON l.id = p.library_id
             WHERE p.is_missing = 0 AND p.is_deleted = 0 AND ${owes}
               AND (${stale} IS NULL OR t.stamp > ${stale})
+              AND (${deferred} IS NULL OR t.stamp > ${deferred})
          ON CONFLICT (photo_id, variant) DO UPDATE SET needs_build = 1
          RETURNING photo_id AS id`;
       const owed = (rows: unknown[]): void => {
         for (const row of rows as { id: string }[]) queued.add(row.id);
       };
       if (photoIds == null) {
-        owed(this.db.query(query(() => '')).all());
+        owed(this.db.query(query(TOUCHED_BY_EDITS(() => ''))).all());
         continue;
       }
       // Chunked, as every other id list here is: a session brings back as many edited
@@ -327,13 +330,8 @@ export class RenditionsRepository {
       // library is all of them at once - which as one `IN (...)` is more bound variables
       // than SQLite will take, and throws over a clone that has committed.
       for (const batch of inChunks(photoIds)) {
-        const placeholders = batch.map(() => '?').join(', ');
-        // The batch once per arm of `TOUCHED_BY_EDITS`, each of which names the changed photograph.
-        owed(
-          this.db
-            .query(query((column) => `AND ${column} IN (${placeholders})`))
-            .all(...batch, ...batch, ...batch),
-        );
+        const touched = touchedBy(batch);
+        owed(this.db.query(query(touched.sql)).all(...touched.binds));
       }
     }
     // A photograph queued by this predicate is one whose settings moved, so whatever
@@ -345,6 +343,38 @@ export class RenditionsRepository {
         .run(...batch);
     }
     return [...queued];
+  }
+
+  /**
+   * `queueEditedSince` owes the viewer's copy of these photographs, and of every composite they
+   * are frames of, nothing until their next edit or `liftDeferral`; `except` keeps its own.
+   */
+  deferViewerCopies(photoIds: readonly string[], except?: string): void {
+    for (const batch of inChunks(photoIds)) {
+      const touched = touchedBy(batch);
+      this.db
+        .query(
+          `INSERT INTO renditions (photo_id, variant, needs_build, deferred_from)
+             SELECT p.id, ${FULL_VARIANT_OF_LIBRARY}, 0, t.stamp
+               FROM (${touched.sql}) t
+               JOIN photos p ON p.id = t.id
+               JOIN libraries l ON l.id = p.library_id
+              WHERE p.id IS NOT ?
+           ON CONFLICT (photo_id, variant) DO UPDATE SET deferred_from = excluded.deferred_from,
+             -- A copy never built is the import's, still owed whatever the paste defers.
+             needs_build = CASE WHEN renditions.built_at IS NULL THEN renditions.needs_build ELSE 0 END`,
+        )
+        .run(...touched.binds, except ?? null);
+    }
+  }
+
+  /** Someone is looking at this photograph's viewer copy, so the sweep owes it again. */
+  liftDeferral(photoId: string): void {
+    this.db
+      .query(
+        'UPDATE renditions SET deferred_from = NULL WHERE photo_id = ? AND deferred_from IS NOT NULL',
+      )
+      .run(photoId);
   }
 
   /**
@@ -397,6 +427,17 @@ export class RenditionsRepository {
     }
     return changed;
   }
+}
+
+/** `TOUCHED_BY_EDITS` narrowed to `batch`, and the bindings its arms take, in order. */
+function touchedBy(batch: readonly string[]): { sql: string; binds: string[] } {
+  const placeholders = batch.map(() => '?').join(', ');
+  let arms = 0;
+  const sql = TOUCHED_BY_EDITS((column) => {
+    arms++;
+    return `AND ${column} IN (${placeholders})`;
+  });
+  return { sql, binds: Array.from({ length: arms }, () => batch).flat() };
 }
 
 // Splits a value list into runs that fit under SQLITE_MAX_VARIABLE_NUMBER (999 on

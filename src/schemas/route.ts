@@ -78,6 +78,7 @@ export const PathSegment = {
   originals: segment('originals'),
   pair: segment('pair'),
   panorama: segment('panorama'),
+  pasteEdits: segment('paste-edits'),
   pause: segment('pause'),
   peers: segment('peers'),
   photos: segment('photos'),

@@ -544,6 +544,24 @@ export type MarkPhotosRequest = z.infer<typeof MarkPhotosRequestSchema>;
 export const HidePhotosRequestSchema = z.object({ target: PhotoTargetSchema, hidden: z.boolean() });
 export type HidePhotosRequest = z.infer<typeof HidePhotosRequestSchema>;
 
+export const PasteEditsRequestSchema = z.object({
+  target: PhotoTargetSchema,
+  /** A develop document, of which only the fields a paste carries are taken (`pastableEdits`). */
+  edits: z.record(z.string(), z.unknown()),
+  /** The photo on screen in the viewer, whose own copy is rebuilt beside its grid tile. */
+  shown: IdSchema.optional(),
+  /** The photo open in the editor, left alone here for the editor to paste into itself. */
+  editing: IdSchema.optional(),
+});
+export type PasteEditsRequest = z.infer<typeof PasteEditsRequestSchema>;
+
+export const PastedEditsSchema = z.object({
+  pasted: z.number().int().min(0),
+  /** The target named the photo open in the editor, which the editor has to paste into itself. */
+  editing_skipped: z.boolean(),
+});
+export type PastedEdits = z.infer<typeof PastedEditsSchema>;
+
 // The photos whose queued work goes ahead of the rest, earliest first. Empty clears it.
 export const PreferPhotosRequestSchema = z.object({ photo_ids: z.array(IdSchema).max(500) });
 

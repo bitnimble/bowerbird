@@ -22,6 +22,7 @@ import { cells, viewport } from './photo_grid_styles';
 import { BandTiles, MasonryBlock, sectionStyle, tilesFor } from './photo_bands';
 import { GridScrollbar } from './grid_scrollbar';
 import { GridKeys } from './grid_keys';
+import { TileMenu } from './tile_menu';
 import { TouchSweep } from './touch_sweep';
 
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
@@ -306,87 +307,89 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
     // there: after the scroller, a screen reader in browse mode would have to cross
     // every mounted tile to reach it, and `scrollbar` is in no quick-nav list.
     <div {...stylex.props(viewport.gallery)}>
-      <GridScrollbar
-        rail={store.rail}
-        axis="y"
-        total={store.total}
-        controls={SCROLLER_ID}
-        viewport={store.viewportHeight}
-        wheelStep={store.rowHeight}
-        onDragged={photos.rail.scrollToProgress}
-        // Straight at the element, not through the store: the store is only as
-        // fresh as the last scroll event, and a notch computed from behind rewinds
-        // the reader by whatever the compositor has already moved. The scroll event
-        // this provokes brings the store along.
-        onWheeled={(deltaY) => scroller.current?.scrollBy({ top: deltaY })}
-      />
-      {/* Focusable and labelled because it is a scrollable region holding content
+      <TileMenu>
+        <GridScrollbar
+          rail={store.rail}
+          axis="y"
+          total={store.total}
+          controls={SCROLLER_ID}
+          viewport={store.viewportHeight}
+          wheelStep={store.rowHeight}
+          onDragged={photos.rail.scrollToProgress}
+          // Straight at the element, not through the store: the store is only as
+          // fresh as the last scroll event, and a notch computed from behind rewinds
+          // the reader by whatever the compositor has already moved. The scroll event
+          // this provokes brings the store along.
+          onWheeled={(deltaY) => scroller.current?.scrollBy({ top: deltaY })}
+        />
+        {/* Focusable and labelled because it is a scrollable region holding content
           no tab stop of its own would reach: without it Page Up/Down, Home and End
           have nothing to act on until a tile happens to be focused. */}
-      <div
-        // Room under the last row for the bar floating over it, which is drawn exactly when a
-        // cull is going on and would otherwise sit on the bottom row's own verdict and stars.
-        // A remote moves only the cursor, so on a television it is the focus and a ring marks it
-        // twice; a keyboard can page the cursor off screen, leaving the ring the only mark.
-        {...stylex.props(
-          viewport.scroller,
-          marks.hasSelection && viewport.barred,
-          onTv() && marks.showsCursor ? focusRing.none : focusRing.ring,
-        )}
-        id={SCROLLER_ID}
-        ref={scroller}
-        onScroll={onScroll}
-        onKeyDown={onKeyDown}
-        tabIndex={0}
-        {...ownsArrows('all')}
-        role="list"
-        aria-label={PhotoGridStrings.gridLabel(store.total)}
-      >
-        {/* The rail and the window are scaffolding for the scroll, not structure:
-            announced, they would sit between the list and its items. */}
         <div
-          {...stylex.props(viewport.content, viewport.railHeight(store.rail.length))}
-          role="presentation"
+          // Room under the last row for the bar floating over it, which is drawn exactly when a
+          // cull is going on and would otherwise sit on the bottom row's own verdict and stars.
+          // A remote moves only the cursor, so on a television it is the focus and a ring marks it
+          // twice; a keyboard can page the cursor off screen, leaving the ring the only mark.
+          {...stylex.props(
+            viewport.scroller,
+            marks.hasSelection && viewport.barred,
+            onTv() && marks.showsCursor ? focusRing.none : focusRing.ring,
+          )}
+          id={SCROLLER_ID}
+          ref={scroller}
+          onScroll={onScroll}
+          onKeyDown={onKeyDown}
+          tabIndex={0}
+          {...ownsArrows('all')}
+          role="list"
+          aria-label={PhotoGridStrings.gridLabel(store.total)}
         >
-          {store.mode === 'masonry'
-            ? blocks.map((block) => (
-                <MasonryBlock
-                  key={block}
-                  block={block}
-                  top={store.rail.positionOf(store.blockTops[block] ?? 0)}
-                  onMeasured={photos.measuredBlock}
-                  onPacked={photos.packedBlock}
-                />
-              ))
-            : // One element per section rather than one window over a contiguous
-              // run: an open stack's band sits between rows of the collection, and a
-              // band several rows tall has to be one bordered box rather than one
-              // per row (§19.6).
-              store.sections.map((section) =>
-                section.kind === 'grid' ? (
-                  <div
-                    key={section.key}
-                    {...stylex.props(
-                      sectionStyle(store.mode, store.columns),
-                      cells.window,
-                      cells.down(store.rail.positionOf(section.top)),
-                      cells.rows(store.rowHeight - GRID_GAP),
-                    )}
-                    role="presentation"
-                  >
-                    {tilesFor(store, marks, stacks, section.from, section.to, store.mode)}
-                  </div>
-                ) : (
-                  <BandTiles
-                    key={section.key}
-                    expansion={section}
-                    top={section.top}
-                    fused={store.fusedStacks.has(section.stackId)}
+          {/* The rail and the window are scaffolding for the scroll, not structure:
+            announced, they would sit between the list and its items. */}
+          <div
+            {...stylex.props(viewport.content, viewport.railHeight(store.rail.length))}
+            role="presentation"
+          >
+            {store.mode === 'masonry'
+              ? blocks.map((block) => (
+                  <MasonryBlock
+                    key={block}
+                    block={block}
+                    top={store.rail.positionOf(store.blockTops[block] ?? 0)}
+                    onMeasured={photos.measuredBlock}
+                    onPacked={photos.packedBlock}
                   />
-                ),
-              )}
+                ))
+              : // One element per section rather than one window over a contiguous
+                // run: an open stack's band sits between rows of the collection, and a
+                // band several rows tall has to be one bordered box rather than one
+                // per row (§19.6).
+                store.sections.map((section) =>
+                  section.kind === 'grid' ? (
+                    <div
+                      key={section.key}
+                      {...stylex.props(
+                        sectionStyle(store.mode, store.columns),
+                        cells.window,
+                        cells.down(store.rail.positionOf(section.top)),
+                        cells.rows(store.rowHeight - GRID_GAP),
+                      )}
+                      role="presentation"
+                    >
+                      {tilesFor(store, marks, stacks, section.from, section.to, store.mode)}
+                    </div>
+                  ) : (
+                    <BandTiles
+                      key={section.key}
+                      expansion={section}
+                      top={section.top}
+                      fused={store.fusedStacks.has(section.stackId)}
+                    />
+                  ),
+                )}
+          </div>
         </div>
-      </div>
+      </TileMenu>
     </div>
   );
 });

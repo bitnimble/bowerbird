@@ -40,6 +40,8 @@ export const renditions = sqliteTable(
     matched: integer('matched'),
     // When the copy on disk was last built or served; null where there is no copy.
     usedAt: text('used_at'),
+    // The edit stamp a paste let this copy fall behind at, unowed until the next edit or a viewer read.
+    deferredFrom: text('deferred_from'),
   },
   (t) => [
     primaryKey({ columns: [t.photoId, t.variant] }),

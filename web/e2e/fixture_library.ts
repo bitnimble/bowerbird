@@ -31,6 +31,7 @@ export const FILTER_PHOTOS_DIR = path.join(E2E_ROOT, 'filter-photos');
 export const BIN_PHOTOS_DIR = path.join(E2E_ROOT, 'bin-photos');
 export const THUMBNAIL_PHOTOS_DIR = path.join(E2E_ROOT, 'thumbnail-photos');
 export const LAYOUT_PHOTOS_DIR = path.join(E2E_ROOT, 'layout-photos');
+export const TILE_MENU_PHOTOS_DIR = path.join(E2E_ROOT, 'tile-menu-photos');
 export const URL_PHOTOS_DIR = path.join(E2E_ROOT, 'url-photos');
 // The second library that spec opens: what it proves is that a question asked of
 // one collection is not carried into the next, which needs a next.
@@ -236,6 +237,7 @@ export function prepareFixture(): void {
     BIN_PHOTOS_DIR,
     THUMBNAIL_PHOTOS_DIR,
     LAYOUT_PHOTOS_DIR,
+    TILE_MENU_PHOTOS_DIR,
     URL_PHOTOS_DIR,
     URL_OTHER_PHOTOS_DIR,
     INDEX_PHOTOS_DIR,

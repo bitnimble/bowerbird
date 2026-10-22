@@ -238,7 +238,7 @@ const stackOptions = ({
   },
 ];
 
-const verdictOptions = (triage: Triage | null): Option<Triage>[] => [
+export const verdictOptions = (triage: Triage | null): Option<Triage>[] => [
   {
     value: triage === 'rejected' ? 'untriaged' : 'rejected',
     label: triage === 'rejected' ? MarksStrings.clearReject() : TriageControlStrings.reject(),
