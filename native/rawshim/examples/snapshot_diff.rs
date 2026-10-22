@@ -1,13 +1,14 @@
 //! Every snapshot that moved, drawn before | after | difference, as an SDR PNG anything can open.
 //!
 //! ```text
-//! snapshot_diff [--against <rev> | --before <dir>] [name...]
+//! snapshot_diff [--against <rev> | --before <dir>] [--after <dir>] [name...]
 //! ```
 //!
 //! Before is the snapshot at `<rev>` (HEAD by default), or `<dir>/<name>.png` for a picture no
-//! revision holds yet; after is the working tree's. With no names, every snapshot that differs from
-//! `<rev>` or is new since it. Writes under `$TMPDIR/bowerbird-snapshots/` and prints each path
-//! with how far it moved.
+//! revision holds yet; after is the working tree's, or `--after`'s `<dir>/<name>.png`. With no
+//! names, every snapshot that differs from `<rev>` or is new since it, or every picture in the
+//! `--after` directory. Writes under `$TMPDIR/bowerbird-snapshots/` and prints each path with how
+//! far it moved.
 
 use rawshim::snapshot::{self, Snapshot};
 use std::path::{Path, PathBuf};
@@ -18,38 +19,59 @@ const SNAPSHOTS: &str = "test/fixtures/snapshots";
 fn main() {
     let mut rev = "HEAD".to_string();
     let mut before_dir: Option<PathBuf> = None;
+    let mut after_dir: Option<PathBuf> = None;
     let mut names: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--against" => rev = args.next().expect("--against <rev>"),
             "--before" => before_dir = Some(PathBuf::from(args.next().expect("--before <dir>"))),
+            "--after" => after_dir = Some(PathBuf::from(args.next().expect("--after <dir>"))),
             _ => names.push(arg.trim_end_matches(".png").to_string()),
         }
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     if names.is_empty() {
-        names = changed(&root, &rev);
+        names = match &after_dir {
+            Some(dir) => pictures_in(dir),
+            None => changed(&root, &rev),
+        };
     }
     if names.is_empty() {
-        eprintln!("no snapshot differs from {rev}");
+        match &after_dir {
+            Some(dir) => eprintln!("no pictures in {}", dir.display()),
+            None => eprintln!("no snapshot differs from {rev}"),
+        }
         return;
     }
 
     for name in names {
         let relative = format!("{SNAPSHOTS}/{name}.png");
-        let Ok(bytes) = std::fs::read(root.join(&relative)) else {
-            println!("{name}: deleted since {rev}");
+        let after_path = match &after_dir {
+            Some(dir) => dir.join(format!("{name}.png")),
+            None => root.join(&relative),
+        };
+        let Ok(bytes) = std::fs::read(&after_path) else {
+            match &after_dir {
+                Some(_) => println!("{name}: no {}", after_path.display()),
+                None => println!("{name}: deleted since {rev}"),
+            }
             continue;
         };
-        let after = Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{relative}: {e}"));
-        let held = match &before_dir {
-            Some(dir) => std::fs::read(dir.join(format!("{name}.png"))).ok(),
-            None => committed(&root, &rev, &relative),
+        let after =
+            Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{}: {e}", after_path.display()));
+        let (held, before_from) = match &before_dir {
+            Some(dir) => {
+                let path = dir.join(format!("{name}.png"));
+                (std::fs::read(&path).ok(), path.display().to_string())
+            }
+            None => (
+                committed(&root, &rev, &relative),
+                format!("{rev}:{relative}"),
+            ),
         };
-        let before = held.map(|bytes| {
-            Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{rev}:{relative}: {e}"))
-        });
+        let before = held
+            .map(|bytes| Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{before_from}: {e}")));
 
         let out: PathBuf = snapshot::scratch().join(format!("{name}.diff.png"));
         std::fs::create_dir_all(out.parent().expect("a directory")).expect("the scratch directory");
@@ -72,6 +94,22 @@ fn main() {
         };
         println!("{name}: {moved}\n  {}", out.display());
     }
+}
+
+/// Every picture's name in `dir`.
+fn pictures_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .filter_map(|e| {
+            e.ok()?
+                .file_name()
+                .to_str()?
+                .strip_suffix(".png")
+                .map(str::to_string)
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// Snapshot names differing from `rev`, tracked or not.
