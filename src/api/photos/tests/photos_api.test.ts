@@ -4,6 +4,7 @@ import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';
 import type { PhotoListResponse } from '../../../schemas/photos';
 import { PathSegment, route } from '../../../schemas/route';
+import type { PhotoEditsService } from '../../../services/photo_edits/photo_edits_service';
 import type { PhotoReadService } from '../../../services/photos/listing/photo_read_service';
 import type { PhotoMutationService } from '../../../services/photos/mutations/photo_mutation_service';
 import type { PhotoRenditionService } from '../../../services/photos/renditions/photo_rendition_service';
@@ -55,13 +56,16 @@ function buildApp(
     rebuildTiles: jest.fn(async () => 1),
     prefer: jest.fn(),
   } as unknown as ProcessingService;
+  const edits = {
+    paste: jest.fn(() => ({ pasted: 1, editing_skipped: false })),
+  } as unknown as PhotoEditsService;
   const app = new Hono();
   app.route(
     route(PathSegment.api()),
-    new PhotosApi(read, mutations, renditions, processing).routes,
+    new PhotosApi(read, mutations, renditions, processing, edits).routes,
   );
   applyErrorHandler(app);
-  return { app, read, mutations, renditions, processing };
+  return { app, read, mutations, renditions, processing, edits };
 }
 
 const PID = 'photo001';
@@ -351,6 +355,30 @@ describe('PhotosApi', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ queued: 1 });
     expect(processing.rebuildTiles).toHaveBeenCalledWith([PID]);
+  });
+
+  it('pastes edits over the resolved target, naming the photos open in the viewer and editor', async () => {
+    const { app, edits } = buildApp();
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.pasteEdits()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          target: { photo_ids: [PID] },
+          edits: { exposure: 1 },
+          shown: PID,
+          editing: 'photo002',
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ pasted: 1, editing_skipped: false });
+    expect(edits.paste).toHaveBeenCalledWith(
+      [PID],
+      { exposure: 1 },
+      { shown: PID, editing: 'photo002' },
+    );
   });
 
   it('marks the resolved selection with the verdict it was given', async () => {

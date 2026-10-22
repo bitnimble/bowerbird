@@ -36,11 +36,12 @@ import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
 import { PhotoStageStrings } from '../viewer/photo_stage.strings';
 import { editPath } from '../viewer/detail_mode';
-import { isComposite, photoPath, renditionVersion } from '../photos_store';
+import { isComposite, isStack, photoPath, renditionVersion } from '../photos_store';
 import { PhotoGridStrings } from './photo_grid.strings';
 import { PhotoTileMarks } from './photo_tile_marks';
 import { PhotoTilePick } from './photo_tile_pick';
 import { BADGE_ICON, bandColourOf, foot, layoutOf, tile, type Layout } from './photo_grid_styles';
+import { useTileMenu } from './tile_menu_context';
 
 // The id for a row with no file behind it, which has no filename to be named by.
 function filename(filePath: string | null, id: string): string {
@@ -85,7 +86,10 @@ export const InStrip = createContext<'x' | 'y' | null>(null);
 
 export const StripOpensEditor = createContext(false);
 
-function useOpenPhoto(): { pathOf: (photoId: string) => string; open: (photoId: string) => void } {
+export function useOpenPhoto(): {
+  pathOf: (photoId: string) => string;
+  open: (photoId: string) => void;
+} {
   const listing = useListingStore();
   const navigate = useNavigate();
   const opensEditor = useContext(StripOpensEditor);
@@ -125,6 +129,7 @@ export const PhotoTile = observer(function PhotoTile({
   const viewer = useViewerStore();
   const { photos } = usePresenters();
   const { pathOf, open: openPhoto } = useOpenPhoto();
+  const openMenu = useTileMenu();
   const [loaded, setLoaded] = useState(false);
   const inStrip = useContext(InStrip);
   const layout = layoutOf(listing.mode, inStrip);
@@ -155,7 +160,7 @@ export const PhotoTile = observer(function PhotoTile({
   // rows this tile stands for", and the store holds them in one map.
   const bandKey = composed ? photo.id : photo.stack_id;
   const expanded = bandKey != null && stacks.expansions.has(bandKey);
-  const stacked = photo.stack_id != null && photo.stack_size > 1;
+  const stacked = isStack(photo);
   // An ordinary stack's tile has nowhere to lead - it stands for several photographs and shows one
   // of them - so the frame is the disclosure. A composite's is a photograph in its own right, with a
   // rendition and an address of its own, so the frame opens it and the chip is the disclosure.
@@ -214,7 +219,7 @@ export const PhotoTile = observer(function PhotoTile({
   }, [expanded, stackId, tracksPacking, packedTileSize, packedWidth, photos]);
 
   // The frame is a link so a photograph can be opened in a tab of its own from
-  // the context menu or a middle click, but its left click belongs to the grid -
+  // a middle click, but its left click belongs to the grid -
   // a cmd-click here is the selection gesture, not the browser's new-tab one - so
   // every case takes the click and the router is driven from inside.
   const onFrameClick = (e: React.MouseEvent): void => {
@@ -318,6 +323,7 @@ export const PhotoTile = observer(function PhotoTile({
       aria-posinset={index + 1}
       aria-current={open ? 'page' : cursor ? true : undefined}
       aria-busy={shown != null && !loaded}
+      onContextMenu={(e) => openMenu?.(e, { kind: 'row', index, photo })}
     >
       {/* A stack's tile is a disclosure rather than a way into a photograph: it
           stands for every photo in the stack rather than the one it shows, so
@@ -600,6 +606,7 @@ export const BandMember = observer(function BandMember({
   const viewer = useViewerStore();
   const { photos } = usePresenters();
   const { pathOf, open: openPhoto } = useOpenPhoto();
+  const openMenu = useTileMenu();
   const [loaded, setLoaded] = useState(false);
   const inStrip = useContext(InStrip);
   const selected = marks.memberSelected(photo);
@@ -631,9 +638,10 @@ export const BandMember = observer(function BandMember({
       aria-busy={!loaded}
       // What a long press dragged over a band picks (`TouchSweep`): a member has no position.
       data-member-id={photo.id}
+      onContextMenu={(e) => openMenu?.(e, { kind: 'member', photo })}
     >
-      {/* A link for the same reason a tile's frame is one: the context menu and
-          the middle click open a member in a tab of its own. */}
+      {/* A link for the same reason a tile's frame is one: the middle click opens
+          a member in a tab of its own. */}
       <div {...stylex.props(photoStyle(layout, false))}>
         <a
           {...stylex.props(tile.hit, focusRing.ring)}

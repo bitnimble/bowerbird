@@ -257,6 +257,199 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
   });
 });
 
+describe('PhotoEditsService.paste', () => {
+  const OTHER = 'other';
+  let photos: PhotoProcessingRepository;
+  let edits: PhotoEditsRepository;
+
+  beforeEach(() => {
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+         VALUES (?, 'lib', '{"kind":"file","path":"b.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
+    ).run(OTHER);
+    photos = photoProcessing();
+    edits = new PhotoEditsRepository(db);
+    const both = {
+      getById: (id: string) => (id === PHOTO || id === OTHER ? { id, library_id: 'lib' } : null),
+    } as unknown as PhotoListingRepository;
+    service = new PhotoEditsService(
+      db,
+      edits,
+      both,
+      () => {},
+      () => {},
+      () => {},
+      () => 'galosh',
+      () => true,
+      (ids, shown) => void photos.queuePasted(ids, shown),
+    );
+    for (const id of [PHOTO, OTHER]) {
+      settled(id);
+      built(id, 'grid', 'full');
+    }
+  });
+
+  function owed(variant: string): string[] {
+    const rows = db
+      .query(
+        `SELECT photo_id FROM renditions WHERE variant = ? AND needs_build = 1 ORDER BY photo_id`,
+      )
+      .all(variant) as { photo_id: string }[];
+    return rows.map((row) => row.photo_id);
+  }
+
+  function stampOf(photoId: string): string {
+    const row = db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(photoId) as {
+      stamp: string;
+    };
+    return row.stamp;
+  }
+
+  it("lays the copied look over each photo's own framing", () => {
+    edits.save(OTHER, { ...neutralEdits(), cropLeft: 0.2, rotate: 90, exposure: -1 }, 0);
+
+    const pasted = service.paste([PHOTO, OTHER], {
+      ...neutralEdits(),
+      exposure: 1.25,
+      contrast: 30,
+      cropLeft: 0.5,
+      rotate: 180,
+    });
+
+    expect(pasted).toEqual({ pasted: 2, editing_skipped: false });
+    expect(edits.get(OTHER).doc).toMatchObject({
+      exposure: 1.25,
+      contrast: 30,
+      cropLeft: 0.2,
+      rotate: 90,
+    });
+    expect(edits.get(PHOTO).doc).toMatchObject({ exposure: 1.25, cropLeft: 0, rotate: 0 });
+  });
+
+  it('refuses a document out of range before writing to any photo', () => {
+    expect(() => service.paste([PHOTO, OTHER], { exposure: 9 })).toThrow();
+    expect(edits.get(PHOTO).rev).toBe(0);
+    expect(edits.get(OTHER).rev).toBe(0);
+  });
+
+  it('leaves the photo open in the editor to the editor', () => {
+    const pasted = service.paste([PHOTO, OTHER], { exposure: 1 }, { editing: PHOTO });
+
+    expect(pasted).toEqual({ pasted: 1, editing_skipped: true });
+    expect(edits.get(PHOTO).rev).toBe(0);
+    expect(edits.get(OTHER).doc.exposure).toBe(1);
+  });
+
+  it('pastes a photo named twice once', () => {
+    expect(service.paste([OTHER, OTHER], { exposure: 1 })).toEqual({
+      pasted: 1,
+      editing_skipped: false,
+    });
+    expect(edits.get(OTHER).rev).toBe(1);
+  });
+
+  it('rebuilds every grid tile and only the viewer copy on screen', () => {
+    service.paste([PHOTO, OTHER], { exposure: 1 }, { shown: PHOTO });
+
+    expect(owed('grid')).toEqual([OTHER, PHOTO]);
+    expect(owed('full')).toEqual([PHOTO]);
+    // The sweep a tile request or a restart runs asks the same question, and gets the same answer.
+    photos.queueEditedSince();
+    expect(owed('full')).toEqual([PHOTO]);
+  });
+
+  it('defers the range of viewer copy an HDR library builds', () => {
+    db.query(`UPDATE libraries SET rendition_hdr = 1 WHERE id = 'lib'`).run();
+    for (const id of [PHOTO, OTHER]) built(id, 'full-hdr');
+
+    service.paste([PHOTO, OTHER], { exposure: 1 }, { shown: PHOTO });
+
+    expect(owed('full-hdr')).toEqual([PHOTO]);
+    photos.queueEditedSince();
+    expect(owed('full-hdr')).toEqual([PHOTO]);
+  });
+
+  it('cancels a rebuild already queued for a built viewer copy, and keeps one never built', () => {
+    const fresh = 'fresh';
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+         VALUES (?, 'lib', '{"kind":"file","path":"c.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
+    ).run(fresh);
+    db.query(`UPDATE renditions SET needs_build = 1 WHERE photo_id = ? AND variant = 'full'`).run(
+      OTHER,
+    );
+    const known = {
+      getById: (id: string) => ({ id, library_id: 'lib' }),
+    } as unknown as PhotoListingRepository;
+    service = new PhotoEditsService(
+      db,
+      edits,
+      known,
+      () => {},
+      () => {},
+      () => {},
+      () => 'galosh',
+      () => true,
+      (ids, shown) => void photos.queuePasted(ids, shown),
+    );
+
+    service.paste([OTHER, fresh], { exposure: 1 });
+
+    expect(owed('full')).toEqual([fresh]);
+  });
+
+  it('defers the viewer copy of a panorama whose frames were pasted, whichever is on screen', () => {
+    const panorama = mergeComposite(photoComposites(), [PHOTO, OTHER]);
+    settled(panorama);
+    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?').run(
+      '2026-02-01T00:00:00.000Z',
+      photos.builtFromOf(panorama),
+      panorama,
+    );
+
+    // The frame on screen is written last, so its stamp is the newest behind the panorama.
+    service.paste([OTHER, PHOTO], { exposure: 1 }, { shown: PHOTO });
+
+    expect(owed('grid')).toContain(panorama);
+    expect(owed('full')).toEqual([PHOTO]);
+    photos.queueEditedSince();
+    expect(owed('full')).toEqual([PHOTO]);
+  });
+
+  it('owes the deferred viewer copy again once the photo is edited after the paste', () => {
+    service.paste([PHOTO, OTHER], { exposure: 1 });
+    expect(owed('full')).toEqual([]);
+
+    const { doc, rev } = edits.get(OTHER);
+    edits.save(OTHER, { ...doc, exposure: 2 }, rev, 'session');
+    photos.queueEditedSince();
+
+    expect(owed('full')).toEqual([OTHER]);
+    expect(owed('grid')).toEqual([OTHER, PHOTO]);
+  });
+
+  it('owes the deferred viewer copy again once the viewer reads it', () => {
+    service.paste([PHOTO, OTHER], { exposure: 1 });
+
+    photos.liftDeferral(OTHER);
+    photos.queueEditedSince([OTHER]);
+
+    expect(owed('full')).toEqual([OTHER]);
+  });
+
+  it('moves the deferral forward with a second paste', () => {
+    service.paste([OTHER], { exposure: 1 });
+    service.paste([OTHER], { exposure: 2 });
+    const deferred = db
+      .query(`SELECT deferred_from FROM renditions WHERE photo_id = ? AND variant = 'full'`)
+      .get(OTHER);
+
+    expect(deferred).toEqual({ deferred_from: stampOf(OTHER) });
+    photos.queueEditedSince();
+    expect(owed('full')).toEqual([]);
+  });
+});
+
 describe('PhotoEditsService.applyCameraMatch', () => {
   const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE, balance: null };
   let photos: PhotoProcessingRepository;

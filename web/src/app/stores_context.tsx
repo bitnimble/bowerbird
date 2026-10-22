@@ -6,6 +6,8 @@ import { ConfirmStore } from '../features/confirm/confirm_store';
 import { DevicePhotosPresenter } from '../features/device_photos/device_photos_presenter';
 import { DevicePhotosStore } from '../features/device_photos/device_photos_store';
 import { EventsPresenter } from '../features/events/events_presenter';
+import { EditsClipboardPresenter } from '../features/photos/edits_clipboard/edits_clipboard_presenter';
+import { EditsClipboardStore } from '../features/photos/edits_clipboard/edits_clipboard_store';
 import { FeedbackPresenter } from '../features/feedback/feedback_presenter';
 import { FeedbackStore } from '../features/feedback/feedback_store';
 import { ExportPresenter } from '../features/export/export_presenter';
@@ -85,6 +87,7 @@ const LabelsStoreContext = createContext<LabelsStore | null>(null);
 const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
 const PrecompileStoreContext = createContext<PrecompileStore | null>(null);
 const DevicePhotosStoreContext = createContext<DevicePhotosStore | null>(null);
+const EditsClipboardStoreContext = createContext<EditsClipboardStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -109,6 +112,7 @@ interface Presenters {
   labels: LabelsPresenter;
   precompile: PrecompilePresenter;
   devicePhotos: DevicePhotosPresenter;
+  editsClipboard: EditsClipboardPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -157,6 +161,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     labelEditor: new LabelEditorStore(),
     precompile: new PrecompileStore(),
     devicePhotos: new DevicePhotosStore(librariesStore),
+    editsClipboard: new EditsClipboardStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -271,6 +276,12 @@ function build(): { stores: Stores; presenters: Presenters } {
       scan,
       toasts,
     ),
+    editsClipboard: new EditsClipboardPresenter(
+      stores.editsClipboard,
+      stores.viewer,
+      photos,
+      toasts,
+    ),
   };
   return { stores, presenters };
 }
@@ -301,6 +312,7 @@ interface Stores {
   labelEditor: LabelEditorStore;
   precompile: PrecompileStore;
   devicePhotos: DevicePhotosStore;
+  editsClipboard: EditsClipboardStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -340,7 +352,11 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                                       <DevicePhotosStoreContext.Provider
                                                         value={stores.devicePhotos}
                                                       >
-                                                        {children}
+                                                        <EditsClipboardStoreContext.Provider
+                                                          value={stores.editsClipboard}
+                                                        >
+                                                          {children}
+                                                        </EditsClipboardStoreContext.Provider>
                                                       </DevicePhotosStoreContext.Provider>
                                                     </PrecompileStoreContext.Provider>
                                                   </ConfirmStoreContext.Provider>
@@ -424,5 +440,7 @@ export const usePrecompileStore = (): PrecompileStore =>
   required(useContext(PrecompileStoreContext), 'PrecompileStore');
 export const useDevicePhotosStore = (): DevicePhotosStore =>
   required(useContext(DevicePhotosStoreContext), 'DevicePhotosStore');
+export const useEditsClipboardStore = (): EditsClipboardStore =>
+  required(useContext(EditsClipboardStoreContext), 'EditsClipboardStore');
 export const usePresenters = (): Presenters =>
   required(useContext(PresentersContext), 'Presenters');

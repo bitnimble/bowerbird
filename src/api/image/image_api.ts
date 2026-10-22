@@ -268,7 +268,7 @@ export class ImageApi {
             photoId,
             renditionVariant(rendition, library.rendition_hdr),
           );
-        this.photoRenditions.rebuildIfStale(photoId);
+        this.photoRenditions.rebuildIfStale(photoId, rendition);
         if (rendition === 'grid') {
           const deviceTile = await this.serveDeviceTile(photo, library, c);
           if (deviceTile != null) return deviceTile;

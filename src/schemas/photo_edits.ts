@@ -360,6 +360,34 @@ export function neutralEdits(): EditDoc {
   return EditDocSchema.parse({});
 }
 
+/** Where in one frame its content sits, which means nothing on another photo. */
+const FRAME_BOUND_FIELDS: ReadonlySet<string> = new Set([
+  'version',
+  'awaitsCameraMatch',
+  'repairs',
+  'cropLeft',
+  'cropTop',
+  'cropRight',
+  'cropBottom',
+  'framedLeft',
+  'framedTop',
+  'framedRight',
+  'framedBottom',
+  'cropAngle',
+  'rotate',
+  'keystone',
+  'keystoneGuides',
+]);
+
+/** The fields of a document that a paste carries onto other photos. */
+export function pastableEdits(doc: EditDoc): Partial<EditDoc> {
+  return Object.fromEntries(
+    Object.keys(EditDocSchema.shape)
+      .filter((key) => !FRAME_BOUND_FIELDS.has(key))
+      .map((key) => [key, doc[key as keyof EditDoc]]),
+  );
+}
+
 // The fields a delta names, on each side of it. A commit routinely moves several
 // at once - an import writes ten, a crop drag four - and a delta that could hold
 // only one would turn each of those into several undos through states the picture

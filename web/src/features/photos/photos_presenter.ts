@@ -28,7 +28,13 @@ import { displayRowOf } from './grid/bands';
 import { ScrollRailPresenter } from './grid/scroll_rail_presenter';
 import { SelectionPresenter } from './grid/selection_presenter';
 import { PhotosPresenterStrings } from './photos_presenter.strings';
-import { sourceKey, type PhotoSource, type ViewMode } from './photos_store';
+import {
+  isStack,
+  sourceKey,
+  type PhotoSource,
+  type TileSubject,
+  type ViewMode,
+} from './photos_store';
 import { openingFilters, reachableModels, type PhotoFilters } from './grid/photo_filters';
 import { SelectionRanges } from './selection';
 import type { Span } from '../../ui/virtual_rows';
@@ -859,6 +865,10 @@ export class PhotosPresenter {
   async markSelection(marks: PhotoMarks): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
+    await this.markPhotos(target, marks);
+  }
+
+  async markPhotos(target: PhotoTarget, marks: PhotoMarks): Promise<void> {
     try {
       await photosApi.mark(target, marks);
     } catch (err) {
@@ -1274,6 +1284,10 @@ export class PhotosPresenter {
   async rebuildGridRenditions(): Promise<void> {
     await this.bulkPresenter.rebuildGridRenditions();
   }
+
+  async rebuildTiles(target: PhotoTarget): Promise<void> {
+    await this.bulkPresenter.rebuildTiles(target);
+  }
   // A photo whose processing never ran, or failed, has no rendition to serve and
   // nothing queued to change that, so the detail view would sit on "no rendition
   // yet" indefinitely. Builds the one that is actually missing rather than
@@ -1423,6 +1437,33 @@ export class PhotosPresenter {
         // stack's row is also selected is not acted on twice.
         members: [...this.marks.selectedMembers],
       },
+    };
+  }
+
+  /** What a tile's menu acts on: the selection where the tile is in it, otherwise the tile alone. */
+  menuTarget(tile: TileSubject): { target: PhotoTarget; count: number; selected: boolean } | null {
+    const selected =
+      tile.kind === 'row'
+        ? this.marks.selection.has(tile.index)
+        : this.marks.memberSelected(tile.photo);
+    if (selected) {
+      const target = this.selectionTarget();
+      return target == null ? null : { target, count: this.marks.selectionCount, selected: true };
+    }
+    const source = this.listing.source;
+    if (source == null) return null;
+    const row = tile.kind === 'row' ? tile.index : null;
+    return {
+      target: {
+        selection: {
+          scope: scopeOf(source),
+          filters: this.selectionFilters(),
+          ranges: row == null ? [] : [{ start: row, end: row }],
+          members: row == null ? [tile.photo.id] : [],
+        },
+      },
+      count: row != null && isStack(tile.photo) ? tile.photo.stack_size : 1,
+      selected: false,
     };
   }
 

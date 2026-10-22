@@ -84,6 +84,15 @@ export function isComposite(photo: PhotoStamps | null | undefined): boolean {
   return photo?.composite_kind != null;
 }
 
+/** Whether this row stands for several photographs and shows one of them. */
+export function isStack(photo: PhotoSummary): boolean {
+  return photo.stack_id != null && photo.stack_size > 1;
+}
+
+/** One cell of the grid or the filmstrip: a row by its position, or a member of an open band. */
+export type TileSubject =
+  { kind: 'row'; index: number; photo: PhotoSummary } | { kind: 'member'; photo: PhotoSummary };
+
 export function triagePath(stackId: string, source: PhotoSource | null): string {
   const stack = route(PathSegment.stacks(), stackId, PathSegment.triage());
   return source == null ? stack : `${collectionPath(source)}${stack}`;

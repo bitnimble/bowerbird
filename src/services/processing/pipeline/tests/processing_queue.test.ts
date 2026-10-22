@@ -762,6 +762,49 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(existsSync(full)).toBe(true);
   });
 
+  it("renders an edited photo's tile on its own, where its viewer copy is not owed", async () => {
+    const fullDir = renditions('full');
+    mkdirSync(fullDir, { recursive: true });
+    const full = path.join(fullDir, 'a.avif');
+    writeFileSync(full, 'kept');
+
+    const markTileBuilt = jest.fn();
+    const markRenditionsBuilt = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        {
+          ...pending('a'),
+          rendition_source: 'embedded',
+          library_rendition_source: 'embedded',
+          needs_renditions: 0,
+          edits: JSON.stringify({ version: 1, exposure: 1 }),
+          edits_stamp: 'stamp-1',
+          edited: 1,
+          // The device's own thumbnail carries no edit either.
+          media_image_id: 7,
+        },
+      ]),
+      markTileBuilt,
+      markRenditionsBuilt,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' });
+
+    // The camera's JPEG carries no edit, so the tile is a render of the document.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.targets.map((target) => [target.rendition, target.source])).toEqual([
+      ['grid', 'render'],
+    ]);
+    expect(posted[0]?.exposure).toBe(1);
+    expect(markTileBuilt.mock.calls.map((call) => [call[2], call[3]])).toEqual([
+      ['stamp-1', expect.objectContaining({ from: 'render' })],
+    ]);
+    expect(markRenditionsBuilt).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(existsSync(full)).toBe(true);
+  });
+
   it('announces each stage as it lands, with the stamp that stage wrote', async () => {
     // Splitting the passes exists so a grid is browsable at the tile's pace (~18ms)
     // rather than the render's (~1.5s). A client hears about a photo through these

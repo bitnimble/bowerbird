@@ -20,6 +20,7 @@ import { band, bandColourOf, cells, strip, viewport } from './photo_grid_styles'
 import { BandMember, InStrip } from './photo_tile';
 import { sectionStyle, tilesFor } from './photo_bands';
 import { GridScrollbar } from './grid_scrollbar';
+import { TileMenu } from './tile_menu';
 
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
 export const STRIP_ID = 'filmstrip-scroller';
@@ -158,130 +159,135 @@ export const PhotoStrip = observer(function PhotoStrip({
 
   return (
     <InStrip.Provider value={along}>
-      <div
-        // The gutter the bar sits in is only there when there is a bar: a
-        // collection the strip shows whole has nothing to seek, and a reserved
-        // 12px beside the cells reads as a gap where a photograph is missing.
-        {...stylex.props(
-          strip.viewport,
-          view.rail.fraction < 1 && strip.seekable,
-          along === 'x' ? strip.gutterX : [strip.gutterY, strip.viewportY],
-          strip.thickness(view.thickness),
-        )}
-      >
-        {!onTv() && <StripResizer view={view} presenter={presenter} />}
+      <TileMenu>
+        <div
+          // The gutter the bar sits in is only there when there is a bar: a
+          // collection the strip shows whole has nothing to seek, and a reserved
+          // 12px beside the cells reads as a gap where a photograph is missing.
+          {...stylex.props(
+            strip.viewport,
+            view.rail.fraction < 1 && strip.seekable,
+            along === 'x' ? strip.gutterX : [strip.gutterY, strip.viewportY],
+            strip.thickness(view.thickness),
+          )}
+        >
+          {!onTv() && <StripResizer view={view} presenter={presenter} />}
 
-        <div {...stylex.props(strip.track, along === 'x' ? strip.trackX : strip.trackY)}>
-          {/* The one way to reach a photograph ten thousand frames away in a
+          <div {...stylex.props(strip.track, along === 'x' ? strip.trackX : strip.trackY)}>
+            {/* The one way to reach a photograph ten thousand frames away in a
               gesture: the native bar describes the rail, which is a few hundred
               cells of a collection that may be a hundred thousand. */}
-          <GridScrollbar
-            rail={view.rail}
-            axis={along}
-            total={store.total}
-            controls={STRIP_ID}
-            viewport={view.viewportLength}
-            wheelStep={view.pitch}
-            onDragged={presenter.rail.scrollToProgress}
-            onWheeled={(delta) =>
-              scroller.current?.scrollBy(along === 'x' ? { left: delta } : { top: delta })
-            }
-          />
-          <div
-            {...stylex.props(
-              strip.scroller,
-              along === 'x' ? strip.scrollerX : strip.scrollerY,
-              // As the gallery's scroller is, for the same reason.
-              onTv() && marks.showsCursor ? focusRing.none : focusRing.ring,
-            )}
-            id={STRIP_ID}
-            ref={scroller}
-            // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`);
-            // down the side it scrolls the other way, so a drag across it is the drawer's.
-            data-owns-sideways={along === 'x' || undefined}
-            // Left and Right are the viewer's: a step on a desktop, the strip's cursor on a television.
-            {...ownsArrows('sideways')}
-            role="list"
-            aria-label={PhotoGridStrings.gridLabel(store.total)}
-            // Focusable and labelled for the reason the gallery's scroller is: it
-            // holds a hundred thousand cells and mounts a few dozen, so tabbing the
-            // tiles reaches only what is already on screen and Home, End and the
-            // page keys have nothing to act on.
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.metaKey || e.ctrlKey || e.altKey) return;
-              // Home and End go to the ends of the *rail*, which is somewhere in the
-              // middle of the collection; the page keys are relative and need nothing.
-              if (e.key !== 'Home' && e.key !== 'End') return;
-              presenter.rail.scrollToProgress(e.key === 'Home' ? 0 : 1);
-              e.preventDefault();
-            }}
-            onScroll={(e) => {
-              const at = offsetOf(e.currentTarget);
-              sampled.current = at;
-              presenter.rail.setTop(at);
-            }}
-            // A wheel over a strip scrolls the strip, whichever way it runs and
-            // whichever way the wheel does. A vertical notch over a row that only
-            // scrolls sideways is left to the browser by Firefox, which is a wheel
-            // that does nothing over the one thing under the pointer that moves.
-            onWheel={(e) => {
-              const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-              const step =
-                e.deltaMode === 1 ? view.pitch : e.deltaMode === 2 ? view.viewportLength : 1;
-              e.currentTarget.scrollBy(
-                along === 'x' ? { left: delta * step } : { top: delta * step },
-              );
-            }}
-          >
+            <GridScrollbar
+              rail={view.rail}
+              axis={along}
+              total={store.total}
+              controls={STRIP_ID}
+              viewport={view.viewportLength}
+              wheelStep={view.pitch}
+              onDragged={presenter.rail.scrollToProgress}
+              onWheeled={(delta) =>
+                scroller.current?.scrollBy(along === 'x' ? { left: delta } : { top: delta })
+              }
+            />
             <div
               {...stylex.props(
-                viewport.content,
-                viewport.stripContent,
-                along === 'x'
-                  ? viewport.railWidth(view.rail.length)
-                  : [viewport.stripContentY, viewport.railHeight(view.rail.length)],
+                strip.scroller,
+                along === 'x' ? strip.scrollerX : strip.scrollerY,
+                // As the gallery's scroller is, for the same reason.
+                onTv() && marks.showsCursor ? focusRing.none : focusRing.ring,
               )}
-              role="presentation"
+              id={STRIP_ID}
+              ref={scroller}
+              // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`);
+              // down the side it scrolls the other way, so a drag across it is the drawer's.
+              data-owns-sideways={along === 'x' || undefined}
+              // Left and Right are the viewer's: a step on a desktop, the strip's cursor on a television.
+              {...ownsArrows('sideways')}
+              role="list"
+              aria-label={PhotoGridStrings.gridLabel(store.total)}
+              // Focusable and labelled for the reason the gallery's scroller is: it
+              // holds a hundred thousand cells and mounts a few dozen, so tabbing the
+              // tiles reaches only what is already on screen and Home, End and the
+              // page keys have nothing to act on.
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.metaKey || e.ctrlKey || e.altKey) return;
+                // Home and End go to the ends of the *rail*, which is somewhere in the
+                // middle of the collection; the page keys are relative and need nothing.
+                if (e.key !== 'Home' && e.key !== 'End') return;
+                presenter.rail.scrollToProgress(e.key === 'Home' ? 0 : 1);
+                e.preventDefault();
+              }}
+              onScroll={(e) => {
+                const at = offsetOf(e.currentTarget);
+                sampled.current = at;
+                presenter.rail.setTop(at);
+              }}
+              // A wheel over a strip scrolls the strip, whichever way it runs and
+              // whichever way the wheel does. A vertical notch over a row that only
+              // scrolls sideways is left to the browser by Firefox, which is a wheel
+              // that does nothing over the one thing under the pointer that moves.
+              onWheel={(e) => {
+                const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+                const step =
+                  e.deltaMode === 1 ? view.pitch : e.deltaMode === 2 ? view.viewportLength : 1;
+                e.currentTarget.scrollBy(
+                  along === 'x' ? { left: delta * step } : { top: delta * step },
+                );
+              }}
             >
-              {view.sections.map((section) => (
-                <div
-                  key={section.key}
-                  {...stylex.props(
-                    sectionStyle(along, 1),
-                    cells.window,
-                    along === 'x' ? cells.windowX : cells.windowY,
-                    cells.along(along, view.rail.positionOf(section.top)),
-                    cells.stripCells(view.pitch - GRID_GAP, STRIP_SPINE),
-                    section.kind === 'band' && [
-                      band.band,
-                      bandColourOf(store.bandColours.get(section.stackId)),
-                    ],
-                  )}
-                  // A band is a group with a name, as it is in the gallery: its
-                  // members are not cells of the collection, and flattened into the
-                  // list they are announced with positions its own rows contradict.
-                  role={section.kind === 'band' ? 'group' : 'presentation'}
-                  aria-label={
-                    section.kind !== 'band'
-                      ? undefined
-                      : section.composite != null
-                        ? PhotoGridStrings.frameBandLabel(section.photos.length, section.composite)
-                        : PhotoGridStrings.bandLabel(
-                            section.photos.length,
-                            section.photos[0]?.bracket_kind ?? null,
-                          )
-                  }
-                >
-                  {section.kind === 'grid'
-                    ? tilesFor(store, marks, stacks, section.from, section.to, along)
-                    : section.photos.map((photo) => <BandMember key={photo.id} photo={photo} />)}
-                </div>
-              ))}
+              <div
+                {...stylex.props(
+                  viewport.content,
+                  viewport.stripContent,
+                  along === 'x'
+                    ? viewport.railWidth(view.rail.length)
+                    : [viewport.stripContentY, viewport.railHeight(view.rail.length)],
+                )}
+                role="presentation"
+              >
+                {view.sections.map((section) => (
+                  <div
+                    key={section.key}
+                    {...stylex.props(
+                      sectionStyle(along, 1),
+                      cells.window,
+                      along === 'x' ? cells.windowX : cells.windowY,
+                      cells.along(along, view.rail.positionOf(section.top)),
+                      cells.stripCells(view.pitch - GRID_GAP, STRIP_SPINE),
+                      section.kind === 'band' && [
+                        band.band,
+                        bandColourOf(store.bandColours.get(section.stackId)),
+                      ],
+                    )}
+                    // A band is a group with a name, as it is in the gallery: its
+                    // members are not cells of the collection, and flattened into the
+                    // list they are announced with positions its own rows contradict.
+                    role={section.kind === 'band' ? 'group' : 'presentation'}
+                    aria-label={
+                      section.kind !== 'band'
+                        ? undefined
+                        : section.composite != null
+                          ? PhotoGridStrings.frameBandLabel(
+                              section.photos.length,
+                              section.composite,
+                            )
+                          : PhotoGridStrings.bandLabel(
+                              section.photos.length,
+                              section.photos[0]?.bracket_kind ?? null,
+                            )
+                    }
+                  >
+                    {section.kind === 'grid'
+                      ? tilesFor(store, marks, stacks, section.from, section.to, along)
+                      : section.photos.map((photo) => <BandMember key={photo.id} photo={photo} />)}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </TileMenu>
     </InStrip.Provider>
   );
 });

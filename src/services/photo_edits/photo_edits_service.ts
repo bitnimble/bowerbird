@@ -1,8 +1,12 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { newId } from '../../schemas/id';
+import type { PastedEdits } from '../../schemas/photos';
 import {
+  EditDocSchema,
   diffEdits,
+  neutralEdits,
+  pastableEdits,
   type CameraTone,
   type Denoiser,
   type EditCheckpoint,
@@ -59,6 +63,8 @@ export class PhotoEditsService {
     private readonly vouch: (photoId: string, stamp: string | null) => void = () => {},
     private readonly denoiserOf: (libraryId: string) => Denoiser = () => 'galosh',
     private readonly upscalable: (photoId: string) => boolean = () => true,
+    /** `rebuild` for a paste: grid tiles, and the viewer's copy of `shown` alone. */
+    private readonly rebuildPasted: (photoIds: string[], shown?: string) => void = () => {},
   ) {}
 
   get(photoId: string): EditState {
@@ -129,6 +135,31 @@ export class PhotoEditsService {
       this.vouch(photoId, opened.stamp);
     }
     this.rebuild([photoId]);
+  }
+
+  /**
+   * Lays the pastable fields of `edits` over each photo's own document, as one session.
+   *
+   * `editing` is skipped: its editor holds a revision this would move under it, so the editor
+   * pastes into itself.
+   */
+  paste(
+    photoIds: readonly string[],
+    edits: Record<string, unknown>,
+    open: { shown?: string; editing?: string } = {},
+  ): PastedEdits {
+    const patch = pastableEdits(EditDocSchema.parse({ ...neutralEdits(), ...edits }));
+    const session = newId();
+    const named = [...new Set(photoIds)];
+    const pasted = named.filter((photoId) => photoId !== open.editing);
+    this.db.transaction(() => {
+      for (const photoId of pasted) {
+        const current = this.get(photoId);
+        this.edits.save(photoId, { ...current.doc, ...patch }, current.rev, session);
+      }
+    })();
+    this.rebuildPasted(pasted, open.shown);
+    return { pasted: pasted.length, editing_skipped: pasted.length < named.length };
   }
 
   conflicts(libraryId?: string): EditConflict[] {

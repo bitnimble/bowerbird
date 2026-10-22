@@ -10,6 +10,9 @@ import {
   DeletePhotosRequestSchema,
   HidePhotosRequestSchema,
   MarkPhotosRequestSchema,
+  PasteEditsRequestSchema,
+  type PastedEdits,
+  PastedEditsSchema,
   type PhotoDaysRequest,
   PhotoDaysRequestSchema,
   type PhotoDaysResponse,
@@ -41,6 +44,7 @@ import {
   type UpdatePhotoRequest,
   UpdatePhotoRequestSchema,
 } from '../../../src/schemas/photos';
+import type { EditDoc } from '../../../src/schemas/photo_edits';
 import type { PrepareDevelop } from '../../../src/schemas/prepare_develop';
 import { PathSegment, route } from '../../../src/schemas/route';
 import {
@@ -225,6 +229,17 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.rebuildTiles()),
       PhotoTargetSchema.parse(target),
+    ),
+  pasteEdits: (
+    target: PhotoTarget,
+    edits: Partial<EditDoc>,
+    open: { shown?: string; editing?: string },
+  ): Promise<PastedEdits> =>
+    request(
+      PastedEditsSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.pasteEdits()),
+      PasteEditsRequestSchema.parse({ target, edits, ...open }),
     ),
   prefer: (photoIds: string[]): Promise<void> =>
     request(

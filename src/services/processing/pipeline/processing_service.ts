@@ -188,7 +188,15 @@ export class ProcessingService extends RenderService {
    * sweep at startup finds anything whose editor never got to say it had closed.
    */
   rebuildEdited(photoIds?: readonly string[]): number {
-    const queued = this.photoProcessing.queueEditedSince(photoIds);
+    return this.drainEdited(this.photoProcessing.queueEditedSince(photoIds));
+  }
+
+  /** `rebuildEdited` for pasted edits: grid tiles, and the viewer's copy of `shown` alone. */
+  rebuildPasted(photoIds: readonly string[], shown?: string): number {
+    return this.drainEdited(this.photoProcessing.queuePasted(photoIds, shown));
+  }
+
+  private drainEdited(queued: readonly string[]): number {
     // Reported rather than thrown past: nothing is awaiting this, so an unhandled
     // rejection is all a failure would otherwise produce.
     if (queued.length > 0) {
@@ -585,7 +593,8 @@ export class ProcessingService extends RenderService {
             this.recordFailure(result, job, photo);
             return;
           }
-          this.stageDone(photo, result.photoId, 'renditions');
+          // A tile-only render settles no `full`: recorded, it would vouch for one never built.
+          if (photo?.owesRenditions !== false) this.stageDone(photo, result.photoId, 'renditions');
           // And the tile, where this job rewrote it from the render. Asked of the targets
           // rather than assumed from the pool, for the reason `runOneOff` gives: a job that
           // wrote a grid file and stamped only the renditions leaves `tile_built_at` where
@@ -786,9 +795,15 @@ export class ProcessingService extends RenderService {
     // crash, a restart, a library that went away and came back - resumes at the
     // one it did not reach rather than redoing a tile already on disk.
     const owesRenditions = pending.needs_renditions === 1;
+    // The camera's JPEG, or the device's thumbnail, carries no edit.
+    const tileOfEdit =
+      pending.needs_tile === 1 &&
+      !owesRenditions &&
+      row.edited &&
+      pending.metadata_provisional !== 1;
     const grid = this.targets.target(dataPath, photoId, 'grid', false, 'embedded');
     const tile: RenditionJob | null =
-      pending.needs_tile === 1
+      pending.needs_tile === 1 && !tileOfEdit
         ? {
             ...common,
             ...(pending.metadata_provisional === 1 ? { header: true as const } : {}),
@@ -812,16 +827,19 @@ export class ProcessingService extends RenderService {
     // encode - measured at 3940ms for grid+full against 4139ms for the full alone on a
     // 61MP body. The grid upgrades in place as the queue reaches each photo, and
     // `tile_built_at` moving is what makes a client re-fetch it.
+    const renderedGrid = this.targets.target(dataPath, photoId, 'grid', false, 'render');
     const renditions: RenditionJob | null =
       source === 'render' && owesRenditions && rendersAhead(row)
         ? {
             ...common,
             targets: [
               this.targets.target(dataPath, photoId, 'full', pending.rendition_hdr === 1, 'render'),
-              this.targets.target(dataPath, photoId, 'grid', false, 'render'),
+              renderedGrid,
             ],
           }
-        : null;
+        : tileOfEdit
+          ? { ...common, targets: [renderedGrid] }
+          : null;
 
     return {
       photoId,

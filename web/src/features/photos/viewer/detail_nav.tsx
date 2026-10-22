@@ -24,7 +24,6 @@ import {
   RotateCcw,
   RotateCw,
   Share2,
-  SlidersHorizontal,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -70,7 +69,7 @@ import type { ViewerStore } from './viewer_store';
 import { renditionLabel } from '../renditions';
 import { DetailRating } from './detail_rating';
 import type { DetailMode } from './detail_mode';
-import { fetchOriginalRefusal } from './detail_labels';
+import { editOption, fetchOriginalThenEdit } from './edit_option';
 import { nameOf, useStep } from './detail_navigation';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
@@ -185,34 +184,13 @@ function actions({
   /** A row composed out of others, which is the only kind that has a merge to go back into. */
   merged: boolean;
 }): Option<Action>[] {
-  const refusal = fetchOriginalRefusal(readOnly, unreachable);
   return [
     // There has to be something here to open, and for a photograph that is its own file: the
     // pictures on this screen may have come from a peer's renditions (§7.9). A composite is
     // editable without one - what it opens is the canvas its recipe composes, prepared where
     // the frames are. Anything else fetches its original first, because what opening without
     // one looks like from inside the editor is a 404 with no way out of it.
-    editable
-      ? {
-          value: 'edit',
-          label: PhotoDetailStrings.edit(),
-          icon: <SlidersHorizontal size={ICON} />,
-          link: <Link to={editHref} replace />,
-        }
-      : {
-          value: 'edit',
-          label: fetchingOriginal
-            ? PhotoDetailStrings.fetchingOriginal()
-            : PhotoDetailStrings.fetchOriginalAndEdit(),
-          icon: fetchingOriginal ? (
-            <RefreshCw size={ICON} {...stylex.props(menuStyles.spin)} />
-          ) : (
-            <HardDriveDownload size={ICON} />
-          ),
-          disabled: fetchingOriginal || refusal != null,
-          keepsMenuOpen: true,
-          ...(refusal == null ? {} : { tooltip: refusal }),
-        },
+    editOption({ editable, fetchingOriginal, readOnly, unreachable, editHref, replace: true }),
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
     // than by a field the viewer would have to carry.
@@ -467,8 +445,8 @@ export const DetailNav = observer(function DetailNav({
             }),
             onSelect: (action) => {
               if (action === 'edit') {
-                void replication.fetchOriginalAndWait(photoId).then((fetched) => {
-                  if (fetched && store.open?.id === photoId) navigate(editHref, { replace: true });
+                fetchOriginalThenEdit(replication, photoId, () => {
+                  if (store.open?.id === photoId) navigate(editHref, { replace: true });
                 });
                 return;
               }

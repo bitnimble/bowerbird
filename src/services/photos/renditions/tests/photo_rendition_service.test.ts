@@ -191,12 +191,13 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
       failed: false,
       ...over,
     })),
+    liftDeferral: jest.fn(),
   });
 
   it('queues nothing for a photograph nobody has edited', () => {
     const { service, processing } = build({ photoProcessing: stamps({ edited_from: null }) });
 
-    service.rebuildIfStale('p1');
+    service.rebuildIfStale('p1', 'grid');
 
     expect(processing.rebuildEdited).not.toHaveBeenCalled();
   });
@@ -204,9 +205,20 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
   it('queues the rebuild an editor that never closed would have asked for', () => {
     const { service, processing } = build({ photoProcessing: stamps({ edited_from: 'edits-2' }) });
 
-    service.rebuildIfStale('p1');
+    service.rebuildIfStale('p1', 'grid');
 
     expect(processing.rebuildEdited).toHaveBeenCalledWith(['p1']);
+  });
+
+  it("owes a pasted photo's viewer copy once the viewer reads it, and not on a grid read", () => {
+    const photoProcessing = stamps({ edited_from: 'edits-2' });
+    const { service } = build({ photoProcessing });
+
+    service.rebuildIfStale('p1', 'grid');
+    expect(photoProcessing.liftDeferral).not.toHaveBeenCalled();
+
+    service.rebuildIfStale('p1', 'full');
+    expect(photoProcessing.liftDeferral).toHaveBeenCalledWith('p1');
   });
 
   /**
@@ -222,7 +234,7 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
       photoProcessing: stamps({ edited_from: 'edits-2', failed: true }),
     });
 
-    service.rebuildIfStale('p1');
+    service.rebuildIfStale('p1', 'full');
 
     expect(processing.rebuildEdited).not.toHaveBeenCalled();
   });

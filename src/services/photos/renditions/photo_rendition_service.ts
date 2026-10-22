@@ -481,9 +481,12 @@ export class PhotoRenditionService {
    * every request would spawn a worker per grid tile forever and erase the recorded
    * failure that the view exists to show.
    */
-  rebuildIfStale(photoId: string): void {
+  rebuildIfStale(photoId: string, rendition: Rendition): void {
     const stamps = this.photoProcessing.renditionStamps(photoId, 'grid');
     if (stamps?.edited_from == null || stamps.failed) return;
+    // A pasted photo's viewer copy waits for this read, which nothing else asks for: the viewer
+    // opens at the stale file and builds nothing (`resolveRenditionToBuild`).
+    if (rendition === 'full') this.photoProcessing.liftDeferral(photoId);
     this.processing.rebuildEdited([photoId]);
   }
   markUsed(photoId: string, variant: RenditionVariant): void {
