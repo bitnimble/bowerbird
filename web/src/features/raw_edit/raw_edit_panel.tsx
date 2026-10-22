@@ -1,8 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
+import { Contrast, Eye, Grid3x3, Palette, Shapes, Sun } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { Fragment } from 'react';
 import { CheckLabel } from '../../ui/check_label';
 import { focusRing } from '../../ui/focus_ring';
+import { ICON } from '../../ui/icon';
 import { Panel } from '../../ui/panel';
 import type { Option } from '../../ui/option';
 import { Slider } from '../../ui/slider';
@@ -35,7 +36,9 @@ import type { RepairStore } from './repair/repair_store';
 import type { PrintStore } from './print/print_store';
 import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
-import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
+import { MobileEditPanels, type EditPanel } from './mobile_edit_panels';
+import { EditTabs, type EditTab } from './edit_tabs';
+import { SoftProofMenuStrings } from './proof/soft_proof_menu.strings';
 import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
 import { ColourWheelEditor } from './colour_wheel/colour_wheel_editor';
 import type { ColourWheelStore } from './colour_wheel/colour_wheel_store';
@@ -373,12 +376,7 @@ const DenoiserChoice = observer(function DenoiserChoice({
   );
 });
 
-function panelGroup(
-  id: string,
-  title: string,
-  content: React.ReactNode,
-  busy = false,
-): MobileEditPanel {
+function panelGroup(id: string, title: string, content: React.ReactNode, busy = false): EditPanel {
   return {
     id,
     title,
@@ -428,7 +426,8 @@ export const RawEditPanel = observer(function RawEditPanel({
     </Panel>
   );
   let scope: string;
-  let panels: MobileEditPanel[];
+  let panels: EditPanel[];
+  let tabs: EditTab[] | null = null;
   if (crop.cropping) {
     scope = 'crop';
     panels = [
@@ -495,88 +494,130 @@ export const RawEditPanel = observer(function RawEditPanel({
       specs.map((spec) => (
         <EditSlider key={spec.key} edit={edit} stage={stage} presenter={presenter} spec={spec} />
       ));
-    panels = [
-      panelGroup(
-        'light',
-        RawEditPanelStrings.groupLight(),
-        <>
-          {sliders(LIGHT)}
-          <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
-        </>,
-      ),
-      panelGroup(
-        'white-balance',
-        RawEditPanelStrings.groupWhiteBalance(),
-        <WhiteBalance edit={edit} stage={stage} presenter={presenter} />,
-      ),
-      panelGroup(
-        'colour',
-        RawEditPanelStrings.groupColour(),
-        <>
-          <ColourProfileChoice edit={edit} presenter={presenter} />
-          {sliders(COLOUR)}
-          <ColourWheelEditor store={colourWheel} stage={stage} presenter={presenter.colourWheel} />
-        </>,
-      ),
-      panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS)),
-      panelGroup(
-        'detail',
-        RawEditPanelStrings.groupDetail(),
-        <>
-          {stage.mosaic && stage.denoises && (
-            <DenoiserChoice edit={edit} presenter={presenter} />
-          )}
-          {sliders(
-            DETAIL.filter(
-              (spec) =>
-                (stage.mosaic && (stage.denoises || spec.key === 'highlightRecovery')) ||
-                spec.key === 'sharpening',
-            ),
-          )}
-          {!stage.mosaic && (
-            <Text variant="muted" as="p">
-              {RawEditPanelStrings.noMosaic()}
-            </Text>
-          )}
-          {stage.mosaic && !stage.denoises && (
-            <Text variant="muted" as="p">
-              {RawEditPanelStrings.noDenoise()}
-            </Text>
-          )}
-        </>,
-        stage.repreparing,
-      ),
-      ...(stage.mosaic
-        ? [
-            panelGroup(
-              'dust',
-              RawEditPanelStrings.groupDustRemoval(),
-              <Dust edit={edit} stage={stage} presenter={presenter} />,
-              stage.repreparing,
-            ),
-          ]
-        : []),
-      panelGroup(
-        'geometry',
-        RawEditPanelStrings.groupGeometry(),
-        <GeometryControls
-          edit={edit}
-          stage={stage}
-          store={crop}
-          presenter={presenter}
-          styles={styles}
-        />,
-      ),
-      ...proofPanels(stage.softProof, print, presenter.print, !stage.editable),
+    const proof = proofPanels(stage.softProof, print, presenter.print, !stage.editable);
+    tabs = [
+      {
+        id: 'light',
+        title: RawEditPanelStrings.groupLight(),
+        icon: <Sun size={ICON} />,
+        panels: [
+          panelGroup(
+            'light',
+            RawEditPanelStrings.groupLight(),
+            <>
+              {sliders(LIGHT)}
+              <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
+            </>,
+          ),
+        ],
+      },
+      {
+        id: 'colour',
+        title: RawEditPanelStrings.groupColour(),
+        icon: <Palette size={ICON} />,
+        panels: [
+          panelGroup(
+            'white-balance',
+            RawEditPanelStrings.groupWhiteBalance(),
+            <WhiteBalance edit={edit} stage={stage} presenter={presenter} />,
+          ),
+          panelGroup(
+            'colour',
+            RawEditPanelStrings.groupColour(),
+            <>
+              <ColourProfileChoice edit={edit} presenter={presenter} />
+              {sliders(COLOUR)}
+              <ColourWheelEditor
+                store={colourWheel}
+                stage={stage}
+                presenter={presenter.colourWheel}
+              />
+            </>,
+          ),
+        ],
+      },
+      {
+        id: 'effects',
+        title: RawEditPanelStrings.groupEffects(),
+        icon: <Contrast size={ICON} />,
+        panels: [panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS))],
+      },
+      {
+        id: 'detail',
+        title: RawEditPanelStrings.groupDetail(),
+        icon: <Grid3x3 size={ICON} />,
+        panels: [
+          panelGroup(
+            'detail',
+            RawEditPanelStrings.groupDetail(),
+            <>
+              {stage.mosaic && stage.denoises && (
+                <DenoiserChoice edit={edit} presenter={presenter} />
+              )}
+              {sliders(
+                DETAIL.filter(
+                  (spec) =>
+                    (stage.mosaic && (stage.denoises || spec.key === 'highlightRecovery')) ||
+                    spec.key === 'sharpening',
+                ),
+              )}
+              {!stage.mosaic && (
+                <Text variant="muted" as="p">
+                  {RawEditPanelStrings.noMosaic()}
+                </Text>
+              )}
+              {stage.mosaic && !stage.denoises && (
+                <Text variant="muted" as="p">
+                  {RawEditPanelStrings.noDenoise()}
+                </Text>
+              )}
+            </>,
+            stage.repreparing,
+          ),
+          ...(stage.mosaic
+            ? [
+                panelGroup(
+                  'dust',
+                  RawEditPanelStrings.groupDustRemoval(),
+                  <Dust edit={edit} stage={stage} presenter={presenter} />,
+                  stage.repreparing,
+                ),
+              ]
+            : []),
+        ],
+      },
+      {
+        id: 'geometry',
+        title: RawEditPanelStrings.groupGeometry(),
+        icon: <Shapes size={ICON} />,
+        panels: [
+          panelGroup(
+            'geometry',
+            RawEditPanelStrings.groupGeometry(),
+            <GeometryControls
+              edit={edit}
+              stage={stage}
+              store={crop}
+              presenter={presenter}
+              styles={styles}
+            />,
+          ),
+        ],
+      },
+      ...(proof.length === 0
+        ? []
+        : // Keyed by the proof, so choosing another one selects its tab again.
+          [
+            {
+              id: `proof-${stage.softProof}`,
+              title: SoftProofMenuStrings.softProof(),
+              icon: <Eye size={ICON} />,
+              panels: proof,
+            },
+          ]),
     ];
+    panels = tabs.flatMap((tab) => tab.panels);
   }
   if (mobile) return <MobileEditPanels panels={panels} scope={scope} notice={notice} />;
-  return (
-    <div {...stylex.props(styles.panel, style)}>
-      {notice}
-      {panels.map(({ id, content }) => (
-        <Fragment key={id}>{content}</Fragment>
-      ))}
-    </div>
-  );
+  return <EditTabs tabs={tabs} panels={panels} notice={notice} style={style} />;
 });

@@ -153,6 +153,7 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
 
   // The camera neutral reaches the client too: what the sliders *do* with it is
   // `raw_edit_presenter.test.ts`, and a header without it leaves the pair absent entirely.
+  await page.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(
     page
       .getByRole('group', { name: 'White balance' })
@@ -551,6 +552,7 @@ test('moving the sharpening prepares the photograph again, and the editor stays 
   await open(page);
   const wasAt = await savedRev(page, photoId);
 
+  await page.getByRole('tab', { name: 'Detail', exact: true }).click();
   await page.getByRole('slider', { name: 'Sharpening' }).focus();
   await page.keyboard.press('PageUp');
   await expect.poll(async () => savedRev(page, photoId), { timeout: 30_000 }).not.toBe(wasAt);
@@ -577,9 +579,6 @@ test('moving the sharpening prepares the photograph again, and the editor stays 
 test('the straighten lands on exactly zero when a drag comes near it', async ({ page }) => {
   await open(page);
 
-  // Through the crop tool, where the panel is this control and one checkbox. In the panel it
-  // shares with every slider the row is below the fold, and a mouse moved to a point outside the
-  // window reaches nothing at all - which reads as a slider that ignored the drag.
   await tool(page, 'Crop').click();
   const straighten = page.getByRole('slider', { name: 'Straighten' });
   // The slider's own root, innermost of the groups around it, is the box its track spans.

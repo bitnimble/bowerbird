@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Fragment } from 'react';
-import { MobileEditPanels, type MobileEditPanel } from '../mobile_edit_panels';
+import { MobileEditPanels, type EditPanel } from '../mobile_edit_panels';
 import type { SoftProof } from '../proof/soft_proof';
 import { PrintPanel, type PrintSection } from './print_panel';
 import { PrintPanelStrings } from './print_panel.strings';
@@ -23,7 +23,7 @@ export function proofPanels(
   store: PrintStore,
   presenter: PrintPresenter,
   disabled: boolean,
-): MobileEditPanel[] {
+): EditPanel[] {
   const sections: PrintSection[] =
     proof === 'srgb'
       ? ['srgb']

@@ -70,6 +70,7 @@ test('opens in the editor, grades on the GPU through the camera match, and offer
   expect(width).toBeGreaterThan(1000);
   expect(height).toBeGreaterThan(1000);
   await expect(editDiagnostics(page)).toHaveAttribute('data-matched', 'true');
+  await page.getByRole('tab', { name: 'Detail', exact: true }).click();
   await expect(page.getByRole('slider', { name: 'Luminance', exact: true })).toBeVisible();
   await expect(page.getByRole('slider', { name: 'Colour', exact: true })).toBeVisible();
 });

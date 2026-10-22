@@ -245,6 +245,7 @@ test('moving the sharpening prepares the picture again at it', async ({ page }) 
   await openComposite(page);
   const wasAt = await savedRev(page, panoramaId);
 
+  await page.getByRole('tab', { name: 'Detail', exact: true }).click();
   await page.getByRole('slider', { name: 'Sharpening' }).focus();
   await page.keyboard.press('PageUp');
 
