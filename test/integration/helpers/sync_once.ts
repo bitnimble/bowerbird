@@ -16,7 +16,6 @@ import { FolderRulesRepository } from '../../../src/services/shoots/folder_rules
 import { ShootsRepository } from '../../../src/services/shoots/shoots_repository';
 import { SyncLocksRepository } from '../../../src/services/sync/coordination/sync_locks_repository';
 import { ScanService } from '../../../src/services/sync/scan/scan_service';
-import { extractMetadata } from '../../../src/services/processing/analysis/metadata';
 import { AppError } from '../../../src/errors';
 import { photoMetadata, photoPaths, photoProcessing, photoScan } from './photo_repositories';
 
@@ -62,7 +61,6 @@ if (role === 'hold') {
     new FolderRulesRepository(db),
     locks,
     { processUnprocessed() {} },
-    extractMetadata,
   );
   for (let i = 0; i < 600 && !existsSync(held); i++) await Bun.sleep(20);
   console.log(`while held: ${await outcome(() => scan.scanLibrary(libraryId))}`);

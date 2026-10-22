@@ -5,7 +5,7 @@ import type { Context } from 'hono';
  *
  * Bun closes an idle request at `IDLE_TIMEOUT_SECONDS` (255 is its ceiling, and
  * `index.ts` sets it there). Some requests here answer only when minutes of work
- * have finished - a library's first scan opens and hashes every file, and a
+ * have finished - a library's first scan stats every file, and a
  * replica's first session takes a whole catalogue - and what the reader sees when
  * the socket is closed underneath one is not a timeout, it is a request that
  * failed. The work carries on server-side, so the UI reports an error for

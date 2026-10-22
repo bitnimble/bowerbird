@@ -48,7 +48,7 @@ test('a denoiser model change owes every photo denoised with it, by its own edit
   photo('untouched', 'plain');
   db.query('UPDATE renditions SET needs_build = 0').run();
 
-  expect(new RenditionsRepository(db).queueDenoisedWith('upscaler')).toBe(3);
+  expect(new RenditionsRepository(db).queueDenoisedWith('upscaler')).toHaveLength(3);
   expect(owing()).toEqual([
     'by-library:full',
     'by-library:grid',

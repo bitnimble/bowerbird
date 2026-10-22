@@ -46,9 +46,16 @@ export class PhotoMetadataRepository {
     this.writeMetadata(photoId, fields, '');
   }
 
-  /** `updateMetadata` for a row the media index catalogued, and a no-op for any other. */
+  /** `updateMetadata` for a row whose header has not been read, and a no-op for any other. */
   fillProvisional(photoId: string, fields: PhotoMetadataFields): void {
     this.writeMetadata(photoId, fields, 'AND metadata_provisional = 1');
+  }
+
+  isProvisional(photoId: string): boolean {
+    const row = this.db
+      .query('SELECT metadata_provisional FROM photos WHERE id = ?')
+      .get(photoId) as { metadata_provisional: number } | null;
+    return row?.metadata_provisional === 1;
   }
 
   private writeMetadata(photoId: string, fields: PhotoMetadataFields, only: string): void {
@@ -57,7 +64,7 @@ export class PhotoMetadataRepository {
         `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
             longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
             camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?, metadata_provisional = 0,
-            stamp_imported = ? WHERE id = ? ${only}`,
+            stamp_imported = COALESCE(?, stamp_imported) WHERE id = ? ${only}`,
       )
       .run(
         fields.width,
@@ -75,9 +82,24 @@ export class PhotoMetadataRepository {
         fields.camera_model,
         fields.lens_model,
         fields.capture_sequence,
-        stamp(this.db),
+        // A header read again over the same file is no new import fact (§5.4: write only if different).
+        this.differs(photoId, fields) ? stamp(this.db) : null,
         photoId,
       );
+  }
+
+  private differs(photoId: string, fields: PhotoMetadataFields): boolean {
+    const held = this.db
+      .query(
+        `SELECT width, height, orientation, date_taken, date_taken_offset, latitude, longitude, iso,
+                shutter_speed, aperture, focal_length, camera_make, camera_model, lens_model,
+                capture_sequence
+           FROM photos WHERE id = ?`,
+      )
+      .get(photoId) as Record<string, unknown> | null;
+    if (held == null) return false;
+    const read: Record<string, unknown> = { ...fields };
+    return Object.entries(held).some(([column, value]) => value !== read[column]);
   }
   // Every id in the catalogue, including soft-deleted rows: a binned photo still
   // has its renditions, which is what makes the Bin browsable (§12.1).

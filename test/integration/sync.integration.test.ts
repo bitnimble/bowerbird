@@ -19,6 +19,7 @@ import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/analysis/metadata';
+import { metadataFieldsOf } from '../../src/services/photos/metadata/photo_metadata_repository';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib00001';
@@ -27,8 +28,8 @@ let root: string;
 let outside: string;
 let db: ReturnType<typeof createDatabase>;
 let scan: ScanService;
+let metadata: ReturnType<typeof photoMetadata>;
 let photoId: string;
-let opens = 0; // counts LibRaw opens so we can assert the stat quick-check skips them
 
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) =>
@@ -48,16 +49,13 @@ beforeAll(() => {
     'taken_desc',
   );
   const processing = photoProcessing(db);
-  // No-op processing trigger: this suite exercises scan/diff detection with real
-  // metadata, not rendition generation (validated separately).
-  const countingExtract = async (p: string) => {
-    opens++;
-    return extractMetadata(p);
-  };
+  metadata = photoMetadata(db, processing);
+  // No-op processing trigger: this suite exercises scan/diff detection, not
+  // rendition generation (validated separately).
   scan = new ScanService(
     photoScan(db, processing),
     photoPaths(db),
-    photoMetadata(db, processing),
+    metadata,
     processing,
     new LibrariesRepository(db),
     new AlbumsRepository(db),
@@ -65,7 +63,6 @@ beforeAll(() => {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    countingExtract,
   );
   copyFileSync(FIXTURE, abs('photo1.arw'));
 });
@@ -75,17 +72,32 @@ afterAll(() => {
   rmSync(outside, { recursive: true, force: true });
 });
 
-test('initial scan indexes the file with real LibRaw metadata', async () => {
+test('initial scan catalogues the file provisionally, and its header fills the row', async () => {
   const status = await scan.scanLibrary(LIB);
   expect(status.photos_added).toBe(1);
-  const p = db.query('SELECT id, width, height, orientation, date_taken FROM photos').get() as {
-    id: string;
-    width: number;
-    height: number;
-    orientation: number;
-    date_taken: string;
-  };
-  photoId = p.id;
+  const read = () =>
+    db
+      .query('SELECT id, width, height, orientation, date_taken, metadata_provisional FROM photos')
+      .get() as {
+      id: string;
+      width: number;
+      height: number;
+      orientation: number;
+      date_taken: string | null;
+      metadata_provisional: number;
+    };
+  photoId = read().id;
+  expect(read()).toMatchObject({
+    width: 0,
+    height: 0,
+    orientation: 1,
+    date_taken: null,
+    metadata_provisional: 1,
+  });
+
+  metadata.fillProvisional(photoId, metadataFieldsOf(await extractMetadata(abs('photo1.arw'))));
+  const p = read();
+  expect(p.metadata_provisional).toBe(0);
   // The manufacturer's recommended crop, which is what `crop_area` states and what the camera's
   // own JPEG is. LibRaw trimmed to its own margins and emitted 4024x6024 - the same picture with
   // a couple of dozen pixels of border.
@@ -97,13 +109,6 @@ test('initial scan indexes the file with real LibRaw metadata', async () => {
   // why the drift is recorded rather than migrated (§10.4).
   expect(p.orientation).toBe(8);
   expect(p.date_taken).toBe('2020-12-06T12:46:35.000Z');
-  expect(opens).toBe(1); // the one new file was opened
-});
-
-test('a re-scan with nothing changed opens zero files (stat quick-check)', async () => {
-  const before = opens;
-  await scan.scanLibrary(LIB);
-  expect(opens).toBe(before); // unchanged file is not re-opened
 });
 
 test('rename is a move: same record, new path, no add/remove', async () => {

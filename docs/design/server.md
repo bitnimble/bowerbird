@@ -151,7 +151,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | ------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`   | `/api/libraries/:libraryId/photos`         | List photos in a library (paginated, filterable)                                                                                                                                                                                                                     |
 | `GET`   | `/api/libraries/:libraryId/photos/missing` | List missing photos in a library                                                                                                                                                                                                                                     |
-| `GET`   | `/api/photos/:id`                          | Get full photo detail                                                                                                                                                                                                                                                |
+| `GET`   | `/api/photos/:id`                          | Get full photo detail, reading a provisional row's header first (§11.2)                                                                                                                                                                                              |
 | `PATCH` | `/api/photos/:id`                          | Update photo metadata (rating, triage, notes)                                                                                                                                                                                                                        |
 | `POST`  | `/api/photos/ids`                          | What a selection stands for, spelled out; only the export asks, having work to do per photograph on the client (§10.5.1)                                                                                                                                             |
 | `POST`  | `/api/photos/delete`                       | Soft-delete photos; answers `{ deleted }`, the undo naming the batch the client stamped rather than every id                                                                                                                                                         |
@@ -374,10 +374,10 @@ class AppError extends Error {
 
 ### 14.3 Logging
 
-Every line goes through `src/logger.ts`, and oxlint's `no-console` keeps it that way (the logger itself, `web/src/features/logs/page_log.ts`, the tests and `scripts/` are the exceptions). A `Logger` is constructed per module with the scope it logs under - `sync`, `processing`, `watcher`, `libraries`, `photos`, `prune`, `daily-sync`, `http`, `server` - and writes one line per event:
+Every line goes through `src/logger.ts`, and oxlint's `no-console` keeps it that way (the logger itself, `web/src/features/logs/page_log.ts`, the tests and `scripts/` are the exceptions). A `Logger` is constructed per module with the scope it logs under - `sync`, `scan`, `processing`, `watcher`, `libraries`, `photos`, `prune`, `daily-sync`, `http`, `server` - and writes one line per event:
 
 ```
-2026-07-29T04:52:43.294Z INFO  [sync] scan done library=963e5039 files=42 rows=42 opened=0 unreadable=0 ms=3
+2026-07-29T04:52:43.294Z INFO  [scan] scan done library=963e5039 files=42 rows=42 binned=0 changed=0 ms=3
 ```
 
 Structured fields expose import counts and support `grep library=<id>`. An `Error`
@@ -641,7 +641,7 @@ These live in `test/integration/*.integration.test.ts` and cover the sync engine
 
 ### 16.4 Known limits, stated rather than discovered
 
-- **A crossing pairs on `file_hash`, which is a digest of the stat and the header** - extension, dimensions, mtime, size, orientation (§9.2) - **not of the pixels.** Two byte-identical copies collide by construction. Not new: live move detection has always had it. What the bin channel adds is that the collision can now cross the bin, and §9.1.1's path test only covers the common false _negative_ (a copy whose mtime moved); the false positive stands.
+- **A crossing pairs on `file_hash`, which is a digest of the stat** - extension, mtime, size (§9.2) - **not of the pixels.** Two byte-identical copies collide by construction. Not new: live move detection has always had it. What the bin channel adds is that the collision can now cross the bin, and §9.1.1's path test only covers the common false _negative_ (a copy whose mtime moved); the false positive stands.
 - **Two instances sharing `/config` must share `/data`**, and only one of them may bin or move photographs. `needs_tile`, `needs_renditions` and `renditions_built_at` are columns in the shared database while the files are per-`DATA_DIR`, so with separate data directories whichever container builds a rendition clears the flags for both and the other serves 404s for ever with nothing able to queue the work. `libraryMutex` is process-global (§9.9) and cannot see the other container; mutations taking the lease and waiting is the fix, and is not implemented.
 - **Two hosts are unsupported**, and were before: SQLite over a network filesystem has no working WAL shared memory.
 - **A read-only library has no bin folder to open in Finder.** A binned photograph is visible in the app and untouched on disk, and nowhere else. Its bin also cannot be renamed from the app, there being none; renaming one by hand in a _flipped_ library works and is followed (§9.1.1).

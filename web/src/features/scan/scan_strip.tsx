@@ -129,16 +129,23 @@ export const ScanStrip = observer(function ScanStrip({
       )}
       {PROCESSING_WORK_KINDS.map((kind) => {
         const count = reported?.processing_work[kind] ?? 0;
-        return (
-          count > 0 && (
+        if (count === 0) return null;
+        if (reported?.processing_running.includes(kind) !== true) {
+          return (
             <Strip key={kind}>
-              <StatusDot state="working" />
-              <StripLabel>
-                {ScanStripStrings[kind](count)}
-                <Pace remaining={count} rate={rates.get(rateKey(library.id, queueKind(kind)))} />
-              </StripLabel>
+              <StatusDot state="queued" />
+              <StripLabel>{ScanStripStrings[`${kind}Queued`](count)}</StripLabel>
             </Strip>
-          )
+          );
+        }
+        return (
+          <Strip key={kind}>
+            <StatusDot state="working" />
+            <StripLabel>
+              {ScanStripStrings[kind](count)}
+              <Pace remaining={count} rate={rates.get(rateKey(library.id, queueKind(kind)))} />
+            </StripLabel>
+          </Strip>
         );
       })}
     </>

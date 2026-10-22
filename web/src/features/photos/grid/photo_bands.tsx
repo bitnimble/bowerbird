@@ -12,12 +12,13 @@ import {
   GRID_GAP,
   TILE_ASPECT,
   TILE_PAD,
+  aspectOf,
   masonryBlockEnd,
   masonryLineStarts,
 } from './grid_layout';
 import { PhotoGridStrings } from './photo_grid.strings';
 import { band, bandColourOf, cells, tile, type Layout } from './photo_grid_styles';
-import { BandMember, PhotoTile, aspectOf, cellStyle, ringStyle } from './photo_tile';
+import { BandMember, PhotoTile, cellStyle, ringStyle } from './photo_tile';
 
 // The tiles for one span of the collection. A row the client is not holding -
 // evicted behind the scroll, or still in flight - keeps its place as an empty

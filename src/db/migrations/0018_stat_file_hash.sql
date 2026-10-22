@@ -1,0 +1,1 @@
+-- `file_hash` is recomputed from the stat columns by `rehashFromStat` in migrate.ts: SQLite has no SHA-1.

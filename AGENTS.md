@@ -93,6 +93,16 @@ cross-build check (DESIGN §23): Windows via cargo-xwin, macOS via osxcross, bot
 `renditions`. Reason about a platform's shipped binary from the workflow, never the Dockerfile.
 Host-only tools (Bun's `--windows-*` flags) are fine in release; the cross stages may skip them.
 
+## Users have catalogues: a schema change carries its migration and backfill
+
+Every schema change ships as a migration in `src/db/migrations/` with its `meta/_journal.json`
+entry, and every stored value it makes stale is rewritten in that same migration: in its SQL
+where SQLite can express it, otherwise as a `DATA_MIGRATIONS` step in `src/db/migrate.ts`, which
+runs inside the migration's transaction. Never leave existing catalogues for a rescan to repair:
+a scan skips any file whose mtime and size match its row. Pin each backfill in
+`src/db/tests/migrate.test.ts`: migrate, delete its `__drizzle_migrations` row, plant old-shape
+data, migrate again.
+
 ## The codecs are pinned too, through vcpkg, and linked statically
 
 `bun run get:codecs` builds libavif, libjxl, libjpeg-turbo, aom, dav1d, sharpyuv, highway, brotli

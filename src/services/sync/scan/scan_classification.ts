@@ -42,19 +42,18 @@ export async function readAndClassify(
     scopePaths: readonly string[] | null;
     token: AbortController;
     startedAt: number;
-    keepLease: () => void;
     batch: ScanBatch;
     evidence: CollectedEvidence;
   },
 ): Promise<ClassifiedScan> {
   const { fileReader, albums, reconciler } = dependencies;
-  const { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence } = input;
+  const { libraryId, library, scopePaths, token, startedAt, batch, evidence } = input;
 
   const { binned, dbPhotos, files, binRoot, binFolder, binFiles, binSide, byIdentity, onDisk } =
     evidence;
-  const { present, changed, failed } = await fileReader.scanFiles(
+  const { present, changed } = await fileReader.scanFiles(
     // Binned files included, so `dbByPath` covers them and the unchanged test
-    // answers correctly: nothing binned is opened or hashed unless it changed.
+    // answers correctly: nothing binned is rehashed or requeued unless it changed.
     [...files, ...binFiles],
     [...dbPhotos, ...binned],
     library.root_path,
@@ -65,23 +64,19 @@ export async function readAndClassify(
       // A batch inserts live photographs, which a file under the bin is not (§9.1.1).
       accepts: (filePath) => binRoot == null || !shootContains(binRoot, filePath),
     },
-    keepLease,
   );
   log.info('scan done', {
     library: libraryId,
     files: present.size,
     rows: dbPhotos.length,
     binned: binned.length,
-    // The files whose stat changed, so the scan opened and hashed them; the
-    // rest cost a stat each. This is what a slow scan's time went on.
-    opened: changed.length + batch.added,
-    unreadable: failed.size,
+    changed: changed.length + batch.added,
     ms: Date.now() - startedAt,
   });
 
-  // Partitioned here rather than after the scan, which would throw away work
-  // already paid for: with `dbByPath` from the live rows alone every binned
-  // file looks new, and 100k binned RAWs would decode 100k RAW headers nightly.
+  // Partitioned here rather than after the scan: with `dbByPath` from the live
+  // rows alone every binned file looks new, and 100k binned RAWs would be
+  // requeued for their tiles and headers nightly.
   const livePresent = new Set([...present].filter((p) => !binSide(p)));
   const binPresent = new Set([...present].filter(binSide));
   const liveChanged = changed.filter((c) => !binSide(c.filePath));
@@ -102,11 +97,11 @@ export async function readAndClassify(
   const inPlacePaths = new Set(inPlace.map((row) => row.file_path));
   const binChanged = changed.filter((c) => binSide(c.filePath) && !inPlacePaths.has(c.filePath));
 
-  const live = buildDiff(dbPhotos, livePresent, liveChanged, failed);
+  const live = buildDiff(dbPhotos, livePresent, liveChanged);
   // On a scoped run both halves are discarded rather than diffed: there was no
   // walk to be an absence from.
   const empty = { removed: [], added: [], modified: [], reappeared: [] };
-  const bin = binRoot == null ? empty : buildDiff(resident, binPresent, binChanged, failed, 'bin');
+  const bin = binRoot == null ? empty : buildDiff(resident, binPresent, binChanged, 'bin');
   // The whole `present` set, since these rows are claimed anywhere in the live
   // tree, and only their own `changed` entries: an addition from the live walk
   // is the live channel's, and handing this one the rest would make every new
@@ -118,7 +113,6 @@ export async function readAndClassify(
           inPlace,
           present,
           changed.filter((c) => inPlacePaths.has(c.filePath)),
-          failed,
           'bin',
         );
   const diff = {

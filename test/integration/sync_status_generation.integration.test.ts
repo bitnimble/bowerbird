@@ -19,7 +19,6 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000cd';
@@ -63,7 +62,6 @@ test("a stale scan generation's processing tail does not stomp the newer status"
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     processing,
-    extractMetadata,
   );
 
   await scan.scanLibrary(LIB); // gen A: indexes photo.arw (added=1), tail blocked on pA

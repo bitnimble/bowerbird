@@ -1,6 +1,6 @@
 // A non-atomic move (link()+unlink()) briefly exposes the same inode under two
 // paths. Scan must collapse the hardlink pair to one path (preferring the DB
-// record) instead of inserting the second as a duplicate photo. Needs LibRaw:
+// record) instead of inserting the second as a duplicate photo.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { copyFileSync, linkSync, mkdtempSync, rmSync } from 'node:fs';
@@ -19,7 +19,6 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000ab';
@@ -55,7 +54,6 @@ beforeAll(() => {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    extractMetadata,
   );
   copyFileSync(FIXTURE, path.join(root, 'photo.arw'));
 });

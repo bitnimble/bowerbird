@@ -29,7 +29,6 @@ import { StacksRepository } from '../../src/services/stacks/stacks_repository';
 import { StacksService } from '../../src/services/stacks/stacks_service';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 import {
   photoListing,
   photoMetadata,
@@ -100,7 +99,6 @@ beforeEach(async () => {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    extractMetadata,
   );
   service = new PhotoMutationService(
     state,

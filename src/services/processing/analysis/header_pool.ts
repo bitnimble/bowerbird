@@ -1,31 +1,27 @@
 import { Logger } from '../../../logger';
-import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
-import type { MetadataExtractor } from './scan_file_reader';
-import type { ScanReply, ScanRequest } from './scan_worker';
+import { extractMetadata, type FileMetadata } from './metadata';
+import type { HeaderReply, HeaderRequest } from './header_worker';
 import { workerEntry } from '../../worker_entry';
 
-const log = new Logger('scan-pool');
+const log = new Logger('header-pool');
 
 // How long a thread waits for another file before it goes. Longer than the gap between two
-// files of one scan by any margin that matters, and short enough that a server which has
-// finished scanning is not holding threads.
+// reads of one selection by any margin that matters, and short enough that a server which has
+// finished reading is not holding threads.
 const IDLE_MS = 2000;
 
 interface Waiting {
   absPath: string;
-  settle: (reply: ScanReply) => void;
+  settle: (reply: HeaderReply) => void;
 }
 
 /**
- * A `MetadataExtractor` that reads headers on worker threads.
+ * `extractMetadata` on worker threads.
  *
- * Same shape as reading them here, so a scan stays written as one file at a time and
- * how many are in the air is the caller's to choose.
- *
- * The threads live only as long as there is work: spawned on the first file of a scan
- * and retired when the last one lands, so a server between syncs holds none.
+ * The threads live only as long as there is work: spawned on the first read and retired
+ * when the last one lands, so an idle server holds none.
  */
-export class ScanPool {
+export class HeaderPool {
   private readonly queue: Waiting[] = [];
   private readonly idle: Worker[] = [];
   private busy = 0;
@@ -33,7 +29,7 @@ export class ScanPool {
 
   constructor(private readonly concurrency: () => number) {}
 
-  read: MetadataExtractor = (absPath) =>
+  read = (absPath: string): Promise<FileMetadata> =>
     new Promise<FileMetadata>((resolve, reject) => {
       this.queue.push({
         absPath,
@@ -61,10 +57,10 @@ export class ScanPool {
       if (worker == null) this.readHere(waiting);
       else this.assign(worker, waiting);
     }
-    // **On a timer, not on the queue running dry.** A scan asks for the next file only once
-    // it has been handed the last one's result, so between every pair of files the queue is
-    // empty and nothing is in flight - and retiring on that spawned a thread per photograph
-    // at a concurrency of one, which is a supported setting.
+    // **On a timer, not on the queue running dry.** A selection's refresh asks for the next
+    // file only once it has been handed the last one's result, so between every pair of files
+    // the queue is empty and nothing is in flight - and retiring on that spawns a thread per
+    // photograph.
     if (this.busy === 0 && this.queue.length === 0) {
       this.retiring = setTimeout(() => {
         this.retiring = null;
@@ -79,13 +75,13 @@ export class ScanPool {
     let settled = false;
     // A worker that posts its reply and then dies would otherwise be counted back in
     // twice, and `busy` never recovers from going negative.
-    const done = (reply: ScanReply): void => {
+    const done = (reply: HeaderReply): void => {
       if (settled) return;
       settled = true;
       this.busy--;
       waiting.settle(reply);
     };
-    worker.onmessage = (event: MessageEvent<ScanReply>) => {
+    worker.onmessage = (event: MessageEvent<HeaderReply>) => {
       done(event.data);
       this.idle.push(worker);
       this.pump();
@@ -94,25 +90,24 @@ export class ScanPool {
     // crash skips the worker's own catch and arrives here instead.
     worker.onerror = (event: ErrorEvent) => {
       worker.terminate();
-      done({ error: `scan worker crashed: ${event.message}` });
+      done({ error: `header worker crashed: ${event.message}` });
       this.pump();
     };
-    const request: ScanRequest = { absPath: waiting.absPath };
+    const request: HeaderRequest = { absPath: waiting.absPath };
     worker.postMessage(request);
   }
 
   private spawn(): Worker | null {
     try {
-      return new Worker(workerEntry('scan_worker', new URL('./scan_worker.ts', import.meta.url)));
+      return new Worker(
+        workerEntry('header_worker', new URL('./header_worker.ts', import.meta.url)),
+      );
     } catch (err) {
-      log.error('could not spawn a scan worker; reading on the main thread instead', { err });
+      log.error('could not spawn a header worker; reading on the main thread instead', { err });
       return null;
     }
   }
 
-  // The rendition queue answers a thread it cannot have by leaving the job pending, and
-  // a scan cannot: a file with no metadata is a file the diff would read as unreadable.
-  // So it is read here instead - slower, and it still finishes.
   private readHere(waiting: Waiting): void {
     this.busy++;
     void extractMetadata(waiting.absPath)

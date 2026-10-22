@@ -51,6 +51,7 @@ const IDLE: LibraryScanStatus = {
   photos_processing: 0,
   photos_processed: 0,
   processing_work: { thumbnails: 0, reading: 0, rendering: 0 },
+  processing_running: [],
   photos_per_second: null,
 };
 
@@ -161,6 +162,7 @@ test('library counts and the render queue keep updating after fetching ends', as
     ...IDLE,
     photos_processing: 3,
     processing_work: { thumbnails: 0, reading: 0, rendering: 3 },
+    processing_running: ['rendering'],
   };
   await openAt('/settings/libraries');
   expect(screen.getByText('rendering 3 photos')).toBeTruthy();

@@ -33,7 +33,6 @@ import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 import {
   photoMetadata,
   photoPaths,
@@ -117,7 +116,6 @@ beforeEach(() => {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    extractMetadata,
   );
   service = new PhotoMutationService(
     state,
@@ -509,36 +507,6 @@ test('a deleted bin folder skips the channel rather than marking every binned ro
   await scan.scanLibrary(LIB);
 
   expect(only()).toMatchObject({ is_deleted: 1, is_missing: 0 });
-});
-
-// The cost is the point, and the row assertions pass either way: a bin of 100k
-// frames that re-hashed nightly would be hours of LibRaw for nothing.
-test('a binned file whose stat has not changed is never opened', async () => {
-  makeLibrary();
-  copyFileSync(FIXTURE, abs('a.arw'));
-  await scan.scanLibrary(LIB);
-  await service.delete([only().id]);
-
-  const opened: string[] = [];
-  const spying = new ScanService(
-    scanRepository,
-    paths,
-    photoMetadata(db, photos),
-    photos,
-    libraries,
-    new AlbumsRepository(db),
-    new ShootsRepository(db),
-    new FolderRulesRepository(db),
-    new SyncLocksRepository(db),
-    { processUnprocessed() {} },
-    async (absPath: string) => {
-      opened.push(absPath);
-      return extractMetadata(absPath);
-    },
-  );
-  await spying.scanLibrary(LIB);
-
-  expect(opened).toEqual([]);
 });
 
 // Both writes are path-guarded, and they disagree about which path: after a

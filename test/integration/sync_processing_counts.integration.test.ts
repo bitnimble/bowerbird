@@ -21,7 +21,6 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000ce';
@@ -71,7 +70,6 @@ test('processing counts track rendition progress, then settle when the tail fini
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed: () => blocked },
-    extractMetadata,
   );
 
   const status = await scan.scanLibrary(LIB);

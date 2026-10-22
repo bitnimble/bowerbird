@@ -12,9 +12,8 @@ import type { PhotoProcessingRepository } from '../../photos/renditions/photo_pr
 import type { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
 import type { FolderRulesRepository } from '../../shoots/folder_rules_repository';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
-import { extractMetadata } from '../../processing/analysis/metadata';
 import { ScanReconciler } from './scan_reconciler';
-import { ScanFileReader, type MetadataExtractor } from './scan_file_reader';
+import { ScanFileReader } from './scan_file_reader';
 import { LEASE_MS, type SyncLocksRepository } from '../coordination/sync_locks_repository';
 import { ScanLeases } from './scan_leases';
 import { ScanRebuilds, type ProcessingTrigger } from './scan_rebuilds';
@@ -42,11 +41,9 @@ export class ScanService implements LibraryLifecycleListener {
     private readonly folderRules: FolderRulesRepository,
     syncLocks: SyncLocksRepository,
     private readonly processing: ProcessingTrigger,
-    private readonly extract: MetadataExtractor = extractMetadata,
     private readonly sidecars: SidecarImporter = { importFor: () => 0 },
     // Read per scan rather than held, so a change on the settings page lands on the
-    // next scan. One, unless something says otherwise: an `extract` that reads on this
-    // thread gains nothing from being asked for several files at once.
+    // next scan.
     private readonly scanConcurrency: () => number = () => 1,
     /**
      * Merged moves this peer has not made on disk yet (docs/replication.md §7.4).
@@ -73,7 +70,7 @@ export class ScanService implements LibraryLifecycleListener {
       shoots,
       folderRules,
     );
-    const fileReader = new ScanFileReader(extract, scanConcurrency, media);
+    const fileReader = new ScanFileReader(scanConcurrency, media);
     this.leases = new ScanLeases(photoScan, syncLocks);
     this.status = new ScanStatus(photoProcessing, libraries, processing);
     this.rebuilds = new ScanRebuilds(
@@ -209,6 +206,10 @@ export class ScanService implements LibraryLifecycleListener {
 
   getScanStatus(libraryId: string): LibraryScanStatus {
     return this.status.getScanStatus(libraryId);
+  }
+
+  isScanning(libraryId: string): boolean {
+    return this.status.current(libraryId)?.status === 'processing';
   }
 
   async scanLibrary(

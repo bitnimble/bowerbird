@@ -56,7 +56,7 @@ const shippedLibrary = (): string => join(NATIVE, libraryName(triple));
  */
 const ENTRIES = [
   join(ROOT, 'src', 'index.ts'),
-  join(ROOT, 'src', 'services', 'sync', 'scan', 'scan_worker.ts'),
+  join(ROOT, 'src', 'services', 'processing', 'analysis', 'header_worker.ts'),
   join(ROOT, 'src', 'services', 'processing', 'workers', 'processing_worker.ts'),
   join(ROOT, 'src', 'services', 'processing', 'workers', 'prepare_worker.ts'),
   join(ROOT, 'src', 'services', 'processing', 'rawshim', 'rawshim_command_worker.ts'),

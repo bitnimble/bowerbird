@@ -82,7 +82,6 @@ function scanService(sidecars?: SidecarImporter): ScanService {
     rules,
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    undefined,
     sidecars,
   );
 }

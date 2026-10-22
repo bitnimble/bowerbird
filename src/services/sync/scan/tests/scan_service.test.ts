@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { AlbumsRepository } from '../../../albums/albums_repository';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
@@ -8,15 +8,14 @@ import type { MediaListing } from '../../../libraries/media_listing';
 import { metadataFieldsOf } from '../../../photos/metadata/photo_metadata_repository';
 import { ScanService } from '../scan_service';
 import { SyncLocksRepository } from '../../coordination/sync_locks_repository';
-import { LIB, makeLibrary, meta, type Peer, put, roots } from './scan_service_test_helpers';
+import { LIB, makeLibrary, type Peer, put, roots } from './scan_service_test_helpers';
 
 /**
  * What `ScanService` itself decides, over a real tree and a real catalogue.
  *
  * The guards in the diff, scope, and relocation modules are pinned there; this file
  * exercises service decisions about bin ownership, shoot removal, and unclaimed files: no
- * RAW decode (`extract` is a stub, as its own doc says it is a seam for), no GPU,
- * no worker, milliseconds a case.
+ * RAW decode, no GPU, no worker, milliseconds a case.
  */
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -294,7 +293,6 @@ describe('a photograph whose row and file disagree on purpose', () => {
       peer.rules,
       new SyncLocksRepository(peer.db),
       { processUnprocessed() {} },
-      meta,
       undefined,
       undefined,
       undefined,
@@ -332,8 +330,7 @@ describe('telling the page a scan moved its photos', () => {
 });
 
 describe('a library the device media index answers for', () => {
-  it('catalogues a finished picture off the index without opening it, and reads the rest', async () => {
-    const opened: string[] = [];
+  it('catalogues a finished picture off the index, and the rest off their stat', async () => {
     const sized = (root: string, name: string): number => statSync(path.join(root, name)).size;
     const media: MediaListing = {
       under: (root) =>
@@ -387,25 +384,24 @@ describe('a library the device media index answers for', () => {
         ),
       queueThumbnail: () => Promise.resolve(null),
     };
-    const peer = makeLibrary({
-      include_non_raw: 1,
-      media,
-      extract: (absPath) => {
-        opened.push(path.basename(absPath));
-        return meta(absPath);
-      },
-    });
+    const peer = makeLibrary({ include_non_raw: 1, media });
     for (const name of ['pixel.jpg', 'stale.jpg', 'raw.dng', 'unsized.jpg']) put(peer, name);
 
     await peer.scan.scanLibrary(LIB);
 
-    expect(opened.sort()).toEqual(['raw.dng', 'stale.jpg', 'unsized.jpg']);
     const rows = peer.db
       .query(
         `SELECT json_extract(recipe, '$.path') AS file_path, width, height, orientation, date_taken,
                 metadata_provisional, media_image_id FROM photos ORDER BY file_path`,
       )
       .all();
+    const unread = {
+      width: 0,
+      height: 0,
+      orientation: 1,
+      date_taken: null,
+      metadata_provisional: 1,
+    };
     expect(rows).toEqual([
       {
         file_path: 'pixel.jpg',
@@ -416,52 +412,91 @@ describe('a library the device media index answers for', () => {
         metadata_provisional: 1,
         media_image_id: 7,
       },
-      {
-        file_path: 'raw.dng',
-        width: 100,
-        height: 100,
-        orientation: 1,
-        date_taken: null,
-        metadata_provisional: 0,
-        media_image_id: null,
-      },
-      {
-        file_path: 'stale.jpg',
-        width: 100,
-        height: 100,
-        orientation: 1,
-        date_taken: null,
-        metadata_provisional: 0,
-        media_image_id: null,
-      },
-      {
-        file_path: 'unsized.jpg',
-        width: 100,
-        height: 100,
-        orientation: 1,
-        date_taken: null,
-        metadata_provisional: 0,
-        media_image_id: 10,
-      },
+      { file_path: 'raw.dng', ...unread, media_image_id: null },
+      { file_path: 'stale.jpg', ...unread, media_image_id: null },
+      { file_path: 'unsized.jpg', ...unread, media_image_id: 10 },
     ]);
+  });
+});
 
-    // The tile pass's header lands on the indexed row alone: a row whose header was read keeps it.
-    const read = metadataFieldsOf(await meta(path.join(peer.root, 'raw.dng')));
-    const ids = peer.db.query('SELECT id FROM photos').all() as { id: string }[];
-    for (const { id } of ids) {
-      peer.photoMetadata.fillProvisional(id, { ...read, camera_model: 'Pixel 9' });
-    }
-    const models = peer.db
-      .query(
-        `SELECT json_extract(recipe, '$.path') AS file_path, camera_model, metadata_provisional
-           FROM photos ORDER BY file_path`,
-      )
-      .all();
-    expect(models).toEqual([
-      { file_path: 'pixel.jpg', camera_model: 'Pixel 9', metadata_provisional: 0 },
-      { file_path: 'raw.dng', camera_model: null, metadata_provisional: 0 },
-      { file_path: 'stale.jpg', camera_model: null, metadata_provisional: 0 },
-      { file_path: 'unsized.jpg', camera_model: null, metadata_provisional: 0 },
-    ]);
+describe('a photo catalogued off its stat', () => {
+  it('takes its header once, from whichever read lands first', async () => {
+    const peer = makeLibrary();
+    put(peer, 'a.arw');
+    await peer.scan.scanLibrary(LIB);
+    const { id } = peer.db.query('SELECT id FROM photos').get() as { id: string };
+    const header = {
+      width: 6000,
+      height: 4000,
+      orientation: 1,
+      dateTaken: '2026-10-01T09:30:00.000Z',
+      dateTakenOffset: '+11:00',
+      latitude: null,
+      longitude: null,
+      iso: 100,
+      shutterSpeed: null,
+      aperture: null,
+      focalLength: null,
+      cameraMake: 'Sony',
+      cameraModel: 'ILCE-7CR',
+      lensModel: null,
+      sequence: null,
+    };
+
+    peer.photoMetadata.fillProvisional(id, metadataFieldsOf(header));
+    peer.photoMetadata.fillProvisional(id, metadataFieldsOf({ ...header, cameraModel: 'later' }));
+
+    expect(
+      peer.db
+        .query(
+          'SELECT width, height, date_taken, camera_model, metadata_provisional FROM photos WHERE id = ?',
+        )
+        .get(id),
+    ).toEqual({
+      width: 6000,
+      height: 4000,
+      date_taken: '2026-10-01T09:30:00.000Z',
+      camera_model: 'ILCE-7CR',
+      metadata_provisional: 0,
+    });
+  });
+
+  it('keeps its read header and stamp when rewritten at the same size', async () => {
+    const peer = makeLibrary();
+    put(peer, 'a.arw');
+    await peer.scan.scanLibrary(LIB);
+    const { id } = peer.db.query('SELECT id FROM photos').get() as { id: string };
+    peer.photoMetadata.fillProvisional(
+      id,
+      metadataFieldsOf({
+        width: 6000,
+        height: 4000,
+        orientation: 1,
+        dateTaken: '2026-10-01T09:30:00.000Z',
+        dateTakenOffset: null,
+        latitude: null,
+        longitude: null,
+        iso: null,
+        shutterSpeed: null,
+        aperture: null,
+        focalLength: null,
+        cameraMake: null,
+        cameraModel: 'ILCE-7CR',
+        lensModel: null,
+        sequence: null,
+      }),
+    );
+    const read = 'SELECT width, height, camera_model, stamp_imported FROM photos WHERE id = ?';
+    const before = peer.db.query(read).get(id);
+    const later = new Date('2027-01-01T00:00:00Z');
+    utimesSync(path.join(peer.root, 'a.arw'), later, later);
+
+    const rescan = await peer.scan.scanLibrary(LIB);
+
+    expect(rescan.photos_modified).toBe(1);
+    expect(peer.db.query(read).get(id)).toEqual(before);
+    expect(peer.db.query('SELECT metadata_provisional FROM photos WHERE id = ?').get(id)).toEqual({
+      metadata_provisional: 1,
+    });
   });
 });

@@ -91,10 +91,10 @@ export const SettingsSchema = z.object({
   disk_space_limit_gb: z.number().int().min(1).default(200),
 
   processing_concurrency: z.number().int().min(1).default(4),
-  // How many files a scan reads the headers of at once. Its own number rather than
-  // `processing_concurrency`'s, because the two are limited by different things: a
-  // rendition worker holds a whole RAW and is bound by memory and the GPU, while a
-  // scan worker reads a few hundred KB of tags and is bound by how many reads the
+  // How many files a scan stats, and how many headers are read outside the tile pass, at
+  // once. Its own number rather than `processing_concurrency`'s, because the two are
+  // limited by different things: a rendition worker holds a whole RAW and is bound by
+  // memory and the GPU, while a stat or a header read is bound by how many requests the
   // disk will answer at once - which for a library on a network mount is many.
   scan_concurrency: z.number().int().min(1).default(4),
   // Give a render the camera's own colour treatment, by fitting the transform that

@@ -196,8 +196,9 @@ export const ProcessingWorkSchema = z.object({
   rendering: z.number().int(),
 });
 export type ProcessingWork = z.infer<typeof ProcessingWorkSchema>;
-export type ProcessingWorkKind = keyof ProcessingWork;
-export const PROCESSING_WORK_KINDS = ProcessingWorkSchema.keyof().options;
+const ProcessingWorkKindSchema = ProcessingWorkSchema.keyof();
+export type ProcessingWorkKind = z.infer<typeof ProcessingWorkKindSchema>;
+export const PROCESSING_WORK_KINDS = ProcessingWorkKindSchema.options;
 export const NO_PROCESSING_WORK: ProcessingWork = { thumbnails: 0, reading: 0, rendering: 0 };
 
 export const LibraryScanStatusSchema = z.object({
@@ -215,6 +216,8 @@ export const LibraryScanStatusSchema = z.object({
   photos_processing: z.number().int(),
   photos_processed: z.number().int(),
   processing_work: ProcessingWorkSchema,
+  // Which of `processing_work` a batch is doing now; the rest is queued behind it.
+  processing_running: z.array(ProcessingWorkKindSchema),
   // Photos per second over the last batch of rows a first scan wrote down, which is
   // the only stretch of a run whose throughput the server itself times. Null
   // everywhere else, where the client's own counting is what there is.

@@ -382,7 +382,7 @@ describe('ProcessingService.processUnprocessed', () => {
     }
   });
 
-  it('reads the header with the tile of a row the media index catalogued, and hands it on', async () => {
+  it('reads the header with the tile of a provisional row, and hands it on', async () => {
     const repo = {
       listPendingProcessing: jest.fn(() => [
         { ...pending('indexed'), metadata_provisional: 1 },
@@ -929,7 +929,7 @@ describe('ProcessingService.processUnprocessed', () => {
     ]);
     let editedMidRender = true;
     const queueEditedSince = jest.fn(() => {
-      const owed = editedMidRender ? 1 : 0;
+      const owed = editedMidRender ? ['a'] : [];
       editedMidRender = false;
       return owed;
     });

@@ -32,6 +32,7 @@ export function idleScanStatus(libraryId: string, status: Status = 'idle'): Libr
     photos_processing: 0,
     photos_processed: 0,
     processing_work: NO_PROCESSING_WORK,
+    processing_running: [],
     photos_per_second: null,
   };
 }
@@ -46,7 +47,7 @@ export class ScanStatus {
   constructor(
     private readonly photoProcessing: PhotoProcessingRepository,
     private readonly libraries: LibrariesRepository,
-    private readonly processing?: Pick<ProcessingTrigger, 'getProcessingCount'>,
+    private readonly processing?: Pick<ProcessingTrigger, 'getProcessingCount' | 'runningWork'>,
   ) {}
 
   set(libraryId: string, status: LibraryScanStatus): void {
@@ -133,12 +134,12 @@ export class ScanStatus {
     if (!this.libraries.has(libraryId))
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     const status = this.countedStatus(libraryId);
+    // Mid-scan, the rows already landed are queued for the batch that starts when it ends.
+    const owed = status.photos_processing > 0 || status.status === 'processing';
     return {
       ...status,
-      processing_work:
-        status.photos_processing > 0
-          ? this.photoProcessing.pendingWork(libraryId)
-          : NO_PROCESSING_WORK,
+      processing_work: owed ? this.photoProcessing.pendingWork(libraryId) : NO_PROCESSING_WORK,
+      processing_running: this.processing?.runningWork?.(libraryId) ?? [],
     };
   }
 

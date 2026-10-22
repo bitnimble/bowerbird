@@ -4,13 +4,12 @@ import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { readCaptureOffset } from './exif_zone';
 import { readRawHeader, type RawHeader } from '../rawshim/raw_decoder';
 
-// Stage 1 reads every supported file with the native header parser (no pixel
-// decode). See DESIGN §11.
+// The native header parser (no pixel decode). See DESIGN §11.
 
 export interface FileMetadata {
-  width: number; // display/upright width (post-flip)
-  height: number; // display/upright height (post-flip)
-  orientation: number; // EXIF orientation, 1 to 8; informational + hash input only
+  width: number; // display/upright width (post-flip); 0 until a provisional row's header is read
+  height: number; // display/upright height (post-flip); 0 until a provisional row's header is read
+  orientation: number; // EXIF orientation, 1 to 8; informational only
   dateTaken: string | null; // the camera's wall clock, as a Z string (§11.1)
   // What zone that wall clock was written in, "+11:00", or null from a body that
   // recorded none. Read straight from EXIF: the header parser does not carry it.
@@ -27,7 +26,7 @@ export interface FileMetadata {
   sequence: CaptureSequence | null;
   mtime: string; // filesystem mtime, ISO datetime
   fileSize: number; // bytes
-  /** Read off the device's media index rather than the file, so the tile pass reads the header. */
+  /** Taken from the stat and the device's media index rather than the file, so the tile pass reads the header. */
   provisional?: boolean;
   /** Set only where the index entry matches the file's size. */
   mediaImageId?: number;

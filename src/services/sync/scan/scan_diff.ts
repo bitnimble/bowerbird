@@ -92,15 +92,14 @@ export interface MoveResult {
 // the live channel, the bin alone for the bin one - and `dbPhotos` narrows with
 // it. Pairing those two inputs is the invariant §9.1.1 has to keep: a path claimed
 // by a binned row is not the live channel's business. `changed` is only the files that are new or whose
-// stat changed, i.e. the ones actually opened + re-hashed; unchanged files are
-// omitted from `changed` and only appear in `presentPaths`, so they are never
-// opened. Already-missing records still on disk reappear in `removed` so a
-// delayed move can match them; they are not re-counted (§9.4 step 5).
+// stat changed, i.e. the ones re-hashed; unchanged files are omitted from
+// `changed` and only appear in `presentPaths`. Already-missing records still on
+// disk reappear in `removed` so a delayed move can match them; they are not
+// re-counted (§9.4 step 5).
 export function buildDiff(
   dbPhotos: readonly DbPhoto[],
   presentPaths: ReadonlySet<string>,
   changed: readonly DiskFile[],
-  failedPaths: ReadonlySet<string> = new Set(),
   channel: Channel = 'live',
 ): LibraryDiff {
   const changedByPath = new Map(changed.map((f) => [f.filePath, f]));
@@ -121,9 +120,6 @@ export function buildDiff(
       });
       continue;
     }
-    // Present but unreadable (stat ok, extract threw): we never confirmed its
-    // content, so leave the record untouched -- do NOT treat it as a reappearance.
-    if (failedPaths.has(db.file_path)) continue;
 
     const change = changedByPath.get(db.file_path);
     if (change && change.hash !== db.file_hash) {

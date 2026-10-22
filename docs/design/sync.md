@@ -122,12 +122,12 @@ For each library:
 
 3. Filter to the extensions this library takes (§7): the RAWs always, and the finished pictures where `include_non_raw` is set. This yields the set of **present** file paths.
 4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
-5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore opens no RAW at all. (Like rsync's default quick-check, this misses a content change that preserves _both_ mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
+5. **Stat quick-check.** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash. Files that are new, or whose mtime/size differ, form the **changed** subset: each gets its **file hash** (§9.2) off the same stat and **provisional** metadata (§11.2). **The scan opens no file at all**, so on a library over a network share it costs a round trip per file rather than several. (Like rsync's default quick-check, this misses a content change that preserves _both_ mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
 6. Build the diff from the present set and the changed set:
 
 ```
 present  : Set<path>                        (every supported file on disk)
-changed  : Map<path, { hash, metadata }>    (only new / mtime-or-size-changed files, i.e. opened)
+changed  : Map<path, { hash, metadata }>    (only new / mtime-or-size-changed files)
 db_inputs: List<{ path, PhotoRecord }>      (one entry per INPUT of every non-deleted record, §4.2.1)
 
 For each entry in db_inputs:
@@ -139,7 +139,7 @@ For each entry in changed:
   if path is an input of no record → mark as ADDED
 ```
 
-Unchanged files (present but not in `changed`) produce no diff entry, so they are never opened and never re-hashed.
+Unchanged files (present but not in `changed`) produce no diff entry, so they are never re-hashed or requeued.
 
 The catalogue contributes **one entry per input**: a file shared by two records is diffed
 against each, marking both. Most records have one input.
@@ -152,7 +152,7 @@ The scan runs **twice**, over two channels: the walk above against the non-delet
 
 > **A path claimed by a binned row is not the live channel's business.**
 
-Binning **in place** (§12.1) leaves flagged files in the live tree. Every run therefore reads binned rows and excludes their paths from the live channel _before_ diffing; otherwise 100k binned RAWs look new and decode 100k headers nightly.
+Binning **in place** (§12.1) leaves flagged files in the live tree. Every run therefore reads binned rows and excludes their paths from the live channel _before_ diffing; otherwise 100k binned RAWs look new and are imported a second time nightly.
 
 The bin channel sets `is_missing` when a binned RAW is deleted by hand, instead of leaving an apparently available original that 404s.
 
@@ -187,24 +187,20 @@ interface LibraryDiff {
 
 ### 9.2 File Hash
 
-The file hash is a SHA-1 digest of the following metadata properties, concatenated in a deterministic order:
+The file hash is a SHA-1 digest of what one `stat` says about the file, concatenated in a deterministic order:
 
 1. File extension (lowercase, e.g. `.arw`, `.cr3`)
-2. Image width (pixels)
-3. Image height (pixels)
-4. Date modified (filesystem mtime, ISO string)
-5. Color space (string identifier; the constant sRGB output space, see §11.1)
-6. File size in bytes
-7. Orientation/rotation (EXIF orientation 1 to 8, or `0` if not present; rows written before the decoder changed hold LibRaw's `flip` code instead, §11.1)
+2. Date modified (filesystem mtime, ISO string)
+3. File size in bytes
 
-**mtime detects in-place edits** preserving dimensions/size/orientation as MODIFIED. Imports/restores resetting mtime also re-process unchanged content. Backup _reads_ (this server as rsync source) preserve mtime and do not trigger this.
+**mtime detects in-place edits** preserving size as MODIFIED. Imports/restores resetting mtime also re-process unchanged content. Backup _reads_ (this server as rsync source) preserve mtime and do not trigger this.
 
-**Critical rule:** Under no circumstances should the hash computation read past the file header/metadata. Every supported format keeps its metadata at the front of the file - an ARW is a TIFF, a CR3 puts its EXIF in a `CMT2` box near the head of `moov` - so reading resolution and orientation is safe. The implementation must not decode pixel data.
+**The hash never opens the file.** It is a move detector (§9.3), not a content digest: a file renamed or moved keeps its mtime and size, and two different photographs agreeing on extension, size and mtime to the millisecond do not happen in practice.
 
 The hash input string is formatted as:
 
 ```
-<extension>|<width>|<height>|<mtime>|<filesize>|<orientation>
+<extension>|<mtime>|<filesize>
 ```
 
 Then: `sha1(inputString)` → hex string.
@@ -249,18 +245,16 @@ interface MoveEntry {
 Process in this order within a database transaction:
 
 1. **Moves:** Update the recipe's path for each moved photo (§4.2.1). Clear `is_missing` if it was set. **Reconcile shoot membership from the destination path:** if `newFilePath` falls under a known shoot's `folder_path`, set the photo's `shoot_id` to the **most-specific (longest-matching) `folder_path`** shoot (so a file under `NYC/Day1` maps to `Day1`, not the ancestor `NYC`); if it moved out to the library root (or a non-shoot folder), clear `shoot_id`. This keeps DB shoot membership consistent with files the user relocated on disk directly (rather than via the shoots API).
-2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, and both pending flags for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
+2. **Modifications:** Update `file_hash`, `date_updated`, and both pending flags for each modified photo, and reset its header columns to provisional (§11.2), since the file they describe has changed. Clear `is_missing` if it was set.
 3. **Additions:** Insert new photo records:
    - `id` = a new entity ID, drawn through `withNewId` (§3)
    - `library_id` = the library being synced
    - `recipe` = a `file` recipe naming the relative path from the disk scan (§4.2.1)
    - `file_hash` = computed hash
-   - `width`, `height`, `orientation` = from metadata
+   - header columns (`width`, `height`, `orientation`, `date_taken`, GPS, exposure, body and lens) = provisional (§11.2)
    - `shoot_id` = the most-specific (longest-matching `folder_path`) shoot containing this file, else NULL
    - `date_added` = current server datetime, normalized to UTC (§4)
-   - `date_taken` = UTC-normalized EXIF capture time (§11.1) if available, else NULL
    - `date_updated` = filesystem mtime
-   - `latitude`, `longitude` = from EXIF GPS data if available
    - `needs_tile = 1`, `needs_renditions = 1`
    - `is_missing = 0`
    - `is_deleted = 0`
@@ -269,7 +263,7 @@ Process in this order within a database transaction:
 4. **Reappearances:** Clear `is_missing = 0` for each reappeared photo. No other change (content and path are unchanged).
 5. **Removals:** Set `is_missing = 1` for each removed photo. Do not delete files or records. Count only photos that transition `is_missing` from `0` to `1` toward `photos_removed`; a record already at `is_missing = 1` reappears in the removed list every scan (so delayed move-matching in §9.3 can still pair it), but it is not a new removal and must not be re-counted. This keeps `photos_removed` a per-sync delta consistent with `photos_added`/`photos_moved`/`photos_modified`.
 
-**A run whose `stat` pass finds every row's file commits its new files in batches of 1000 files or two seconds, whichever comes first.** The time bound keeps a library on a slow drive visible while a thousand header reads are still in flight. A single closing transaction would discard three hours of reads if killed at hour three, and an import that was stopped or killed once would then restart as one such transaction, losing everything at every later kill. Partial scans normally risk false removals from an incomplete `present` set (§9.10), but with no row missing from the walk no removal can be derived, and so no move either: a new file is only an addition. That covers a first sync, all-new scoped paths, and any import resumed after a stop. Files under the bin and changed files with rows still wait for the closing diff. Each batch is independently valid; restart resumes from committed rows whose mtime and size let §9.1 skip reopening them.
+**A run whose `stat` pass finds every row's file commits its new files in batches of 1000**, yielding to the server between batches, so a library of fifty thousand arrives in the grid a commit at a time rather than holding every request until the last. Partial scans normally risk false removals from an incomplete `present` set (§9.10), but with no row missing from the walk no removal can be derived, and so no move either: a new file is only an addition. That covers a first sync, all-new scoped paths, and any import resumed after a stop. Files under the bin and changed files with rows still wait for the closing diff. Each batch is independently valid; restart resumes from committed rows whose mtime and size let §9.1 skip them.
 
 Only empty-row runs qualify. In populated libraries, additions may be move targets and stay in the closing transaction. Empty-row runs can resolve shoot membership early because shoot relocation (§9.4.1) requires existing photos.
 
@@ -322,17 +316,21 @@ interface SyncStatus {
   photosModified: number;
   photosProcessing: number;
   photosProcessed: number;
+  processingWork: { thumbnails: number; reading: number; rendering: number };
+  processingRunning: Array<'thumbnails' | 'reading' | 'rendering'>;
   photosPerSecond: number | null;
 }
 ```
 
 Updated during sync; exposed through the polling API.
 
-**Scan is `processing`; rendition backlog is `rendition`.** Scan includes opening, hashing and metadata; grid tiles are the rendition backlog's (§10.4).
+**Scan is `processing`; rendition backlog is `rendition`.** Scan stats files and hashes the stat; grid tiles and headers are the rendition backlog's (§10.4, §11.2).
 
-**Both phases report progress.** Renditions report `photosProcessed` against queued work; scan reports `photosScanned` against `photosToScan`, updated by the opening/hashing loop. The earlier `stat` pass opens nothing and collapses hardlink pairs before `photosToScan` is known: progress is 0/0 during walk/stats, then counts files. Both counters finish at files found, giving one bar per phase.
+**Both phases report progress.** Renditions report `photosProcessed` against queued work; scan reports `photosScanned` against `photosToScan`, counted by the stat pass, which is the whole cost of a scan (§9.1). Both are 0 during the walk. Both counters finish at files found, giving one bar per phase.
 
-**The rate a first scan reports is what its last committed batch managed**, `photosPerSecond`, measured across the batch (§9.4) rather than sampled between two of a client's polls: the workers land in bursts, and a figure taken between two polls a second apart swings by a factor of several, which is a figure nobody can read an ETA off. The clock starts at the first progress report rather than at the top of the run, so the `stat` pass - which opens nothing - does not drag the first batch's figure down. It is null in every other phase, which have no batches to time; the client counts its own polls there, over a five-second window.
+**`processingWork` counts what the library owes by kind; `processingRunning` names the kinds a batch is building right now.** The rest is queued: behind the pass that is running, behind a scan of the library (which holds its batches, DESIGN §10.3), or, mid-scan, behind the batch the scan's end starts.
+
+**The rate a first scan reports is what its last committed batch managed**, `photosPerSecond`, measured across the batch (§9.4) rather than sampled between two of a client's polls, which swing too far to read an ETA off. The first batch is timed from the end of the stat pass, which commits nothing. It is null in every other phase, which have no batches to time; the client counts its own polls there, over a five-second window.
 
 No generation guard on those writes, unlike the ones after the scan: the sync lease is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
@@ -359,7 +357,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
 
 `scanLibrary` runs in six ways:
 
-0. **On creation**, from `LibrariesService`'s lifecycle listener. A full scan, not awaited by the create: the request answers as soon as the row exists, and a first import is minutes of opening and hashing that the status endpoint reports on like any other run (§9.6). A library nobody has imported holds nothing, so making that import a second, separate button leaves the answer to "where are my photographs" sitting behind one - and the settings a create asks for (subfolders, the bin name) are exactly the ones that decide what this scan brings in, which is why they are on the dialog rather than in Settings afterwards (§18.3).
+0. **On creation**, from `LibrariesService`'s lifecycle listener. A full scan, not awaited by the create: the request answers as soon as the row exists, and a first import is minutes of statting and inserting that the status endpoint reports on like any other run (§9.6). A library nobody has imported holds nothing, so making that import a second, separate button leaves the answer to "where are my photographs" sitting behind one - and the settings a create asks for (subfolders, the bin name) are exactly the ones that decide what this scan brings in, which is why they are on the dialog rather than in Settings afterwards (§18.3).
 1. **Manual**, `POST /api/libraries/:id/sync`. A full scan (whole tree).
 2. **Scoped (watcher)**, the `LibraryWatcher` accumulates the changed relative paths in each debounce window and calls `scanLibrary(id, { paths })`. A scoped sync **does not walk the tree, and does not read a directory either**: it stats the changed paths themselves and reconciles them against the DB rows at those paths, plus every already-missing row (the move-source pool). Its cost scales with the number of changed paths, not with library size and not with how many photographs sit beside them.
    - File-scoped, because the watcher names both halves of a move (§9.8). A `readdir` of each changed path's parent would find a target that was never reported - insurance against an event stream already chosen for reporting both halves, paid for on every scoped run by reading a directory that may hold thousands of frames. A move whose halves land in different windows still pairs, through the missing pool rather than through the directory.
@@ -407,7 +405,7 @@ Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutat
 
 What a stop means depends on which phase it lands in, and neither leaves anything half-applied:
 
-- **During the scan**, the loop that opens and hashes checks between files, so a stop lands within one file's decode rather than at the end of the walk. On a populated library the diff is a single transaction _after_ the scan, so abandoning it applies no removal, modification or move: `scanLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
+- **During the scan**, the stat pass and the loop that hashes and inserts both check between files, so a stop lands within one file rather than at the end of the walk. On a populated library the diff is a single transaction _after_ the scan, so abandoning it applies no removal, modification or move: `scanLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
   - **New files are kept when no row is missing.** A half-built `present` set is normally unusable, and dangerously so: absence from it is how §9.1 detects a removal, so applying a truncated scan would mark every file it had not got to as missing. That reasoning needs a row to be absent from the walk. When the `stat` pass found every row's file - a library's first sync, a scoped sync whose paths are all new, or an import resumed after a stop - no removal can be derived, and therefore no move either, since a move pairs a removal with an addition. A new file it read then says only "this file is new", which is as true of a scan that saw half the library as of one that saw all of it, so it is kept and the files it never reached are added by the next sync. Otherwise a stopped 50k-frame import would throw away every file it had already read and hashed, and on restart do so again.
   - That case is exactly the one §9.4 commits in batches, so most of what a stop keeps is already on disk before the stop arrives; all the stop itself adds is the tail of the batch in hand. A kill is the same event without the courtesy of asking, and it keeps the same work for the same reason.
   - The stop is still a stop: the processing that follows a partial commit is handed the same aborted generation, so it queues nothing and the photos land owing their renditions. `last_synced_at` is stamped, which says when a sync last ran rather than that the catalogue is complete.
@@ -417,23 +415,23 @@ What a stop means depends on which phase it lands in, and neither leaves anythin
 
 Deleting a library aborts its run for the same reason: its rows are cascade-gone, so there is nothing left to finish.
 
-**Why the full scan stats every file.** Skipping the stat for files in directories whose mtime is unchanged was tried and removed: the stat is the _only_ cost it saves (the mtime+size quick-check already skips the expensive decode for unchanged files), and skipping it also skips the `(dev, ino)` collapse that `moveIntoDir`'s non-atomic `link()`-then-`unlink()` window depends on. A cross-directory move bumps only the destination directory's mtime, so the source stays "unchanged" and is pruned; the destination is then inserted as a new photo while the source row survives, leaving a duplicate. Making it safe means restoring the stat, which leaves no saving.
+**Why the full scan stats every file.** Skipping the stat for files in directories whose mtime is unchanged was tried and removed: the stat is the _only_ cost it saves (the scan opens no file, §9.1), and skipping it also skips the `(dev, ino)` collapse that `moveIntoDir`'s non-atomic `link()`-then-`unlink()` window depends on. A cross-directory move bumps only the destination directory's mtime, so the source stays "unchanged" and is pruned; the destination is then inserted as a new photo while the source row survives, leaving a duplicate. Making it safe means restoring the stat, which leaves no saving.
 
 ---
 
 ## 11. Metadata Extraction (`metadata.ts`)
 
-Used during sync to populate photo records and compute file hashes.
+Fills each photo's header columns once the scan has catalogued it off its stat (§11.2).
 
 ### 11.1 Implementation
 
 Metadata is read by the same reader as the decode (§10), which is rawler for every format. That it comes from a RAW decoder at all rather than from a general image library is worth keeping the reason for: libvips, while it was here, had no RAW loader at all, and coaxed into opening an ARW as a generic TIFF it reported the embedded preview's dimensions rather than the full-res sensor values.
 
-For every supported format, metadata comes from **a header parse in `native/rawshim/src/header.rs`**: `get_decoder` then `raw_metadata` for the EXIF block (orientation, capture time, GPS, exposure, body and lens), plus one _dummy_ `raw_image` for the shape, which reads the frame's dimensions and `crop_area` without decompressing anything. No pixel data is decoded, and this is the fast path used per file during scan. The dimensions come from that dummy decode rather than from EXIF deliberately: EXIF describes the picture the camera would have made, and the recommended crop and the orientation both move it, where the catalogue's row has to agree with the rendition it will show. The EXIF capture time is naive (the tag carries no zone), and `header.rs` parses `DateTimeOriginal` itself and treats it as UTC, so the seconds it hands back re-encode as a `Z` UTC ISO string (§4) that stores the camera's wall clock verbatim whatever the server's zone is. A decoder exposing the time only as a `time_t` derived with `mktime` forces a round trip through the process's own zone, and reading that back as an instant slides every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks IFD0 into the Exif IFD and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. An ARW _is_ a TIFF, so that walk starts at byte zero. A CR3 is an ISO base-media file, so the box tree is walked first - `moov` into the `uuid` box, to `CMT2`, which holds the Exif IFD as a complete little TIFF of its own - and the same IFD reader takes it from there. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR and a Canon EOS R8 both write `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values (" ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
+For every supported format, metadata comes from **a header parse in `native/rawshim/src/header.rs`**: `get_decoder` then `raw_metadata` for the EXIF block (orientation, capture time, GPS, exposure, body and lens), plus one _dummy_ `raw_image` for the shape, which reads the frame's dimensions and `crop_area` without decompressing anything. No pixel data is decoded. The dimensions come from that dummy decode rather than from EXIF deliberately: EXIF describes the picture the camera would have made, and the recommended crop and the orientation both move it, where the catalogue's row has to agree with the rendition it will show. The EXIF capture time is naive (the tag carries no zone), and `header.rs` parses `DateTimeOriginal` itself and treats it as UTC, so the seconds it hands back re-encode as a `Z` UTC ISO string (§4) that stores the camera's wall clock verbatim whatever the server's zone is. A decoder exposing the time only as a `time_t` derived with `mktime` forces a round trip through the process's own zone, and reading that back as an instant slides every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks IFD0 into the Exif IFD and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. An ARW _is_ a TIFF, so that walk starts at byte zero. A CR3 is an ISO base-media file, so the box tree is walked first - `moov` into the `uuid` box, to `CMT2`, which holds the Exif IFD as a complete little TIFF of its own - and the same IFD reader takes it from there. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR and a Canon EOS R8 both write `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values (" ", `+1100`) are read as absent rather than as UTC. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from.
 
 **A parsed GPS block is not the same as a fix.** Canon sets `gpsparsed` on every frame and leaves the degree triples at zero when the body had no fix, so trusting the flag alone put a whole catalogue at 0,0 - which is not a null, it is a point in the Gulf of Guinea, and it maps. An all-zero latitude _and_ longitude therefore reads as "not recorded".
 
-`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation is applied. What the dummy decode reports is still in **sensor orientation**, so the reader swaps the two axes itself for EXIF orientations 5 to 8. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
+`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation is applied. What the dummy decode reports is still in **sensor orientation**, so the reader swaps the two axes itself for EXIF orientations 5 to 8. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately only as informational metadata; **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
 
 **`orientation` is the EXIF tag, 1 to 8, and it did not always mean that.** LibRaw handed over dcraw's `flip` encoding - 0/3/5/6 - and rows written before the decoder changed still hold it; nothing rewrites them, because the column is informational and a re-scan of a changed file overwrites it anyway. The name has stayed put through both, so read it as "whatever the reader of the day recorded" rather than as one encoding.
 
@@ -454,6 +452,7 @@ interface FileMetadata {
   lensModel: string | null;
   mtime: string; // filesystem mtime, ISO datetime; hash input (§9.2) and date_updated source (§9.4)
   fileSize: number; // bytes; hash input (§9.2)
+  provisional?: boolean; // the header is still to be read (§11.2)
 }
 
 async function extractMetadata(filePath: string): Promise<FileMetadata> {
@@ -469,26 +468,13 @@ Body and lens come from the metadata block: `make`/`model`, and `lens.lens_name`
 
 The FFI header is our `#[repr(C)]` struct, size-checked on first call. Layout changes fail rather than producing plausible garbage from six offset tables over five C structs. `raw_header.integration.test.ts` pins fixture values.
 
-### 11.2 Hash Computation (`hash.ts`)
+### 11.2 Provisional rows
 
-```typescript
-import { createHash } from 'crypto';
+**The scan never reads a header.** A new or changed file's row is written off its stat alone (§9.1): `width` and `height` 0, `orientation` 1, every EXIF column NULL, and `metadata_provisional = 1`. On Android a finished picture the media index describes takes its size, orientation and capture time from the index instead (§10.3), still provisional. On a library over a network share a header read is a round trip per page touched, so this is what makes an import's rows land at the stat rate.
 
-function computeFileHash(filePath: string, metadata: FileMetadata): string {
-  const ext = path.extname(filePath).toLowerCase();
+**The header is read where the file is opened anyway.** The tile job asks for it (`Job::header`) whenever its row is provisional and reports it off the same open as the embedded preview, and `fillProvisional` writes it over provisional rows only, clearing the flag. Two reads can race - the tile job and the one below - and whichever lands first is the one kept.
 
-  const input = [
-    ext,
-    metadata.width,
-    metadata.height,
-    metadata.mtime,
-    metadata.fileSize,
-    metadata.orientation,
-  ].join('|');
-
-  return createHash('sha1').update(input).digest('hex');
-}
-```
+**The detail read does not wait for the tile pass.** `GET /api/photos/:id` reads a provisional row's header on a `HeaderPool` worker before answering, so the viewer, the editor and print never see a 0 by 0 photograph. The grid lays a 0 by 0 tile out at its own 3:2 cell, and a row with no `date_taken` sorts after the dated ones, so an import's photos settle into place as the tile pass reaches them. Binned and hidden rows get no tiles, so theirs is read when they come back or when they are opened.
 
 ---
 

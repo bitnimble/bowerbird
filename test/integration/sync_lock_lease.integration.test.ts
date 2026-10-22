@@ -20,7 +20,6 @@ import {
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const RUNNER = path.join(import.meta.dir, 'helpers/sync_once.ts');
@@ -101,7 +100,6 @@ test('scanAll re-attempts a library it found locked', async () => {
     new FolderRulesRepository(db),
     locks,
     { processUnprocessed() {} },
-    extractMetadata,
   );
 
   await scan.scanAll('daily');
@@ -133,7 +131,6 @@ test('a scan whose lease was taken over rolls its apply back', async () => {
       }
     })(db),
     { processUnprocessed() {} },
-    extractMetadata,
   );
 
   await expect(scan.scanLibrary(LIB)).rejects.toThrow(/lease/);

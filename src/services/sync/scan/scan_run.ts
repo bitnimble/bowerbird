@@ -203,7 +203,7 @@ export class ScanRunner {
     );
     const classified = await readAndClassify(
       { fileReader: this.fileReader, albums: this.albums, reconciler: this.reconciler },
-      { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence },
+      { libraryId, library, scopePaths, token, startedAt, batch, evidence },
     );
     const counts = applyChanges(
       {

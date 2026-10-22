@@ -31,6 +31,7 @@ import { menuStyles } from '../../../ui/menu_styles';
 import { Text } from '../../../ui/text';
 import { Tooltip } from '../../../ui/tooltip';
 import { tileMarker } from './grid.stylex';
+import { aspectOf } from './grid_layout';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
 import { PhotoStageStrings } from '../viewer/photo_stage.strings';
@@ -675,12 +676,6 @@ export const BandMember = observer(function BandMember({
     </div>
   );
 });
-
-// The shape a row is drawn at, which is the picture's own - a composite's `width`/`height` are the
-// canvas already framed to what its frames cover, so a panorama lays out like anything else.
-export function aspectOf(photo: PhotoSummary): number {
-  return photo.width / photo.height;
-}
 
 // Masonry sizes a cell from the photo's own shape, off the stored dimensions, so no layout is
 // ever read back to lay the rows out.

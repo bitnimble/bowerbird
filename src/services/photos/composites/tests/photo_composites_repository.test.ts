@@ -444,7 +444,7 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
       return renditionCurrent(stamps?.built_from ?? null, stamps?.edited_from ?? null);
     };
     expect(current()).toBe(true);
-    expect(processing.queueEditedSince([panorama])).toBe(0);
+    expect(processing.queueEditedSince([panorama])).toHaveLength(0);
 
     db.query('UPDATE photos SET stamp_placement = ? WHERE id = ?').run(
       `${placedAt(panorama)}z`,
@@ -452,7 +452,7 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
     );
 
     expect(current()).toBe(false);
-    expect(processing.queueEditedSince([panorama])).toBe(1);
+    expect(processing.queueEditedSince([panorama])).toHaveLength(1);
   });
 
   it('answers whether any of a set the merge is about to build is developed', () => {

@@ -171,12 +171,12 @@ describe('an assembly this build made', () => {
         variant,
       );
     }
-    expect(photos.queueEditedSince([made.id])).toBe(0);
+    expect(photos.queueEditedSince([made.id])).toHaveLength(0);
 
     const reopened = JSON.stringify({ ...JSON.parse(made.recipe), pick: [0, 0] });
     const candidates = applyRecipeCellAs(peer, made.id, reopened);
 
     expect(candidates).toEqual([made.id]);
-    expect(photos.queueEditedSince(candidates)).toBe(1);
+    expect(photos.queueEditedSince(candidates)).toHaveLength(1);
   });
 });

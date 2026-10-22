@@ -127,6 +127,13 @@
       "when": 1791100000000,
       "tag": "0017_media_image_id",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792600000000,
+      "tag": "0018_stat_file_hash",
+      "breakpoints": true
     }
   ]
 }

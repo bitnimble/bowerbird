@@ -131,9 +131,9 @@ export class PhotoRenditionService {
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
     return { photo, library };
   }
-  // Re-reads the RAW header and updates the stored metadata. Sync only re-opens
-  // a file whose stat changed, so photos catalogued before a metadata field
-  // existed keep NULLs forever without this. Renditions are untouched: nothing
+  // Re-reads the RAW header and updates the stored metadata. A header is otherwise
+  // read only while its row is provisional, so photos catalogued before a metadata
+  // field existed keep NULLs forever without this. Renditions are untouched: nothing
   // about the pixels changed.
   async refreshMetadata(photoIds: string[]): Promise<number> {
     let updated = 0;
@@ -163,6 +163,18 @@ export class PhotoRenditionService {
     }
     log.info('metadata refreshed', { asked: photoIds.length, updated });
     return updated;
+  }
+  /** The header of a photo the scan catalogued off its stat alone, read now rather than with its tile. */
+  async fillProvisional(photoId: string): Promise<void> {
+    if (!this.photoMetadata.isProvisional(photoId)) return;
+    const { photo, library } = this.locate(photoId);
+    const filePath = this.originals.here(library, photo);
+    if (filePath == null) return;
+    try {
+      this.photoMetadata.fillProvisional(photoId, metadataFieldsOf(await this.extract(filePath)));
+    } catch (err) {
+      log.warn('could not read a header ahead of its tile', { photo: photoId, err });
+    }
   }
   buildRendition(photoId: string, rendition: Rendition, force = false): Promise<void> {
     return this.build(photoId, rendition, { force, hdr: null, via: null });

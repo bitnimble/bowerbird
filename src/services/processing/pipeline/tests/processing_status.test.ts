@@ -23,7 +23,7 @@ import type { FileMetadata } from '../../analysis/metadata';
 import type { RenderTiming } from '../../../../schemas/render_stages';
 import { RenderTimingsFile } from '../../renditions/render_timings_file';
 import { RenderBenchmark } from '../render_benchmark';
-import { MockWorker, REAL_WORKER, settingsWith } from './processing_test_helpers';
+import { HEADER, MockWorker, REAL_WORKER, settingsWith } from './processing_test_helpers';
 
 const LIB = 'status01';
 const OTHER = 'status02';
@@ -69,8 +69,10 @@ describe('live library processing status', () => {
   let processing: ProcessingService;
   let status: ScanStatus;
   let activity: LibraryActivity;
+  const scanning = new Set<string>();
 
   beforeEach(() => {
+    scanning.clear();
     db = new Database(':memory:');
     runMigrations(db);
     root = mkdtempSync(path.join(tmpdir(), 'bb-processing-status-'));
@@ -96,6 +98,8 @@ describe('live library processing status', () => {
       undefined,
       undefined,
       activity,
+      null,
+      (libraryId) => scanning.has(libraryId),
     );
     status = new ScanStatus(photos, libraries, processing);
     HeldWorker.jobs.length = 0;
@@ -158,6 +162,112 @@ describe('live library processing status', () => {
     await Promise.all([first, arrivals]);
     expect(status.getScanStatus(OTHER)).toMatchObject({ status: 'idle', photos_processing: 0 });
     expect(photos.countPendingProcessing()).toBe(0);
+  });
+
+  it('says which kind of work a batch is doing, and the rest is queued', async () => {
+    add('a');
+    add('b');
+    add('x', OTHER);
+    const run = processing.processUnprocessed({ libraryId: LIB });
+    await Bun.sleep(0);
+    expect(status.getScanStatus(LIB)).toMatchObject({
+      processing_work: { thumbnails: 2, reading: 0, rendering: 2 },
+      processing_running: ['thumbnails', 'reading'],
+    });
+    expect(status.getScanStatus(OTHER).processing_running).toEqual([]);
+
+    HeldWorker.finish('a', 'grid');
+    HeldWorker.finish('b', 'grid');
+    await Bun.sleep(0);
+    expect(status.getScanStatus(LIB)).toMatchObject({
+      processing_work: { thumbnails: 0, reading: 0, rendering: 2 },
+      processing_running: ['rendering'],
+    });
+
+    HeldWorker.finish('a', 'full');
+    HeldWorker.finish('b', 'full');
+    await run;
+    expect(status.getScanStatus(LIB).processing_running).toEqual([]);
+  });
+
+  it('starts nothing for a library mid-scan, queues its work meanwhile, and resumes once woken', async () => {
+    add('a');
+    add('x', OTHER);
+    scanning.add(LIB);
+    const held = processing.processUnprocessed({ libraryId: LIB });
+    const other = processing.processUnprocessed({ libraryId: OTHER });
+    await Bun.sleep(0);
+
+    expect(HeldWorker.jobs.map(({ job }) => job.photoId)).toEqual(['x']);
+    expect(status.getScanStatus(LIB).processing_running).toEqual([]);
+    expect(status.getScanStatus(OTHER).processing_running).toEqual(['thumbnails', 'reading']);
+
+    scanning.delete(LIB);
+    processing.wake();
+    expect(HeldWorker.jobs.map(({ job }) => job.photoId)).toEqual(['x', 'a']);
+    expect(status.getScanStatus(LIB).processing_running).toEqual(['thumbnails', 'reading']);
+
+    for (const photoId of ['a', 'x']) HeldWorker.finish(photoId, 'grid');
+    await Bun.sleep(0);
+    for (const photoId of ['a', 'x']) HeldWorker.finish(photoId, 'full');
+    await Promise.all([held, other]);
+  });
+
+  it("counts a scan's rows as queued while it reads, with nothing running yet", () => {
+    add('a');
+    status.set(LIB, idleScanStatus(LIB, 'processing'));
+    expect(status.getScanStatus(LIB)).toMatchObject({
+      photos_processing: 0,
+      processing_work: { thumbnails: 1, reading: 0, rendering: 1 },
+      processing_running: [],
+    });
+  });
+
+  it('drains only the photos a model update queued, leaving the rest of the backlog', async () => {
+    add('a');
+    add('backlog', OTHER);
+    db.query(`UPDATE libraries SET denoiser = 'upscaler' WHERE id = ?`).run(LIB);
+
+    const queued = processing.rebuildDenoisedWith('upscaler');
+    await Bun.sleep(0);
+
+    expect(queued).toBe(1);
+    expect(HeldWorker.jobs.map(({ job }) => job.photoId)).toEqual(['a']);
+    expect(status.getScanStatus(OTHER).photos_processing).toBe(0);
+  });
+
+  it("reads a provisional row's header once", async () => {
+    add('a');
+    db.query('UPDATE photos SET width = 0, height = 0, metadata_provisional = 1 WHERE id = ?').run(
+      'a',
+    );
+    const read = jest.fn(async (): Promise<FileMetadata> => ({
+      ...HEADER,
+      mtime: '2026-01-01T00:00:00.000Z',
+      fileSize: 3,
+    }));
+    const renditions = new PhotoRenditionService(
+      new PhotoPathsRepository(db, new StackMembership(db)),
+      new PhotoListingRepository(db),
+      new PhotoMetadataRepository(db, photos),
+      photos,
+      new LibrariesRepository(db),
+      processing,
+      localOriginals(),
+      read,
+      null,
+      activity,
+    );
+
+    await renditions.fillProvisional('a');
+    await renditions.fillProvisional('a');
+
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(
+      db
+        .query('SELECT width, height, camera_model, metadata_provisional FROM photos WHERE id = ?')
+        .get('a'),
+    ).toEqual({ width: 4000, height: 3000, camera_model: 'Pixel 9', metadata_provisional: 0 });
   });
 
   it('removes failed work while leaving unrelated persisted backlog idle', async () => {

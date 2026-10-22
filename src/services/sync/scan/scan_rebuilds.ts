@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
-import type { LibraryScanStatus } from '../../../schemas/libraries';
+import type { LibraryScanStatus, ProcessingWorkKind } from '../../../schemas/libraries';
 import type { ProcessingScope } from '../../processing/pipeline/processing_service';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
@@ -12,6 +12,7 @@ const log = new Logger('scan');
 export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
   getProcessingCount?(libraryId: string): number;
+  runningWork?(libraryId: string): ProcessingWorkKind[];
 }
 
 export class ScanRebuilds {

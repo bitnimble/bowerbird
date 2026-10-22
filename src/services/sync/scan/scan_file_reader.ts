@@ -7,27 +7,18 @@ import type { MediaEntry, MediaListing } from '../../libraries/media_listing';
 import type { ScanDbPhoto } from '../../photos/scan/photo_scan_repository';
 import type { FileMetadata } from '../../processing/analysis/metadata';
 import type { DiskFile } from './scan_diff';
-import { eachInOrder, inodeOrder } from './scan_order';
+import { eachInOrder } from './scan_order';
 
 const log = new Logger('scan');
 
-// How many photos a first scan holds before writing them down. Small enough that
-// a kill costs seconds of work rather than hours, large enough that the commit
-// itself is nowhere near the cost of the reads that filled it.
 const INSERT_BATCH = 1000;
 
-// And how long it holds them, however few there are, so a drive slow enough to make a
-// thousand header reads take a while still shows photos arriving.
-const INSERT_BATCH_MS = 2_000;
-
-/** One file the walk found, with the stat the diff and the read order are both taken from. */
+/** One file the walk found, with the stat the diff is taken from. */
 interface Scanned {
   relPath: string;
   absPath: string;
   stats: Stats;
 }
-
-export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
 export class ScanCancelled extends Error {}
 
@@ -39,23 +30,22 @@ export interface BatchedInserts {
 
 export class ScanFileReader {
   constructor(
-    private readonly extract: MetadataExtractor,
     private readonly scanConcurrency: () => number,
     private readonly media: MediaListing | null = null,
   ) {}
 
-  // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
-  // changed vs the stored record (§9.1). Unchanged files are never opened, so a
-  // no-op scan does zero decoding. Shared by the full and scoped paths.
+  // Stats each file and opens none (§9.1). A file that is new, or whose mtime+size
+  // changed vs the stored record, is hashed off that stat and its row made
+  // provisional, so the tile pass reads its header.
   //
-  // `batched`, when given, takes new files as they are hashed, a batch at a time,
-  // and is what makes an import resumable: a half-built `present` is normally
-  // unusable, because absence from it is how a removal is detected, and applying
-  // it would mark every file the scan had not reached as missing. When the stat
-  // pass finds every row's file, no removal can come of this run, and so no move
-  // either - a move pairs a removal with an addition - so a new file says only
-  // "this file is new", which is true whether or not the scan saw the rest. Those
-  // files are handed over rather than accumulated in `changed`.
+  // `batched`, when given, takes new files a batch at a time, and is what makes an
+  // import resumable: a half-built `present` is normally unusable, because absence
+  // from it is how a removal is detected, and applying it would mark every file the
+  // scan had not reached as missing. When the stat pass finds every row's file, no
+  // removal can come of this run, and so no move either - a move pairs a removal
+  // with an addition - so a new file says only "this file is new", which is true
+  // whether or not the scan saw the rest. Those files are handed over rather than
+  // accumulated in `changed`.
   async scanFiles(
     files: readonly ScannedFile[],
     dbPhotos: readonly ScanDbPhoto[],
@@ -63,8 +53,7 @@ export class ScanFileReader {
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
     batched: BatchedInserts | null,
-    keepLease: () => void,
-  ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
+  ): Promise<{ present: Set<string>; changed: DiskFile[] }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
     // Stat everything, collapsing hardlink pairs (same dev+ino) to a single path.
@@ -73,16 +62,15 @@ export class ScanFileReader {
     // new path would be scanned as a brand-new file and insertFromScan'd as a
     // permanent duplicate row. Prefer whichever path matches an existing record.
     const byInode = new Map<string, Scanned>();
-    const width = this.scanConcurrency();
     const stopped = (): boolean => signal.aborted;
+    let statted = 0;
+    onProgress(0, files.length);
     await eachInOrder(
       files,
-      width,
+      this.scanConcurrency(),
       (file) => stat(file.absPath),
       (file, outcome) => {
-        // This pass reports nothing, so it is the one blocking stretch of a scan
-        // with no other refresh point in it (§9.7).
-        keepLease();
+        onProgress(++statted, files.length);
         // Gone before it was looked at: treat as not present (a race, or a deletion
         // the watcher reported).
         if (!('value' in outcome)) return;
@@ -106,27 +94,19 @@ export class ScanFileReader {
 
     const present = new Set<string>();
     const changed: DiskFile[] = [];
-    const failed = new Set<string>();
     const batch: DiskFile[] = [];
-    let committedAt = Date.now();
-    const keep = (file: DiskFile): void => {
+    const keep = async (file: DiskFile): Promise<void> => {
       if (inserts == null || dbByPath.has(file.filePath) || !inserts.accepts(file.filePath)) {
         changed.push(file);
         return;
       }
       batch.push(file);
-      if (batch.length < INSERT_BATCH && Date.now() - committedAt < INSERT_BATCH_MS) return;
+      if (batch.length < INSERT_BATCH) return;
       inserts.insert(batch.splice(0));
-      committedAt = Date.now();
+      // Nothing else in this loop awaits: without it a 50k-photo import holds every request.
+      await Bun.sleep(0);
     };
 
-    // The pass below is the whole cost of a scan (the stat pass above opens
-    // nothing), so it is the one worth reporting against. `present` is added to
-    // once per file, so its size is how many have been dealt with.
-    //
-    // A file whose stat still matches its row is never opened, and asking for it is
-    // what would open it - so the test is made here, before the read is started, and
-    // an unchanged file's "read" is the null that stands for one that never happened.
     const unchanged = (file: Scanned): boolean => {
       const record = dbByPath.get(file.relPath);
       return (
@@ -135,58 +115,28 @@ export class ScanFileReader {
         record.file_size === file.stats.size
       );
     };
-    // The denominator before the first read rather than with the first result: reads are
-    // started ahead of the results being used, so a strip that waited for one would show
-    // nothing to scan for as long as the first file takes - which on the library this is
-    // for is the better part of a second.
-    onProgress(0, byInode.size);
-    // Asked once, and only when some file is opened at all: a scan that finds nothing changed
-    // costs the index nothing.
-    let indexed: Promise<ReadonlyMap<string, MediaEntry> | null> | null = null;
-    const index = (): Promise<ReadonlyMap<string, MediaEntry> | null> =>
-      (indexed ??= this.media?.under(root) ?? Promise.resolve(null));
-    await eachInOrder(
-      inodeOrder([...byInode.values()]),
-      width,
-      async (file) => {
-        if (unchanged(file)) return null;
-        const entry = matchingIndexEntry(file, (await index())?.get(file.absPath));
-        if (entry == null) return await this.extract(file.absPath);
-        const metadata = fromIndex(file, entry) ?? (await this.extract(file.absPath));
-        return entry.imageId == null ? metadata : { ...metadata, mediaImageId: entry.imageId };
-      },
-      (file, outcome) => {
-        // After the file is counted in, not before it: reads run ahead of their results
-        // being used, so a figure written before the count would say a file was
-        // outstanding while the read of the one after it was already in flight.
-        present.add(file.relPath);
-        onProgress(present.size, byInode.size);
-        if (!('value' in outcome)) {
-          // Unreadable/corrupt file: record it as failed so buildDiff leaves any
-          // existing record untouched (not marked missing, and not falsely reappeared).
-          failed.add(file.relPath);
-          log.warn('unreadable file, left as it is', { file: file.absPath, err: outcome.error });
-          return;
-        }
-        const metadata = outcome.value;
-        if (metadata == null) return;
-        keep({
-          filePath: file.relPath,
-          hash: computeFileHash(file.absPath, metadata),
-          metadata,
-        });
-      },
-      // Between files, not inside one: this is the pass that opens and hashes, so a
-      // stop lands within one file's read rather than at the end of the scan.
-      stopped,
-    );
+    const scanned = [...byInode.values()];
+    // Asked only when some file changed: a scan that finds nothing costs the index nothing.
+    const index =
+      this.media == null || scanned.every(unchanged) ? null : await this.media.under(root);
+    for (const file of scanned) {
+      if (stopped()) break;
+      present.add(file.relPath);
+      if (unchanged(file)) continue;
+      const metadata = provisionalMetadata(file, index?.get(file.absPath));
+      await keep({
+        filePath: file.relPath,
+        hash: computeFileHash(file.absPath, metadata),
+        metadata,
+      });
+    }
 
     // The tail of a batched scan, stopped or finished: it is as applicable as
     // every batch before it.
     if (batch.length > 0) inserts?.insert(batch.splice(0));
     // With rows, the rest of a stopped run's picture reads as removals.
     if (signal.aborted && dbByPath.size > 0) throw new ScanCancelled();
-    return { present, changed, failed };
+    return { present, changed };
   }
 }
 
@@ -197,22 +147,13 @@ const EXIF_ORIENTATION_OF_DEGREES = new Map([
   [270, 8],
 ]);
 
-function matchingIndexEntry(file: Scanned, entry: MediaEntry | undefined): MediaEntry | null {
-  if (entry == null || entry.size !== file.stats.size) return null;
-  // Not a RAW: the index reports the sensor's size, and its thumbnail isn't the picture the grid shows.
-  if (!isRendered(file.relPath)) return null;
-  return entry;
-}
-
-function fromIndex(file: Scanned, entry: MediaEntry): FileMetadata | null {
-  const orientation = EXIF_ORIENTATION_OF_DEGREES.get(entry.orientationDegrees ?? 0);
-  if (entry.width == null || entry.height == null || orientation == null) return null;
-  const turned = orientation === 6 || orientation === 8;
-  return {
-    width: turned ? entry.height : entry.width,
-    height: turned ? entry.width : entry.height,
-    orientation,
-    dateTaken: entry.takenWallMs == null ? null : new Date(entry.takenWallMs).toISOString(),
+/** What a row holds until its tile job reads the header: the stat, and whatever the device's index knows. */
+function provisionalMetadata(file: Scanned, entry: MediaEntry | undefined): FileMetadata {
+  const unread: FileMetadata = {
+    width: 0,
+    height: 0,
+    orientation: 1,
+    dateTaken: null,
     dateTakenOffset: null,
     latitude: null,
     longitude: null,
@@ -227,5 +168,18 @@ function fromIndex(file: Scanned, entry: MediaEntry): FileMetadata | null {
     mtime: file.stats.mtime.toISOString(),
     fileSize: file.stats.size,
     provisional: true,
+  };
+  // Not a RAW: the index reports the sensor's size, and its thumbnail isn't the picture the grid shows.
+  if (entry == null || entry.size !== file.stats.size || !isRendered(file.relPath)) return unread;
+  const indexed = entry.imageId == null ? unread : { ...unread, mediaImageId: entry.imageId };
+  const orientation = EXIF_ORIENTATION_OF_DEGREES.get(entry.orientationDegrees ?? 0);
+  if (entry.width == null || entry.height == null || orientation == null) return indexed;
+  const turned = orientation === 6 || orientation === 8;
+  return {
+    ...indexed,
+    width: turned ? entry.height : entry.width,
+    height: turned ? entry.width : entry.height,
+    orientation,
+    dateTaken: entry.takenWallMs == null ? null : new Date(entry.takenWallMs).toISOString(),
   };
 }

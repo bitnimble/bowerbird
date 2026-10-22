@@ -21,6 +21,13 @@ export const LIST_ROW_H = 62;
 // The grid mode gives every photo the same 3:2 cell.
 export const TILE_ASPECT = 3 / 2;
 
+// The shape a row is drawn at, which is the picture's own - a composite's `width`/`height` are the
+// canvas already framed to what its frames cover, so a panorama lays out like anything else.
+export function aspectOf(photo: { width: number; height: number }): number {
+  // A scan catalogues a photo before its header is read, which stores 0 by 0.
+  return photo.height > 0 ? photo.width / photo.height : TILE_ASPECT;
+}
+
 // How much taller than the stack's own tile a line of its members may be drawn, in
 // masonry. Nothing else bounds one there - the band is a full-width flex line, so
 // two portrait frames alone on it stretch to the width of the grid - and a stack

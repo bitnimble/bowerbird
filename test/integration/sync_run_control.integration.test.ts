@@ -3,14 +3,14 @@
 // only the new photos it wrote down as it went, and the detached
 // processing tail, which stops handing out jobs and settles back to idle.
 //   docker exec bowerbird-dev bun test test/integration
-import { afterEach, beforeEach, expect, jest, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
-import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
+import type { MediaListing } from '../../src/services/libraries/media_listing';
 import {
   photoMetadata,
   photoPaths,
@@ -19,6 +19,7 @@ import {
 } from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
+import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import type { ProcessingTrigger } from '../../src/services/sync/scan/scan_rebuilds';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
@@ -26,37 +27,19 @@ import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_l
 const LIB = 'lib000ce';
 const flush = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
 
-// The files never get opened: the extractor is injected, and the hash is computed
-// from its answer rather than from the bytes.
-function metadata(mtime: Date, size: number): FileMetadata {
-  return {
-    width: 100,
-    height: 100,
-    orientation: 0,
-    dateTaken: null,
-    dateTakenOffset: null,
-    latitude: null,
-    longitude: null,
-    iso: null,
-    shutterSpeed: null,
-    aperture: null,
-    focalLength: null,
-    cameraMake: null,
-    cameraModel: null,
-    lensModel: null,
-    sequence: null,
-    mtime: mtime.toISOString(),
-    fileSize: size,
-  };
-}
-
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 
-function build(
-  processing: ProcessingTrigger,
-  extract: (absPath: string) => Promise<FileMetadata>,
-): ScanService {
+interface Hooks {
+  /** Asked just before the stat pass. */
+  scanConcurrency?: () => number;
+  /** Asked after each committed batch of new photos. */
+  sidecars?: SidecarImporter;
+  /** Asked once the stat pass is done, before anything it found is kept. */
+  media?: MediaListing;
+}
+
+function build(processing: ProcessingTrigger, hooks: Hooks = {}): ScanService {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -69,8 +52,35 @@ function build(
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     processing,
-    extract,
+    hooks.sidecars,
+    hooks.scanConcurrency,
+    undefined,
+    undefined,
+    hooks.media,
   );
+}
+
+function afterStatting(then: () => void): MediaListing {
+  return {
+    under: async () => {
+      then();
+      return null;
+    },
+    queueThumbnail: async () => null,
+  };
+}
+
+function afterEachBatch(then: () => void): SidecarImporter {
+  return {
+    importFor: () => {
+      then();
+      return 0;
+    },
+  };
+}
+
+function addBatchOfFiles(): void {
+  for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 }
 
 beforeEach(() => {
@@ -90,22 +100,29 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('the scan counts its way through the files it will open', async () => {
+test('the scan counts its way through the files it stats', async () => {
   const seen: [number, number][] = [];
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () => {
+  const look = (): void => {
     const status = scan.getScanStatus(LIB);
     expect(status.status).toBe('processing');
     seen.push([status.photos_scanned, status.photos_to_scan]);
-    return metadata(new Date(), 3);
-  });
+  };
+  const scan: ScanService = build(
+    { processUnprocessed: () => {} },
+    {
+      scanConcurrency: () => {
+        look();
+        return 1;
+      },
+      media: afterStatting(look),
+    },
+  );
 
   const status = await scan.scanLibrary(LIB);
 
-  // Read at the top of each file's turn, so the last one is still outstanding.
   expect(seen).toEqual([
     [0, 3],
-    [1, 3],
-    [2, 3],
+    [3, 3],
   ]);
   // Over, so the two settle on what was found and the phase moves on.
   expect(status.status).toBe('rendition');
@@ -113,87 +130,55 @@ test('the scan counts its way through the files it will open', async () => {
   expect(status.photos_to_scan).toBe(3);
 });
 
-test('a first scan writes rows down on the clock, not only when a batch fills', async () => {
-  // Three files is nowhere near INSERT_BATCH, and each one costs a decode and a
-  // tile: without the time bound a library smaller than a batch shows an empty
-  // grid for the whole run. Scan concurrency is 1 here, so the reads and their
-  // results strictly alternate and the count below is the one the flush left.
-  const rowsWhenRead: number[] = [];
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () => {
-    rowsWhenRead.push((db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n);
-    // The clock the flush reads, moved past the batch's age while the first file is
-    // open. Faked rather than waited out: the bound is seconds, and a suite that
-    // sleeps through every one of them is a suite nobody runs.
-    if (rowsWhenRead.length === 1) jest.setSystemTime(new Date(Date.now() + 3_000));
-    return metadata(new Date(), 3);
-  });
-
-  const status = await scan.scanLibrary(LIB);
-  jest.useRealTimers();
-
-  // The first file's row is on disk before the second is opened. The second's is
-  // not: its batch is younger than the bound by the time the third is read, so it
-  // waits for the tail, which is the flush that was always there.
-  expect(rowsWhenRead).toEqual([0, 1, 1]);
-  expect(status.photos_added).toBe(3);
-});
-
 test('a stopped first scan keeps the photos it did reach', async () => {
   // Nothing in the catalogue for the half-built picture to contradict, so what it
   // holds is "these files are new" and stays true however much it did not see.
   // The alternative is throwing away every file a stopped 50k import had read.
-  let scanned = 0;
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () => {
-    if (++scanned === 2) scan.cancelScan(LIB); // stop with the third still to read
-    return metadata(new Date(), 3);
-  });
+  addBatchOfFiles();
+  const scan: ScanService = build(
+    { processUnprocessed: () => {} },
+    { sidecars: afterEachBatch(() => scan.cancelScan(LIB)) },
+  );
 
   const status = await scan.scanLibrary(LIB);
 
-  expect(scanned).toBe(2); // the third was never opened
-  expect(status.photos_added).toBe(2);
-  expect(db.query('SELECT COUNT(*) AS n FROM photos').get()).toEqual({ n: 2 });
+  expect(status.photos_added).toBe(1000);
+  expect(db.query('SELECT COUNT(*) AS n FROM photos').get()).toEqual({ n: 1000 });
   // None marked missing: the file it never reached is simply not in the catalogue
   // yet, which is what the next scan adds.
   expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
 });
 
 test('stopping a rescan keeps the new photos it reached and applies nothing else', async () => {
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () =>
-    metadata(new Date(), 3),
-  );
-  await scan.scanLibrary(LIB);
+  await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
   const before = db
     .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
     .all();
   expect(before).toHaveLength(3);
 
-  // A fourth file to be found, so there is something for a partial run to apply.
-  writeFileSync(path.join(root, 'd.arw'), 'd.arw');
+  // More than a batch of new files, so the stop lands between a committed batch and the rest.
+  addBatchOfFiles();
 
-  const stopped: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
-    if (absPath.endsWith('d.arw')) stopped.cancelScan(LIB);
-    return metadata(new Date(), 3);
-  });
+  const stopped: ScanService = build(
+    { processUnprocessed: () => {} },
+    { sidecars: afterEachBatch(() => stopped.cancelScan(LIB)) },
+  );
   const status = await stopped.scanLibrary(LIB);
 
   expect(status.status).toBe('idle');
   expect(status.photos_scanned).toBe(0);
   // The 3 rows untouched and none marked missing, which is what applying the truncated
-  // scan's picture would have done; the fourth file, which it did read, is kept.
+  // scan's picture would have done; the batch it committed is kept.
   const after = db
     .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
     .all();
   expect(after.slice(0, 3)).toEqual(before);
-  expect(after).toHaveLength(4);
+  expect(after).toHaveLength(1003);
   expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
 });
 
 test('stopping a rescan with a file gone applies nothing, since a new file may be its move', async () => {
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () =>
-    metadata(new Date(), 3),
-  );
-  await scan.scanLibrary(LIB);
+  await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
   const before = db
     .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
     .all();
@@ -201,10 +186,10 @@ test('stopping a rescan with a file gone applies nothing, since a new file may b
   rmSync(path.join(root, 'a.arw'));
   writeFileSync(path.join(root, 'd.arw'), 'd.arw');
 
-  const stopped: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
-    if (absPath.endsWith('d.arw')) stopped.cancelScan(LIB);
-    return metadata(new Date(), 3);
-  });
+  const stopped: ScanService = build(
+    { processUnprocessed: () => {} },
+    { media: afterStatting(() => stopped.cancelScan(LIB)) },
+  );
   await stopped.scanLibrary(LIB);
 
   expect(
@@ -225,7 +210,6 @@ test('stopping during processing ends the run rather than waiting it out', async
         return blocked;
       },
     },
-    async () => metadata(new Date(), 3),
   );
 
   const status = await scan.scanLibrary(LIB);
@@ -251,14 +235,11 @@ test('a batch a later scan coalesced into is still what a stop reaches', async (
   // handed over is dropped. Asked for a fixed answer, the batch would go on
   // watching the finished scan, and Stop would do nothing at all.
   const asked: (() => boolean)[] = [];
-  const scan: ScanService = build(
-    {
-      processUnprocessed: (_libraryId, stopped) => {
-        if (stopped) asked.push(stopped);
-      },
+  const scan: ScanService = build({
+    processUnprocessed: (_libraryId, stopped) => {
+      if (stopped) asked.push(stopped);
     },
-    async () => metadata(new Date(), 3),
-  );
+  });
 
   await scan.scanLibrary(LIB); // the generation whose batch is running
   await scan.scanLibrary(LIB); // a later one, which would join that batch

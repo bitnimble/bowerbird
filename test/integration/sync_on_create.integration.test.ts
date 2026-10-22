@@ -17,34 +17,11 @@ import {
   photoProcessing,
   photoScan,
 } from './helpers/photo_repositories';
-import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { dataPathForLibraryId } from '../../src/utils/paths';
-
-// No LibRaw here: what is under test is that the scan runs at all, so the files
-// are stubs and the header read is one too.
-const stubExtract = async (): Promise<FileMetadata> => ({
-  width: 100,
-  height: 100,
-  orientation: 0,
-  dateTaken: '2026-01-01T00:00:00.000Z',
-  dateTakenOffset: null,
-  latitude: null,
-  longitude: null,
-  iso: null,
-  shutterSpeed: null,
-  aperture: null,
-  focalLength: null,
-  cameraMake: null,
-  cameraModel: null,
-  lensModel: null,
-  sequence: null,
-  mtime: '2026-01-01T00:00:00.000Z',
-  fileSize: 3,
-});
 
 let root: string;
 let db: ReturnType<typeof createDatabase>;
@@ -65,7 +42,6 @@ function buildServices(): { scan: ScanService; service: LibrariesService } {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    stubExtract,
   );
   const service = new LibrariesService(
     new LibrariesRepository(db),

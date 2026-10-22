@@ -528,9 +528,7 @@ export const DetailNav = observer(function DetailNav({
         // The frame the estimate is scaled against, where the detail has landed. Null is a
         // dialog that says nothing about size rather than one that guesses at it.
         const frame =
-          photo?.width != null && photo.height != null
-            ? { width: photo.width, height: photo.height }
-            : null;
+          photo != null && photo.height > 0 ? { width: photo.width, height: photo.height } : null;
         exportPhotos.openFor({ photo_ids: [photoId] }, 1, frame);
       },
     }),

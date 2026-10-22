@@ -46,6 +46,7 @@ export const status: LibraryScanStatus = {
   photos_processing: 0,
   photos_processed: 0,
   processing_work: { thumbnails: 0, reading: 0, rendering: 0 },
+  processing_running: [],
   photos_per_second: null,
 };
 

@@ -46,6 +46,7 @@ function buildApp(
   } as unknown as PhotoMutationService;
   const renditions = {
     refreshMetadata: jest.fn(async () => 0),
+    fillProvisional: jest.fn(async () => {}),
     buildRendition: jest.fn(async () => {}),
     renditionJob: jest.fn(() => null),
     ...over.renditions,
@@ -128,6 +129,26 @@ describe('PhotosApi', () => {
       },
     );
     expect(res.status).toBe(400);
+  });
+
+  it("reads a provisional photo's header before answering its detail", async () => {
+    const order: string[] = [];
+    const { app } = buildApp({
+      renditions: {
+        fillProvisional: jest.fn(async (id: string) => {
+          await Bun.sleep(0);
+          order.push(`fill ${id}`);
+        }),
+      },
+      read: {
+        get: jest.fn((id: string) => {
+          order.push(`get ${id}`);
+          throw new AppError('NOT_FOUND', `photo not found: ${id}`);
+        }),
+      },
+    });
+    await app.request(route(PathSegment.api(), PathSegment.photos(), 'x'));
+    expect(order).toEqual(['fill x', 'get x']);
   });
 
   it('maps a service NOT_FOUND to the 404 envelope', async () => {

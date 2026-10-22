@@ -54,6 +54,7 @@ import {
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
+import { aspectOf } from '../grid/grid_layout';
 
 // 0 decodes at the sensor's own size: the draw runs per canvas pixel, so the frame's size is paid
 // once at the open, and a smaller decode is detail a zoom cannot get back (`docs/raw-edit-gpu.md` §4.1).
@@ -326,7 +327,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // all the layout needs, and waiting for the fetch to learn it costs a frame of
   // empty stage on every step, warmed neighbour or not.
   const shape = store.photoFor(photoId);
-  const aspect = shape == null ? null : shape.width / shape.height;
+  const aspect = shape == null ? null : aspectOf(shape);
   const backdrop =
     shape == null || !editing
       ? undefined

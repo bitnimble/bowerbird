@@ -46,8 +46,9 @@ export const PhotoSummarySchema = z.object({
   // The recipe's single input, and so null for a row composed from several - which has a name
   // rather than a path, and no one file a reader could be shown.
   file_path: z.string().nullable(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  // 0 until the header of a row the scan catalogued off its stat has been read (DESIGN §11.2).
+  width: z.number().int().nonnegative(),
+  height: z.number().int().nonnegative(),
   ordering_date: z.string().nullable(),
   triage: TriageSchema,
   rating: z.number().int().min(0).max(5),
@@ -207,8 +208,8 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // recorded still needs it. The grid lays out on the pair below - a cropped photo
   // occupies a different shape on the wall, and a tile at the file's aspect would be
   // letterboxed for the life of the library.
-  display_width: z.number().int().positive(),
-  display_height: z.number().int().positive(),
+  display_width: z.number().int().nonnegative(),
+  display_height: z.number().int().nonnegative(),
   // One entry per rendition the viewer can show rather than one for whichever is
   // on screen, because the server does not know which that is and each is a
   // different file. Every field is answered from disk rather than from a column:

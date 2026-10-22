@@ -272,9 +272,11 @@ export class PhotosApi {
       },
     );
 
-    app.get(route(PathSegment.photos(), PathSegment.param('id')), (c) =>
-      c.json(respond(PhotoDetailSchema, this.read.get(c.req.param('id')))),
-    );
+    app.get(route(PathSegment.photos(), PathSegment.param('id')), async (c) => {
+      const id = c.req.param('id');
+      await this.renditions.fillProvisional(id);
+      return c.json(respond(PhotoDetailSchema, this.read.get(id)));
+    });
 
     // The frames a panorama is composed from, which its badge opens as a band. No ordering or
     // album to narrow by, unlike a stack's members: a recipe names its frames in one order and

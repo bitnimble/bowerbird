@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   GRID_GAP,
   RAIL_HEIGHT,
+  TILE_ASPECT,
   TILE_PAD,
   anchorLimit,
+  aspectOf,
   atRailWall,
   blockTops,
   gridColumns,
@@ -25,6 +27,16 @@ describe('gridColumns', () => {
   test('never drops below one, however narrow', () => {
     expect(gridColumns(100, 1600)).toBe(1);
     expect(gridColumns(0, 240)).toBe(1);
+  });
+});
+
+describe('aspectOf', () => {
+  test("is the photo's own shape", () => {
+    expect(aspectOf({ width: 4000, height: 6000 })).toBeCloseTo(2 / 3);
+  });
+
+  test('is the tile shape until the header is read', () => {
+    expect(aspectOf({ width: 0, height: 0 })).toBe(TILE_ASPECT);
   });
 });
 

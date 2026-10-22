@@ -61,7 +61,7 @@ import { BackupLocations } from './services/backup/backup_locations';
 import { Cull } from './services/backup/cull';
 import { Mirror } from './services/backup/mirror';
 import { PassivePeers } from './services/backup/passive_peers';
-import { extractMetadata } from './services/processing/analysis/metadata';
+import { HeaderPool } from './services/processing/analysis/header_pool';
 import { addressedPeers, PairedPeers, Peers } from './services/replication/peer_transport';
 import { deviceName } from './services/replication/pairing';
 import { LogsApi } from './api/logs/logs_api';
@@ -102,7 +102,6 @@ import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { ScanService } from './services/sync/scan/scan_service';
 import { SyncLocksRepository } from './services/sync/coordination/sync_locks_repository';
-import { ScanPool } from './services/sync/scan/scan_pool';
 import { LibraryWatcher } from './services/sync/watch/library_watcher';
 import { DailyScan } from './services/sync/watch/daily_scan';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
@@ -234,6 +233,8 @@ const processingService: ProcessingService = new ProcessingService(
   holdingRenderMemory,
   activity,
   config.shellSocket ?? null,
+  // Late-bound: `scanService` is built on this one.
+  (libraryId) => scanService.isScanning(libraryId),
 );
 const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'downloaded'), [
   {
@@ -270,6 +271,7 @@ const renditionFetch = new RenditionFetchService(
   undefined,
   activity,
 );
+const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
 const photoRenditionService = new PhotoRenditionService(
   photoPathsRepo,
   photoListingRepo,
@@ -278,7 +280,7 @@ const photoRenditionService = new PhotoRenditionService(
   librariesRepo,
   processingService,
   originals,
-  extractMetadata,
+  new HeaderPool(scanConcurrency).read,
   renditionFetch,
   activity,
   deviceMedia,
@@ -330,8 +332,6 @@ const shootsService = new ShootsService(
   folderRulesRepo,
   writeGrants,
 );
-const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
-const scanPool = new ScanPool(scanConcurrency);
 const scanService = new ScanService(
   photoScanRepo,
   photoPathsRepo,
@@ -343,7 +343,6 @@ const scanService = new ScanService(
   folderRulesRepo,
   syncLocksRepo,
   processingService,
-  scanPool.read,
   new SidecarImportService(photoEditsRepo),
   scanConcurrency,
   (libraryId) => replicationRunner.materialise(libraryId),
@@ -408,6 +407,7 @@ mirror.start();
 const announceScan = (libraryId: string): void =>
   eventsApi.announce('scan', { library_id: libraryId });
 scanService.onScanned(announceScan);
+scanService.onScanned(() => processingService.wake());
 // Not gated on `changed`: it leaves out removals, which is how a photo becomes missing.
 scanService.onSettled(announceScan);
 const blobsApi = new BlobsApi(

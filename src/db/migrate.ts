@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { newId } from '../schemas/id';
 import { DEVICE_NAME_MAX_LENGTH } from '../schemas/replication';
 import { config } from '../config';
+import { computeFileHash } from '../utils/hash';
 import type { Database } from './driver';
 import { triggers } from './triggers';
 
@@ -64,6 +65,32 @@ function journal(): JournalEntry[] {
   return [...read.entries].sort((a, b) => a.when - b.when);
 }
 
+/** Rewrites a migration's SQL cannot express, run in that migration's transaction. */
+const DATA_MIGRATIONS: Partial<Record<string, (db: Database) => void>> = {
+  '0018_stat_file_hash': rehashFromStat,
+};
+
+/**
+ * Every scanned row's `file_hash` off the stat columns it digests (DESIGN §9.2), or a row hashed
+ * from its header would never pair as a move with the file the scan finds.
+ */
+function rehashFromStat(db: Database): void {
+  const rows = db
+    .query(
+      `SELECT id, json_extract(recipe, '$.path') AS path, date_updated, file_size FROM photos
+        WHERE json_extract(recipe, '$.kind') = 'file' AND file_hash IS NOT NULL
+          AND date_updated IS NOT NULL AND file_size IS NOT NULL`,
+    )
+    .all() as { id: string; path: string; date_updated: string; file_size: number }[];
+  const update = db.query('UPDATE photos SET file_hash = ? WHERE id = ?');
+  for (const row of rows) {
+    update.run(
+      computeFileHash(row.path, { mtime: row.date_updated, fileSize: row.file_size }),
+      row.id,
+    );
+  }
+}
+
 /**
  * Applies what drizzle-kit generated and has not been applied here yet.
  *
@@ -101,6 +128,7 @@ function applyMigrations(db: Database): void {
           const trimmed = statement.trim();
           if (trimmed !== '') db.exec(trimmed);
         }
+        DATA_MIGRATIONS[entry.tag]?.(db);
         db.query('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run(
           entry.tag,
           entry.when,

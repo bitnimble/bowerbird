@@ -259,6 +259,10 @@ export class PhotoScanRepository {
       );
   }
   applyModification(photoId: string, fields: ScanModification): void {
+    if (fields.metadata_provisional === true) {
+      this.reprovision(photoId, fields);
+      return;
+    }
     // The stamp only moves if the import facts did. A photograph whose original
     // has just arrived from a peer has no local scan baseline yet - `file_hash`
     // and `date_updated` are per-peer and do not replicate - so the next scan
@@ -277,7 +281,7 @@ export class PhotoScanRepository {
             -- Left standing, a photo imported under an 'embedded' library and edited after the
             -- library moved to 'render' keeps resolving 'embedded', so no full rendition is
             -- ever built and the viewer asks for a file nothing writes.
-            rendition_source = NULL, is_missing = 0, metadata_provisional = ?, media_image_id = ?,
+            rendition_source = NULL, is_missing = 0, metadata_provisional = 0, media_image_id = ?,
             stamp_imported = COALESCE(?, stamp_imported) WHERE id = ?`,
       )
       .run(
@@ -299,12 +303,34 @@ export class PhotoScanRepository {
         fields.camera_model,
         fields.lens_model,
         fields.capture_sequence,
-        fields.metadata_provisional === true ? 1 : 0,
         fields.media_image_id ?? null,
         moved,
         photoId,
       );
     // The file's pixels changed, so every derived copy of it is of the old one.
+    this.processing.queueBothPasses(photoId);
+  }
+
+  // Header columns stay as the last read left them until `fillProvisional`: the provisional zeros
+  // written here would stamp the `imported` unit and replicate blanks to every peer.
+  private reprovision(photoId: string, fields: ScanModification): void {
+    const resized = this.db
+      .query('SELECT 1 FROM photos WHERE id = ? AND file_size IS NOT ?')
+      .get(photoId, fields.file_size);
+    this.db
+      .query(
+        `UPDATE photos SET file_hash = ?, date_updated = ?, file_size = ?, rendition_source = NULL,
+            is_missing = 0, metadata_provisional = 1, media_image_id = ?,
+            stamp_imported = COALESCE(?, stamp_imported) WHERE id = ?`,
+      )
+      .run(
+        fields.file_hash,
+        fields.date_updated,
+        fields.file_size,
+        fields.media_image_id ?? null,
+        resized == null ? null : stamp(this.db),
+        photoId,
+      );
     this.processing.queueBothPasses(photoId);
   }
   // What the `imported` unit actually carries, against what the scan just read.

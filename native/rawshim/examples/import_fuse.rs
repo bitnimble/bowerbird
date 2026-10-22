@@ -4,10 +4,9 @@
 //! import_fuse <dir-of-raws> [--limit 3] [--skip N] [--out DIR]
 //! ```
 //!
-//! An import reads every file twice: once for the catalogue row (`header::read_path`), then
-//! again for the 800px grid tile (`job::run` with one `Source::Embedded` target). What that
-//! second read costs is `scripts/bench_import.ts`, which times the product's own pools. What it
-//! *reads* is this, and the two answer different halves of the same question.
+//! Compares a header read for the catalogue row (`header::read_path`), the 800px grid tile
+//! (`job::run` with one `Source::Embedded` target), and both off one open (`Job::header`), by
+//! the pages each touches.
 //!
 //! **A map holds whatever is cached, where a timing does not.** Evicting this machine's page
 //! cache says nothing about the cache on the far side of a network mount: the first 256KB of a

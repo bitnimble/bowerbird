@@ -61,8 +61,8 @@ function dedupeByPath(files: readonly ScannedFile[]): ScannedFile[] {
  * tombstones do not name and every peer then receives.
  *
  * Held out of the walk rather than skipped at the import, because a file with no
- * row is one the unchanged test cannot answer for, so it would be opened and
- * hashed on every full scan from here on.
+ * row is one the unchanged test cannot answer for, so it would be imported again
+ * on every full scan from here on.
  *
  * The folder, not the file: every rule here is about where a thing sits, and the
  * hidden-segment one would otherwise strand a frame whose own name begins with a

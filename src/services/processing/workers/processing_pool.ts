@@ -15,6 +15,7 @@ interface Batch {
   running: number;
   onResult: (result: ProcessingResult, job: RenditionJob) => void;
   stopped?: () => boolean;
+  held?: () => boolean;
   settle: () => void;
 }
 
@@ -41,11 +42,13 @@ export class ProcessingPool {
   /**
    * Settles once every job has landed, or once `stopped` and the jobs in flight have landed.
    * Jobs never started (stopped, or no worker could be spawned) keep their flags for the next sync.
+   * While `held`, no more of its jobs start; call `wake` once it lets go.
    */
   run(
     jobs: RenditionJob[],
     onResult: (result: ProcessingResult, job: RenditionJob) => void,
     stopped?: () => boolean,
+    held?: () => boolean,
   ): Promise<void> {
     if (jobs.length === 0) return Promise.resolve();
     return new Promise((settle) => {
@@ -57,10 +60,15 @@ export class ProcessingPool {
         running: 0,
         onResult,
         stopped,
+        held,
         settle,
       });
       this.pump();
     });
+  }
+
+  wake(): void {
+    this.pump();
   }
 
   private pump(): void {
@@ -88,7 +96,7 @@ export class ProcessingPool {
   private preferredJob(): { batch: Batch; index: number } | null {
     for (const photoId of this.preferred) {
       for (const batch of this.batches) {
-        if (!this.owesWork(batch)) continue;
+        if (!this.ready(batch)) continue;
         const index = batch.byPhoto.get(photoId);
         if (index != null && batch.taken[index] === 0) return { batch, index };
       }
@@ -124,11 +132,15 @@ export class ProcessingPool {
     for (let i = 0; i < count; i++) {
       const index = (this.turn + i) % count;
       const batch = this.batches[index]!;
-      if (!this.owesWork(batch)) continue;
+      if (!this.ready(batch)) continue;
       this.turn = index + 1;
       return batch;
     }
     return null;
+  }
+
+  private ready(batch: Batch): boolean {
+    return this.owesWork(batch) && batch.held?.() !== true;
   }
 
   // A stop retires each worker as its current job lands rather than killing it

@@ -6,12 +6,15 @@ import { Tooltip } from './tooltip';
 
 const pulse = stylex.keyframes({ '50%': { opacity: 0.35 } });
 
+const DOT_PX = 7;
+const GAP_PX = 8;
+
 const styles = stylex.create({
   strip: {
     display: 'flex',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: '8px',
+    gap: `${GAP_PX}px`,
     marginTop: '6px',
   },
   label: {
@@ -19,11 +22,12 @@ const styles = stylex.create({
     fontSize: '12.1px',
     color: color.boneDim,
     minWidth: 0,
+    maxWidth: `calc(100% - ${DOT_PX + GAP_PX}px)`,
     overflowWrap: 'anywhere',
   },
   dot: {
-    width: '7px',
-    height: '7px',
+    width: `${DOT_PX}px`,
+    height: `${DOT_PX}px`,
     borderRadius: '50%',
     backgroundColor: color.boneDim,
     flexGrow: 0,
@@ -41,6 +45,9 @@ const styles = stylex.create({
   },
   working: {
     backgroundColor: color.satin,
+  },
+  queued: {
+    backgroundColor: color.ochre,
   },
 });
 
@@ -71,19 +78,19 @@ export function StripLabel({
   );
 }
 
-/** Idle is still; `processing` is the scan, `working` whatever runs after or beside it. */
+/**
+ * Idle is still; `processing` is the scan, `working` whatever runs after or beside it, `queued`
+ * work waiting its turn.
+ */
 export function StatusDot({
   state = 'idle',
 }: {
-  state?: 'idle' | 'processing' | 'working';
+  state?: 'idle' | 'processing' | 'working' | 'queued';
 }): JSX.Element {
+  const moving = state === 'processing' || state === 'working';
   return (
     <span
-      {...stylex.props(
-        styles.dot,
-        state !== 'idle' && styles.pulse,
-        state !== 'idle' && styles[state],
-      )}
+      {...stylex.props(styles.dot, moving && styles.pulse, state !== 'idle' && styles[state])}
       aria-hidden="true"
     />
   );

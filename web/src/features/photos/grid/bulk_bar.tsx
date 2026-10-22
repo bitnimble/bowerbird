@@ -352,7 +352,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const openExport = (): void => {
     const target = photos.selectionTarget();
     if (target == null) return;
-    const frame = store.selectedLoadedPhotos[0] ?? null;
+    const frame = store.selectedLoadedPhotos.find((photo) => photo.height > 0) ?? null;
     exportPhotos.openFor(
       target,
       store.selectionCount,

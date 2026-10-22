@@ -172,7 +172,7 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
     service.finish(PHOTO, from);
 
     expect(owingRenditions()).toEqual([]);
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
   });
 
   it('rebuilds a document that moved', () => {
@@ -216,7 +216,7 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
 
     service.finish(PHOTO, from);
 
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
   });
 
   it('rebuilds a copy that was already behind when the editor opened', () => {
@@ -281,7 +281,7 @@ describe('PhotoEditsService.applyCameraMatch', () => {
       exposure: 0.35,
       awaitsCameraMatch: false,
     });
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
   });
 
   it("keeps a merge's copies current once its document awaiting the match is filled", () => {
@@ -296,7 +296,7 @@ describe('PhotoEditsService.applyCameraMatch', () => {
 
     service.applyCameraMatch(PHOTO, tone);
 
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
   });
 
   it('leaves a library that renders owing the copy it never built', () => {
@@ -305,7 +305,7 @@ describe('PhotoEditsService.applyCameraMatch', () => {
 
     service.applyCameraMatch(PHOTO, tone);
 
-    expect(photos.queueEditedSince()).toBe(1);
+    expect(photos.queueEditedSince()).toHaveLength(1);
     expect(owingRenditions()).toEqual([PHOTO]);
   });
 });
@@ -349,7 +349,7 @@ describe('PhotoEditsService', () => {
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
     settled(PHOTO);
 
-    expect(photos.queueEditedSince()).toBe(1);
+    expect(photos.queueEditedSince()).toHaveLength(1);
 
     // The predicate is the mechanism rather than a filter on one: it is true however
     // the photo got that way, which is what lets the sweep at startup catch an editor
@@ -374,14 +374,14 @@ describe('PhotoEditsService', () => {
 
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
     settled(PHOTO);
-    expect(photos.queueEditedSince([PHOTO])).toBe(1);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(1);
 
     // Back to where the edit left it, and now something claims the settings without having
     // built either derived file.
     settled(PHOTO);
     built(PHOTO, 'grid', 'full');
 
-    expect(photos.queueEditedSince([PHOTO])).toBe(0);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(0);
     expect(owingRenditions()).toEqual([]);
   });
 
@@ -404,7 +404,7 @@ describe('PhotoEditsService', () => {
     settled(PHOTO);
     built(PHOTO, 'full');
 
-    expect(photos.queueEditedSince([PHOTO])).toBe(1);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(1);
 
     const owed = db
       .query(`SELECT variant, needs_build FROM renditions WHERE photo_id = ? ORDER BY variant`)
@@ -434,12 +434,12 @@ describe('PhotoEditsService', () => {
       photos.builtFromOf(panorama),
       panorama,
     );
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
 
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
 
     // Both: the frame's own copies, and the canvas made of it.
-    expect(photos.queueEditedSince([PHOTO])).toBe(2);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(2);
     expect(owingRenditions().sort()).toEqual([panorama, PHOTO].sort());
   });
 
@@ -456,11 +456,11 @@ describe('PhotoEditsService', () => {
     });
     built(PHOTO, 'grid');
 
-    expect(photos.queueEditedSince([PHOTO])).toBe(0);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(0);
 
     expect(matched).not.toBeNull();
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.state.rev ?? 0);
-    expect(photos.queueEditedSince([PHOTO])).toBe(1);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(1);
     expect(owingRenditions()).toEqual([PHOTO]);
   });
 
@@ -489,7 +489,7 @@ describe('PhotoEditsService', () => {
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
     settled(PHOTO);
     settled(panorama);
-    expect(photos.queueEditedSince()).toBe(2);
+    expect(photos.queueEditedSince()).toHaveLength(2);
 
     // The frame's stamp, which is what the composite was rendered from.
     const stamp = (
@@ -508,7 +508,7 @@ describe('PhotoEditsService', () => {
       ).run(stamp, id, variant);
     }
 
-    expect(photos.queueEditedSince()).toBe(0);
+    expect(photos.queueEditedSince()).toHaveLength(0);
   });
 
   // And the URL version cannot do it, which is the point of its being a separate column: a
@@ -525,7 +525,7 @@ describe('PhotoEditsService', () => {
         WHERE photo_id = ? AND variant = 'full'`,
     ).run(PHOTO);
 
-    expect(photos.queueEditedSince([PHOTO])).toBe(1);
+    expect(photos.queueEditedSince([PHOTO])).toHaveLength(1);
   });
 
   it('marks the photo as edited, which is what stops the viewer opening at the camera JPEG', () => {

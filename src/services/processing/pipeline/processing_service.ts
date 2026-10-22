@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../../logger';
-import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
+import type {
+  LibraryConfiguration as Library,
+  ProcessingWorkKind,
+} from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import { isComposite } from '../../../schemas/recipes';
@@ -87,6 +90,7 @@ export class ProcessingService extends RenderService {
   // drain loop knows to stop.
   private readonly queued = new Map<string, Set<string> | null>();
   private readonly active = new Map<string, Map<string, string>>();
+  private readonly running = new Map<string, readonly ProcessingWorkKind[]>();
   private readonly pool = new ProcessingPool(
     () => this.settings.get().processing_concurrency,
     this.renderBudget,
@@ -130,6 +134,8 @@ export class ProcessingService extends RenderService {
     private readonly holdingRenderMemory: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
     activity: LibraryActivity = new LibraryActivity(),
     private readonly shellSocket: string | null = null,
+    /** A library mid-scan, whose batches start no job until `wake` follows the scan's end. */
+    private readonly scanning: (libraryId: string) => boolean = () => false,
   ) {
     super(
       photoProcessing,
@@ -167,7 +173,7 @@ export class ProcessingService extends RenderService {
 
   /**
    * Both derived stages of photos whose develop settings are newer than their renders,
-   * and a drain to follow. Every photo that qualifies where `photoIds` is omitted.
+   * and a drain of those photos alone. Every photo that qualifies where `photoIds` is omitted.
    *
    * **Called when an editor closes, not when it saves.** A save happens on every slider
    * release, and there is no way to know from one whether the reader is finished or two
@@ -185,25 +191,23 @@ export class ProcessingService extends RenderService {
     const queued = this.photoProcessing.queueEditedSince(photoIds);
     // Reported rather than thrown past: nothing is awaiting this, so an unhandled
     // rejection is all a failure would otherwise produce.
-    if (queued > 0) {
-      void this.processUnprocessed({
-        photoIds: photoIds == null ? undefined : [...photoIds],
-      }).catch((err: unknown) =>
-        log.warn('could not rebuild after an edit', { photos: queued, err }),
+    if (queued.length > 0) {
+      void this.processUnprocessed({ photoIds: queued }).catch((err: unknown) =>
+        log.warn('could not rebuild after an edit', { photos: queued.length, err }),
       );
     }
-    return queued;
+    return queued.length;
   }
 
   /** Both derived stages of every photo denoised with `denoiser`, whose model has changed. */
   rebuildDenoisedWith(denoiser: Denoiser): number {
     const queued = this.photoProcessing.queueDenoisedWith(denoiser);
-    if (queued > 0) {
-      void this.processUnprocessed().catch((err: unknown) =>
-        log.warn('could not rebuild after a model update', { photos: queued, err }),
+    if (queued.length > 0) {
+      void this.processUnprocessed({ photoIds: queued }).catch((err: unknown) =>
+        log.warn('could not rebuild after a model update', { photos: queued.length, err }),
       );
     }
-    return queued;
+    return queued.length;
   }
 
   // `stopped` ends the batch between jobs (a sync the user stopped, §9.10). What is
@@ -254,6 +258,44 @@ export class ProcessingService extends RenderService {
     );
   }
 
+  /** Which kinds of `pendingWork` a batch is building for this library now. */
+  runningWork(libraryId: string): ProcessingWorkKind[] {
+    const kinds = new Set<ProcessingWorkKind>();
+    for (const [key, work] of this.running) {
+      if (key !== '*' && key !== libraryId) continue;
+      if (![...(this.active.get(key)?.values() ?? [])].includes(libraryId)) continue;
+      if (this.scanning(libraryId)) continue;
+      for (const kind of work) kinds.add(kind);
+    }
+    return [...kinds];
+  }
+
+  /** Starts the jobs a scan held back. */
+  wake(): void {
+    this.pool.wake();
+  }
+
+  // One pool batch per library, so a scan holds back its own library's jobs and nobody else's.
+  private runPass(
+    jobs: RenditionJob[],
+    active: ReadonlyMap<string, string>,
+    onResult: (result: ProcessingResult, job: RenditionJob) => void,
+    stopped?: () => boolean,
+  ): Promise<void> {
+    const byLibrary = new Map<string, RenditionJob[]>();
+    for (const job of jobs) {
+      const libraryId = active.get(job.photoId) ?? '';
+      const group = byLibrary.get(libraryId);
+      if (group == null) byLibrary.set(libraryId, [job]);
+      else group.push(job);
+    }
+    return Promise.all(
+      [...byLibrary].map(([libraryId, group]) =>
+        this.pool.run(group, onResult, stopped, () => this.scanning(libraryId)),
+      ),
+    ).then(() => {});
+  }
+
   // `drain` is async, so its return resolves a promise and the cleanup below runs
   // a microtask later. A call landing in that gap finds this key still in flight,
   // is handed a batch that has already settled, and leaves what it asked for in
@@ -267,6 +309,7 @@ export class ProcessingService extends RenderService {
     const run = this.holdingRenderMemory(() => this.drain(libraryId, key, stopped)).finally(() => {
       this.inFlight.delete(key);
       this.active.delete(key);
+      this.running.delete(key);
       // Not while stopped: `drain` returns without consuming `queued` in that
       // case, so relaunching on it would spin.
       if (stopped?.() !== true && this.queued.has(key)) {
@@ -320,14 +363,13 @@ export class ProcessingService extends RenderService {
       }
       const active = new Map(pending.map((row) => [row.photo_id, row.library_id]));
       this.active.set(key, active);
+      const composites = pending.filter((row) => isComposite(row.recipe));
+      if (composites.length > 0) this.running.set(key, ['thumbnails', 'rendering']);
       // Composites are composed rather than decoded, one at a time and on a worker of their own:
       // a panorama holds the device for the whole of a canvas, so putting one in the pool beside
       // the tiles would stall every other photograph behind it.
-      await this.composePending(
-        pending.filter((row) => isComposite(row.recipe)),
-        active,
-        stopped,
-      );
+      await this.composePending(composites, active, stopped);
+      this.running.delete(key);
       const staged = pending.map((p) => this.toStages(p)).filter((p) => p != null);
       const stagedIds = new Set(staged.map((photo) => photo.photoId));
       for (const photoId of active.keys()) if (!stagedIds.has(photoId)) active.delete(photoId);
@@ -340,14 +382,16 @@ export class ProcessingService extends RenderService {
         renditions: staged.filter((p) => p.renditions != null).length,
         stagedMs: startedAt - listingFrom,
       });
-      const failed = await this.runStaged(staged, active, stopped);
+      const failed = await this.runStaged(key, staged, active, stopped);
       active.clear();
+      this.running.delete(key);
       // An edit saved while its photo rendered set the flag its stale job's landing then cleared.
       // Never a failed one: it records no stamp, so it would read as owed again every pass.
       const landedIds = staged
         .map((photo) => photo.photoId)
         .filter((photoId) => !failed.has(photoId));
-      if (this.photoProcessing.queueEditedSince(landedIds) > 0) this.widen(key, landedIds);
+      const editedSince = this.photoProcessing.queueEditedSince(landedIds);
+      if (editedSince.length > 0) this.widen(key, editedSince);
       log.info('batch done', {
         library: libraryId,
         photos: staged.length,
@@ -464,6 +508,7 @@ export class ProcessingService extends RenderService {
   // between them resumes at the second rather than repeating the first.
   /** Resolves to the photos either pass failed. */
   private async runStaged(
+    key: string,
     staged: StagedPhoto[],
     active: Map<string, string>,
     stopped?: () => boolean,
@@ -487,8 +532,10 @@ export class ProcessingService extends RenderService {
     const settled = idle.filter((photo) => photo.owesRenditions).length;
     if (settled > 0) log.debug('settled photos with nothing to build', { photos: settled });
 
-    await this.pool.run(
+    this.running.set(key, ['thumbnails', 'reading']);
+    await this.runPass(
       staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
+      active,
       (result, job) =>
         this.landing(() => {
           const photo = byId.get(result.photoId) ?? null;
@@ -525,8 +572,10 @@ export class ProcessingService extends RenderService {
     );
     if (pending.length === 0 || stopped?.() === true) return failed;
 
-    await this.pool.run(
+    this.running.set(key, ['rendering']);
+    await this.runPass(
       pending.map((photo) => photo.renditions as RenditionJob),
+      active,
       (result, job) =>
         this.landing(() => {
           const photo = byId.get(result.photoId) ?? null;

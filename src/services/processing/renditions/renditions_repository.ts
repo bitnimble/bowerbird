@@ -269,7 +269,7 @@ export class RenditionsRepository {
   /**
    * Both derived stages of photographs whose develop settings are newer than the
    * copies rendered from them, narrowed to `photoIds` where the caller has some in
-   * mind. Returns how many photographs were queued.
+   * mind. Returns the photographs queued.
    *
    * **The predicate is the mechanism, not a filter on one.** Asking "are the edits
    * newer than the render" is true however the photograph got that way - a save, an
@@ -292,8 +292,8 @@ export class RenditionsRepository {
    * edited frame makes the panorama it belongs to stale as surely as an edited photograph makes
    * its own copies stale, and nothing else was reaching it.
    */
-  queueEditedSince(photoIds?: readonly string[]): number {
-    if (photoIds != null && photoIds.length === 0) return 0;
+  queueEditedSince(photoIds?: readonly string[]): string[] {
+    if (photoIds != null && photoIds.length === 0) return [];
     const queued = new Set<string>();
     // No entry reads as owed, and has to: a build with nothing to record leaves the
     // stamp null, which is indistinguishable from a copy never built - so a photograph
@@ -344,7 +344,7 @@ export class RenditionsRepository {
         .query(`UPDATE photos SET processing_error = NULL WHERE id IN (${placeholders})`)
         .run(...batch);
     }
-    return queued.size;
+    return [...queued];
   }
 
   /**
@@ -353,7 +353,7 @@ export class RenditionsRepository {
    *
    * ponytail: a composite is left as built, though its frames may use the denoiser.
    */
-  queueDenoisedWith(denoiser: Denoiser): number {
+  queueDenoisedWith(denoiser: Denoiser): string[] {
     const queued = new Set<string>();
     for (const [variant, owes] of [
       [`'grid'`, 'TRUE'],
@@ -373,7 +373,7 @@ export class RenditionsRepository {
         .all(denoiser) as { id: string }[];
       for (const row of rows) queued.add(row.id);
     }
-    return queued.size;
+    return [...queued];
   }
 
   /**

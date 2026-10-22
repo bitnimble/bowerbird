@@ -21,8 +21,8 @@ const noAlbums = () => false;
 const present = (...paths: string[]) => new Set(paths);
 
 describe('buildDiff', () => {
-  it('classifies added, removed, modified, and unchanged (a.arw unchanged, so not opened)', () => {
-    // a.arw is present but unchanged -> omitted from `changed` (never opened).
+  it('classifies added, removed, modified, and unchanged (a.arw unchanged, so not rehashed)', () => {
+    // a.arw is present but unchanged -> omitted from `changed`.
     const diff = buildDiff(
       [db('p1', 'a.arw', 'h1'), db('p2', 'b.arw', 'h2'), db('p3', 'c.arw', 'h3')],
       present('a.arw', 'b.arw', 'd.arw'),
@@ -36,21 +36,9 @@ describe('buildDiff', () => {
     expect(diff.reappeared).toEqual([]);
   });
 
-  it('flags a present-but-unchanged file that was missing as reappeared (not re-opened)', () => {
+  it('flags a present-but-unchanged file that was missing as reappeared', () => {
     const diff = buildDiff([db('p1', 'a.arw', 'h1', true)], present('a.arw'), []);
     expect(diff.reappeared).toEqual(['p1']);
-    expect(diff.removed).toEqual([]);
-    expect(diff.modified).toEqual([]);
-  });
-
-  it('leaves a present-but-unreadable (extract-failed) missing file untouched, not reappeared', () => {
-    const diff = buildDiff(
-      [db('p1', 'a.arw', 'h1', true)],
-      present('a.arw'),
-      [],
-      new Set(['a.arw']),
-    );
-    expect(diff.reappeared).toEqual([]);
     expect(diff.removed).toEqual([]);
     expect(diff.modified).toEqual([]);
   });

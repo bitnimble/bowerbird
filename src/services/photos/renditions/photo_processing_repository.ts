@@ -313,10 +313,10 @@ export class PhotoProcessingRepository {
   // `rendition_source` is left alone, unlike the whole-library form below: that one
   // clears it so a library switched to `render` stops being told there is nothing to
   // build, and here the library's setting has not moved - only the photo has.
-  queueEditedSince(photoIds?: readonly string[]): number {
+  queueEditedSince(photoIds?: readonly string[]): string[] {
     return this.renditions.queueEditedSince(photoIds);
   }
-  queueDenoisedWith(denoiser: Denoiser): number {
+  queueDenoisedWith(denoiser: Denoiser): string[] {
     return this.renditions.queueDenoisedWith(denoiser);
   }
   // Whole library, same tile-only rule as `queueTileRebuild`.

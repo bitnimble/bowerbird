@@ -592,6 +592,8 @@ export const LibraryScanStatusSchema = z.object({
   photos_modified: z.number().int(),
   photos_processing: z.number().int(),
   photos_processed: z.number().int(),
+  processing_work: ProcessingWorkSchema,
+  processing_running: z.array(ProcessingWorkKindSchema),
   photos_per_second: z.number().nullable(),
 });
 ```

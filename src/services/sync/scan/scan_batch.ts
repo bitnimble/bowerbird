@@ -74,7 +74,8 @@ export class ScanBatch {
 
   reportScan(scanned: number, toScan: number): void {
     this.keepLease();
-    this.committedAt ??= Date.now();
+    // Until the first commit, so the first batch is timed from the end of the stat pass.
+    if (this.added === 0) this.committedAt = Date.now();
     this.status.set(this.libraryId, {
       ...idleScanStatus(this.libraryId, 'processing'),
       photos_to_scan: toScan,

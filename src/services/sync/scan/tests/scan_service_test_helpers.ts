@@ -1,9 +1,8 @@
 import { Database } from '../../../../db/driver';
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runMigrations } from '../../../../db/migrate';
-import type { FileMetadata } from '../../../processing/analysis/metadata';
 import type { MediaListing } from '../../../libraries/media_listing';
 import { AlbumsRepository } from '../../../albums/albums_repository';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
@@ -34,41 +33,12 @@ export interface Peer {
 
 export const roots: string[] = [];
 
-/**
- * A stub, so a scan test is not also a test about reading a RAW header - which is
- * exactly what the `extract` seam's own doc says it is there for.
- *
- * The dimensions are the only fields the scan itself reads; the rest is carried
- * through to the row untouched.
- */
-export const meta = (absPath: string): Promise<FileMetadata> =>
-  Promise.resolve({
-    width: 100,
-    height: 100,
-    orientation: 1,
-    dateTaken: null,
-    dateTakenOffset: null,
-    latitude: null,
-    longitude: null,
-    iso: null,
-    shutterSpeed: null,
-    aperture: null,
-    focalLength: null,
-    cameraMake: null,
-    cameraModel: null,
-    lensModel: null,
-    sequence: null,
-    mtime: '2026-01-01T00:00:00.000Z',
-    fileSize: statSync(absPath).size,
-  });
-
 export function makeLibrary(
   over: {
     include_subfolders?: number;
     bin_name?: string | null;
     include_non_raw?: number;
-    pendingMoves?: ConstructorParameters<typeof ScanService>[14];
-    extract?: ConstructorParameters<typeof ScanService>[10];
+    pendingMoves?: ConstructorParameters<typeof ScanService>[13];
     media?: MediaListing;
   } = {},
 ): Peer {
@@ -107,7 +77,6 @@ export function makeLibrary(
     rules,
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    over.extract ?? meta,
     undefined,
     undefined,
     undefined,

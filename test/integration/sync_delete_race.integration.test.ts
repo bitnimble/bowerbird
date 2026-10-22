@@ -1,6 +1,6 @@
 // A library deleted while its scan is mid-scan must abort cleanly (NOT_FOUND),
 // not crash with a foreign-key violation when the apply transaction inserts
-// against the now-cascade-deleted library_id. Needs a real catalogue and LibRaw:
+// against the now-cascade-deleted library_id. Needs a real catalogue:
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -20,7 +20,6 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
-import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000de';
@@ -47,11 +46,11 @@ afterAll(() => {
 
 test('a library deleted during scan aborts with NOT_FOUND, no FK crash, no orphan rows', async () => {
   const photoProcessingRepo = photoProcessing(db);
-  // Simulate a concurrent DELETE /libraries/:id landing during the async scan.
-  const extractThenDelete = async (p: string) => {
-    const meta = await extractMetadata(p);
+  // A concurrent DELETE /libraries/:id landing after the walk, through the seam the
+  // scan reads just before it stats the files.
+  const deleteThenConcurrency = () => {
     db.query('DELETE FROM libraries WHERE id = ?').run(LIB);
-    return meta;
+    return 1;
   };
   const scan = new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -64,7 +63,8 @@ test('a library deleted during scan aborts with NOT_FOUND, no FK crash, no orpha
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    extractThenDelete,
+    undefined,
+    deleteThenConcurrency,
   );
 
   const err = await scan.scanLibrary(LIB).then(

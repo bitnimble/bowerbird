@@ -4,11 +4,10 @@
 // rather than a flat idle (§9.6).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
-import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import type { ProcessingScope } from '../../src/services/processing/pipeline/processing_service';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
@@ -20,45 +19,17 @@ import {
 } from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
+import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import type { ProcessingTrigger } from '../../src/services/sync/scan/scan_rebuilds';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 
 const LIB = 'lib000ce';
 
-// The files are never opened: the extractor is injected, and the hash comes off
-// its answer rather than the bytes. mtime and size are the file's real ones, so
-// a second scan sees an untouched file as unchanged rather than modified.
-function metadata(absPath: string): FileMetadata {
-  const stats = statSync(absPath);
-  return {
-    width: 100,
-    height: 100,
-    orientation: 0,
-    dateTaken: null,
-    dateTakenOffset: null,
-    latitude: null,
-    longitude: null,
-    iso: null,
-    shutterSpeed: null,
-    aperture: null,
-    focalLength: null,
-    cameraMake: null,
-    cameraModel: null,
-    lensModel: null,
-    sequence: null,
-    mtime: stats.mtime.toISOString(),
-    fileSize: stats.size,
-  };
-}
-
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 
-function build(
-  processing: ProcessingTrigger,
-  extract: (absPath: string) => Promise<FileMetadata>,
-): ScanService {
+function build(processing: ProcessingTrigger, sidecars?: SidecarImporter): ScanService {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -71,12 +42,26 @@ function build(
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     processing,
-    extract,
+    sidecars,
   );
 }
 
 function count(): number {
   return (db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n;
+}
+
+// The sidecar import runs once after each commit of inserted rows, so it sees each batch land.
+function recordingCommits(): { committed: number[]; sidecars: SidecarImporter } {
+  const committed: number[] = [];
+  return {
+    committed,
+    sidecars: {
+      importFor: () => {
+        committed.push(count());
+        return 0;
+      },
+    },
+  };
 }
 
 beforeEach(() => {
@@ -100,61 +85,38 @@ test('a first scan writes its photos down as it goes, not all at the end', async
   // running. A kill at this point costs the tail, not the hours before it.
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const midScan: number[] = [];
-  let opened = 0;
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
-    if (++opened === 1001) midScan.push(count());
-    return metadata(absPath);
-  });
+  const { committed, sidecars } = recordingCommits();
+  const status = await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
 
-  const status = await scan.scanLibrary(LIB);
-
-  expect(midScan).toEqual([1000]);
+  expect(committed).toEqual([1000, 1001]);
   expect(status.photos_added).toBe(1001);
   expect(count()).toBe(1001);
 });
 
 test('an import resumed after a stop still writes its photos down as it goes', async () => {
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
-  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
-    LIB,
-  );
+  await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const midScan: number[] = [];
-  let opened = 0;
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
-    if (++opened === 1001) midScan.push(count());
-    return metadata(absPath);
-  });
+  const { committed, sidecars } = recordingCommits();
+  const status = await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
 
-  const status = await scan.scanLibrary(LIB);
-
-  expect(opened).toBe(1001);
-  expect(midScan).toEqual([1003]);
+  expect(committed).toEqual([1003, 1004]);
   expect(status.photos_added).toBe(1001);
   expect(count()).toBe(1004);
 });
 
 test('a scan that misses a row holds its new files back for the move they may be', async () => {
   writeFileSync(path.join(root, 'a.arw'), 'a.arw');
-  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
-    LIB,
-  );
+  await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
   const before = db.query('SELECT id FROM photos').get() as { id: string };
   renameSync(path.join(root, 'a.arw'), path.join(root, 'moved.arw'));
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const midScan: number[] = [];
-  let opened = 0;
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
-    if (++opened === 1002) midScan.push(count());
-    return metadata(absPath);
-  });
+  const { committed, sidecars } = recordingCommits();
+  await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
 
-  await scan.scanLibrary(LIB);
-
-  expect(midScan).toEqual([1]);
+  expect(committed).toEqual([1002]);
   expect(count()).toBe(1002);
   const moved = db
     .query(`SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`)
@@ -166,10 +128,7 @@ test('a scoped run hands the rendition batch its own files, not the library back
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
 
   const scopes: (ProcessingScope | undefined)[] = [];
-  const scan: ScanService = build(
-    { processUnprocessed: (scope) => void scopes.push(scope) },
-    async (absPath) => metadata(absPath),
-  );
+  const scan: ScanService = build({ processUnprocessed: (scope) => void scopes.push(scope) });
 
   // A full run, whose photos nothing then processes: the backlog a scoped run
   // must not adopt.
@@ -193,15 +152,11 @@ test('a scoped run hands the rendition batch its own files, not the library back
 
 test('a fresh process reports the work the last one left, without starting it', async () => {
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
-  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
-    LIB,
-  );
+  await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
 
   // Stands in for the restart: same database, no in-memory status at all.
   let asked = 0;
-  const restarted = build({ processUnprocessed: () => void asked++ }, async (absPath) =>
-    metadata(absPath),
-  );
+  const restarted = build({ processUnprocessed: () => void asked++ });
   const status = restarted.getScanStatus(LIB);
 
   expect(status.status).toBe('idle');

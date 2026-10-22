@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { Database } from '../driver';
 import { runMigrations } from '../migrate';
 import { config } from '../../config';
+import { computeFileHash } from '../../utils/hash';
 
 function settingsFor(db: Database, keys: string[]): Record<string, string> {
   const rows = db.query('SELECT key, value FROM settings').all() as {
@@ -51,6 +52,33 @@ describe('opening a catalogue', () => {
       render_skip_full: 'mismatch',
       render_skip_max: '',
     });
+    db.close();
+  });
+
+  it('rehashes every scanned photo from its stat, so a moved file still pairs with its row', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0018_stat_file_hash'");
+    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('lib', '/l', 'L');
+    const insert = db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added, file_hash, date_updated, file_size)
+         VALUES (?, 'lib', json_object('kind', 'file', 'path', ?), 6000, 4000, '2026-01-01T00:00:00.000Z', ?, ?, ?)`,
+    );
+    insert.run('scanned', 'Trip/A.ARW', 'header-hash', '2026-02-03T04:05:06.789Z', 81_000_000);
+    insert.run('unscanned', 'Trip/b.arw', null, null, null);
+
+    runMigrations(db);
+
+    const hashOf = (id: string): unknown =>
+      (db.query('SELECT file_hash FROM photos WHERE id = ?').get(id) as { file_hash: unknown })
+        .file_hash;
+    expect(hashOf('scanned')).toBe(
+      computeFileHash('elsewhere/a.arw', {
+        mtime: '2026-02-03T04:05:06.789Z',
+        fileSize: 81_000_000,
+      }),
+    );
+    expect(hashOf('unscanned')).toBeNull();
     db.close();
   });
 
