@@ -278,7 +278,6 @@ const FINE_RINGS: usize = 8;
 /// Lower costs quality quickly: the tail is many thin kernels that each matter little and together
 /// carry a third of the fine pass's gain.
 const FINE_CARRIED: f64 = 0.9997;
-const SCREEN_EVERY: usize = 4;
 /// Levels from black to the fitted ceiling, in ZCAM lightness (`LutAxes::of`).
 ///
 /// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
@@ -2634,21 +2633,20 @@ impl Rescored {
     }
 }
 
-/// The matrix for the tone stage a colour currently carries, and every candidate it was chosen
-/// from.
+/// The matrix for the tone stage a colour currently carries.
 async fn fitted_matrix_for(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
     pairs: &Pairs,
     frame: &Pairs,
     samples: &Gathered,
-) -> Option<([[f64; 3]; 3], Vec<[[f64; 3]; 3]>)> {
+) -> Option<[[f64; 3]; 3]> {
     // The tone stage once, kept on the device for the candidates below: they differ only in
     // their matrix, which sits after it.
     let toned = evaluate_over(gpu, colour, &samples.pairs, pairs.at.len(), Stage::Tone);
     let candidates = ridge_candidates(gpu, &toned.buffer, pairs).await?;
     if candidates.len() == 1 {
-        return Some((IDENTITY, vec![IDENTITY]));
+        return Some(IDENTITY);
     }
     // **All seven in one dispatch**: a probe costs a round trip whatever it computes, and these
     // differ only in the matrix that sits after the tone stage.
@@ -2678,9 +2676,11 @@ async fn fitted_matrix_for(
             .collect();
         eprintln!("  matrix candidates {}", ridges.join(", "));
     }
-    Some((
-        fitted_matrix(&candidates, &scored, &frame_scored, unmatched),
-        candidates,
+    Some(fitted_matrix(
+        &candidates,
+        &scored,
+        &frame_scored,
+        unmatched,
     ))
 }
 
@@ -5238,7 +5238,7 @@ async fn fit_colour(
     };
     let global = train.thinned(gpu, |k| train.balance[k]);
     lap("mask, census, pairs");
-    let (model, candidates) = fit_model(
+    let model = fit_model(
         gpu,
         &source,
         &evidence,
@@ -5298,10 +5298,6 @@ async fn fit_colour(
             wide_train.len() + wide_held.len(),
         );
     }
-    let with_matrix = |matrix: [[f64; 3]; 3]| HdrColour {
-        matrix,
-        ..model.clone()
-    };
     let lifted = sharp.lifted(gpu);
     let landed =
         |pairs: &Pairs| Landed::pairs(gpu, &source, &neighbourhood, pairs, &map_balance, &census);
@@ -5309,20 +5305,21 @@ async fn fit_colour(
     // taught on the pairs, so a node they never reached extrapolates onto the pixels they left
     // out - on an orange-lit stairwell that doubled the blue on every dark wall, which no held-out
     // pair can object to because none of them is a dark wall.
-    let pricing = async |held: &Pairs, frame: &Pairs, wide_held: &[WideSample]| {
-        let judges = Judges::new(
-            gpu,
-            &source,
-            &neighbourhood.buffer,
-            [held, frame],
-            wide_held,
-        );
-        Pricing::of(gpu, judges, &with_matrix(IDENTITY)).await
+    let judges = Judges::new(
+        gpu,
+        &source,
+        &neighbourhood.buffer,
+        [&held, &frame],
+        &wide_held,
+    );
+    let unmatched = HdrColour {
+        matrix: IDENTITY,
+        ..model.clone()
     };
-    let full = pricing(&held, &frame, &wide_held).await?;
+    let pricing = Pricing::of(gpu, judges, &unmatched).await?;
     let lattice = Lattice {
         sharp,
-        lifted: lifted.clone(),
+        lifted,
         train: landed(&train),
         wide_train: Landed::wides(gpu, &wide_train),
         held: landed(&held),
@@ -5331,51 +5328,17 @@ async fn fit_colour(
     };
     lap("landed");
 
-    // Every matrix candidate is judged with the lattice it would carry, since the lattice mends
-    // locally what a 3x3 cannot, and a matrix that serves a frame's commonest colours by turning a
-    // rare one is only as bad as what is left of that after the lattice.
-    let finalists: Vec<[[f64; 3]; 3]> = match candidates.len() {
-        0 | 1 => candidates.clone(),
-        _ => {
-            // Weights not scaled up by the stride: `MAP_CONFIDENCE` and `CLASS_CONFIDENCE` then
-            // shrink the sample's thin nodes and rare classes harder, which its noise wants.
-            // Scaled to the full fit's weight, the screen chose worse across a 32-frame sweep.
-            let every = |wides: &[WideSample]| -> Vec<WideSample> {
-                wides.iter().step_by(SCREEN_EVERY).cloned().collect()
-            };
-            let sampled_held = held.every(gpu, SCREEN_EVERY);
-            let sampled_frame = frame.every(gpu, SCREEN_EVERY);
-            let sampled_wide_held = every(&wide_held);
-            let screen = pricing(&sampled_held, &sampled_frame, &sampled_wide_held).await?;
-            let screened = Lattice {
-                sharp,
-                lifted,
-                train: landed(&train.every(gpu, SCREEN_EVERY)),
-                wide_train: Landed::wides(gpu, &every(&wide_train)),
-                held: landed(&sampled_held),
-                frame: landed(&sampled_frame),
-                wide_held: Landed::wides(gpu, &sampled_wide_held),
-            };
-            let ranking = ranked(
-                gpu,
-                &candidates,
-                &with_matrix,
-                &screened,
-                Search::SCREEN,
-                &screen,
-            )
-            .await?;
-            lap("screen");
-            vec![ranking.first()?.1.matrix]
-        }
+    let fitted = fitted_lattice(gpu, &model, &lattice, async |trial| {
+        pricing.cost(gpu, trial).await
+    })
+    .await?;
+    let mut colour = HdrColour {
+        chroma: fitted.map.clone(),
+        ..model
     };
-    let (fitted, mut colour) = ranked(gpu, &finalists, &with_matrix, &lattice, Search::FULL, &full)
-        .await?
-        .into_iter()
-        .next()?;
     let mut scored = fitted.score;
     if let Some((_, map, score)) = refined_lattice(gpu, &colour, &lattice, &fitted, async |trial| {
-        full.cost(gpu, trial).await
+        pricing.cost(gpu, trial).await
     })
     .await?
     {
@@ -5654,40 +5617,6 @@ impl Pricing {
     }
 }
 
-/// Each matrix with the lattice `search` fits it under `pricing`, cheapest first. Ties keep their
-/// order, so a frame that cannot tell candidates apart keeps the most damped.
-async fn ranked(
-    gpu: &'static crate::gpu::Gpu,
-    matrices: &[[[f64; 3]; 3]],
-    with_matrix: &impl Fn([[f64; 3]; 3]) -> HdrColour,
-    on: &Lattice<'_>,
-    search: Search,
-    pricing: &Pricing,
-) -> Option<Vec<(FittedLattice, HdrColour)>> {
-    let mut fitted = Vec::with_capacity(matrices.len());
-    for &matrix in matrices {
-        let trial = with_matrix(matrix);
-        let lattice = fitted_lattice(gpu, &trial, on, search, async |trial| {
-            pricing.cost(gpu, trial).await
-        })
-        .await?;
-        if crate::clock::watched() {
-            eprintln!(
-                "  matrix {matrix:.3?}: {:.3}, lattice {}",
-                lattice.spent,
-                lattice.map.is_some()
-            );
-        }
-        let colour = HdrColour {
-            chroma: lattice.map.clone(),
-            ..trial
-        };
-        fitted.push((lattice, colour));
-    }
-    fitted.sort_by(|a, b| a.0.spent.total_cmp(&b.0.spent));
-    Some(fitted)
-}
-
 /// The finer grid, fitted on what `colour`'s own lattice left and joined to it where that costs
 /// less than `colour` alone, `spent` being what `colour` costs.
 ///
@@ -5738,7 +5667,6 @@ async fn fitted_lattice(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
     on: &Lattice<'_>,
-    search: Search,
     cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
 ) -> Option<FittedLattice> {
     let Lattice { sharp, .. } = *on;
@@ -5785,7 +5713,7 @@ async fn fitted_lattice(
         cost(&trial).await
     };
     let mut rungs: Option<(f64, ChromaMap, Score, f64)> = None;
-    for &wide_weight in search.rungs {
+    for wide_weight in WIDE_WEIGHTS {
         let Some((grid, _)) = taught.grid(axes, shape, wide_weight) else {
             continue;
         };
@@ -5806,33 +5734,19 @@ async fn fitted_lattice(
         wide_weight: 0.0,
         axes,
     };
-    match rungs {
-        Some((whole, map, score, wide_weight)) if !search.strength => {
-            if whole < bare {
-                best = FittedLattice {
-                    spent: whole,
-                    map: Some(map),
-                    score,
-                    wide_weight,
-                    axes,
-                };
-            }
+    if let Some((whole, map, score, wide_weight)) = rungs {
+        let at = |strength: f64| map.at_strength(strength);
+        if let Some((spent, strength, score)) =
+            strongest(at, (whole, score), bare, &mut mapped).await?
+        {
+            best = FittedLattice {
+                spent,
+                map: Some(map.at_strength(strength)),
+                score,
+                wide_weight,
+                axes,
+            };
         }
-        Some((whole, map, score, wide_weight)) => {
-            let at = |strength: f64| map.at_strength(strength);
-            if let Some((spent, strength, score)) =
-                strongest(at, (whole, score), bare, &mut mapped).await?
-            {
-                best = FittedLattice {
-                    spent,
-                    map: Some(map.at_strength(strength)),
-                    score,
-                    wide_weight,
-                    axes,
-                };
-            }
-        }
-        None => {}
     }
     lap("chroma ladder");
     Some(best)
@@ -5842,27 +5756,9 @@ async fn fitted_lattice(
 /// costs it.
 const MAP_FLAT_SLACK: f64 = 0.15;
 
-/// Without `strength`, the winning rung is taken whole.
-#[derive(Clone, Copy)]
-struct Search {
-    rungs: &'static [f64],
-    strength: bool,
-}
-
-impl Search {
-    const FULL: Search = Search {
-        rungs: &WIDE_WEIGHTS,
-        strength: true,
-    };
-    const SCREEN: Search = Search {
-        rungs: &[0.0, 0.01, 0.25],
-        strength: false,
-    };
-}
-
 /// The ladder `fitted_lattice` offers: how far the wide samples may outvote the pairs in the cells
 /// both reach.
-const WIDE_WEIGHTS: [f64; 7] = [0.0, 0.002, 0.01, 0.05, 0.25, 1.0, 4.0];
+const WIDE_WEIGHTS: [f64; 3] = [0.0, 0.01, 0.25];
 
 /// Below this our side is a warp-margin crumb for the pair and wide admission, where the
 /// camera has content over it. Two orders below a real shadow, and one-sided: a Sony puts
@@ -5878,7 +5774,7 @@ async fn fit_model(
     ceiling: f64,
     [pairs, frame]: [&Pairs; 2],
     as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(HdrColour, Vec<[[f64; 3]; 3]>)> {
+) -> Option<HdrColour> {
     let mut lap = crate::clock::laps("  model ");
     let (curves, anchor) = fit_curves(gpu, evidence, balance, ceiling, None).await?;
     let mut colour = HdrColour {
@@ -5915,11 +5811,9 @@ async fn fit_model(
     };
     let mut samples = gather(source);
     let mut lit: Option<Source> = None;
-    let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
         let before = colour.matrix;
-        (colour.matrix, candidates) =
-            fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
+        colour.matrix = fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
         lap("matrix");
         let settled = before
             .iter()
@@ -5959,7 +5853,7 @@ async fn fit_model(
         lap("neutral");
     }
 
-    Some((colour, candidates))
+    Some(colour)
 }
 
 /// `plane` as it would be lit by `to` rather than by `from`, the illuminant it was balanced for:
