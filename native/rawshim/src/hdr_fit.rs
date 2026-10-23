@@ -2735,8 +2735,8 @@ const SATURATION_STEP: f64 = 0.01;
 const INVERSE_PHI: f64 = 0.618_033_988_749_895;
 
 /// Golden steps past the first two probes in the chroma map's strength search, which leaves a
-/// bracket a tenth of the way from no map to the map.
-const STRENGTH_STEPS: usize = 5;
+/// bracket four tenths of the way from no map to the map.
+const STRENGTH_STEPS: usize = 2;
 
 /// Steps of the coarse sweep.
 ///
