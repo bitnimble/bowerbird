@@ -279,7 +279,6 @@ const FINE_RINGS: usize = 8;
 /// carry a third of the fine pass's gain.
 const FINE_CARRIED: f64 = 0.9997;
 const SCREEN_EVERY: usize = 4;
-const FINALISTS: usize = 2;
 /// Levels from black to the fitted ceiling, in ZCAM lightness (`LutAxes::of`).
 ///
 /// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
@@ -1653,8 +1652,8 @@ pub fn srgb_oetf(value: f64) -> f64 {
 /// The camera's rendering as the fit will compare against it, and the weights and pair
 /// list every comparison uses, worked out once.
 ///
-/// The fit measures itself dozens of times over - six ridge candidates at each of three rounds -
-/// and none of this changes between them.
+/// The fit measures itself dozens of times over - six ridge candidates at each of up to three
+/// rounds - and none of this changes between them.
 struct Pairs {
     at: Vec<usize>,
     /// `at` and `greys` on the device, which is where every probe gathers its samples from.
@@ -2449,12 +2448,15 @@ fn hue_balance(census: &HueCensus, limit: f64) -> Vec<f64> {
         .collect()
 }
 
-/// How many times the curves and the matrix are fitted against each other.
+/// How many times at most the curves and the matrix are fitted against each other.
 ///
 /// Three, matching the falloff's alternation in `fit.rs`: the second round is where the
 /// cross-channel part moves out of the curves and into the matrix, and the third
 /// settles it.
 const FIT_ROUNDS: usize = 3;
+
+/// A matrix entry moving less than this between rounds has settled, and the rounds stop there.
+const MATRIX_SETTLED: f64 = 0.02;
 
 /// The tone curve, one shape shared by all three channels.
 ///
@@ -5333,7 +5335,7 @@ async fn fit_colour(
     // locally what a 3x3 cannot, and a matrix that serves a frame's commonest colours by turning a
     // rare one is only as bad as what is left of that after the lattice.
     let finalists: Vec<[[f64; 3]; 3]> = match candidates.len() {
-        n if n <= FINALISTS => candidates.clone(),
+        0 | 1 => candidates.clone(),
         _ => {
             // Weights not scaled up by the stride: `MAP_CONFIDENCE` and `CLASS_CONFIDENCE` then
             // shrink the sample's thin nodes and rare classes harder, which its noise wants.
@@ -5364,16 +5366,7 @@ async fn fit_colour(
             )
             .await?;
             lap("screen");
-            // Back in candidate order, so finalists the full fit cannot tell apart keep the more
-            // damped, as `ranked` promises.
-            let mut picked: Vec<usize> = ranking
-                .iter()
-                .take(FINALISTS)
-                .filter_map(|(_, colour)| candidates.iter().position(|m| *m == colour.matrix))
-                .collect();
-            picked.sort_unstable();
-            picked.dedup();
-            picked.into_iter().map(|at| candidates[at]).collect()
+            vec![ranking.first()?.1.matrix]
         }
     };
     let (fitted, mut colour) = ranked(gpu, &finalists, &with_matrix, &lattice, Search::FULL, &full)
@@ -5924,9 +5917,18 @@ async fn fit_model(
     let mut lit: Option<Source> = None;
     let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
+        let before = colour.matrix;
         (colour.matrix, candidates) =
             fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
         lap("matrix");
+        let settled = before
+            .iter()
+            .flatten()
+            .zip(colour.matrix.iter().flatten())
+            .all(|(a, b)| (a - b).abs() < MATRIX_SETTLED);
+        if round > 0 && settled {
+            break;
+        }
         let Some(inverse) = invert3(&colour.matrix).filter(|_| round + 1 < FIT_ROUNDS) else {
             break;
         };
