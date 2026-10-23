@@ -2902,17 +2902,11 @@ impl<'a> SaturationPairs<'a> {
     }
 }
 
-/// Pairs a device thread sums.
-///
-/// **Small because a probe is one thread per block, and a section asks one probe at a time.** The
-/// golden section cannot be batched - it places each probe where the last one's answer says, and
-/// the arithmetic for why is beside the loop - so at 4096 a 150k-pair frame offered 37 threads,
-/// which on any adapter is a kernel waiting on one lane's serial walk: measured at 4.4ms a probe,
-/// against 0.5ms once the same work is spread over 600.
+/// Pairs a device workgroup sums.
 ///
 /// Fixed in code rather than per adapter: the block is part of the summation order and so part
 /// of the answer, so no two runs disagree.
-const SCORE_BLOCK: usize = 256;
+const SCORE_BLOCK: usize = 4096;
 
 /// Each probe's mean at the pairs' own weights, folded from the blocks the device summed.
 async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option<Vec<f64>> {

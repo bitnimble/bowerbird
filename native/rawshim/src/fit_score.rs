@@ -317,7 +317,7 @@ impl Scoring {
                 let mut pass = recording.encoder().begin_compute_pass(&Default::default());
                 pass.set_pipeline(&kernel(gpu).target);
                 pass.set_bind_group(0, &scoring.group, &[]);
-                pass.dispatch_workgroups((blocks as u32).div_ceil(64), 1, 1);
+                pass.dispatch_workgroups(blocks as u32, 1, 1);
             }
             recording.submit();
         }
@@ -385,7 +385,7 @@ impl Scoring {
             for scoring in &asked {
                 let units = probes.len() * scoring.blocks;
                 pass.set_bind_group(0, &scoring.group, &[]);
-                pass.dispatch_workgroups((units as u32).div_ceil(64), 1, 1);
+                pass.dispatch_workgroups(units as u32, 1, 1);
             }
         }
         for scoring in &asked {

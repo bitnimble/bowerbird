@@ -12,10 +12,10 @@
 // rendering into the Lab every probe compares against, and sums per block the two terms of a
 // partial that no probe moves.
 //
-// **One thread per (probe, block), and the block is part of the answer.** Float addition is not
-// associative, so each probe is summed over fixed blocks of `block` pairs in index order and the
-// host folds the blocks in order afterwards: the same terms, in the same order, in the same
-// groups, whatever adapter runs it.
+// **One workgroup per (probe, block), and the block is part of the answer.** Float addition is not
+// associative, so each probe is summed over fixed blocks of `block` pairs, each lane's share in
+// index order and the lanes in a fixed tree, and the host folds the blocks in order afterwards:
+// the same terms, in the same order, in the same groups, whatever adapter runs it.
 
 import prelude;
 import fit_class;
@@ -81,6 +81,28 @@ static const int INVARIANT = 4 + BIAS_BUCKETS + COLOUR_CLASSES;
 /// live in every thread - which on a small adapter is the difference between the accumulators
 /// living in registers and living in memory. `fit_target` sums them once per block instead.
 static const int PARTIAL = 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + 1 + INVARIANT;
+/// What a probe accumulates, the partial ahead of its invariant.
+static const int SUMS = PARTIAL - INVARIANT;
+
+/// Threads sharing a block, each walking every `LANES`th pair of it, then summed in a fixed tree.
+static const int LANES = 64;
+groupshared float lanes[LANES * SUMS];
+
+/// Each lane's first `words` of `lanes` summed into lane 0's, the same tree on every adapter.
+void summed_across_lanes(int lane, int words)
+{
+    GroupMemoryBarrierWithGroupSync();
+    for (int stride = LANES / 2; stride > 0; stride /= 2) {
+        if (lane < stride) {
+            let mine = lane * SUMS;
+            let theirs = (lane + stride) * SUMS;
+            for (int w = 0; w < words; w++) {
+                lanes[mine + w] += lanes[theirs + w];
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+}
 
 /// A probe scales the chroma about the pair's luma, which is `fitted_saturation`'s blend.
 static const int SHAPE_SATURATION = 0;
@@ -346,11 +368,11 @@ float3 probed(int p, int k)
 /// The camera's side of every pair, once per upload: its Lab in place of its linear Rec.2020,
 /// and per block the two sums no probe moves.
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_target(uint3 id : SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_target(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
+    let b = int(group.x);
+    let lane = int(index);
     let start = b * pc.block;
     let end = min(start + pc.block, pc.pairs);
 
@@ -367,7 +389,7 @@ void fit_target(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < COLOUR_CLASSES; i++) {
         classed[i] = 0.0;
     }
-    for (int k = start; k < end; k++) {
+    for (int k = start + lane; k < end; k += LANES) {
         let t = target[k];
         let srgb = through_srgb(t.xyz);
         let lab = lab_of(float3(on_grid(srgb.x), on_grid(srgb.y), on_grid(srgb.z)));
@@ -389,27 +411,31 @@ void fit_target(uint3 id : SV_DispatchThreadID)
         }
     }
 
-    let out = b * INVARIANT;
-    invariant[out] = weight;
-    invariant[out + 1] = weight_all;
-    invariant[out + 2] = trusted;
-    invariant[out + 3] = float(end - start);
+    let mine = lane * SUMS;
+    lanes[mine] = weight;
+    lanes[mine + 1] = weight_all;
+    lanes[mine + 2] = trusted;
+    lanes[mine + 3] = 0.0;
     [ForceUnroll]
     for (int i = 0; i < BIAS_BUCKETS; i++) {
-        invariant[out + 4 + i] = seen[i];
+        lanes[mine + 4 + i] = seen[i];
     }
     [ForceUnroll]
     for (int i = 0; i < COLOUR_CLASSES; i++) {
-        invariant[out + 4 + BIAS_BUCKETS + i] = classed[i];
+        lanes[mine + 4 + BIAS_BUCKETS + i] = classed[i];
+    }
+    summed_across_lanes(lane, INVARIANT);
+    if (lane < INVARIANT) {
+        invariant[b * INVARIANT + lane] = lane == 3 ? float(end - start) : lanes[lane];
     }
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_score(uint3 id : SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_score(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
 {
-    let unit = int(id.x);
-    if (unit >= pc.probes * pc.blocks) { return; }
+    let unit = int(group.x);
+    let lane = int(index);
     let p = unit / pc.blocks;
     let b = unit % pc.blocks;
     let start = b * pc.block;
@@ -433,7 +459,7 @@ void fit_score(uint3 id : SV_DispatchThreadID)
         class_error[i] = 0.0;
     }
 
-    for (int k = start; k < end; k++) {
+    for (int k = start + lane; k < end; k += LANES) {
         let t = target[k];
         let lit = probed(p, k);
         let past = excursion(lit);
@@ -468,23 +494,28 @@ void fit_score(uint3 id : SV_DispatchThreadID)
         }
     }
 
-    let out = unit * PARTIAL;
-    partial[out] = balanced;
-    partial[out + 1] = flat;
-    partial[out + 2] = gamut_balanced;
-    partial[out + 3] = gamut_flat;
+    let mine = lane * SUMS;
+    lanes[mine] = balanced;
+    lanes[mine + 1] = flat;
+    lanes[mine + 2] = gamut_balanced;
+    lanes[mine + 3] = gamut_flat;
     [ForceUnroll]
     for (int i = 0; i < BIAS_BUCKETS; i++) {
-        partial[out + 4 + 2 * i] = bias_a[i];
-        partial[out + 4 + 2 * i + 1] = bias_b[i];
+        lanes[mine + 4 + 2 * i] = bias_a[i];
+        lanes[mine + 4 + 2 * i + 1] = bias_b[i];
     }
     [ForceUnroll]
     for (int i = 0; i < COLOUR_CLASSES; i++) {
-        partial[out + 4 + 2 * BIAS_BUCKETS + i] = class_error[i];
+        lanes[mine + 4 + 2 * BIAS_BUCKETS + i] = class_error[i];
     }
-    partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES] = plain;
-    [ForceUnroll]
-    for (int j = 0; j < INVARIANT; j++) {
-        partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + 1 + j] = invariant[b * INVARIANT + j];
+    lanes[mine + SUMS - 1] = plain;
+    summed_across_lanes(lane, SUMS);
+
+    let out = unit * PARTIAL;
+    if (lane < SUMS) {
+        partial[out + lane] = lanes[lane];
+    }
+    if (lane < INVARIANT) {
+        partial[out + SUMS + lane] = invariant[b * INVARIANT + lane];
     }
 }

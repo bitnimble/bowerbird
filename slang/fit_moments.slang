@@ -6,10 +6,11 @@
 // thirty-six floats wide and stays on the host, where it costs nothing; what was worth moving is
 // the fold in front of it.
 //
-// **One thread per (matrix, block), walking its block's pairs in order.** Float addition is not
-// associative, so the blocking is the answer's shape rather than an optimisation: the host sums
-// the blocks in index order afterwards and gets the same terms in the same groups whatever adapter
-// ran this. `fit_score.slang` and `fit_objective.slang` do the same for the same reason.
+// **One workgroup per (matrix, block), each lane walking its share in order and the lanes summed in
+// a fixed tree.** Float addition is not associative, so the blocking is the answer's shape rather
+// than an optimisation: the host sums the blocks in index order afterwards and gets the same terms
+// in the same groups whatever adapter ran this. `fit_score.slang` and `fit_objective.slang` block
+// for the same reason.
 //
 // **Each output row has its own normal equations**, because a channel the camera crushed is a
 // bound on that row alone: the camera says the colour had at most that much of it, and nothing
@@ -25,7 +26,7 @@ import times;
 struct Params {
     int pairs;
     int blocks;
-    /// Pairs one thread walks. `hdr_fit::MEASURE_BLOCK`.
+    /// Pairs one workgroup walks. `hdr_fit::MEASURE_BLOCK`.
     int block;
     /// `hdr_fit::CAMERA_CRUSHED`.
     float crushed;
@@ -84,24 +85,28 @@ void row_take(inout Row row, int m, int o, float3 v, float4 t, float w)
     row.atb += (wo * v) * t[o];
 }
 
-void row_write(Row row, int at, int o)
+/// Threads sharing a block, each walking every `LANES`th pair of it.
+static const int LANES = 64;
+groupshared float lanes[LANES * MOMENT_WORDS];
+
+void row_share(Row row, int at, int o)
 {
     for (int c = 0; c < 3; c++) {
-        partial[at + o * 9 + c] = row.ata0[c];
-        partial[at + o * 9 + 3 + c] = row.ata1[c];
-        partial[at + o * 9 + 6 + c] = row.ata2[c];
-        partial[at + 27 + times(o, 3) + c] = row.atb[c];
+        lanes[at + o * 9 + c] = row.ata0[c];
+        lanes[at + o * 9 + 3 + c] = row.ata1[c];
+        lanes[at + o * 9 + 6 + c] = row.ata2[c];
+        lanes[at + 27 + times(o, 3) + c] = row.atb[c];
     }
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_moments(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_moments(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let unit = int(id.x);
+    let unit = int(group.x);
+    let lane = int(index);
     let probe = unit / pc.blocks;
     let b = unit - probe * pc.blocks;
-    if (probe >= pc.probes) { return; }
     let first = b * pc.block;
     let last = min(first + pc.block, pc.pairs);
     let m = probe * 9;
@@ -113,7 +118,7 @@ void fit_moments(uint3 id: SV_DispatchThreadID)
     row_none(green);
     row_none(blue);
 
-    for (int k = first; k < last; k++) {
+    for (int k = first + lane; k < last; k += LANES) {
         let v = below[k].xyz;
         let t = target[k];
         // The weight the host used: a pair's hue balance over its own brightness, so a dark pair
@@ -129,8 +134,21 @@ void fit_moments(uint3 id: SV_DispatchThreadID)
         row_take(blue, m, 2, v, t, w);
     }
 
-    let at = unit * MOMENT_WORDS;
-    row_write(red, at, 0);
-    row_write(green, at, 1);
-    row_write(blue, at, 2);
+    let mine = lane * MOMENT_WORDS;
+    row_share(red, mine, 0);
+    row_share(green, mine, 1);
+    row_share(blue, mine, 2);
+    GroupMemoryBarrierWithGroupSync();
+    for (int stride = LANES / 2; stride > 0; stride /= 2) {
+        if (lane < stride) {
+            let theirs = (lane + stride) * MOMENT_WORDS;
+            for (int w = 0; w < MOMENT_WORDS; w++) {
+                lanes[mine + w] += lanes[theirs + w];
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (lane < MOMENT_WORDS) {
+        partial[unit * MOMENT_WORDS + lane] = lanes[lane];
+    }
 }

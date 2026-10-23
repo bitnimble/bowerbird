@@ -147,7 +147,7 @@ pub(crate) async fn partials(
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(&kernel(gpu).moments);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(((matrices.len() * blocks) as u32).div_ceil(64), 1, 1);
+        pass.dispatch_workgroups((matrices.len() * blocks) as u32, 1, 1);
     }
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit moments out"),
