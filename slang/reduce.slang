@@ -148,36 +148,66 @@ float3 averaged_coarser(float2 at, float2 scale, uint2 source)
     return acc / max(total, 1e-6);
 }
 
-/// A frame to a smaller frame, at whatever ratio the caller asked for. What a rendition is cut with.
+/// A pair of output pixels' light, the second zero where the frame ends at the first.
 ///
-/// A pair of output pixels at a time, for `warp_lens`'s reason: three samples do not fill a whole
-/// number of words and two pixels do, so a per-pixel invocation would share its last word with its
-/// neighbour's first and one of the two writes would be lost.
+/// A pair at a time, for `warp_lens`'s reason: three samples do not fill a whole number of words
+/// and two pixels do, so a per-pixel invocation would share its last word with its neighbour's
+/// first and one of the two writes would be lost.
+struct Pair {
+    float3 a;
+    float3 b;
+    bool paired;
+};
+
+Pair resized_pair(uint first, uint pixels)
+{
+    let origin = float2(reduction.out_origin);
+    Pair pair;
+    pair.a = averaged_light(placed(first, reduction.size.x) + origin, reduction.scale,
+        reduction.source, reduction.source_origin);
+    pair.b = float3(0.0);
+    pair.paired = first + 1 < pixels;
+    if (pair.paired) {
+        pair.b = averaged_light(placed(first + 1, reduction.size.x) + origin, reduction.scale,
+            reduction.source, reduction.source_origin);
+    }
+    return pair;
+}
+
+/// A coded frame to a smaller one, at whatever ratio the caller asked for. What a rendition is cut
+/// with.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void resize(uint3 id : SV_DispatchThreadID)
 {
-    let pair = linear(id);
+    let first = linear(id) * 2;
     let pixels = reduction.size.x * reduction.size.y;
-    let first = pair * 2;
     if (first >= pixels) { return; }
-
-    let origin = float2(reduction.out_origin);
-    let a = averaged_light(placed(first, reduction.size.x) + origin, reduction.scale,
-        reduction.source, reduction.source_origin);
-    float3 b = float3(0.0);
-    let paired = first + 1 < pixels;
-    if (paired) {
-        b = averaged_light(placed(first + 1, reduction.size.x) + origin, reduction.scale,
-            reduction.source, reduction.source_origin);
-    }
-
+    let pair = resized_pair(first, pixels);
     store_pair(
         smaller,
         wide<Drawn>(first),
-        codes_of_light(light_of_code, a),
-        codes_of_light(light_of_code, b),
-        paired,
+        codes_of_pq_light(light_of_code, pair.a),
+        codes_of_pq_light(light_of_code, pair.b),
+        pair.paired,
+        false);
+}
+
+/// The same over a frame the coding has not reached, whose table is `Base::light_of_level`.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void resize_scene(uint3 id : SV_DispatchThreadID)
+{
+    let first = linear(id) * 2;
+    let pixels = reduction.size.x * reduction.size.y;
+    if (first >= pixels) { return; }
+    let pair = resized_pair(first, pixels);
+    store_pair(
+        smaller,
+        wide<Drawn>(first),
+        codes_of_level_light(light_of_code, pair.a),
+        codes_of_level_light(light_of_code, pair.b),
+        pair.paired,
         false);
 }
 
@@ -192,7 +222,7 @@ void halve(uint3 id : SV_DispatchThreadID)
     let level = averaged_light(float2(id.xy), float2(2.0), reduction.source, uint2(0));
     finer.Store(
         int2(int(id.x), int(id.y)),
-        uint4(codes_of_light(light_of_code, level), 65535));
+        uint4(codes_of_pq_light(light_of_code, level), 65535));
 }
 
 /// Every level after it, from the one above.
@@ -211,5 +241,5 @@ void reduce(uint3 id : SV_DispatchThreadID)
     let level = averaged_coarser(float2(id.xy), float2(2.0), above);
     finer.Store(
         int2(int(id.x), int(id.y)),
-        uint4(codes_of_light(light_of_code, level), 65535));
+        uint4(codes_of_pq_light(light_of_code, level), 65535));
 }

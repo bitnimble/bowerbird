@@ -89,8 +89,8 @@ void composite_resolve(uint3 id : SV_DispatchThreadID)
     store_pair(
         out_,
         wide<Drawn>(first),
-        codes_of_light(light_of_code, a),
-        codes_of_light(light_of_code, b),
+        codes_of_pq_light(light_of_code, a),
+        codes_of_pq_light(light_of_code, b),
         paired,
         false);
 }

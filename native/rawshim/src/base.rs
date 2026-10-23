@@ -43,6 +43,7 @@ pub struct Base {
     light_of_level: crate::gpu::Buffer,
     resize_layout: wgpu::BindGroupLayout,
     resize: wgpu::ComputePipeline,
+    resize_scene: wgpu::ComputePipeline,
     halve_layout: wgpu::BindGroupLayout,
     halve: wgpu::ComputePipeline,
     reduce_layout: wgpu::BindGroupLayout,
@@ -291,6 +292,7 @@ impl Base {
             })
         };
         let resize = reducing("resize", &resize_layout);
+        let resize_scene = reducing("resize_scene", &resize_layout);
         let halve = reducing("halve", &halve_layout);
         let reduce = reducing("reduce", &reduce_layout);
 
@@ -424,6 +426,7 @@ impl Base {
             sharpen_apply: sharpen("sharpen_apply"),
             resize_layout,
             resize,
+            resize_scene,
             halve_layout,
             halve,
             reduce_layout,
@@ -456,41 +459,47 @@ impl Base {
 /// Built in `f64` for the reason `coding_curve` is: this is the table the round trip is held exact
 /// against, and a `f32` curve would put the search a count out on the codes where PQ is steepest.
 fn light_of_code(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
+    table_buffer(gpu, "light of code", &light_of_code_table())
+}
+
+fn light_of_code_table() -> Vec<f32> {
     let signal = |of: u16| crate::light::Light::measured(f64::from(of) / f64::from(u16::MAX));
     let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(signal(u16::MAX));
-    let mut bytes = Vec::with_capacity((u16::MAX as usize + 1) * 4);
-    for code in 0..=u16::MAX {
-        // A ratio, which is what the header means by normalised: both ends are the scene's nits,
-        // so whatever the frame's anchor was divides out and this is the curve alone.
-        let light = crate::tone::pq_inv::<crate::light::SceneNits>(signal(code)) / ceiling;
-        bytes.extend_from_slice(&(light.raw() as f32).to_le_bytes());
-    }
-    gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("light of code"),
-        contents: &bytes,
-        usage: wgpu::BufferUsages::STORAGE,
-    })
+    (0..=u16::MAX)
+        .map(|code| {
+            // A ratio, which is what the header means by normalised: both ends are the scene's
+            // nits, so whatever the frame's anchor was divides out and this is the curve alone.
+            let light = crate::tone::pq_inv::<crate::light::SceneNits>(signal(code)) / ceiling;
+            light.raw() as f32
+        })
+        .collect()
 }
 
 /// The same table for a frame the coding has not reached: each sample's own level, by its bits
 /// (`resident::level_of_bits`), as a fraction of full scale.
 ///
-/// Normalised the same way, so `code_of_light`'s search over it lands back on the sample it came
-/// from and a flat field survives the round trip.
+/// Normalised the same way, so `code_of_level_light`'s search over it lands back on the sample it
+/// came from and a flat field survives the round trip.
 fn light_of_level(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
+    table_buffer(gpu, "light of level", &light_of_level_table())
+}
+
+fn light_of_level_table() -> Vec<f32> {
     let largest = half::f16::MAX.to_bits();
-    let mut bytes = Vec::with_capacity((u16::MAX as usize + 1) * 4);
-    for bits in 0..=u16::MAX {
+    (0..=u16::MAX)
         // Past the largest finite half are infinity, NaNs and the negatives, which no writer
         // stores; saturated, so the search's table stays ascending.
-        let light = match bits <= largest {
+        .map(|bits| match bits <= largest {
             true => crate::resident::level_of_bits(bits) / crate::resident::FULL_SCALE,
             false => f32::MAX,
-        };
-        bytes.extend_from_slice(&light.to_le_bytes());
-    }
+        })
+        .collect()
+}
+
+fn table_buffer(gpu: &crate::gpu::Gpu, label: &str, table: &[f32]) -> crate::gpu::Buffer {
+    let bytes: Vec<u8> = table.iter().flat_map(|light| light.to_le_bytes()).collect();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("light of level"),
+        label: Some(label),
         contents: &bytes,
         usage: wgpu::BufferUsages::STORAGE,
     })
@@ -824,6 +833,7 @@ pub fn resize(
         base,
         frame,
         &Reduction::whole(source, out, resize_scale(source, out)),
+        &base.resize,
         &base.light_of_code,
     ))
 }
@@ -849,7 +859,7 @@ pub fn resize_window(
         out_origin: out.at.raw(),
         source_origin: region_at.raw(),
     };
-    resized_through(gpu, base, region, &block, &base.light_of_code)
+    resized_through(gpu, base, region, &block, &base.resize, &base.light_of_code)
 }
 
 /// The rectangle of a `whole` frame that `out` of its resize to `whole_out` reads.
@@ -912,6 +922,7 @@ pub fn resize_scene(
         base,
         frame,
         &Reduction::whole(source, out, resize_scale(source, out)),
+        &base.resize_scene,
         &base.light_of_level,
     ))
 }
@@ -921,6 +932,7 @@ fn resized_through(
     base: &'static Base,
     frame: &crate::resident::Resident,
     block: &Reduction,
+    pipeline: &wgpu::ComputePipeline,
     light_of_sample: &crate::gpu::Buffer,
 ) -> crate::resident::Resident {
     let out = block.out;
@@ -956,7 +968,7 @@ fn resized_through(
 
     {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.resize);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
         let (x, y) = groups(pixels.div_ceil(2));
         pass.dispatch_workgroups(x, y, 1);
@@ -4255,6 +4267,121 @@ mod tests {
             "the same size is not a downscale",
         );
         assert!(resized(gpu, base, &flat, (8, 8), (4, 4)).is_some());
+    }
+
+    /// Both code searches start near the curve's guess, and land on the code a binary search of
+    /// the whole table does: every entry, the midpoints and the floats either side of them, and
+    /// the lights no table holds.
+    #[test]
+    fn the_code_searches_land_where_a_whole_table_search_does() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let device = gpu.describing();
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("codes"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/probe_codes.wgsl")).into(),
+            ),
+        });
+        let searched = |entry: &str, table: &[f32], lights: &[f32]| -> Vec<u32> {
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: None,
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            let bytes: Vec<u8> = lights.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let mut recording = gpu.record();
+            let table_bytes: Vec<u8> = table.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let table = recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("table"),
+                contents: &table_bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let words = recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("lights"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+            let readback = recording.buffer(&wgpu::BufferDescriptor {
+                label: Some("codes out"),
+                size: bytes.len() as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(entry),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: table.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: words.as_entire_binding(),
+                    },
+                ],
+            });
+            {
+                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups(lights.len().div_ceil(64) as u32, 1, 1);
+            }
+            recording
+                .encoder()
+                .copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
+            recording.submit();
+            pollster::block_on(crate::gpu::read_back(gpu, &readback, |mapped| {
+                mapped
+                    .chunks_exact(4)
+                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            }))
+            .expect("the codes map")
+        };
+        let whole_table = |table: &[f32], light: f32| -> u32 {
+            let (mut lo, mut hi) = (0usize, table.len() - 1);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                match table[mid] < light {
+                    true => lo = mid + 1,
+                    false => hi = mid,
+                }
+            }
+            match lo > 0 && light - table[lo - 1] < table[lo] - light {
+                true => lo as u32 - 1,
+                false => lo as u32,
+            }
+        };
+
+        for (entry, table) in [
+            ("probe_pq_codes", super::light_of_code_table()),
+            ("probe_level_codes", super::light_of_level_table()),
+        ] {
+            let mut lights = vec![0.0, -0.0, -1.0, f32::NAN, 1.5, 65504.5, 1e9, f32::INFINITY];
+            for pair in table.windows(2) {
+                let middle = pair[0] + (pair[1] - pair[0]) / 2.0;
+                lights.extend([
+                    pair[0],
+                    middle,
+                    f32::from_bits(middle.to_bits().saturating_sub(1)),
+                    f32::from_bits(middle.to_bits() + 1),
+                ]);
+            }
+            let got = searched(entry, &table, &lights);
+            for (light, got) in lights.iter().zip(got) {
+                let want = whole_table(&table, *light);
+                assert_eq!(
+                    got, want,
+                    "{entry}: {light:e} found {got} where the table says {want}"
+                );
+            }
+        }
     }
 
     /// A frame the coding has not reached averages in its own samples, which for that frame is the

@@ -9,8 +9,8 @@
 // each other's work and the order they are drawn in decides only which one is on top where they
 // overlap.
 //
-// Mixed in light, through `light_of_code` and back through its own search, for `reduce.slang`'s
-// reason: a weighted sum of PQ codes is a number no photograph has.
+// Mixed in light, through `light_of_code` and back through `code_of_pq_light`, for
+// `reduce.slang`'s reason: a weighted sum of PQ codes is a number no photograph has.
 import lanes;
 import packed;
 import prelude;
@@ -61,22 +61,6 @@ static const float NOT_REACHED = -1e30;
 /// largest code, well below any diffuse white. A cell of black would otherwise be a log of zero,
 /// and two cells of noise in the shadows would disagree by as many stops as a face and a wall.
 static const float DARKEST = 0.00006103515625;
-
-/// `reduce.slang`'s `code_of_light`, over the same table: the nearest code to a light, exactly, so
-/// a fill of gain one lands on the code it was read from.
-uint code_of_light(float light)
-{
-    uint lo = 0;
-    uint hi = 65535;
-    while (lo < hi) {
-        let mid = (lo + hi) / 2;
-        if (light_of_code[mid] < light) { lo = mid + 1; } else { hi = mid; }
-    }
-    if (lo > 0 && light - light_of_code[lo - 1] < light_of_code[lo] - light) {
-        return lo - 1;
-    }
-    return lo;
-}
 
 float2 vertex(uint at)
 {
@@ -139,7 +123,7 @@ uint3 repaired(uint pixel, uint3 codes)
     for (uint channel = 0; channel < 3; channel++) {
         let here = light_of_code[codes[channel]];
         let there = light_of_code[half_of(band[(at + channel) / 2], at + channel)] * params.gain;
-        out[channel] = code_of_light(lerp(here, there, weight));
+        out[channel] = code_of_pq_light(light_of_code, lerp(here, there, weight));
     }
     return out;
 }

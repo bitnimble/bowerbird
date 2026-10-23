@@ -5,6 +5,7 @@
 // it would double a 361MB frame at 61MP for arithmetic that rounds back to sixteen bits anyway.
 module packed;
 
+import prelude;
 import px;
 
 /// The half of `word` that sample `at` occupies.
@@ -95,30 +96,64 @@ public void store_pair(
     words[word + 1] = padding | a.b;
 }
 
-/// The nearest code to a quantity of light, by searching the table the codes decode through.
+/// The nearest PQ code to a quantity of light, in `Base::light_of_code`'s table.
 ///
 /// **Not ST 2084 evaluated here: the round trip has to be an identity.** A `f32` PQ against the
-/// table the host built in `f64` disagrees by a count on about a fifth of a frame; a search of the
-/// same table cannot, so a pixel every tap agreed on comes back as its own code.
-public uint code_of_light(StructuredBuffer<float> light_of_code, float light)
+/// table the host built in `f64` disagrees by a count on about a fifth of a frame. The curve only
+/// says where to start; the table decides, so a pixel every tap agreed on comes back as its own code.
+public uint code_of_pq_light(StructuredBuffer<float> light_of_code, float light)
 {
-    uint lo = 0;
-    uint hi = 65535;
+    var near = 0u;
+    if (light == light) {
+        let y = pow(clamp(light, 0.0, 1.0), PQ_M1);
+        let signal = pow((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y), PQ_M2);
+        near = uint(clamp(round(signal * 65535.0), 0.0, 65535.0));
+    }
+    return nearest_from(light_of_code, light, near);
+}
+
+/// The same in `Base::light_of_level`'s table, whose codes are half floats of the light itself.
+public uint code_of_level_light(StructuredBuffer<float> light_of_level, float light)
+{
+    // Masked rather than signed: a negative zero would start the walk in the negative halves.
+    let near = light == light ? half_bits(max(light, 0.0)) & 0x7fff : 0u;
+    return nearest_from(light_of_level, light, near);
+}
+
+public uint3 codes_of_pq_light(StructuredBuffer<float> light_of_code, float3 light)
+{
+    return uint3(
+        code_of_pq_light(light_of_code, light.r),
+        code_of_pq_light(light_of_code, light.g),
+        code_of_pq_light(light_of_code, light.b));
+}
+
+public uint3 codes_of_level_light(StructuredBuffer<float> light_of_level, float3 light)
+{
+    return uint3(
+        code_of_level_light(light_of_level, light.r),
+        code_of_level_light(light_of_level, light.g),
+        code_of_level_light(light_of_level, light.b));
+}
+
+static const uint NEAR = 2;
+
+/// The first code at or above `light` in the ascending table, or its predecessor where that is
+/// nearer, searched within `NEAR` of `near` when the answer lies there and the whole table otherwise.
+uint nearest_from(StructuredBuffer<float> table, float light, uint near)
+{
+    var lo = near - min(near, NEAR);
+    var hi = min(near + NEAR, 65535u);
+    if ((lo > 0 && !(table[lo - 1] < light)) || (hi < 65535 && table[hi] < light)) {
+        lo = 0;
+        hi = 65535;
+    }
     while (lo < hi) {
         let mid = (lo + hi) / 2;
-        if (light_of_code[mid] < light) { lo = mid + 1; } else { hi = mid; }
+        if (table[mid] < light) { lo = mid + 1; } else { hi = mid; }
     }
-    // The first code at or above the target; its predecessor may be the nearer of the two.
-    if (lo > 0 && light - light_of_code[lo - 1] < light_of_code[lo] - light) {
+    if (lo > 0 && light - table[lo - 1] < table[lo] - light) {
         return lo - 1;
     }
     return lo;
-}
-
-public uint3 codes_of_light(StructuredBuffer<float> light_of_code, float3 light)
-{
-    return uint3(
-        code_of_light(light_of_code, light.r),
-        code_of_light(light_of_code, light.g),
-        code_of_light(light_of_code, light.b));
 }
