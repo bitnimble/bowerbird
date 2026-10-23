@@ -5,8 +5,10 @@
 //! tiling between the two walks, which is index bookkeeping over a few thousand probes rather than
 //! work on a picture.
 
-/// Stepped positions one thread of the gate walks.
+/// Stepped positions one workgroup of the gate takes.
 const BLOCK: usize = 256;
+// `compact.slang` marks a lane's share in 64 bits, across its 64 lanes.
+const _: () = assert!(BLOCK <= 64 * 64);
 
 /// Words a gathered sample occupies: ours, the camera's, and whether it survived.
 const SAMPLE_WORDS: usize = 7;
@@ -253,6 +255,7 @@ fn bound(
 pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
     let stepped = rows(planes) * columns(planes);
     let blocks = stepped.div_ceil(BLOCK).max(1);
+    assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
     let storage = wgpu::BufferUsages::STORAGE;
     let readable = storage | wgpu::BufferUsages::COPY_SRC;
     let held = |label, words: usize, usage| {
@@ -289,7 +292,7 @@ pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) ->
         &spare_samples,
         &push,
     );
-    let over_blocks = (blocks as u32).div_ceil(64);
+    let over_blocks = blocks as u32;
     let built = kernels(gpu);
     // A pass each: the scan reads what the count wrote.
     for (pipeline, dispatch) in [(&built.count, over_blocks), (&built.offsets, 1)] {

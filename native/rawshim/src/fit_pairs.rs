@@ -16,7 +16,7 @@ const HALF_BINS: usize = 65536;
 /// Words a pair's record occupies, which `fit_pairs.slang` states for itself.
 const PAIR_WORDS: usize = 5;
 
-/// Pixels one thread of the two pair passes walks.
+/// Pixels one workgroup of the two pair passes takes.
 ///
 /// The count and the write have to agree on this and nothing else does, so it is a free choice:
 /// small enough that the blocks fill a device, large enough that the scan over them stays short.
@@ -206,6 +206,7 @@ pub(crate) async fn select(
 ) -> Option<Selected> {
     let pixels = width * height;
     let blocks = pixels.div_ceil(BLOCK).max(1);
+    assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
     let hue_slots = crate::hdr_fit::HUE_SLOTS;
     let marks_words = HUES + hue_slots;
 
@@ -283,7 +284,7 @@ pub(crate) async fn select(
     });
     let selecting = group(&idle);
     let over_pixels = ((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
-    let over_blocks = ((blocks as u32).div_ceil(64), 1, 1);
+    let over_blocks = (blocks as u32, 1, 1);
     // A pass each, which is what orders them: within one pass two dispatches may overlap, and
     // every step here reads what the step before it wrote.
     for (pipeline, (x, y, z)) in [

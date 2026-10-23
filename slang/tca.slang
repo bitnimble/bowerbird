@@ -18,6 +18,7 @@
 // measuring what is there with the sampling positions moved.
 import px;
 import times;
+import compact;
 
 struct Params {
     int width;
@@ -26,7 +27,7 @@ struct Params {
     int out_width;
     int out_height;
     int reduce;
-    /// Stepped positions one thread of the scan walks, and how many such blocks the rows hold.
+    /// Stepped positions one workgroup of the scan takes, and how many such blocks the rows hold.
     int block;
     int blocks;
     int rows;
@@ -183,14 +184,14 @@ bool is_source(int x, int y)
     return count <= LIT_AT_MOST && extent <= MAX_EXTENT;
 }
 
-/// The stepped positions one thread of the scan walks. Every second row, because a point source is
+/// The stepped positions the scan takes. Every second row, because a point source is
 /// a single-pixel peak, so this finds about half of them - and the measurement wants tens per
 /// radius bin, not thousands.
 int columns() { return pc.width - 2 * MARGIN; }
-int2 span_of(int b)
+int2 share_in(uint b, uint lane)
 {
-    let first = b * pc.block;
-    return int2(first, min(first + pc.block, pc.rows * columns()));
+    let first = int(b) * pc.block;
+    return share_of(first, min(first + pc.block, pc.rows * columns()), int(lane));
 }
 int2 stepped(int s)
 {
@@ -226,19 +227,23 @@ void tca_reduce(uint3 id: SV_DispatchThreadID)
     }
 }
 
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void tca_count(uint3 id: SV_DispatchThreadID)
+uint2 scanned_in(int2 share)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
-    let span = span_of(b);
-    var kept = 0u;
-    for (int s = span.x; s < span.y; s++) {
+    var kept = uint2(0u);
+    for (int s = share.x; s < share.y; s++) {
         int2 p;
-        if (scanned(s, p)) { kept++; }
+        if (scanned(s, p)) { kept = with_kept(kept, s - share.x); }
     }
-    counts[b] = kept;
+    return kept;
+}
+
+[shader("compute")]
+[numthreads(LANES, 1, 1)]
+void tca_count(uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
+{
+    uint total;
+    kept_before(int(lane), kept_count(scanned_in(share_in(group.x, lane))), total);
+    if (lane == 0) { counts[group.x] = total; }
 }
 
 /// Where each block's run starts, which keeps the point list in the order a serial scan would
@@ -257,16 +262,16 @@ void tca_offsets()
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void tca_write(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void tca_write(uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
-    let span = span_of(b);
-    var slot = counts[b];
-    for (int s = span.x; s < span.y; s++) {
-        int2 p;
-        if (!scanned(s, p)) { continue; }
+    let share = share_in(group.x, lane);
+    let kept = scanned_in(share);
+    uint total;
+    var slot = counts[group.x] + kept_before(int(lane), kept_count(kept), total);
+    for (int s = share.x; s < share.y; s++) {
+        if (!is_kept(kept, s - share.x)) { continue; }
+        let p = stepped(s);
         at[int(slot) * 2] = p.x;
         at[int(slot) * 2 + 1] = p.y;
         slot++;

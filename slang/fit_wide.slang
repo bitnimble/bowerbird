@@ -8,6 +8,7 @@
 // on a picture.
 import prelude;
 import px;
+import compact;
 
 struct Params {
     /// The grid both planes are read on, which is the smaller of the two.
@@ -20,7 +21,7 @@ struct Params {
     int our_height;
     /// One pixel in this many, each way.
     int stride;
-    /// Pixels one thread of the gate walks, and how many such blocks the rows hold.
+    /// Pixels one workgroup of the gate takes, and how many such blocks the rows hold.
     int block;
     int blocks;
     /// How many rows the gate steps over, and how many admitted pixels the gather has.
@@ -130,11 +131,21 @@ int columns() { return (pc.width - 2 + pc.stride - 1) / pc.stride; }
 int column_at(int k) { return 1 + k * pc.stride; }
 int row_at(int r) { return 1 + r * pc.stride; }
 
-/// The half-open run of stepped positions one thread of the gate walks.
-int2 span_of(uint b)
+/// The half-open run of stepped positions one workgroup of the gate takes, and lane `lane`'s share
+/// of it.
+int2 share_in(uint b, uint lane)
 {
     let first = int(b) * pc.block;
-    return int2(first, min(first + pc.block, pc.rows * columns()));
+    return share_of(first, min(first + pc.block, pc.rows * columns()), int(lane));
+}
+
+uint2 admitted_in(int2 share)
+{
+    var kept = uint2(0u);
+    for (int s = share.x; s < share.y; s++) {
+        if (admits(s)) { kept = with_kept(kept, s - share.x); }
+    }
+    return kept;
 }
 
 /// Whether the stepped position `s` is one this pass will teach from.
@@ -148,16 +159,12 @@ bool admits(int s)
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_wide_count(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_wide_count(uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
 {
-    if (int(id.x) >= pc.blocks) { return; }
-    let span = span_of(id.x);
-    var kept = 0u;
-    for (int s = span.x; s < span.y; s++) {
-        if (admits(s)) { kept++; }
-    }
-    counts[id.x] = kept;
+    uint total;
+    kept_before(int(lane), kept_count(admitted_in(share_in(group.x, lane))), total);
+    if (lane == 0) { counts[group.x] = total; }
 }
 
 /// Where each block's run starts, which is what keeps the admitted list in row-major order.
@@ -178,14 +185,15 @@ void fit_wide_offsets()
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_wide_write(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_wide_write(uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
 {
-    if (int(id.x) >= pc.blocks) { return; }
-    let span = span_of(id.x);
-    var slot = counts[id.x];
-    for (int s = span.x; s < span.y; s++) {
-        if (!admits(s)) { continue; }
+    let share = share_in(group.x, lane);
+    let kept = admitted_in(share);
+    uint total;
+    var slot = counts[group.x] + kept_before(int(lane), kept_count(kept), total);
+    for (int s = share.x; s < share.y; s++) {
+        if (!is_kept(kept, s - share.x)) { continue; }
         at[slot * 2] = column_at(s % columns());
         at[slot * 2 + 1] = row_at(s / columns());
         slot++;

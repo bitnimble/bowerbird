@@ -18,9 +18,8 @@ import index_space;
 import kernel_reach;
 
 struct Params {
-    /// Pairs the lattice was given, and how many one thread of the scan walks.
+    /// Pairs the lattice was given, and how many `BLOCK`s they make.
     int pairs;
-    int block;
     int blocks;
     /// Nodes along hue, chroma, lightness and neighbourhood.
     int hue_nodes;
@@ -32,7 +31,8 @@ struct Params {
     float level_low;
     float level_scale;
     float neighbourhood_scale;
-    int pad;
+    int pad0;
+    int pad1;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -72,6 +72,13 @@ static const int NODE_WORDS = 35;
 static const int REACH_WORDS = 26;
 /// Landings one gathering thread walks at most.
 static const int SLICE = 256;
+/// Pairs a workgroup of the count and the write takes, and the threads sharing them.
+static const int BLOCK = 512;
+static const int LANES = 64;
+/// The most cells a grid has: `hdr_fit::GridShape::FINE`'s.
+static const int MOST_CELLS = 3072;
+groupshared int round_cells[LANES];
+groupshared uint tally[MOST_CELLS];
 
 int nodes() { return pc.hue_nodes * pc.chroma_nodes * pc.level_nodes * pc.neighbourhood_nodes; }
 int corners_from() { return nodes() * NODE_WORDS; }
@@ -176,21 +183,48 @@ void lat_land(uint3 id: SV_DispatchThreadID)
     landed[base + 11] = weights[k];
 }
 
-/// Landings per (block, cell). One thread a block, walking its own pairs.
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void lat_count(uint3 id: SV_DispatchThreadID)
+/// The cell of the block's `i`th pair, or -1 past the last pair.
+int cell_of(int b, int i)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
-    let cells = cells();
-    for (int c = 0; c < cells; c++) { counts[b * cells + c] = 0u; }
-    let first = b * pc.block;
-    let last = min(first + pc.block, pc.pairs);
-    for (int k = first; k < last; k++) {
-        let cell = int(landed[times(k, LANDING_WORDS)]);
-        counts[b * cells + cell] = counts[b * cells + cell] + 1u;
+    let k = b * BLOCK + i;
+    return k < pc.pairs ? int(landed[times(k, LANDING_WORDS)]) : -1;
+}
+
+/// How many lanes before `lane` this round share its cell, and whether none after it does: the
+/// last of a cell's lanes is the one that moves its tally on, so no two lanes write one cell.
+int rank_in_round(int lane, int cell, out bool last_of_cell)
+{
+    round_cells[lane] = cell;
+    GroupMemoryBarrierWithGroupSync();
+    var rank = 0;
+    last_of_cell = true;
+    for (int j = 0; j < LANES; j++) {
+        if (round_cells[j] == cell) {
+            if (j < lane) { rank++; }
+            if (j > lane) { last_of_cell = false; }
+        }
     }
+    GroupMemoryBarrierWithGroupSync();
+    return rank;
+}
+
+/// Landings per (block, cell). A workgroup a block, meeting its pairs in order a round at a time.
+[shader("compute")]
+[numthreads(LANES, 1, 1)]
+void lat_count(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+{
+    let b = int(group.x);
+    let lane = int(index);
+    let cells = cells();
+    for (int c = lane; c < cells; c += LANES) { tally[c] = 0u; }
+    for (int round = 0; round < BLOCK; round += LANES) {
+        let cell = cell_of(b, round + lane);
+        bool last_of_cell;
+        let rank = rank_in_round(lane, cell, last_of_cell);
+        if (cell >= 0 && last_of_cell) { tally[cell] += uint(rank + 1); }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    for (int c = lane; c < cells; c += LANES) { counts[b * cells + c] = tally[c]; }
 }
 
 /// Each cell's own total, a thread a cell.
@@ -249,19 +283,25 @@ void lat_starts(uint3 id: SV_DispatchThreadID)
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void lat_write(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void lat_write(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
+    let b = int(group.x);
+    let lane = int(index);
     let cells = cells();
-    let first = b * pc.block;
-    let last = min(first + pc.block, pc.pairs);
-    for (int k = first; k < last; k++) {
-        let cell = int(landed[times(k, LANDING_WORDS)]);
-        let slot = counts[pc.blocks * cells + b * cells + cell];
-        ordered[int(slot)] = uint(k);
-        counts[pc.blocks * cells + b * cells + cell] = slot + 1u;
+    for (int c = lane; c < cells; c += LANES) { tally[c] = counts[pc.blocks * cells + b * cells + c]; }
+    for (int round = 0; round < BLOCK; round += LANES) {
+        let cell = cell_of(b, round + lane);
+        bool last_of_cell;
+        let rank = rank_in_round(lane, cell, last_of_cell);
+        var slot = 0u;
+        if (cell >= 0) {
+            slot = tally[cell] + uint(rank);
+            ordered[int(slot)] = uint(b * BLOCK + round + lane);
+        }
+        // Every lane of a cell reads its tally before the last of them moves it on.
+        GroupMemoryBarrierWithGroupSync();
+        if (cell >= 0 && last_of_cell) { tally[cell] = slot + 1u; }
     }
 }
 

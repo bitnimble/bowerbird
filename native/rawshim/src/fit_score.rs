@@ -210,6 +210,7 @@ impl Scoring {
     ) -> Scoring {
         let pairs = target.len();
         let blocks = pairs.div_ceil(block.max(1));
+        assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
         let partial_bytes = (probes * blocks * PARTIAL * 4).max(4) as u64;
         let held = |label, size, usage| {
             gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -384,6 +385,7 @@ impl Scoring {
             pass.set_pipeline(&kernel(first.gpu).score);
             for scoring in &asked {
                 let units = probes.len() * scoring.blocks;
+                assert!(units <= 65535, "{units} blocks overrun a dispatch");
                 pass.set_bind_group(0, &scoring.group, &[]);
                 pass.dispatch_workgroups(units as u32, 1, 1);
             }

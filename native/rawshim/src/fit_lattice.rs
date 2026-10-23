@@ -17,8 +17,10 @@ const LANDING_WORDS: usize = 12;
 const CORNERS: usize = 16;
 /// Landings one gathering thread walks at most.
 const SLICE: usize = 256;
-/// Pairs one thread of the count and the write walks.
+/// Pairs one workgroup of the count and the write takes.
 const BLOCK: usize = 512;
+/// Cells the count's workgroup tally holds, which `hdr_fit::GridShape::FINE` fills.
+const MOST_CELLS: usize = 3072;
 
 pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
@@ -136,10 +138,15 @@ pub(crate) async fn moments(
     grid: &Grid,
 ) -> Option<Vec<[f64; NODE_WORDS]>> {
     let (nodes, cells) = (grid.node_count(), grid.cell_count());
+    assert!(
+        cells <= MOST_CELLS,
+        "{cells} cells overrun the count's tally"
+    );
     if pairs == 0 {
         return Some(vec![[0.0; NODE_WORDS]; nodes]);
     }
     let blocks = pairs.div_ceil(BLOCK).max(1);
+    assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
     let storage = wgpu::BufferUsages::STORAGE;
 
     let mut recording = gpu.record();
@@ -181,7 +188,6 @@ pub(crate) async fn moments(
     let [hue, chroma, level, neighbourhood_nodes] = grid.nodes;
     let mut block = [
         pairs as i32,
-        BLOCK as i32,
         blocks as i32,
         hue as i32,
         chroma as i32,
@@ -199,7 +205,7 @@ pub(crate) async fn moments(
     ] {
         block.extend((v as f32).to_ne_bytes());
     }
-    block.extend(0i32.to_ne_bytes());
+    block.extend([0i32, 0].iter().flat_map(|v| v.to_ne_bytes()));
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_lattice push"),
         contents: &block,
@@ -257,11 +263,11 @@ pub(crate) async fn moments(
     let over = |n: usize| (n as u32).div_ceil(64).max(1);
     for (pipeline, groups) in [
         (&built.land, over(pairs)),
-        (&built.count, over(blocks)),
+        (&built.count, blocks as u32),
         (&built.total, over(cells)),
         (&built.scan, 1),
         (&built.starts, over(cells)),
-        (&built.write, over(blocks)),
+        (&built.write, blocks as u32),
         (&built.gather, over(slices * CORNERS)),
         (&built.fold, over(nodes * NODE_WORDS)),
     ] {
@@ -302,6 +308,8 @@ mod tests {
             format!("static const int LANDING_WORDS = {};", super::LANDING_WORDS),
             format!("static const int CORNERS = {};", super::CORNERS),
             format!("static const int SLICE = {};", super::SLICE),
+            format!("static const int BLOCK = {};", super::BLOCK),
+            format!("static const int MOST_CELLS = {};", super::MOST_CELLS),
         ] {
             assert!(
                 SOURCE.contains(&line),

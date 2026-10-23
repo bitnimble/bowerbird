@@ -80,6 +80,11 @@ pub(crate) async fn partials(
         return Some(vec![Vec::new(); matrices.len()]);
     }
     let blocks = pairs.div_ceil(block);
+    assert!(
+        matrices.len() * blocks <= 65535,
+        "{} blocks overrun a dispatch",
+        matrices.len() * blocks
+    );
     let words = matrices.len() * blocks * MOMENT_WORDS;
 
     let mut recording = gpu.record();

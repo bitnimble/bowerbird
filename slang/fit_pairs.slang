@@ -16,11 +16,12 @@ import prelude;
 import primaries;
 import fit_class;
 import px;
+import compact;
 
 struct Params {
     int width;
     int height;
-    /// Pixels one thread of the pair passes walks, and how many such blocks the plane holds.
+    /// Pixels one workgroup of the pair passes takes, and how many such blocks the plane holds.
     int block;
     int blocks;
     int hue_bins;
@@ -362,11 +363,22 @@ bool neutral(float3 v)
     return high > pc.grey_floor && (high - low_of(v)) / high < pc.grey_chroma;
 }
 
-/// The half-open run of pixels one thread of the two passes below walks.
-int2 span_of(uint b)
+/// The half-open run of pixels one workgroup of the two passes below takes, and lane `lane`'s
+/// share of it.
+int2 share_in(uint b, uint lane)
 {
     let first = int(b) * pc.block;
-    return int2(first, min(first + pc.block, pc.width * pc.height));
+    return share_of(first, min(first + pc.block, pc.width * pc.height), int(lane));
+}
+
+/// How many of a bit's pixels lie in `share`.
+uint found_in(int2 share, uint bit)
+{
+    var found = 0u;
+    for (int p = share.x; p < share.y; p++) {
+        if ((bits[p] & bit) != 0) { found++; }
+    }
+    return found;
 }
 
 /// How many of a bit's pixels each block holds, counted before any of them is placed.
@@ -374,24 +386,20 @@ int2 span_of(uint b)
 /// The bit is a parameter rather than a uniform so the two selections are two entry points over
 /// one walk: a uniform would have to be rewritten between the dispatches, and two buffers holding
 /// one differing word is more to keep in step than two names.
-void count_of(uint3 id, uint bit)
+void count_of(uint b, uint lane, uint bit)
 {
-    if (int(id.x) >= pc.blocks) { return; }
-    let span = span_of(id.x);
-    var found = 0u;
-    for (int p = span.x; p < span.y; p++) {
-        if ((bits[p] & bit) != 0) { found++; }
-    }
-    counts[id.x] = found;
+    uint total;
+    kept_before(int(lane), found_in(share_in(b, lane), bit), total);
+    if (lane == 0) { counts[b] = total; }
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_pairs_count(uint3 id: SV_DispatchThreadID) { count_of(id, COLOUR); }
+[numthreads(LANES, 1, 1)]
+void fit_pairs_count(uint3 group: SV_GroupID, uint lane: SV_GroupIndex) { count_of(group.x, lane, COLOUR); }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_frame_count(uint3 id: SV_DispatchThreadID) { count_of(id, FRAME); }
+[numthreads(LANES, 1, 1)]
+void fit_frame_count(uint3 group: SV_GroupID, uint lane: SV_GroupIndex) { count_of(group.x, lane, FRAME); }
 
 /// Where each block's run starts, which is what keeps the pair list in ascending pixel order.
 ///
@@ -412,12 +420,12 @@ void fit_pairs_offsets()
 }
 
 /// Each selected pixel, the camera's colour there, and whether it is one of the greys.
-void write_of(uint3 id, uint bit)
+void write_of(uint b, uint lane, uint bit)
 {
-    if (int(id.x) >= pc.blocks) { return; }
-    let span = span_of(id.x);
-    var slot = counts[id.x];
-    for (int p = span.x; p < span.y; p++) {
+    let share = share_in(b, lane);
+    uint total;
+    var slot = counts[b] + kept_before(int(lane), found_in(share, bit), total);
+    for (int p = share.x; p < share.y; p++) {
         if ((bits[p] & bit) == 0) { continue; }
         let t = jpeg_at(p);
         let out = slot * PAIR_WORDS;
@@ -431,9 +439,9 @@ void write_of(uint3 id, uint bit)
 }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_pairs_write(uint3 id: SV_DispatchThreadID) { write_of(id, COLOUR); }
+[numthreads(LANES, 1, 1)]
+void fit_pairs_write(uint3 group: SV_GroupID, uint lane: SV_GroupIndex) { write_of(group.x, lane, COLOUR); }
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_frame_write(uint3 id: SV_DispatchThreadID) { write_of(id, FRAME); }
+[numthreads(LANES, 1, 1)]
+void fit_frame_write(uint3 group: SV_GroupID, uint lane: SV_GroupIndex) { write_of(group.x, lane, FRAME); }

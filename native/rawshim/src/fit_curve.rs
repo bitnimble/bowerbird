@@ -1,17 +1,20 @@
 //! The tone curve's evidence, binned where the two fit planes are.
 //!
 //! `slang/fit_curve.slang` is the arithmetic over pixels. What is left here is the fold - each
-//! thread's partials summed in thread order, in `f64` - and the solve the fold feeds, which is a
+//! block's partials summed in block order, in `f64` - and the solve the fold feeds, which is a
 //! pass over 256 bins rather than over a picture.
 
 use crate::parallel::*;
 
-/// Threads the binning is split across, which is also how many partials come back.
+/// Workgroups the binning is split across, which is also how many partials come back.
 ///
-/// Low on purpose: the fold that crosses is `BLOCKS * BINS * 3` floats, and the work either side of
-/// it is a few million adds, which this many lanes finish in microseconds. Raising it buys nothing
-/// and costs the readback linearly.
+/// Low on purpose: the fold that crosses is `BLOCKS * BINS * 3` floats, so raising it costs the
+/// readback linearly, and measured no faster at 1024.
 const BLOCKS: usize = 256;
+
+/// `fit_curve.slang`'s lanes and the curve bins each owns, which bound the bins one block can hold.
+const LANES: usize = 64;
+const OWNED: usize = 4;
 
 /// The three sums a curve bin carries.
 const PER_BIN: usize = 3;
@@ -107,6 +110,7 @@ pub(crate) async fn binned(
 ) -> Option<Binned> {
     let bins = crate::hdr_fit::BINS;
     let level_bins = crate::hdr_fit::LEVEL_BINS;
+    assert!(bins <= LANES * OWNED && level_bins <= LANES);
     let mut recording = gpu.record();
     recording.holding(&evidence.render);
     recording.holding(&evidence.jpeg);
@@ -121,7 +125,6 @@ pub(crate) async fn binned(
         })
     };
     let storage = wgpu::BufferUsages::STORAGE;
-    // Zeroed by the driver, which both binnings rely on: every slot is added into.
     let levels = held(
         &mut recording,
         "fit curve levels",
@@ -211,7 +214,7 @@ pub(crate) async fn binned(
     });
     // A pass each: the weighting reads what the level count wrote, and the binning reads what the
     // weighting wrote.
-    let over_blocks = (BLOCKS as u32).div_ceil(64);
+    let over_blocks = BLOCKS as u32;
     for (pipeline, groups) in [
         (&built.levels, over_blocks),
         (&built.weights, 1),
@@ -241,7 +244,7 @@ pub(crate) async fn binned(
     })
     .await?;
 
-    // Folded in thread order, which is what makes two fits of one photograph draw one curve.
+    // Folded in block order, which is what makes two fits of one photograph draw one curve.
     let mut binned = Binned {
         sum: vec![0.0; bins],
         weight: vec![0.0; bins],
@@ -272,5 +275,19 @@ mod tests {
             SOURCE.contains(&line),
             "fit_pairs.slang does not say `{line}`"
         );
+    }
+
+    #[test]
+    fn the_host_bounds_the_bins_with_the_shaders_lanes() {
+        const SOURCE: &str = include_str!("../../../slang/fit_curve.slang");
+        for line in [
+            format!("static const int LANES = {};", super::LANES),
+            format!("static const int OWNED = {};", super::OWNED),
+        ] {
+            assert!(
+                SOURCE.contains(&line),
+                "fit_curve.slang does not say `{line}`"
+            );
+        }
     }
 }

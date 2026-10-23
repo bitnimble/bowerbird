@@ -4,9 +4,9 @@
 //
 // What crosses back is two sets of partials, not two histograms. A device float add is not
 // associative and an atomic one lands in whatever order the lanes did, so two fits of one
-// photograph would draw different curves; instead each thread owns a contiguous run of pixels,
-// accumulates it serially into a slice of its own, and the host folds the threads in order and in
-// f64. `fit_score::folded` records the same trade.
+// photograph would draw different curves; instead each workgroup owns a contiguous run of pixels,
+// summed into a slice of its own in the order a serial walk meets them, and the host folds the
+// blocks in order and in f64. `fit_score::folded` records the same trade.
 //
 // The solve stays on the host. It is `pool_violators`, a knot fit and a monotone pass over 256 bins
 // - arithmetic, not arithmetic over pixels - and it wants f64.
@@ -17,7 +17,7 @@ import times;
 
 struct Params {
     int pixels;
-    /// Pixels one thread walks, and how many threads that makes.
+    /// Pixels one workgroup takes, and how many workgroups that makes.
     int block;
     int blocks;
     int bins;
@@ -44,11 +44,11 @@ struct Params {
 [vk::binding(2, 0)] StructuredBuffer<uint> bits;
 /// What a pixel counts for, by the hue bucket it was censused into: `hdr_fit::hue_balance`.
 [vk::binding(3, 0)] StructuredBuffer<float> hue_weights;
-/// `blocks * level_bins`: each thread's weight per level.
+/// `blocks * level_bins`: each block's weight per level.
 [vk::binding(4, 0)] RWStructuredBuffer<float> levels;
-/// `level_bins`: what each level's weight is scaled by, once every thread has counted.
+/// `level_bins`: what each level's weight is scaled by, once every block has counted.
 [vk::binding(5, 0)] RWStructuredBuffer<float> weights;
-/// `blocks * bins * 3`: each thread's coded sum, weight and count per curve bin.
+/// `blocks * bins * 3`: each block's coded sum, weight and count per curve bin.
 [vk::binding(6, 0)] RWStructuredBuffer<float> partials;
 
 /// Which channels a pixel is usable for at all.
@@ -83,30 +83,50 @@ int level_of(float x)
     return min(int(t * float(pc.level_bins)), pc.level_bins - 1);
 }
 
-/// Each thread's weight per level, over the run it owns.
+/// Threads sharing a block. They stage `LANES` pixels' channels at a time, then each walks the
+/// staged run in order, adding only into the bins it owns: every bin's sum is the serial walk's.
+static const int LANES = 64;
+/// Curve bins a lane owns, every `LANES`th.
+static const int OWNED = 4;
+static const int STAGED = LANES * 3;
+groupshared int staged_bin[STAGED];
+groupshared float staged_value[STAGED];
+groupshared float staged_weight[STAGED];
+
+/// Each block's weight per level, over the run it owns.
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_curve_levels(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_curve_levels(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
+    let b = int(group.x);
+    let lane = int(index);
     let span = span_of(b);
-    let base = b * pc.level_bins;
-    for (int p = span.x; p < span.y; p++) {
-        let mask = bits[p];
-        if ((mask & CHANNELS) == 0) { continue; }
-        let w = hue_weights[mask >> uint(pc.hue_shift)];
-        for (int c = 0; c < 3; c++) {
-            if ((mask & (1u << uint(c))) == 0) { continue; }
-            levels[base + level_of(render[wide<FitPlane>(p) * 3 + c])] += w;
+    var owned = 0.0;
+    for (int run = span.x; run < span.y; run += LANES) {
+        let p = run + lane;
+        for (int c = 0; c < 3; c++) { staged_bin[times(lane, 3) + c] = -1; }
+        let mask = p < span.y ? bits[p] : 0u;
+        if ((mask & CHANNELS) != 0) {
+            let w = hue_weights[mask >> uint(pc.hue_shift)];
+            for (int c = 0; c < 3; c++) {
+                if ((mask & (1u << uint(c))) == 0) { continue; }
+                staged_bin[times(lane, 3) + c] = level_of(render[wide<FitPlane>(p) * 3 + c]);
+                staged_weight[times(lane, 3) + c] = w;
+            }
         }
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = 0; i < STAGED; i++) {
+            if (staged_bin[i] == lane) { owned += staged_weight[i]; }
+        }
+        GroupMemoryBarrierWithGroupSync();
     }
+    if (lane < pc.level_bins) { levels[b * pc.level_bins + lane] = owned; }
 }
 
 /// What each level's weight is scaled by, so the shadows are not fitted at whatever slope the
 /// bright end leaves them.
 ///
-/// One invocation, folding the threads in their own order: the sum has to be the same one twice.
+/// One invocation, folding the blocks in their own order: the sum has to be the same one twice.
 /// Bounded like the hue weighting and for the same reason, a level reached by a handful of pairs
 /// being noise rather than a measurement.
 [shader("compute")]
@@ -133,32 +153,58 @@ void fit_curve_weights()
     }
 }
 
-/// Each thread's coded sum, weight and count per curve bin, over the run it owns.
+/// Each block's coded sum, weight and count per curve bin, over the run it owns.
 ///
 /// Averaged through the transfer a viewer sees, not in light. Within a bin every pair sits at
 /// nearly the same input, so the spread is all in the camera's answer - and a mean in light is
 /// pulled by the brightest members of it, which is not where the middle of what a reader sees lies.
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_curve_bins(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_curve_bins(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let b = int(id.x);
-    if (b >= pc.blocks) { return; }
+    let b = int(group.x);
+    let lane = int(index);
     let span = span_of(b);
-    let base = b * pc.bins;
-    for (int p = span.x; p < span.y; p++) {
-        let mask = bits[p];
-        if ((mask & CHANNELS) == 0) { continue; }
-        let want = target_at(p);
-        for (int c = 0; c < 3; c++) {
-            if ((mask & (1u << uint(c))) == 0) { continue; }
-            let x = render[wide<FitPlane>(p) * 3 + c];
-            let w = hue_weights[mask >> uint(pc.hue_shift)] * weights[level_of(x)];
-            let bin = clamp(int(round(x / pc.ceiling * float(pc.bins - 1))), 0, pc.bins - 1);
-            let at = times(base + bin, 3);
-            partials[at] += srgb_oetf(clamp(want[c], 0.0, 1.0)) * w;
-            partials[at + 1] += w;
-            partials[at + 2] += 1.0;
+    float3 owned[OWNED];
+    [ForceUnroll]
+    for (int j = 0; j < OWNED; j++) { owned[j] = float3(0.0); }
+    for (int run = span.x; run < span.y; run += LANES) {
+        let p = run + lane;
+        for (int c = 0; c < 3; c++) { staged_bin[times(lane, 3) + c] = -1; }
+        let mask = p < span.y ? bits[p] : 0u;
+        if ((mask & CHANNELS) != 0) {
+            let want = target_at(p);
+            for (int c = 0; c < 3; c++) {
+                if ((mask & (1u << uint(c))) == 0) { continue; }
+                let x = render[wide<FitPlane>(p) * 3 + c];
+                let w = hue_weights[mask >> uint(pc.hue_shift)] * weights[level_of(x)];
+                staged_bin[times(lane, 3) + c] =
+                    clamp(int(round(x / pc.ceiling * float(pc.bins - 1))), 0, pc.bins - 1);
+                staged_value[times(lane, 3) + c] = srgb_oetf(clamp(want[c], 0.0, 1.0)) * w;
+                staged_weight[times(lane, 3) + c] = w;
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = 0; i < STAGED; i++) {
+            let bin = staged_bin[i];
+            if (bin < 0 || bin % LANES != lane) { continue; }
+            let term = float3(staged_value[i], staged_weight[i], 1.0);
+            // A select per slot rather than a subscript, so `owned` stays in registers.
+            [ForceUnroll]
+            for (int j = 0; j < OWNED; j++) {
+                owned[j] = select(bin / LANES == j, owned[j] + term, owned[j]);
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    [ForceUnroll]
+    for (int j = 0; j < OWNED; j++) {
+        let bin = j * LANES + lane;
+        if (bin < pc.bins) {
+            let at = times(b * pc.bins + bin, 3);
+            partials[at] = owned[j].x;
+            partials[at + 1] = owned[j].y;
+            partials[at + 2] = owned[j].z;
         }
     }
 }

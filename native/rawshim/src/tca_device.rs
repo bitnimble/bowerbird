@@ -6,12 +6,13 @@
 //! row of the reduce, three channel sums and the one word saying how many point sources the scan
 //! found - never the picture, in either direction.
 
-/// Stepped positions one thread of the scan walks.
+/// Stepped positions one workgroup of the scan takes.
 ///
-/// Wide, because `tca_offsets` walks the blocks in one lane: at 8 a 24MP render is 1.5M blocks and
-/// that walk is the stage. At 128 it is 92k blocks, which is still far more threads than the
-/// device has lanes, and the scan itself does the same work either way.
-const BLOCK: usize = 128;
+/// Wide, because a block is a workgroup and a dispatch holds at most 65535: a 24MP render's scan
+/// is 12M positions, 92k blocks at 128.
+const BLOCK: usize = 4096;
+// `compact.slang` marks a lane's share in 64 bits, across its 64 lanes.
+const _: () = assert!(BLOCK <= 64 * 64);
 
 /// Words a row of the regression reports: two cross sums, two squares, and its count.
 const ROW_WORDS: usize = 5;
@@ -543,6 +544,7 @@ pub(crate) async fn frame(
     let rows = height.saturating_sub(2 * MARGIN).div_ceil(2);
     let columns = width.saturating_sub(2 * MARGIN);
     let blocks = (rows * columns).div_ceil(BLOCK).max(1);
+    assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
     let offsets = crate::tca::HALO_OFFSETS.len();
 
     let mut frame = Frame {
@@ -604,7 +606,7 @@ pub(crate) async fn frame(
         );
     }
     // A pass each: the scan reads what the count wrote.
-    let over_blocks = (blocks as u32).div_ceil(64);
+    let over_blocks = blocks as u32;
     for (pipeline, groups) in [(&built.count, over_blocks), (&built.offsets, 1)] {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(pipeline);
