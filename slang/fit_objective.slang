@@ -7,6 +7,7 @@
 // `u8`, a target is a `u8`, and a residual is the difference of two of them. Two runs agree to the
 // bit whatever order the lanes landed in - the ordered-partial machinery `fit_score` needs for its
 // f64 sums buys nothing here. `stacks.slang` records the same trade.
+import compact;
 import prelude;
 import px;
 import times;
@@ -166,75 +167,54 @@ void fit_obj_count(uint3 id: SV_DispatchThreadID)
     counts[count_at(candidate, b)] = kept;
 }
 
-/// Blocks one group of the scan covers.
-///
-/// **The scan is two-level because one level is a single lane.** A 640x427 grid at eight pixels a
-/// block is 34000 of them, and one invocation walking that many dependent global reads cost more
-/// than every other pass of the objective put together - which is what a run at eight pixels a
-/// block and a run at 256 both measured, from opposite ends. Two levels leave 533 for the serial
-/// walk and put the rest back in parallel.
-static const int GROUP = 64;
+/// Blocks one group of the scan covers, a lane each.
+static const int GROUP = LANES;
 
 int groups() { return (pc.blocks + GROUP - 1) / GROUP; }
 
-/// A candidate's stretch of `counts`: a count per block, then an offset per block, then the total,
-/// then a base per group. The counts and the offsets are kept apart because the level that places
-/// the blocks reads its group's counts while its neighbours write their own offsets.
+/// A candidate's stretch of `counts`: a count per block, then each block's start within its group,
+/// then the total, then a base per group.
 int counts_per_candidate() { return 2 * pc.blocks + 1 + groups(); }
 int count_at(int candidate, int b) { return candidate * counts_per_candidate() + b; }
 int offset_at(int candidate, int b) { return candidate * counts_per_candidate() + pc.blocks + b; }
 int total_at(int candidate) { return candidate * counts_per_candidate() + 2 * pc.blocks; }
 int group_at(int candidate, int g) { return total_at(candidate) + 1 + g; }
 
-/// Each group's own total, which is all the serial walk below has to read.
+/// Each block's start within its group, and the group's own total.
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_obj_group(uint3 id: SV_DispatchThreadID)
+[numthreads(GROUP, 1, 1)]
+void fit_obj_group(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let g = int(id.x);
-    let candidate = int(id.y);
-    if (g >= groups() || candidate >= pc.candidates) { return; }
-    var seen = 0u;
-    for (int b = g * GROUP; b < min((g + 1) * GROUP, pc.blocks); b++) {
-        seen += counts[count_at(candidate, b)];
-    }
-    counts[group_at(candidate, g)] = seen;
+    let g = int(group.x);
+    let candidate = int(group.y);
+    let b = g * GROUP + int(index);
+    let kept = b < pc.blocks ? counts[count_at(candidate, b)] : 0u;
+    uint total;
+    let before = kept_before(int(index), kept, total);
+    if (b < pc.blocks) { counts[offset_at(candidate, b)] = before; }
+    if (index == 0) { counts[group_at(candidate, g)] = total; }
 }
 
-/// Where each group's run starts, and the total behind them.
+/// Where each group's run starts, and the total behind them: a lane a contiguous share of the
+/// groups, so the bases come out in group order.
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_obj_scan(uint3 id: SV_DispatchThreadID)
+[numthreads(LANES, 1, 1)]
+void fit_obj_scan(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
 {
-    let candidate = int(id.x);
-    if (candidate >= pc.candidates) { return; }
-    var seen = 0u;
-    for (int g = 0; g < groups(); g++) {
+    let candidate = int(group.x);
+    let lane = int(index);
+    let share = share_of(0, groups(), lane);
+    var mine = 0u;
+    for (int g = share.x; g < share.y; g++) { mine += counts[group_at(candidate, g)]; }
+    uint total;
+    var seen = kept_before(lane, mine, total);
+    for (int g = share.x; g < share.y; g++) {
         let at = group_at(candidate, g);
         let kept = counts[at];
         counts[at] = seen;
         seen += kept;
     }
-    counts[total_at(candidate)] = seen;
-}
-
-/// Where each block's run starts, which is what puts the pair list in row-major order.
-///
-/// The order is not tidiness: the two phases are every second pair from it, so which pair sits
-/// where is part of the residual.
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void fit_obj_offsets(uint3 id: SV_DispatchThreadID)
-{
-    let b = int(id.x);
-    let candidate = int(id.y);
-    if (b >= pc.blocks || candidate >= pc.candidates) { return; }
-    let g = b / GROUP;
-    var seen = counts[group_at(candidate, g)];
-    for (int before = g * GROUP; before < b; before++) {
-        seen += counts[count_at(candidate, before)];
-    }
-    counts[offset_at(candidate, b)] = seen;
+    if (lane == 0) { counts[total_at(candidate)] = total; }
 }
 
 /// The radius bucket a pixel sits at, as `fit::Gain::radius` quantises it.
@@ -256,7 +236,9 @@ void fit_obj_write(uint3 id: SV_DispatchThreadID)
     let candidate = int(id.y);
     if (b >= pc.blocks || candidate >= pc.candidates) { return; }
     let span = span_of(b);
-    var slot = counts[offset_at(candidate, b)];
+    // Row-major, which is not tidiness: the two phases are every second pair from it, so which pair
+    // sits where is part of the residual.
+    var slot = counts[group_at(candidate, b / GROUP)] + counts[offset_at(candidate, b)];
     for (int p = span.x; p < span.y; p++) {
         int3 ours;
         int3 theirs;

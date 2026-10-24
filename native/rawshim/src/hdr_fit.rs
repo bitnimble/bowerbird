@@ -3347,16 +3347,25 @@ pub(crate) const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uni
 pub struct Searching {
     tabulated: Kernel,
     inline: Kernel,
+    /// `correspond_lanes`, a workgroup a point, for a reach its workgroup holds.
+    lanes_tabulated: Kernel,
+    lanes_inline: Kernel,
 }
 
 impl Searching {
-    fn pipeline(&self, tabulated: bool) -> &wgpu::ComputePipeline {
-        match tabulated {
-            true => &self.tabulated.pipeline,
-            false => &self.inline.pipeline,
+    fn pipeline(&self, tabulated: bool, lanes: bool) -> &wgpu::ComputePipeline {
+        match (tabulated, lanes) {
+            (true, false) => &self.tabulated.pipeline,
+            (false, false) => &self.inline.pipeline,
+            (true, true) => &self.lanes_tabulated.pipeline,
+            (false, true) => &self.lanes_inline.pipeline,
         }
     }
 }
+
+/// `correspond_lanes`' workgroup: the widest patch and search whose windows it holds.
+const LANE_MOST_PATCH: isize = 3;
+const LANE_MOST_SEARCH: isize = 4;
 
 pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
     static BUILT: std::sync::OnceLock<Searching> = std::sync::OnceLock::new();
@@ -3374,6 +3383,8 @@ pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
         Searching {
             tabulated: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 1.0)]),
             inline: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 0.0)]),
+            lanes_tabulated: kernel(gpu, "correspond_lanes", WGSL, BINDINGS, &[("0", 1.0)]),
+            lanes_inline: kernel(gpu, "correspond_lanes", WGSL, BINDINGS, &[("0", 0.0)]),
         }
     })
 }
@@ -4008,7 +4019,8 @@ fn corresponded_grid_about(
             usage: wgpu::BufferUsages::STORAGE,
         })
     });
-    let asking = Asking::new(
+    // A grid, so a thread a point (`Asking::with_lanes`).
+    let asking = Asking::with_lanes(
         gpu,
         &mut recording,
         ours,
@@ -4018,6 +4030,7 @@ fn corresponded_grid_about(
         given.as_ref(),
         refine,
         Reach::NARROW,
+        false,
     );
     {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
@@ -4142,10 +4155,13 @@ const CORRESPOND_GROUP: u32 = 64;
 /// Split evenly rather than filling x first: at 66084 groups, packing x to the limit dispatches
 /// 65535 by 2 and half of the second row launches only to fail the bounds test, where an even
 /// 33042 by 2 is the same coverage with nothing spare.
-fn dispatch_span(points: usize) -> usize {
+///
+/// `per_group` is the points a workgroup takes: `CORRESPOND_GROUP` for `correspond`, one for
+/// `correspond_lanes`.
+fn dispatch_span(points: usize, per_group: usize) -> usize {
     const LIMIT: usize = 65535;
-    let groups = (points.div_ceil(CORRESPOND_GROUP as usize)).max(1);
-    groups.div_ceil(groups.div_ceil(LIMIT)) * CORRESPOND_GROUP as usize
+    let groups = (points.div_ceil(per_group)).max(1);
+    groups.div_ceil(groups.div_ceil(LIMIT)) * per_group
 }
 
 /// One correspondence dispatch's own buffers, so a caller can put it in an encoder beside whatever
@@ -4162,6 +4178,16 @@ struct Asking {
     group: wgpu::BindGroup,
     points: usize,
     tabulated: bool,
+    /// Searched by `correspond_lanes`, which holds any reach up to `NARROW`'s.
+    lanes: bool,
+}
+
+/// The points a workgroup of a search takes: one for `correspond_lanes`, else `correspond`'s group.
+fn per_group(lanes: bool) -> usize {
+    match lanes {
+        true => 1,
+        false => CORRESPOND_GROUP as usize,
+    }
 }
 
 impl Asking {
@@ -4185,6 +4211,32 @@ impl Asking {
         refine: i32,
         reach: Reach,
     ) -> Asking {
+        let lanes = reach.patch <= LANE_MOST_PATCH && reach.search <= LANE_MOST_SEARCH;
+        Asking::with_lanes(
+            gpu, recording, ours, theirs, at, points, given, refine, reach, lanes,
+        )
+    }
+
+    /// [`Asking::new`], searched by `correspond_lanes` or by `correspond` as `lanes` says: the same
+    /// answers either way, but `lanes` is for scattered points within `LANE_MOST_*`, and a dense
+    /// grid wants it false.
+    #[allow(clippy::too_many_arguments)]
+    fn with_lanes(
+        gpu: &'static crate::gpu::Gpu,
+        recording: &mut crate::gpu::Recording<'_>,
+        ours: &DevicePlane,
+        theirs: &DevicePlane,
+        at: &crate::gpu::Buffer,
+        points: usize,
+        given: Option<&crate::gpu::Buffer>,
+        refine: i32,
+        reach: Reach,
+        lanes: bool,
+    ) -> Asking {
+        assert!(
+            !lanes || (reach.patch <= LANE_MOST_PATCH && reach.search <= LANE_MOST_SEARCH),
+            "{reach:?} overruns what correspond_lanes holds"
+        );
         let bytes = (points * 4 * 4) as u64;
         let found = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("correspond found"),
@@ -4205,7 +4257,7 @@ impl Asking {
             (points as i32).to_ne_bytes(),
             (FLAT_PATCH as f32).to_ne_bytes(),
             (MATCH_MIN as f32).to_ne_bytes(),
-            (dispatch_span(points) as i32).to_ne_bytes(),
+            (dispatch_span(points, per_group(lanes)) as i32).to_ne_bytes(),
             refine.to_ne_bytes(),
             i32::from(given.is_some()).to_ne_bytes(),
         ]
@@ -4261,14 +4313,16 @@ impl Asking {
             group,
             points,
             tabulated: theirs.stats.is_some(),
+            lanes,
         }
     }
 
     fn dispatch(&self, gpu: &'static crate::gpu::Gpu, pass: &mut wgpu::ComputePass<'_>) {
-        pass.set_pipeline(search_device(gpu).pipeline(self.tabulated));
+        pass.set_pipeline(search_device(gpu).pipeline(self.tabulated, self.lanes));
         pass.set_bind_group(0, &self.group, &[]);
-        let across = dispatch_span(self.points) as u32 / CORRESPOND_GROUP;
-        let groups = (self.points as u32).div_ceil(CORRESPOND_GROUP).max(1);
+        let taken = per_group(self.lanes);
+        let across = (dispatch_span(self.points, taken) / taken) as u32;
+        let groups = self.points.div_ceil(taken).max(1) as u32;
         pass.dispatch_workgroups(across, groups.div_ceil(across), 1);
     }
 
@@ -6455,22 +6509,45 @@ pub(crate) fn warped_planes(
         return Vec::new();
     }
     let mut recording = gpu.record();
-    recording.holding(source);
     let planes: Vec<crate::gpu::Buffer> = lenses
         .iter()
         .map(|_| rgb_buffer(&mut recording, "fit candidate", width, height))
         .collect();
+    warped_into(
+        gpu,
+        &mut recording,
+        source,
+        (sw, sh),
+        lenses,
+        &planes,
+        (width, height),
+    );
+    recording.submit();
+    planes
+}
+
+/// [`warped_planes`], recorded into planes the caller holds rather than submitted on its own.
+pub(crate) fn warped_into(
+    gpu: &'static crate::gpu::Gpu,
+    recording: &mut crate::gpu::Recording<'_>,
+    source: &crate::gpu::Buffer,
+    source_size: (usize, usize),
+    lenses: &[crate::fit::Lens],
+    planes: &[crate::gpu::Buffer],
+    size: (usize, usize),
+) {
+    recording.holding(source);
     let shapings: Vec<Shaping> = lenses
         .iter()
-        .zip(&planes)
+        .zip(planes)
         .map(|(lens, plane)| {
             Shaping::new(
                 gpu,
-                &mut recording,
+                recording,
                 source,
-                (sw, sh),
+                source_size,
                 plane,
-                (width, height),
+                size,
                 Shape::Warp {
                     lens,
                     luma: false,
@@ -6479,14 +6556,10 @@ pub(crate) fn warped_planes(
             )
         })
         .collect();
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        for shaping in &shapings {
-            shaping.dispatch(&mut pass);
-        }
+    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    for shaping in &shapings {
+        shaping.dispatch(&mut pass);
     }
-    recording.submit();
-    planes
 }
 
 /// [`warped_planes`], back on the host as 8-bit levels.
@@ -6579,20 +6652,15 @@ impl Settling {
             contents: &coordinates,
             usage: wgpu::BufferUsages::STORAGE,
         });
-        // **Tabulated even though the search is sparse**, which the settle is the one caller that
-        // can say yes to: 6000 points on a stride of 13 do not share a window, but the six rounds
-        // ask about the same 6000 against the same camera plane, so one pass over 1.1M pixels
-        // stands in for six rounds of 81 windows each.
         let mut recording = gpu.record();
         recording.holding(&preview.buffer);
-        let mut theirs = DevicePlane::luma_of(
+        let theirs = DevicePlane::luma_of(
             gpu,
             &mut recording,
             &preview.buffer,
             preview.width,
             preview.height,
         );
-        theirs.tabulate(gpu, recording.encoder(), Reach::NARROW);
         recording.submit();
         Settling {
             source,
@@ -8101,6 +8169,120 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_host_holds_the_lane_search_to_the_windows_the_shader_keeps() {
+        const SOURCE: &str = include_str!("../../../slang/correspond.slang");
+        for line in [
+            format!("static const int LANE_MOST_PATCH = {LANE_MOST_PATCH};"),
+            format!("static const int LANE_MOST_SEARCH = {LANE_MOST_SEARCH};"),
+        ] {
+            assert!(
+                SOURCE.contains(&line),
+                "correspond.slang does not say `{line}`"
+            );
+        }
+    }
+
+    /// `correspond_lanes` scores the offsets a lane each and picks the best afterwards, and has to
+    /// land on exactly what `correspond`'s one-thread scan does: same offset, sub-pixel, peak and
+    /// outcome, to the bit.
+    #[test]
+    fn the_lane_search_answers_what_the_point_search_does() {
+        let gpu = searching();
+        let (w, h) = (96usize, 80usize);
+        // A flat corner, so the featureless answer is compared too.
+        let flat = |plane: Vec<f32>| -> Vec<f32> {
+            plane
+                .into_iter()
+                .enumerate()
+                .map(|(p, v)| if p % w < 30 && p / w < 30 { 0.5 } else { v })
+                .collect()
+        };
+        let ours_luma = flat(shifted_plane(w, h, 0.0, 0.0));
+        let theirs_luma = flat(shifted_plane(w, h, 1.3, -0.6));
+        let edge = (PATCH + SEARCH) as i32;
+        let points: Vec<[i32; 2]> = (0..(w * h) as i32)
+            .step_by(3)
+            .map(|p| {
+                let (x, y) = (p % w as i32, p / w as i32);
+                match x >= edge && y >= edge && x < w as i32 - edge && y < h as i32 - edge {
+                    true => [x, y],
+                    false => [-1, -1],
+                }
+            })
+            .collect();
+        let about: Vec<[i32; 2]> = points.iter().map(|_| [1, -1]).collect();
+        let answers = |tabulated: bool, about: Option<&[[i32; 2]]>, refine: i32, lanes: bool| {
+            let ours = DevicePlane::from_luma(gpu, &ours_luma, w, h);
+            let mut theirs = DevicePlane::from_luma(gpu, &theirs_luma, w, h);
+            if tabulated {
+                theirs = theirs.tabulated(gpu, Reach::NARROW);
+            }
+            let mut recording = gpu.record();
+            let at = recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("correspond at"),
+                contents: &point_words(&readable(&points, about, &theirs, Reach::NARROW)),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let given = about.map(|offsets| {
+                recording.init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("correspond given"),
+                    contents: &point_words(offsets),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
+            });
+            let asking = Asking::with_lanes(
+                gpu,
+                &mut recording,
+                &ours,
+                &theirs,
+                &at,
+                points.len(),
+                given.as_ref(),
+                refine,
+                Reach::NARROW,
+                lanes,
+            );
+            {
+                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+                asking.dispatch(gpu, &mut pass);
+            }
+            asking.copy(recording.encoder());
+            recording.submit();
+            pollster::block_on(asking.read(gpu))
+                .expect("the device searches")
+                .iter()
+                .map(|found| {
+                    found.as_ref().map(|f| {
+                        (
+                            f.dx.to_bits(),
+                            f.dy.to_bits(),
+                            f.peak.to_bits(),
+                            f.featureless,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        for (tabulated, about, refine) in [
+            (true, None, -1),
+            (false, None, -1),
+            (true, Some(about.as_slice()), 1),
+        ] {
+            let listed = answers(tabulated, about, refine, false);
+            let laned = answers(tabulated, about, refine, true);
+            let found = listed.iter().filter(|f| f.is_some_and(|f| !f.3)).count();
+            let featureless = listed.iter().filter(|f| f.is_some_and(|f| f.3)).count();
+            assert!(
+                found > points.len() / 3 && featureless > 10,
+                "{found} found, {featureless} featureless"
+            );
+            for (p, (a, b)) in listed.iter().zip(&laned).enumerate() {
+                assert_eq!(a, b, "tabulated {tabulated}, refine {refine}, point {p}");
+            }
+        }
+    }
+
     /// A belief the caller hands in is where the search looks, however far away it is.
     ///
     /// The window is nine pixels wide, and a panorama's frames overlap by a third of a frame, so
@@ -9361,27 +9543,26 @@ mod tests {
     /// the index from the same span and a disagreement drops the tail of the plane silently.
     #[test]
     fn the_correspondence_dispatch_covers_its_points_within_the_device_limit() {
-        for points in [
-            1usize, 63, 64, 6_000, 3_300_000, 4_194_240, 4_229_376, 60_200_000,
-        ] {
-            let span = dispatch_span(points);
-            let across = span / CORRESPOND_GROUP as usize;
-            let groups = points.div_ceil(CORRESPOND_GROUP as usize).max(1);
-            let down = groups.div_ceil(across);
-            assert!(
-                across <= 65535 && down <= 65535,
-                "{points} asks {across} by {down}"
-            );
-            assert!(
-                across * CORRESPOND_GROUP as usize * down >= points,
-                "{points} uncovered"
-            );
-            // Every launched group does work: the spare is under one row of them.
-            assert!(
-                across * down - groups < across,
-                "{points} wastes {} groups",
-                across * down
-            );
+        for per_group in [CORRESPOND_GROUP as usize, 1] {
+            for points in [
+                1usize, 63, 64, 6_000, 3_300_000, 4_194_240, 4_229_376, 60_200_000,
+            ] {
+                let span = dispatch_span(points, per_group);
+                let across = span / per_group;
+                let groups = points.div_ceil(per_group).max(1);
+                let down = groups.div_ceil(across);
+                assert!(
+                    across <= 65535 && down <= 65535,
+                    "{points} asks {across} by {down}"
+                );
+                assert!(across * per_group * down >= points, "{points} uncovered");
+                // Every launched group does work: the spare is under one row of them.
+                assert!(
+                    across * down - groups < across,
+                    "{points} wastes {} groups",
+                    across * down
+                );
+            }
         }
     }
 
@@ -9398,29 +9579,31 @@ mod tests {
     /// indexing rather than about pixels.
     #[test]
     fn the_shader_rebuilds_every_point_the_dispatch_covers() {
-        for points in [1usize, 64, 65, 4_194_240, 4_194_241, 4_229_376] {
-            let span = dispatch_span(points);
-            let across = (span / CORRESPOND_GROUP as usize) as u32;
-            let groups = (points as u32).div_ceil(CORRESPOND_GROUP).max(1);
-            let down = groups.div_ceil(across);
+        // `correspond` rebuilds a point from `id`, `correspond_lanes` from its workgroup's id, and
+        // both as `y * span + x`.
+        for per_group in [CORRESPOND_GROUP as usize, 1] {
+            for points in [1usize, 64, 65, 4_194_240, 4_194_241, 4_229_376] {
+                let span = dispatch_span(points, per_group);
+                let across = span / per_group;
+                let groups = points.div_ceil(per_group).max(1);
+                let down = groups.div_ceil(across);
 
-            let mut seen = vec![false; points];
-            for y in 0..down {
-                for x in 0..across * CORRESPOND_GROUP {
-                    // `correspond.slang`: `int(id.y * uint(pc.span) + id.x)`, then the bounds
-                    // test that follows it.
-                    let point = y as usize * span + x as usize;
-                    if point >= points {
-                        continue;
+                let mut seen = vec![false; points];
+                for y in 0..down {
+                    for x in 0..across * per_group {
+                        let point = y * span + x;
+                        if point >= points {
+                            continue;
+                        }
+                        assert!(!seen[point], "{points}: point {point} is dispatched twice");
+                        seen[point] = true;
                     }
-                    assert!(!seen[point], "{points}: point {point} is dispatched twice");
-                    seen[point] = true;
                 }
+                assert!(
+                    seen.iter().all(|hit| *hit),
+                    "{points}: a point was never dispatched"
+                );
             }
-            assert!(
-                seen.iter().all(|hit| *hit),
-                "{points}: a point was never dispatched"
-            );
         }
     }
 
@@ -9452,6 +9635,9 @@ mod tests {
         // One row, so `id.y * span + id.x` is `id.x` and the geometry is what it always was.
         let points: usize = 3_300_000;
         let groups = points.div_ceil(CORRESPOND_GROUP as usize);
-        assert_eq!(dispatch_span(points), groups * CORRESPOND_GROUP as usize);
+        assert_eq!(
+            dispatch_span(points, CORRESPOND_GROUP as usize),
+            groups * CORRESPOND_GROUP as usize
+        );
     }
 }

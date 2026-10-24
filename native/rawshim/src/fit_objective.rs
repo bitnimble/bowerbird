@@ -38,7 +38,6 @@ pub(crate) struct Kernels {
     count: wgpu::ComputePipeline,
     group: wgpu::ComputePipeline,
     scan: wgpu::ComputePipeline,
-    offsets: wgpu::ComputePipeline,
     write: wgpu::ComputePipeline,
     bins: wgpu::ComputePipeline,
     curve: wgpu::ComputePipeline,
@@ -102,7 +101,6 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
             count: build("fit_obj_count"),
             group: build("fit_obj_group"),
             scan: build("fit_obj_scan"),
-            offsets: build("fit_obj_offsets"),
             write: build("fit_obj_write"),
             bins: build("fit_obj_bins"),
             curve: build("fit_obj_curve"),
@@ -135,6 +133,8 @@ pub(crate) struct Paired {
     falloff_bins: crate::gpu::Buffer,
     /// Pairs the gate admitted, which the falloff walks and nothing else needs.
     admitted: std::cell::OnceCell<usize>,
+    /// What [`Self::scored_through`] warps each candidate into, made on its first call.
+    planes: std::cell::OnceCell<Vec<crate::gpu::Buffer>>,
     idle: crate::gpu::Buffer,
     width: usize,
     height: usize,
@@ -241,6 +241,7 @@ pub(crate) fn paired(
             readable,
         ),
         admitted: std::cell::OnceCell::new(),
+        planes: std::cell::OnceCell::new(),
         idle: held(gpu, "unused", 1, storage),
         width,
         height,
@@ -344,7 +345,56 @@ impl Paired {
         fitted: crate::fit::Phase,
         gain: Option<&crate::fit::Gain>,
     ) -> Option<Vec<Scored>> {
+        self.scored_in(self.gpu.record(), warped, fitted, gain)
+            .await
+    }
+
+    /// [`Self::scored`] on the training half, of `source` through each of `lenses`, warped in the
+    /// same submit into planes this keeps.
+    pub(crate) async fn scored_through(
+        &self,
+        source: &crate::gpu::Buffer,
+        source_size: (usize, usize),
+        lenses: &[crate::fit::Lens],
+    ) -> Option<Vec<Scored>> {
+        assert!(
+            lenses.len() <= self.candidates,
+            "more lenses than candidate slots"
+        );
+        let planes = self.planes.get_or_init(|| {
+            (0..self.candidates)
+                .map(|_| {
+                    held(
+                        self.gpu,
+                        "fit objective candidate",
+                        self.pixels * 3,
+                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    )
+                })
+                .collect()
+        });
+        let planes = &planes[..lenses.len()];
         let mut recording = self.gpu.record();
+        crate::hdr_fit::warped_into(
+            self.gpu,
+            &mut recording,
+            source,
+            source_size,
+            lenses,
+            planes,
+            (self.width, self.height),
+        );
+        self.scored_in(recording, planes, crate::fit::Phase::Train, None)
+            .await
+    }
+
+    async fn scored_in(
+        &self,
+        mut recording: crate::gpu::Recording<'_>,
+        warped: &[crate::gpu::Buffer],
+        fitted: crate::fit::Phase,
+        gain: Option<&crate::fit::Gain>,
+    ) -> Option<Vec<Scored>> {
         recording.holding(&self.jpeg);
         // The planes into the one buffer the kernel indexes by slot, in the submit that reads them:
         // a binding count cannot vary, and device to device this is what a warp just wrote.
@@ -375,13 +425,13 @@ impl Paired {
         // without a readback and is what the folds' own bound already handles.
         let over_pairs = (self.pixels as u32).div_ceil(64);
         let candidates = self.candidates as u32;
-        let over_groups = (self.blocks.div_ceil(GROUP) as u32).div_ceil(64);
+        let groups = self.blocks.div_ceil(GROUP) as u32;
+        assert!(groups <= 65535, "{groups} groups overrun a dispatch");
         // A pass each, and every one of them reads what the pass before it wrote.
         for (pipeline, across, down) in [
             (&built.count, over_blocks, candidates),
-            (&built.group, over_groups, candidates),
-            (&built.scan, candidates.div_ceil(64), 1),
-            (&built.offsets, over_blocks, candidates),
+            (&built.group, groups, candidates),
+            (&built.scan, candidates, 1),
             (&built.write, over_blocks, candidates),
             (&built.bins, over_pairs, candidates),
             (&built.curve, candidates, 1),
@@ -534,12 +584,17 @@ mod tests {
             format!("static const int SCORE_WORDS = {};", super::SCORE_WORDS),
             format!("static const int LEVELS = {};", super::LEVELS),
             format!("static const int PHASES = {};", super::PHASES),
-            format!("static const int GROUP = {};", super::GROUP),
+            "static const int GROUP = LANES;".to_string(),
         ] {
             assert!(
                 SOURCE.contains(&line),
                 "fit_objective.slang does not say `{line}`"
             );
         }
+        let lanes = format!("public static const int LANES = {};", super::GROUP);
+        assert!(
+            include_str!("../../../slang/compact.slang").contains(&lanes),
+            "compact.slang does not say `{lanes}`"
+        );
     }
 }

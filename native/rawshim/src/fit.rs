@@ -989,11 +989,12 @@ pub(crate) fn linear_table() -> [f64; 256] {
 /// other. `INFINITY` where a candidate kept too few pairs to be believed at all.
 async fn residuals(
     paired: &crate::fit_objective::Paired,
-    warped: &[crate::gpu::Buffer],
+    grid: &Grid,
+    lenses: &[Lens],
 ) -> Option<Vec<f64>> {
     Some(
         paired
-            .scored(warped, Phase::Train, None)
+            .scored_through(&grid.source, grid.source_size, lenses)
             .await?
             .into_iter()
             .map(|scored| match scored.pairs >= MIN_PAIRS {
@@ -1010,8 +1011,7 @@ async fn residual_for(
     knots: &[f64],
     crop: f64,
 ) -> Option<f64> {
-    let warped = grid.warped(gpu, &[candidate(knots, crop)]);
-    let delta = residuals(grid.alone(gpu), &warped)
+    let delta = residuals(grid.alone(gpu), grid, &[candidate(knots, crop)])
         .await?
         .first()
         .copied()?;
@@ -1062,9 +1062,8 @@ async fn scan<T: Send + Sync + Copy>(
         .iter()
         .map(|c| candidate(&knots_of(*c), crop_of(*c)))
         .collect();
-    let warped = grid.warped(gpu, &lenses);
     let paired = crate::fit_objective::paired(gpu, lenses.len(), &grid.jpeg.buffer, grid.size());
-    let scored = residuals(&paired, &warped).await?;
+    let scored = residuals(&paired, grid, &lenses).await?;
     candidates
         .iter()
         .zip(&scored)

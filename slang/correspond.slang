@@ -5,10 +5,10 @@
 // a 9x9 offset window. It is a zero-mean normalised cross correlation, which is template matching
 // and the shape a device is built for.
 //
-// **One thread per point, not per offset.** The tie-break is a scan in a fixed offset order -
-// strictly better wins, and an equal score only wins if it moved less - so the offsets have to be
-// visited in order by something carrying the running best. Splitting them across lanes would need a
-// reduction that reproduces that order, which costs more than the scan does.
+// The tie-break is a scan in a fixed offset order - strictly better wins, and an equal score only
+// wins if it moved less - so the offsets are visited in order by something carrying the running
+// best. `correspond` scores and scans them on one thread per point; `correspond_lanes` scores them
+// a lane each and has one lane scan the kept scores in the same order.
 //
 // The planes are f32, which is not a compromise: they are built from 8-bit samples, so f32's 24-bit
 // mantissa holds them exactly and a 49-term patch sum nowhere near reaches its limits. Measured, one
@@ -233,5 +233,189 @@ void correspond(uint3 id: SV_DispatchThreadID)
     found[out + 2] = peak;
     // Below the floor the host has no correspondence to act on, which the last slot says: -1 for
     // unmatched, 0 for found, 1 for a patch too flat to have searched.
+    found[out + 3] = peak >= pc.match_min ? 0.0 : -1.0;
+}
+
+/// `correspond_lanes`' workgroup: the widest patch and search whose windows it holds.
+static const int LANE_MOST_PATCH = 3;
+static const int LANE_MOST_SEARCH = 4;
+static const int LANE_PATCH_SIDE = 2 * LANE_MOST_PATCH + 1;
+static const int LANE_REACH = LANE_MOST_PATCH + LANE_MOST_SEARCH;
+static const int LANE_WINDOW = 2 * LANE_REACH + 1;
+static const int LANE_OFFSETS = (2 * LANE_MOST_SEARCH + 1) * (2 * LANE_MOST_SEARCH + 1);
+groupshared float lane_ours[LANE_PATCH_SIDE * LANE_PATCH_SIDE];
+groupshared float lane_theirs[LANE_WINDOW * LANE_WINDOW];
+groupshared float lane_scores[LANE_OFFSETS];
+
+/// Our plane `(dx, dy)` from the point, from the workgroup's copy.
+float held_ours(int dx, int dy)
+{
+    return lane_ours[(dy + LANE_MOST_PATCH) * LANE_PATCH_SIDE + dx + LANE_MOST_PATCH];
+}
+
+/// Their plane `(dx, dy)` from the search's centre, from the workgroup's copy.
+float held_theirs(int dx, int dy)
+{
+    return lane_theirs[(dy + LANE_REACH) * LANE_WINDOW + dx + LANE_REACH];
+}
+
+/// The score `correspond_lanes` kept for offset `(ox, oy)`.
+float lane_score_of(int reach, int ox, int oy)
+{
+    return lane_scores[(oy + reach) * (2 * reach + 1) + ox + reach];
+}
+
+/// `score_at` against the workgroup's copies, at offset `(ox, oy)` from the centre `(cx, cy)`.
+float held_score(float mean, float spread, int cx, int cy, int ox, int oy)
+{
+    float their_mean;
+    float their_spread;
+    if (TABULATED != 0) {
+        let slot = 2 * ((cy + oy) * pc.width + cx + ox);
+        their_mean = their_stats[slot];
+        their_spread = their_stats[slot + 1];
+    } else {
+        var sum = 0.0;
+        var count = 0.0;
+        for (int dy = -pc.patch; dy <= pc.patch; dy++) {
+            for (int dx = -pc.patch; dx <= pc.patch; dx++) {
+                sum += held_theirs(ox + dx, oy + dy);
+                count += 1.0;
+            }
+        }
+        their_mean = sum / count;
+        var deviation = 0.0;
+        for (int dy = -pc.patch; dy <= pc.patch; dy++) {
+            for (int dx = -pc.patch; dx <= pc.patch; dx++) {
+                let d = held_theirs(ox + dx, oy + dy) - their_mean;
+                deviation += d * d;
+            }
+        }
+        their_spread = deviation;
+    }
+    if (their_spread < pc.flat_patch) { return 0.0; }
+
+    var joint = 0.0;
+    for (int dy = -pc.patch; dy <= pc.patch; dy++) {
+        for (int dx = -pc.patch; dx <= pc.patch; dx++) {
+            joint += (held_ours(dx, dy) - mean) * (held_theirs(ox + dx, oy + dy) - their_mean);
+        }
+    }
+    return joint / sqrt(spread * their_spread);
+}
+
+/// `correspond` with a workgroup a point: the windows read into shared memory once, an offset a
+/// lane, and the running best taken over the scores afterwards in `correspond`'s own order - so
+/// the same answer, from a fortieth of the reads.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void correspond_lanes(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+{
+    let point = int(group.y * uint(pc.span) + group.x);
+    if (point >= pc.points) { return; }
+    let lane = int(index);
+    let x = at[2 * point];
+    let y = at[2 * point + 1];
+    let out = 4 * point;
+    // Not returned on here or below until the last barrier: a barrier must be reached by the whole
+    // workgroup, and these tests read storage, which WGSL does not count as uniform.
+    let excluded = x < 0 || y < 0;
+    var centre_x = x;
+    var centre_y = y;
+    if (pc.has_given != 0) {
+        centre_x += given[2 * point];
+        centre_y += given[2 * point + 1];
+    }
+
+    for (int k = lane; k < LANE_PATCH_SIDE * LANE_PATCH_SIDE; k += 64) {
+        let px = x + k % LANE_PATCH_SIDE - LANE_MOST_PATCH;
+        let py = y + k / LANE_PATCH_SIDE - LANE_MOST_PATCH;
+        let inside = px >= 0 && py >= 0 && px < pc.width && py < pc.height;
+        lane_ours[k] = inside ? ours[py * pc.width + px] : 0.0;
+    }
+    for (int k = lane; k < LANE_WINDOW * LANE_WINDOW; k += 64) {
+        let px = centre_x + k % LANE_WINDOW - LANE_REACH;
+        let py = centre_y + k / LANE_WINDOW - LANE_REACH;
+        let inside = px >= 0 && py >= 0 && px < pc.width && py < pc.height;
+        lane_theirs[k] = inside ? theirs[py * pc.width + px] : 0.0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // Every lane works out our patch, in `patch_of`'s order, rather than waiting on one that did.
+    var sum = 0.0;
+    var count = 0.0;
+    for (int dy = -pc.patch; dy <= pc.patch; dy++) {
+        for (int dx = -pc.patch; dx <= pc.patch; dx++) {
+            sum += held_ours(dx, dy);
+            count += 1.0;
+        }
+    }
+    let mean = sum / count;
+    var deviation = 0.0;
+    for (int dy = -pc.patch; dy <= pc.patch; dy++) {
+        for (int dx = -pc.patch; dx <= pc.patch; dx++) {
+            let d = held_ours(dx, dy) - mean;
+            deviation += d * d;
+        }
+    }
+    let spread = deviation;
+    let flat = spread < pc.flat_patch;
+
+    let reach = pc.refine >= 0 ? min(pc.refine, pc.search) : pc.search;
+    let side = 2 * reach + 1;
+    if (!excluded && !flat) {
+        for (int k = lane; k < side * side; k += 64) {
+            lane_scores[k] =
+                held_score(mean, spread, centre_x, centre_y, k % side - reach, k / side - reach);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (lane != 0) { return; }
+    if (excluded) {
+        found[out] = 0.0;
+        found[out + 1] = 0.0;
+        found[out + 2] = 0.0;
+        found[out + 3] = -1.0;
+        return;
+    }
+    if (flat) {
+        found[out] = 0.0;
+        found[out + 1] = 0.0;
+        found[out + 2] = 1.0;
+        found[out + 3] = 1.0;
+        return;
+    }
+
+    var best_x = 0;
+    var best_y = 0;
+    var peak = -1e30;
+    for (int k = 0; k < side * side; k++) {
+        let ox = k % side - reach;
+        let oy = k / side - reach;
+        let score = lane_scores[k];
+        let nearer = abs(ox) + abs(oy) < abs(best_x) + abs(best_y);
+        if (score > peak || (score == peak && nearer)) {
+            peak = score;
+            best_x = ox;
+            best_y = oy;
+        }
+    }
+    var sub_x = 0.0;
+    var sub_y = 0.0;
+    if (abs(best_x) < reach) {
+        sub_x = sub_pixel(
+            lane_score_of(reach, best_x - 1, best_y),
+            peak,
+            lane_score_of(reach, best_x + 1, best_y));
+    }
+    if (abs(best_y) < reach) {
+        sub_y = sub_pixel(
+            lane_score_of(reach, best_x, best_y - 1),
+            peak,
+            lane_score_of(reach, best_x, best_y + 1));
+    }
+    found[out] = float(centre_x - x + best_x) + sub_x;
+    found[out + 1] = float(centre_y - y + best_y) + sub_y;
+    found[out + 2] = peak;
     found[out + 3] = peak >= pc.match_min ? 0.0 : -1.0;
 }
