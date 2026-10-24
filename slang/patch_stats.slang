@@ -24,10 +24,35 @@ struct Push {
 [vk::binding(1, 0)] RWStructuredBuffer<float> stats;
 
 
-[shader("compute")]
-[numthreads(16, 16, 1)]
-void patch_stats(uint3 id: SV_DispatchThreadID)
+static const int TILE = 16;
+/// The widest patch whose windows a workgroup holds for itself; a wider one reads `plane` per tap.
+static const int MOST_PATCH = 8;
+groupshared float held[(TILE + 2 * MOST_PATCH) * (TILE + 2 * MOST_PATCH)];
+
+/// The plane at `(x, y)`, from the workgroup's `span`-wide copy starting at `origin` where it holds one.
+float tap(bool tiled, int span, int2 origin, int x, int y)
 {
+    if (tiled) { return held[(y - origin.y) * span + (x - origin.x)]; }
+    return plane[y * pc.width + x];
+}
+
+[shader("compute")]
+[numthreads(TILE, TILE, 1)]
+void patch_stats(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+{
+    let patch = pc.patch;
+    let tiled = patch <= MOST_PATCH;
+    let span = TILE + 2 * patch;
+    let origin = int2(group.xy) * TILE - patch;
+    if (tiled) {
+        for (int k = int(index); k < span * span; k += TILE * TILE) {
+            let at = origin + int2(k % span, k / span);
+            let inside = all(at >= 0) && at.x < pc.width && at.y < pc.height;
+            held[k] = inside ? plane[at.y * pc.width + at.x] : 0.0;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     let x = int(id.x);
     let y = int(id.y);
     if (x >= pc.width || y >= pc.height) { return; }
@@ -35,7 +60,6 @@ void patch_stats(uint3 id: SV_DispatchThreadID)
 
     // Zero where the window would leave the plane, exactly as the host leaves it. Every caller
     // guards `holds(x, y, PATCH + SEARCH)` before it searches, so nothing reads these.
-    let patch = pc.patch;
     if (x < patch || y < patch || x + patch >= pc.width || y + patch >= pc.height) {
         stats[out] = 0.0;
         stats[out + 1] = 0.0;
@@ -49,7 +73,7 @@ void patch_stats(uint3 id: SV_DispatchThreadID)
     var count = 0.0;
     for (int dy = -patch; dy <= patch; dy++) {
         for (int dx = -patch; dx <= patch; dx++) {
-            sum += plane[(y + dy) * pc.width + (x + dx)];
+            sum += tap(tiled, span, origin, x + dx, y + dy);
             count += 1.0;
         }
     }
@@ -57,7 +81,7 @@ void patch_stats(uint3 id: SV_DispatchThreadID)
     var deviation = 0.0;
     for (int dy = -patch; dy <= patch; dy++) {
         for (int dx = -patch; dx <= patch; dx++) {
-            let d = plane[(y + dy) * pc.width + (x + dx)] - mean;
+            let d = tap(tiled, span, origin, x + dx, y + dy) - mean;
             deviation += d * d;
         }
     }

@@ -243,6 +243,7 @@ pub(crate) struct Resamplers {
     lanczos: wgpu::ComputePipeline,
     blur: wgpu::ComputePipeline,
     box_blur: wgpu::ComputePipeline,
+    box_blur_windowed: wgpu::ComputePipeline,
 }
 
 pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
@@ -294,6 +295,7 @@ pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
             lanczos: build("fit_lanczos"),
             blur: build("fit_stack_blur"),
             box_blur: build("fit_box_blur"),
+            box_blur_windowed: build("fit_box_blur_windowed"),
             layout,
         }
     })
@@ -330,6 +332,31 @@ pub(crate) fn pass(
     (width, height): (usize, usize),
     axis: usize,
     radius: usize,
+) -> Sampled {
+    let tiles = ((width as u32).div_ceil(16), (height as u32).div_ceil(16));
+    pass_over(
+        gpu,
+        recording,
+        pipeline,
+        source,
+        (width, height),
+        axis,
+        radius,
+        tiles,
+    )
+}
+
+/// [`pass`] with its workgroups laid out as `groups`.
+#[allow(clippy::too_many_arguments)]
+fn pass_over(
+    gpu: &'static crate::gpu::Gpu,
+    recording: &mut crate::gpu::Recording<'_>,
+    pipeline: &wgpu::ComputePipeline,
+    source: &Sampled,
+    (width, height): (usize, usize),
+    axis: usize,
+    radius: usize,
+    groups: (u32, u32),
 ) -> Sampled {
     let out = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit grid plane"),
@@ -391,7 +418,7 @@ pub(crate) fn pass(
         let mut compute = recording.encoder().begin_compute_pass(&Default::default());
         compute.set_pipeline(pipeline);
         compute.set_bind_group(0, &group, &[]);
-        compute.dispatch_workgroups((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
+        compute.dispatch_workgroups(groups.0, groups.1, 1);
     }
     Sampled {
         buffer: out,
@@ -460,14 +487,45 @@ pub(crate) fn box_blurred(
     source: &Sampled,
     radius: usize,
 ) -> Sampled {
-    let kernel = &resamplers(gpu).box_blur;
+    let kernels = resamplers(gpu);
     let size = (source.width, source.height);
-    let mut plane = pass(gpu, recording, kernel, source, size, 0, radius);
-    for sweep in 1..2 * BOX_PASSES {
-        plane = pass(gpu, recording, kernel, &plane, size, sweep % 2, radius);
+    let sweep = |recording: &mut crate::gpu::Recording<'_>, from: &Sampled, axis: usize| {
+        if radius < BOX_WINDOWED_FROM {
+            return pass(gpu, recording, &kernels.box_blur, from, size, axis, radius);
+        }
+        assert!(
+            radius <= BOX_MOST_RADIUS,
+            "a box of radius {radius} overruns its window"
+        );
+        let (along, lines) = match axis {
+            0 => size,
+            _ => (size.1, size.0),
+        };
+        assert!(lines <= 65535, "{lines} lines overrun a dispatch");
+        let groups = ((along as u32).div_ceil(BOX_SEGMENT), lines as u32);
+        pass_over(
+            gpu,
+            recording,
+            &kernels.box_blur_windowed,
+            from,
+            size,
+            axis,
+            radius,
+            groups,
+        )
+    };
+    let mut plane = sweep(recording, source, 0);
+    for swept in 1..2 * BOX_PASSES {
+        plane = sweep(recording, &plane, swept % 2);
     }
     plane
 }
+
+/// `fit_grids.slang`'s windowed box workgroup: the pixels of a line it writes, and the widest
+/// window it holds.
+const BOX_SEGMENT: u32 = 256;
+pub(crate) const BOX_MOST_RADIUS: usize = BOX_SEGMENT as usize / 2;
+const BOX_WINDOWED_FROM: usize = 16;
 
 /// An 8-bit plane on the device as its own bytes, and a grid back off it.
 ///
@@ -1703,6 +1761,20 @@ mod tests {
         let read = staged(&mut recording, &out);
         recording.submit();
         pollster::block_on(read_rgb(gpu, &read, &out))
+    }
+
+    #[test]
+    fn the_host_lays_the_box_out_as_the_shader_holds_it() {
+        const SOURCE: &str = include_str!("../../../slang/fit_grids.slang");
+        for line in [
+            format!("static const int SEGMENT = {};", super::BOX_SEGMENT),
+            "static const int MOST_RADIUS = SEGMENT / 2;".to_string(),
+        ] {
+            assert!(
+                SOURCE.contains(&line),
+                "fit_grids.slang does not say `{line}`"
+            );
+        }
     }
 
     #[test]

@@ -132,8 +132,20 @@ void fit_stack_blur(uint3 id: SV_DispatchThreadID)
     put(x, y, acc / float((pc.radius + 1) * (pc.radius + 1)));
 }
 
-/// The colour fit's prefilter, one axis a dispatch: a flat window truncated where it meets the
-/// frame's edge and divided by however much of it survived.
+/// One box output: the window's mean, truncated at the frame's edge and divided by however much of
+/// it survived.
+void put_box(int x, int y, float3 sum, int taps)
+{
+    let out = max(sum / float(taps), float3(0.0));
+    // Not `put`: the planes this filters carry scene light above diffuse white, and the clamp a
+    // Lanczos pass needs would flatten every highlight in them to one.
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.width)) * 3;
+    plane[i] = out.x;
+    plane[i + 1] = out.y;
+    plane[i + 2] = out.z;
+}
+
+/// The colour fit's prefilter, one axis a dispatch, a pixel a thread summing its own window.
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void fit_box_blur(uint3 id: SV_DispatchThreadID)
@@ -152,11 +164,61 @@ void fit_box_blur(uint3 id: SV_DispatchThreadID)
     for (int k = lo; k <= hi; k++) {
         acc += along(across, k);
     }
-    let out = max(acc / float(hi - lo + 1), float3(0.0));
-    // Not `put`: the planes this filters carry scene light above diffuse white, and the clamp a
-    // Lanczos pass needs would flatten every highlight in them to one.
-    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.width)) * 3;
-    plane[i] = out.x;
-    plane[i + 1] = out.y;
-    plane[i + 2] = out.z;
+    put_box(x, y, acc, hi - lo + 1);
+}
+
+/// Pixels of one line a windowed box workgroup writes, and the widest window it can load either side of them.
+static const int SEGMENT = 256;
+static const int MOST_RADIUS = SEGMENT / 2;
+/// Window entries one of `block_sums` totals.
+static const int BLOCK = 16;
+groupshared float3 window[2 * SEGMENT];
+groupshared float3 block_sums[2 * SEGMENT / BLOCK];
+
+/// `window[lo ..= hi]`, summed from the whole blocks inside it and the entries either side.
+float3 window_sum(int lo, int hi)
+{
+    let first = (lo + BLOCK - 1) / BLOCK;
+    let last = (hi + 1) / BLOCK;
+    var sum = float3(0.0);
+    if (first >= last) {
+        for (int k = lo; k <= hi; k++) { sum += window[k]; }
+        return sum;
+    }
+    for (int k = lo; k < first * BLOCK; k++) { sum += window[k]; }
+    for (int b = first; b < last; b++) { sum += block_sums[b]; }
+    for (int k = last * BLOCK; k <= hi; k++) { sum += window[k]; }
+    return sum;
+}
+
+/// `fit_box_blur` for a wide window: a workgroup a segment of a line, whose window it reads into
+/// `window` once and totals by blocks.
+[shader("compute")]
+[numthreads(SEGMENT, 1, 1)]
+void fit_box_blur_windowed(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+{
+    let lane = int(index);
+    let across = int(group.y);
+    let count = pc.axis == 0 ? pc.source_width : pc.source_height;
+    let start = int(group.x) * SEGMENT;
+    let from = max(start - pc.radius, 0);
+    let to = min(start + SEGMENT - 1 + pc.radius, count - 1);
+    for (int k = lane; k < 2 * SEGMENT; k += SEGMENT) {
+        window[k] = from + k <= to ? along(across, from + k) : float3(0.0);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (lane < 2 * SEGMENT / BLOCK) {
+        var sum = float3(0.0);
+        for (int k = lane * BLOCK; k < (lane + 1) * BLOCK; k++) { sum += window[k]; }
+        block_sums[lane] = sum;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    let here = start + lane;
+    if (here >= count) { return; }
+    let x = pc.axis == 0 ? here : across;
+    let y = pc.axis == 0 ? across : here;
+    let lo = max(here - pc.radius, 0) - from;
+    let hi = min(here + pc.radius, count - 1) - from;
+    put_box(x, y, window_sum(lo, hi), hi - lo + 1);
 }

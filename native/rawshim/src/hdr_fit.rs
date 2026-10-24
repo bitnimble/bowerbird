@@ -50,6 +50,9 @@ pub const TRUST_CEILING: f64 = 0.9;
 
 const MIN_BIN_SAMPLES: usize = 8;
 const MIN_PAIRS: usize = 2000;
+/// Every how-manyth selected pair the fit keeps: neighbours on the grid hold the same colour, so
+/// the half dropped teaches the fit nothing the half kept does not.
+const PAIR_STRIDE: usize = 2;
 
 /// Rec.2020 luma, for the chroma blend and the sample weighting.
 pub(crate) const LUMA: [f64; 3] = [0.2627, 0.678, 0.0593];
@@ -2215,6 +2218,11 @@ const THIN_TRUST: f64 = 0.1;
 
 /// Solves of the matrix against the overshoot of the one before, from the identity.
 const CENSOR_ROUNDS: usize = 4;
+/// The same, from the ridges the fit's previous round settled on.
+const WARM_CENSOR_ROUNDS: usize = 1;
+
+/// One solved matrix per [`RIDGE_CANDIDATES`] damping.
+type Ridges = [[[f64; 3]; 3]; RIDGE_CANDIDATES.len()];
 
 impl Moments {
     /// One pair into the normal equations as `fit_moments.slang` adds it, asked about `matrix`.
@@ -2338,9 +2346,14 @@ async fn ridge_candidates(
     gpu: &'static crate::gpu::Gpu,
     toned: &crate::gpu::Buffer,
     pairs: &Pairs,
+    last: &mut Option<Ridges>,
 ) -> Option<Vec<[[f64; 3]; 3]>> {
-    let mut ridged = [IDENTITY; RIDGE_CANDIDATES.len()];
-    for _ in 0..CENSOR_ROUNDS {
+    let rounds = match last {
+        Some(_) => WARM_CENSOR_ROUNDS,
+        None => CENSOR_ROUNDS,
+    };
+    let mut ridged = last.unwrap_or([IDENTITY; RIDGE_CANDIDATES.len()]);
+    for _ in 0..rounds {
         let blocks = crate::fit_moments::partials(
             gpu,
             toned,
@@ -2357,6 +2370,7 @@ async fn ridge_candidates(
         }
         ridged = std::array::from_fn(|k| moments[k].solve(RIDGE_CANDIDATES[k]));
     }
+    *last = Some(ridged);
     // The identity ahead of the ridges, as the damped end of the same scale rather than a special
     // case: the most damped ridge is still solved from the pairs, so on a frame whose pairs are not
     // the picture it can contradict the picture too. It wins where it scores best, which is what
@@ -2634,17 +2648,20 @@ impl Rescored {
 }
 
 /// The matrix for the tone stage a colour currently carries.
+///
+/// `ridged` is the ridges the last call solved, which this one starts from and replaces.
 async fn fitted_matrix_for(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
     pairs: &Pairs,
     frame: &Pairs,
     samples: &Gathered,
+    ridged: &mut Option<Ridges>,
 ) -> Option<[[f64; 3]; 3]> {
     // The tone stage once, kept on the device for the candidates below: they differ only in
     // their matrix, which sits after it.
     let toned = evaluate_over(gpu, colour, &samples.pairs, pairs.at.len(), Stage::Tone);
-    let candidates = ridge_candidates(gpu, &toned.buffer, pairs).await?;
+    let candidates = ridge_candidates(gpu, &toned.buffer, pairs, ridged).await?;
     if candidates.len() == 1 {
         return Some(IDENTITY);
     }
@@ -4545,6 +4562,7 @@ async fn neighbourhood_plane(
     };
     // Blurred and then reduced, where the host took the luma first. Both are linear, so the two
     // orders are the same arithmetic, and this way the blur is the only pass that has to exist.
+    const _: () = assert!(FIT_LONG_EDGE / 10 <= crate::fit::BOX_MOST_RADIUS);
     let blurred = crate::fit::box_blurred(gpu, &mut recording, &source, width / 10);
     let plane = DevicePlane::luma_of(gpu, &mut recording, &blurred.buffer, width, height);
     let out = staged(&mut recording, &plane.buffer, width * height);
@@ -4701,8 +4719,8 @@ async fn wide_samples(
     // fit-grid pixel each wide one sits inside. Neither is a read of a picture, and both are host
     // arrays the gather has no business carrying.
     let samples: Vec<WideSample> = taken
-        .into_iter()
-        .zip(&admitted.at)
+        .into_par_iter()
+        .zip(admitted.at.par_iter())
         .filter_map(|(pair, point)| {
             let (v, t) = pair?;
             let fit_at = (point[1] as usize / 2).min(fit_tall - 1) * fit_wide
@@ -5178,12 +5196,14 @@ async fn fit_colour(
     // several times over inside its own node and its correction averages to nothing.
     let map_balance = hue_balance(&census, MAP_BALANCE_LIMIT);
 
+    let stride = (at.len() / MIN_PAIRS).clamp(1, PAIR_STRIDE);
+    let at: Vec<usize> = at.into_iter().step_by(stride).collect();
     let pairs = Pairs {
         balance: at.iter().map(|p| census.weigh(&balance, *p)).collect(),
         indices: indices_on(gpu, &at),
         grey_indices: indices_on(gpu, &greys),
         at,
-        target,
+        target: target.into_iter().step_by(stride).collect(),
         greys,
         grey_target,
         to_srgb: rec2020_to_srgb(),
@@ -5805,9 +5825,11 @@ async fn fit_model(
     };
     let mut samples = gather(source);
     let mut lit: Option<Source> = None;
+    let mut ridged = None;
     for round in 0..FIT_ROUNDS {
         let before = colour.matrix;
-        colour.matrix = fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
+        colour.matrix =
+            fitted_matrix_for(gpu, &colour, pairs, frame, &samples, &mut ridged).await?;
         lap("matrix");
         let settled = before
             .iter()
@@ -7963,8 +7985,25 @@ mod tests {
             state ^= state << 17;
             (state >> 11) as f64 / (1u64 << 53) as f64
         };
-        for (w, h, radius) in [(1, 1, 3), (7, 5, 1), (40, 9, 4), (13, 41, 20), (64, 48, 6)] {
-            let source: Vec<f64> = (0..w * h * 3).map(|_| noise()).collect();
+        // The last is a highlight fifty times diffuse white beside a run of near black, whose
+        // digits any sum that cancels the highlight against itself would lose.
+        for (w, h, radius, lit) in [
+            (1, 1, 3, false),
+            (7, 5, 1, false),
+            (40, 9, 4, false),
+            (13, 41, 20, false),
+            (64, 48, 6, false),
+            (600, 3, crate::fit::BOX_MOST_RADIUS, false),
+            (3, 700, 90, false),
+            (400, 2, 54, true),
+        ] {
+            let source: Vec<f64> = (0..w * h * 3)
+                .map(|i| match lit {
+                    true if (i / 3) % w < 20 => 50.0,
+                    true => 0.001,
+                    false => noise(),
+                })
+                .collect();
             let mut recording = gpu.record();
             let held = crate::fit::Sampled {
                 buffer: rgb_source(
@@ -8002,8 +8041,12 @@ mod tests {
                     }
                 }
             }
+            let tolerance = |b: f64| if lit { 1e-4 * b } else { 1e-5 };
             for (a, b) in got.data.iter().zip(&slow) {
-                assert!((a - b).abs() < 1e-5, "{w}x{h} r{radius}: {a} against {b}");
+                assert!(
+                    (a - b).abs() < tolerance(*b),
+                    "{w}x{h} r{radius}: {a} against {b}"
+                );
             }
         }
     }
