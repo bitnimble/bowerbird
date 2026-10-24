@@ -8,8 +8,7 @@ use crate::parallel::*;
 
 /// Workgroups the binning is split across, which is also how many partials come back.
 ///
-/// Low on purpose: the fold that crosses is `BLOCKS * BINS * 3` floats, so raising it costs the
-/// readback linearly, and measured no faster at 1024.
+/// The fold that crosses is `BLOCKS * BINS * 3` floats, so raising it costs the readback linearly.
 const BLOCKS: usize = 256;
 
 /// `fit_curve.slang`'s lanes and the curve bins each owns, which bound the bins one block can hold.
@@ -275,6 +274,117 @@ mod tests {
             SOURCE.contains(&line),
             "fit_pairs.slang does not say `{line}`"
         );
+    }
+
+    /// Blocks of several staged runs with the last block and its last run part-filled, channels
+    /// masked one and two at a time, and bins every lane owns up to the last: each bin holds what a
+    /// serial walk of every usable (pixel, channel) gives it, with the matrix undone and without.
+    #[test]
+    fn the_bins_hold_what_a_serial_walk_does() {
+        use crate::hdr_fit::{BINS, HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS, srgb_oetf};
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let pixels = super::BLOCKS * 150 + 37;
+        let ceiling = 0.9f32;
+        let hue_weights = [0.5, 1.0, 1.5, 0.8, 1.2, 2.0];
+        let mut seed = 9u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let (mut render, mut jpeg, mut bits) = (vec![], vec![], vec![]);
+        for _ in 0..pixels {
+            for _ in 0..3 {
+                render.push(1.05 * ceiling * next());
+                jpeg.push(next());
+            }
+            let channels = (next() * 8.0) as u32;
+            let hue = (next() * hue_weights.len() as f32) as u32;
+            bits.push(channels | (hue << HUE_SHIFT));
+        }
+        let upload = |label, bytes: Vec<u8>| {
+            gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        };
+        let evidence = super::Evidence {
+            render: upload(
+                "render",
+                render.iter().flat_map(|v| v.to_ne_bytes()).collect(),
+            ),
+            jpeg: upload("jpeg", jpeg.iter().flat_map(|v| v.to_ne_bytes()).collect()),
+            bits: upload("bits", bits.iter().flat_map(|v| v.to_ne_bytes()).collect()),
+            pixels,
+        };
+        let masks = &bits;
+        let usable = |p: usize| (0..3usize).filter(move |&c| masks[p] & (1u32 << c) != 0);
+        let hue_weight = |p: usize| hue_weights[(masks[p] >> HUE_SHIFT) as usize];
+        let level_of = |x: f32| {
+            let t = (x.max(0.0) / ceiling).sqrt();
+            ((t * LEVEL_BINS as f32) as usize).min(LEVEL_BINS - 1)
+        };
+        let mut counted = [0.0f64; LEVEL_BINS];
+        for p in 0..pixels {
+            for c in usable(p) {
+                counted[level_of(render[p * 3 + c])] += hue_weight(p);
+            }
+        }
+        let occupied = counted.iter().filter(|c| **c > 0.0).count().max(1);
+        let parity = counted.iter().sum::<f64>() / occupied as f64;
+        let level_weight = counted.map(|c| match c > 0.0 {
+            true => (parity / c).clamp(1.0 / LEVEL_BALANCE_LIMIT, LEVEL_BALANCE_LIMIT),
+            false => 1.0,
+        });
+        let inverse = [[1.2, -0.1, -0.1], [-0.05, 1.1, -0.05], [0.0, -0.2, 1.2]];
+        for inverse in [None, Some(&inverse)] {
+            let device = pollster::block_on(super::binned(
+                gpu,
+                &evidence,
+                &hue_weights,
+                f64::from(ceiling),
+                inverse,
+            ))
+            .expect("binned");
+            let (mut sum, mut weight, mut count) =
+                (vec![0.0; BINS], vec![0.0; BINS], vec![0; BINS]);
+            for p in 0..pixels {
+                let v = [0, 1, 2].map(|c| f64::from(jpeg[p * 3 + c]));
+                let want = match inverse {
+                    None => v,
+                    Some(m) => {
+                        m.map(|row| (row[0] * v[0] + row[1] * v[1] + row[2] * v[2]).max(0.0))
+                    }
+                };
+                for c in usable(p) {
+                    let x = render[p * 3 + c];
+                    let w = hue_weight(p) * level_weight[level_of(x)];
+                    let bin = (x / ceiling * (BINS - 1) as f32)
+                        .round_ties_even()
+                        .clamp(0.0, (BINS - 1) as f32) as usize;
+                    sum[bin] += srgb_oetf(want[c].clamp(0.0, 1.0)) * w;
+                    weight[bin] += w;
+                    count[bin] += 1;
+                }
+            }
+            assert!(count[BINS - 1] > 0, "the last bin is reached");
+            let close = |a: f64, b: f64| (a - b).abs() <= 1e-4 * b.abs().max(1.0);
+            for bin in 0..BINS {
+                assert_eq!(device.count[bin], count[bin], "bin {bin}");
+                assert!(
+                    close(device.sum[bin], sum[bin]) && close(device.weight[bin], weight[bin]),
+                    "bin {bin}: {} {} against {} {}",
+                    device.sum[bin],
+                    device.weight[bin],
+                    sum[bin],
+                    weight[bin]
+                );
+            }
+        }
     }
 
     #[test]

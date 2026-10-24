@@ -50,8 +50,7 @@ pub const TRUST_CEILING: f64 = 0.9;
 
 const MIN_BIN_SAMPLES: usize = 8;
 const MIN_PAIRS: usize = 2000;
-/// Every how-manyth selected pair the fit keeps: neighbours on the grid hold the same colour, so
-/// the half dropped teaches the fit nothing the half kept does not.
+/// Every how-manyth selected pair the fit keeps.
 const PAIR_STRIDE: usize = 2;
 
 /// Rec.2020 luma, for the chroma blend and the sample weighting.
@@ -3919,7 +3918,7 @@ impl DevicePlane {
         let buffer = gpu.own_buffer(&wgpu::BufferDescriptor {
             label: Some("patch stats"),
             size: (self.width * self.height * 2 * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let mut block = [
@@ -4217,9 +4216,7 @@ impl Asking {
         )
     }
 
-    /// [`Asking::new`], searched by `correspond_lanes` or by `correspond` as `lanes` says: the same
-    /// answers either way, but `lanes` is for scattered points within `LANE_MOST_*`, and a dense
-    /// grid wants it false.
+    /// [`Asking::new`], searched by `correspond_lanes` or by `correspond` as `lanes` says.
     #[allow(clippy::too_many_arguments)]
     fn with_lanes(
         gpu: &'static crate::gpu::Gpu,
@@ -6996,6 +6993,73 @@ mod tests {
         .expect("the device selected")
     }
 
+    /// The pair and frame lists hold exactly the pixels the mask marks, in pixel order, over planes
+    /// a dozen blocks long whose last block is part-filled.
+    #[test]
+    fn the_lists_hold_the_pixels_the_mask_marks() {
+        // `fit_pairs.slang`'s own bits.
+        const COLOUR: u8 = 16;
+        const FRAME: u8 = 32;
+        let gpu = searching();
+        let (width, height) = (61usize, 47usize);
+        let mut seed = 5u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let patches: Vec<([f64; 3], [f64; 3])> = (0..width.div_ceil(4) * height.div_ceil(4))
+            .map(|_| {
+                let level = next();
+                let ours = [level, level * 0.8, level * 0.5].map(|v| 0.9 * v);
+                let theirs = match next() {
+                    roll if roll < 0.15 => [1.0; 3],
+                    roll if roll < 0.3 => [0.0; 3],
+                    _ => ours.map(|v| 1.1 * v),
+                };
+                (ours, theirs)
+            })
+            .collect();
+        let (mut ours, mut theirs) = (vec![], vec![]);
+        for y in 0..height {
+            for x in 0..width {
+                let (o, t) = patches[(y / 4) * width.div_ceil(4) + x / 4];
+                ours.extend(o);
+                theirs.extend(t);
+            }
+        }
+        let upload = |data: &[f64]| {
+            gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("selection test plane"),
+                contents: &rgb_words(data, |v| v as f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        };
+        let selected = pollster::block_on(crate::fit_pairs::select(
+            gpu,
+            &upload(&ours),
+            &upload(&theirs),
+            width,
+            height,
+        ))
+        .expect("the device selected");
+        let marked = |bit: u8| -> Vec<usize> {
+            (0..width * height)
+                .filter(|&p| selected.bits[p] & bit != 0)
+                .collect()
+        };
+        let (pairs, frame) = (marked(COLOUR), marked(FRAME));
+        assert!(
+            pairs.len() > 512 && pairs.len() < width * height * 3 / 4,
+            "{} pairs",
+            pairs.len()
+        );
+        assert!(frame.len() > 10, "{} frame pixels", frame.len());
+        assert_eq!(selected.at, pairs);
+        assert_eq!(selected.frame_at, frame);
+    }
+
     /// The centre of a 5x5, which is the only pixel a border-skipping mask and a gradient three
     /// wide can both reach.
     const CENTRE: usize = 12;
@@ -7136,9 +7200,19 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        let pairs: Vec<([f64; 3], [f64; 3], f64)> = (0..300)
+        for (count, block) in [(300, 64), (300, 192), (9000, 4096)] {
+            the_device_adds_pairs_in_blocks_of(gpu, count, block);
+        }
+    }
+
+    fn the_device_adds_pairs_in_blocks_of(
+        gpu: &'static crate::gpu::Gpu,
+        count: usize,
+        block: usize,
+    ) {
+        let pairs: Vec<([f64; 3], [f64; 3], f64)> = (0..count)
             .map(|k| {
-                let f = k as f64 / 300.0;
+                let f = k as f64 / count as f64;
                 let v = [
                     0.1 + 0.5 * f,
                     0.05 + 0.3 * (1.0 - f),
@@ -7167,11 +7241,12 @@ mod tests {
             &below,
             &target,
             pairs.len(),
-            64,
+            block,
             &matrices,
         ))
         .unwrap();
         for (matrix, blocks) in matrices.iter().zip(&blocks) {
+            assert_eq!(blocks.len(), count.div_ceil(block));
             let device = Moments::folded(blocks);
             let mut host = Moments::default();
             for (v, t, w) in &pairs {
@@ -7716,8 +7791,14 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
+        the_device_lattice_sums_on(gpu, GridShape::COARSE, 2e-3);
+        // Hue tents half as wide, so the same rounding moves twice the share and more between
+        // neighbouring nodes.
+        the_device_lattice_sums_on(gpu, GridShape::FINE, 2e-2);
+    }
+
+    fn the_device_lattice_sums_on(gpu: &'static crate::gpu::Gpu, shape: GridShape, grazing: f64) {
         let axes = test_axes();
-        let shape = GridShape::COARSE;
         let mut seed = 7u64;
         let mut next = || {
             seed = seed
@@ -7833,6 +7914,15 @@ mod tests {
             out.extend(m.reach[node]);
             out
         };
+        // Every pair lands whole however its shares fall, so a pair the count or the write lost
+        // or doubled shows here, where tent-edge rounding cannot.
+        let landed = |m: &ChromaMoments| m.seen.iter().sum::<f64>();
+        assert!(
+            (landed(&device) - landed(&host)).abs() <= 1e-4 * landed(&host),
+            "{} landed against {}",
+            landed(&device),
+            landed(&host)
+        );
         for node in 0..shape.nodes() {
             for (word, (got, want)) in words(&device, node)
                 .into_iter()
@@ -7842,7 +7932,7 @@ mod tests {
                 // Signed sums can cancel to near nothing, so the floor scales with the weight of
                 // every pair that reached the node: one grazing it lands on the tent's steep
                 // edge, where ZCAM's 134th power turns `f32` rounding into a share a tenth off.
-                let allowed = 1e-3 * want.abs() + 2e-3 * touched[node];
+                let allowed = 1e-3 * want.abs() + grazing * touched[node];
                 assert!(
                     (got - want).abs() <= allowed,
                     "node {node} word {word}: {got} against {want}"
@@ -8212,6 +8302,10 @@ mod tests {
             })
             .collect();
         let about: Vec<[i32; 2]> = points.iter().map(|_| [1, -1]).collect();
+        // Windows pushed against every edge of the plane.
+        let scattered: Vec<[i32; 2]> = (0..points.len() as i32)
+            .map(|p| [p % 9 - 4, p % 7 - 3])
+            .collect();
         let answers = |tabulated: bool, about: Option<&[[i32; 2]]>, refine: i32, lanes: bool| {
             let ours = DevicePlane::from_luma(gpu, &ours_luma, w, h);
             let mut theirs = DevicePlane::from_luma(gpu, &theirs_luma, w, h);
@@ -8268,17 +8362,67 @@ mod tests {
             (true, None, -1),
             (false, None, -1),
             (true, Some(about.as_slice()), 1),
+            (true, Some(scattered.as_slice()), 0),
+            (false, Some(scattered.as_slice()), 2),
         ] {
             let listed = answers(tabulated, about, refine, false);
             let laned = answers(tabulated, about, refine, true);
             let found = listed.iter().filter(|f| f.is_some_and(|f| !f.3)).count();
             let featureless = listed.iter().filter(|f| f.is_some_and(|f| f.3)).count();
             assert!(
-                found > points.len() / 3 && featureless > 10,
+                found > points.len() / 4 && featureless > 10,
                 "{found} found, {featureless} featureless"
             );
             for (p, (a, b)) in listed.iter().zip(&laned).enumerate() {
                 assert_eq!(a, b, "tabulated {tabulated}, refine {refine}, point {p}");
+            }
+        }
+    }
+
+    /// Every pixel's window mean and spread, held in the workgroup's tile up to `MOST_PATCH` and
+    /// read from the plane past it, on a plane whose last tiles hang off its right and bottom.
+    #[test]
+    fn the_patch_statistics_are_their_windows() {
+        let gpu = searching();
+        let (w, h) = (53usize, 41usize);
+        let plane = shifted_plane(w, h, 0.3, -0.2);
+        for patch in [3isize, 8, 9] {
+            let reach = Reach { patch, search: 0 };
+            let tabulated = DevicePlane::from_luma(gpu, &plane, w, h).tabulated(gpu, reach);
+            let stats = pollster::block_on(crate::align::read_floats(
+                gpu,
+                &tabulated.stats.as_ref().expect("tabulated").buffer,
+                w * h * 2,
+            ))
+            .expect("read back");
+            let p = patch as usize;
+            for y in 0..h {
+                for x in 0..w {
+                    let at = 2 * (y * w + x);
+                    if x < p || y < p || x + p >= w || y + p >= h {
+                        assert_eq!((stats[at], stats[at + 1]), (0.0, 0.0), "({x}, {y})");
+                        continue;
+                    }
+                    let window = || {
+                        (y - p..=y + p).flat_map(move |yy| (x - p..=x + p).map(move |xx| (xx, yy)))
+                    };
+                    let (mut sum, mut count) = (0.0f32, 0.0f32);
+                    for (xx, yy) in window() {
+                        sum += plane[yy * w + xx];
+                        count += 1.0;
+                    }
+                    let mean = sum / count;
+                    let deviation: f32 = window()
+                        .map(|(xx, yy)| (plane[yy * w + xx] - mean).powi(2))
+                        .sum();
+                    let close = |a: f32, b: f32| (a - b).abs() <= 1e-5 * b.abs().max(1.0);
+                    assert!(
+                        close(stats[at], mean) && close(stats[at + 1], deviation),
+                        "patch {patch} ({x}, {y}): {:?} against {:?}",
+                        (stats[at], stats[at + 1]),
+                        (mean, deviation)
+                    );
+                }
             }
         }
     }

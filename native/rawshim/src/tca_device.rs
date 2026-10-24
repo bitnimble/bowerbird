@@ -8,8 +8,7 @@
 
 /// Stepped positions one workgroup of the scan takes.
 ///
-/// Wide, because a block is a workgroup and a dispatch holds at most 65535: a 24MP render's scan
-/// is 12M positions, 92k blocks at 128.
+/// Wide, because a block is a workgroup and a dispatch holds at most 65535.
 const BLOCK: usize = 4096;
 // `compact.slang` marks a lane's share in 64 bits, across its 64 lanes.
 const _: () = assert!(BLOCK <= 64 * 64);

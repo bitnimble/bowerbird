@@ -29,7 +29,8 @@ static const int TILE = 16;
 static const int MOST_PATCH = 8;
 groupshared float held[(TILE + 2 * MOST_PATCH) * (TILE + 2 * MOST_PATCH)];
 
-/// The plane at `(x, y)`, from the workgroup's `span`-wide copy starting at `origin` where it holds one.
+/// The plane at `(x, y)`, from the workgroup's `span`-wide copy starting at `origin` where it
+/// holds one.
 float tap(bool tiled, int span, int2 origin, int x, int y)
 {
     if (tiled) { return held[(y - origin.y) * span + (x - origin.x)]; }

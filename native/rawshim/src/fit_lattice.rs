@@ -185,30 +185,9 @@ pub(crate) async fn moments(
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
 
-    let [hue, chroma, level, neighbourhood_nodes] = grid.nodes;
-    let mut block = [
-        pairs as i32,
-        blocks as i32,
-        hue as i32,
-        chroma as i32,
-        level as i32,
-        neighbourhood_nodes as i32,
-    ]
-    .iter()
-    .flat_map(|v| v.to_ne_bytes())
-    .collect::<Vec<u8>>();
-    for v in [
-        grid.chroma_scale,
-        grid.level_low,
-        grid.level_scale,
-        grid.neighbourhood_scale,
-    ] {
-        block.extend((v as f32).to_ne_bytes());
-    }
-    block.extend([0i32, 0].iter().flat_map(|v| v.to_ne_bytes()));
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_lattice push"),
-        contents: &block,
+        contents: &params(pairs, blocks, grid),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -294,6 +273,43 @@ pub(crate) async fn moments(
             .map(|node| std::array::from_fn(|i| node[i]))
             .collect(),
     )
+}
+
+fn params(pairs: usize, blocks: usize, grid: &Grid) -> Vec<u8> {
+    let [hue, chroma, level, neighbourhood_nodes] = grid.nodes;
+    let mut block = [
+        pairs as i32,
+        blocks as i32,
+        hue as i32,
+        chroma as i32,
+        level as i32,
+        neighbourhood_nodes as i32,
+    ]
+    .iter()
+    .flat_map(|v| v.to_ne_bytes())
+    .collect::<Vec<u8>>();
+    for v in [
+        grid.chroma_scale,
+        grid.level_low,
+        grid.level_scale,
+        grid.neighbourhood_scale,
+    ] {
+        block.extend((v as f32).to_ne_bytes());
+    }
+    block.extend([0i32, 0].iter().flat_map(|v| v.to_ne_bytes()));
+    block
+}
+
+#[cfg(test)]
+pub(crate) fn params_block() -> usize {
+    let grid = Grid {
+        nodes: [2; 4],
+        chroma_scale: 1.0,
+        level_low: 0.0,
+        level_scale: 1.0,
+        neighbourhood_scale: 1.0,
+    };
+    params(1, 1, &grid).len()
 }
 
 #[cfg(test)]

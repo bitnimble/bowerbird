@@ -167,7 +167,8 @@ void fit_box_blur(uint3 id: SV_DispatchThreadID)
     put_box(x, y, acc, hi - lo + 1);
 }
 
-/// Pixels of one line a windowed box workgroup writes, and the widest window it can load either side of them.
+/// Pixels of one line a windowed box workgroup writes, and the widest window it can load either
+/// side of them.
 static const int SEGMENT = 256;
 static const int MOST_RADIUS = SEGMENT / 2;
 /// Window entries one of `block_sums` totals.

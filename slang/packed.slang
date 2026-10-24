@@ -100,7 +100,8 @@ public void store_pair(
 ///
 /// **Not ST 2084 evaluated here: the round trip has to be an identity.** A `f32` PQ against the
 /// table the host built in `f64` disagrees by a count on about a fifth of a frame. The curve only
-/// says where to start; the table decides, so a pixel every tap agreed on comes back as its own code.
+/// says where to start; the table decides, so a pixel every tap agreed on comes back as its own
+/// code.
 public uint code_of_pq_light(StructuredBuffer<float> light_of_code, float light)
 {
     var near = 0u;
@@ -139,7 +140,8 @@ public uint3 codes_of_level_light(StructuredBuffer<float> light_of_level, float3
 static const uint NEAR = 2;
 
 /// The first code at or above `light` in the ascending table, or its predecessor where that is
-/// nearer, searched within `NEAR` of `near` when the answer lies there and the whole table otherwise.
+/// nearer, searched within `NEAR` of `near` when the answer lies there and the whole table
+/// otherwise.
 uint nearest_from(StructuredBuffer<float> table, float light, uint near)
 {
     var lo = near - min(near, NEAR);

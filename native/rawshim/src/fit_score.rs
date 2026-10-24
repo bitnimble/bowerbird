@@ -635,6 +635,103 @@ mod tests {
         assert!(dark < 0.3, "a difference next to black keeps {dark}");
     }
 
+    /// Blocks whose lanes walk many pairs each, several probes to a call, sum what blocks of a pair
+    /// a lane do, and a probe asked beside others answers what it does alone.
+    #[test]
+    fn the_sums_hold_whatever_the_blocking() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let mut seed = 11u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let pairs = 9000;
+        let (mut below, mut target, mut balance) = (vec![], vec![], vec![]);
+        for k in 0..pairs {
+            let t = [next(), next(), next()].map(|v| 0.02 + 0.9 * v);
+            let m = t.map(|v| v * (0.8 + 0.4 * next()));
+            below.push((m, 0.3 * m[0] + 0.6 * m[1] + 0.1 * m[2]));
+            target.push(t);
+            let weight = 0.5 + next();
+            balance.push(if k % 7 == 0 { -weight } else { weight });
+        }
+        let scoring = |block: usize| {
+            Scoring::new(
+                gpu,
+                below_buffer(gpu, &below),
+                &target,
+                &balance,
+                &IDENTITY,
+                block,
+                3,
+            )
+        };
+        let (narrow, wide) = (scoring(64), scoring(4096));
+        let fields = |p: &Partial| -> Vec<f64> {
+            let mut out = vec![
+                p.balanced,
+                p.flat,
+                p.plain,
+                p.gamut_balanced,
+                p.gamut_flat,
+                p.weight,
+                p.weight_all,
+                p.trusted,
+                p.counted,
+            ];
+            out.extend(p.bias.iter().flatten());
+            out.extend(p.seen.iter().chain(&p.class_error).chain(&p.class_seen));
+            out
+        };
+        let summed = |blocks: &[Partial]| -> Vec<f64> {
+            let mut out = vec![0.0; fields(&blocks[0]).len()];
+            for block in blocks {
+                for (o, v) in out.iter_mut().zip(fields(block)) {
+                    *o += v;
+                }
+            }
+            out
+        };
+        let saturations = [1.0, 0.8, 1.3].map(|saturation| Probe {
+            matrix: IDENTITY,
+            saturation,
+        });
+        let matrices = [
+            IDENTITY,
+            [[0.9, 0.05, 0.05], [0.0, 1.0, 0.0], [0.2, -0.1, 0.9]],
+            [[1.1, -0.1, 0.0], [0.05, 0.9, 0.05], [0.0, 0.0, 1.0]],
+        ]
+        .map(|matrix| Probe {
+            matrix,
+            saturation: 1.0,
+        });
+        for (shape, probes) in [(Shape::Saturation, saturations), (Shape::Matrix, matrices)] {
+            let fine = pollster::block_on(narrow.partials(&shape, &probes)).expect("scored");
+            let coarse = pollster::block_on(wide.partials(&shape, &probes)).expect("scored");
+            for (probe, (fine, coarse)) in fine.iter().zip(&coarse).enumerate() {
+                for (block, partial) in coarse.iter().enumerate() {
+                    assert_eq!(partial.counted, (pairs - block * 4096).min(4096) as f64);
+                }
+                for (word, (f, c)) in summed(fine).into_iter().zip(summed(coarse)).enumerate() {
+                    assert!(
+                        (f - c).abs() <= 1e-4 * f.abs().max(1.0),
+                        "probe {probe} word {word}: {c} against {f}"
+                    );
+                }
+            }
+            let alone = pollster::block_on(wide.partials(&shape, std::slice::from_ref(&probes[2])))
+                .expect("scored");
+            for (a, b) in alone[0].iter().zip(&coarse[2]) {
+                assert_eq!(fields(a), fields(b), "the last probe alone");
+            }
+        }
+    }
+
     /// A colour past the sRGB hull is measured by how far, and a clipped target is measured by
     /// that alone: no deltaE, no place in the trusted count, its weight kept for the gamut sum.
     #[test]

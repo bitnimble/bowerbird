@@ -196,6 +196,12 @@ mod tests {
                 crate::fit_pairs::params_block(),
             ),
             (
+                "fit_lattice.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_lattice.wgsl")).to_string(),
+                crate::fit_lattice::params_block(),
+            ),
+            (
                 "linearise.wgsl",
                 "Params",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/linearise.wgsl")).to_string(),

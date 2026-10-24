@@ -305,8 +305,7 @@ float held_score(float mean, float spread, int cx, int cy, int ox, int oy)
 }
 
 /// `correspond` with a workgroup a point: the windows read into shared memory once, an offset a
-/// lane, and the running best taken over the scores afterwards in `correspond`'s own order - so
-/// the same answer, from a fortieth of the reads.
+/// lane, and the running best taken over the scores afterwards in `correspond`'s own order.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void correspond_lanes(uint3 group: SV_GroupID, uint index: SV_GroupIndex)

@@ -2095,6 +2095,181 @@ mod tests {
         }
     }
 
+    /// Grey planes in flat patches, ours a level per patch and the camera's a bumpy, non-monotone
+    /// mapping of it with per-pixel noise, plus patches clipped on either side for the gate.
+    fn noisy_grids((width, height): (usize, usize), seed: u64) -> (Vec<f32>, Vec<f32>) {
+        const PATCH: usize = 6;
+        let mut seed = seed;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as i32
+        };
+        let (mut ours, mut theirs) = (Vec::new(), Vec::new());
+        let patches = width.div_ceil(PATCH);
+        let levels: Vec<i32> = (0..patches * height.div_ceil(PATCH))
+            .map(|_| next() % 256)
+            .collect();
+        for y in 0..height {
+            for x in 0..width {
+                let level = levels[(y / PATCH) * patches + x / PATCH];
+                let mapped = level * 3 / 4 + 20 + (level * 37) % 11 - 5;
+                let camera = (mapped + next() % 7 - 3).clamp(0, 255);
+                for _ in 0..3 {
+                    ours.push(level as f32 / 255.0);
+                    theirs.push(camera as f32 / 255.0);
+                }
+            }
+        }
+        (ours, theirs)
+    }
+
+    /// What `fit_objective.slang` should answer for one candidate, given the curve it drew: the
+    /// gate walked row-major, the pairs split by parity, and the held-out half's residual.
+    fn objective_by_hand(
+        ours: &[f32],
+        theirs: &[f32],
+        (width, height): (usize, usize),
+        curve: &[u8; 256],
+    ) -> (usize, [f64; 256], [f64; 256], u64, u64) {
+        let level = |plane: &[f32], i: usize| (plane[i] * 255.0).round().clamp(0.0, 255.0) as i32;
+        let rgb = |plane: &[f32], p: usize| [0, 1, 2].map(|c| level(plane, p * 3 + c));
+        let mut pairs = Vec::new();
+        for y in 1..height.saturating_sub(1) {
+            for x in 1..width - 1 {
+                let p = y * width + x;
+                let (mine, camera) = (rgb(ours, p), rgb(theirs, p));
+                let lo = |v: [i32; 3]| v.into_iter().min().unwrap();
+                let hi = |v: [i32; 3]| v.into_iter().max().unwrap();
+                if lo(camera) <= 2 || hi(camera) >= 253 || lo(mine) <= 1 || hi(mine) >= 254 {
+                    continue;
+                }
+                let gx = (level(theirs, (p + 1) * 3) - level(theirs, (p - 1) * 3)).abs();
+                let gy = (level(theirs, (p + width) * 3) - level(theirs, (p - width) * 3)).abs();
+                if gx + gy > MAX_PAIR_GRADIENT {
+                    continue;
+                }
+                // Grey, so luma is the level itself.
+                pairs.push((mine[0] as usize, camera[0]));
+            }
+        }
+        let (mut sum, mut count) = ([0.0; 256], [0.0; 256]);
+        let (mut residual, mut held) = (0u64, 0u64);
+        for (k, (level, target)) in pairs.iter().enumerate() {
+            match k & 1 {
+                0 => {
+                    sum[*level] += f64::from(*target);
+                    count[*level] += 1.0;
+                }
+                _ => {
+                    residual += (i32::from(curve[*level]) - target).unsigned_abs() as u64;
+                    held += 1;
+                }
+            }
+        }
+        (pairs.len(), sum, count, residual, held)
+    }
+
+    /// Several candidates at once, on planes whose blocks overrun one scan group and on planes too
+    /// small to fill one, each answer what the gate, the pair order and the held-out residual
+    /// make of it by hand; a candidate with nothing the gate admits answers no residual at all.
+    #[test]
+    fn the_objective_scores_each_candidate_as_its_pairs_say() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let upload = |label, values: &[f32]| {
+            let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            })
+        };
+        for size in [(203, 157), (37, 23)] {
+            let (first, theirs) = noisy_grids(size, 3);
+            let (second, _) = noisy_grids(size, 5);
+            let empty = vec![0.0f32; first.len()];
+            let planes = [&first, &second, &empty];
+            let paired = crate::fit_objective::paired(gpu, 3, &upload("theirs", &theirs), size);
+            let warped: Vec<crate::gpu::Buffer> =
+                planes.iter().map(|plane| upload("ours", plane)).collect();
+            let scored = pollster::block_on(paired.scored(&warped, Phase::Train, None))
+                .expect("the device scored");
+            for (candidate, plane) in planes.iter().enumerate() {
+                let drawn = pollster::block_on(paired.curve(candidate)).expect("a curve");
+                let (pairs, sum, count, residual, held) =
+                    objective_by_hand(plane, &theirs, size, &drawn);
+                assert_eq!(
+                    scored[candidate].pairs, pairs,
+                    "{size:?} candidate {candidate}"
+                );
+                if held == 0 {
+                    assert_eq!(scored[candidate].delta, f64::INFINITY);
+                    continue;
+                }
+                assert!(pairs > 100, "{size:?} candidate {candidate}: {pairs} pairs");
+                let by_hand = residual as f64 / held as f64 * (100.0 / 255.0);
+                assert_eq!(
+                    scored[candidate].delta, by_hand,
+                    "{size:?} candidate {candidate}"
+                );
+                let fitted = curve_from_bins(sum, count);
+                for level in 0..256 {
+                    assert!(
+                        fitted[level].abs_diff(drawn[level]) <= 1,
+                        "{size:?} candidate {candidate} level {level}: {} against {}",
+                        drawn[level],
+                        fitted[level]
+                    );
+                }
+            }
+        }
+    }
+
+    /// The objective warping into planes it keeps answers what warping first and scoring after
+    /// does, and asked again about other lenses it answers those, not the last call's.
+    #[test]
+    fn scoring_through_lenses_answers_what_warping_them_first_does() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let size = (160, 120);
+        let render = textured(size.0, size.1);
+        let source = crate::hdr_fit::levelled_source(gpu, render.as_ref());
+        let knots = |strength: f64| -> Vec<f64> {
+            (0..16)
+                .map(|i| strength * (i as f64 / 15.0).powi(2) * crate::image::SPLINE_UNIT)
+                .collect()
+        };
+        let jpeg = crate::hdr_fit::warped_planes(
+            gpu,
+            &source,
+            size,
+            &[candidate(&knots(0.01), 1.0)],
+            size,
+        )
+        .remove(0);
+        let paired = crate::fit_objective::paired(gpu, 3, &jpeg, size);
+        let first = [
+            candidate(&knots(0.0), 1.0),
+            candidate(&knots(0.01), 1.0),
+            candidate(&knots(-0.02), 0.97),
+        ];
+        let second = [candidate(&knots(0.03), 0.99), candidate(&knots(0.01), 1.0)];
+        for lenses in [&first[..], &second[..], &first[..]] {
+            let through = pollster::block_on(paired.scored_through(&source, size, lenses))
+                .expect("scored through");
+            let warped = crate::hdr_fit::warped_planes(gpu, &source, size, lenses, size);
+            let direct =
+                pollster::block_on(paired.scored(&warped, Phase::Train, None)).expect("scored");
+            for (k, (a, b)) in through.iter().zip(&direct).take(lenses.len()).enumerate() {
+                assert_eq!((a.delta, a.pairs), (b.delta, b.pairs), "lens {k}");
+            }
+        }
+    }
+
     /// BT.709, not an average: a frame's green carries most of its luma, and getting
     /// these weights wrong would be invisible on the grey pairs above.
     #[test]
