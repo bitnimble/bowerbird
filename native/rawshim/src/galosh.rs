@@ -179,6 +179,7 @@ const PASS12_TILE: u32 = 28;
 const PYRAMID_LEVELS: usize = 4;
 const PYRAMID_PLANES: usize = 4;
 const PYRAMID_TILE: usize = 28;
+const PYRAMID_STRIDE: usize = 4;
 const PYRAMID_PILOT_ID: &str = "0";
 const PYRAMID_THRESHOLDED_GUIDE_ID: &str = "1";
 const PYRAMID_OWN_PILOT_ID: &str = "2";
@@ -208,23 +209,46 @@ const PYRAMID_LUMA_MATCH: f32 = 0.62;
 pub const SHRINK_LATTICE: usize = COARSE_SCALE as usize * PASS12_TILE as usize;
 const LOESS_TILE: u32 = 16;
 
+/// What a region's origin has to be a multiple of for the pyramid's block grids to be the frame's
+/// at every level: the coarsest level's block stride, in photosites.
+const PYRAMID_LATTICE: usize = PYRAMID_STRIDE << PYRAMID_LEVELS;
+
+/// How far past a pixel the pyramid reads, in photosites: 23 coarsest sites and the 15 photosites
+/// of a site's own span, with one to spare for a trimmed Bayer extent. Recompute on any change to
+/// the levels, block or passes; `the_pyramid_tiles_without_moving_a_sample` holds it.
+pub const PYRAMID_REACH: usize = 384;
+
+/// The halo a region denoised with `shrink` needs at least, past the `halo` its caller asked for.
+pub fn reach(shrink: Shrink, halo: usize) -> usize {
+    match shrink {
+        Shrink::Blocks => halo,
+        Shrink::Pyramid | Shrink::ColourPyramid => halo.max(PYRAMID_REACH),
+    }
+}
+
 /// The grid a region's origin has to start on, per axis, for its denoise to be the frame's.
 ///
-/// Two claims on one number: [`SHRINK_LATTICE`] is the shrinkage's, and a whole period of the
-/// pattern is the CFA's, since every kernel that asks a photosite's colour asks it of the region's
-/// own coordinates. So an origin owes the first multiple of the lattice that is also a whole number
-/// of periods. Bayer's two divides the lattice and this is the lattice itself; X-Trans's six does
-/// not, and the answer is three times it.
-pub fn lattice(cfa: &crate::cfa::Cfa) -> (usize, usize) {
-    let step = |period: usize| {
-        let (mut a, mut b) = (SHRINK_LATTICE, period);
-        while b != 0 {
-            (a, b) = (b, a % b);
-        }
-        SHRINK_LATTICE / a * period
+/// Claims on one number: [`SHRINK_LATTICE`] is the blocks', [`PYRAMID_LATTICE`] the pyramid's,
+/// which either pyramid shrink owes along with the blocks' (the hybrid runs both, and a pyramid
+/// falls back to the blocks off a Bayer pattern), and a whole period of the pattern is the CFA's,
+/// since every kernel that asks a photosite's colour asks it of the region's own coordinates. So an
+/// origin owes the first common multiple. Bayer's two divides the lattice and this is the lattice
+/// itself; X-Trans's six does not, and the answer is three times it.
+pub fn lattice(cfa: &crate::cfa::Cfa, shrink: Shrink) -> (usize, usize) {
+    let multiple = |a: usize, b: usize| a / gcd(a, b) * b;
+    let shrinkage = match shrink {
+        Shrink::Blocks => SHRINK_LATTICE,
+        Shrink::Pyramid | Shrink::ColourPyramid => multiple(SHRINK_LATTICE, PYRAMID_LATTICE),
     };
     let (pw, ph) = cfa.period();
-    (step(pw), step(ph))
+    (multiple(shrinkage, pw), multiple(shrinkage, ph))
+}
+
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 /// One dispatch's scalars, as the uniform slot the kernel reads them from.
@@ -866,6 +890,16 @@ pub enum Denoiser {
     Hybrid,
 }
 
+impl Denoiser {
+    pub fn shrink(self) -> Shrink {
+        match self {
+            Denoiser::Pyramid => Shrink::Pyramid,
+            Denoiser::Hybrid => Shrink::ColourPyramid,
+            Denoiser::Galosh | Denoiser::Pmrid | Denoiser::Upscaler => Shrink::Blocks,
+        }
+    }
+}
+
 impl Detail {
     /// Both halves as a reader set them.
     pub const fn at(luminance: f64, colour: f64) -> Detail {
@@ -953,13 +987,8 @@ impl Detail {
     /// The same pair in the units the kernels read.
     pub fn amounts(&self, fit: Option<NoiseFit>) -> Amounts {
         let (luminance, colour) = self.resolved(fit);
-        let shrink = match self.denoiser {
-            Denoiser::Pyramid => Shrink::Pyramid,
-            Denoiser::Hybrid => Shrink::ColourPyramid,
-            _ => Shrink::Blocks,
-        };
         Amounts {
-            shrink,
+            shrink: self.denoiser.shrink(),
             ..Amounts::from_sliders(luminance, colour)
         }
     }
@@ -1080,12 +1109,6 @@ const NE_TARGET_BLOCKS: usize = 32_768;
 /// which sees one part of one subject; this sees the whole frame at one block in seven, so
 /// vignetting, subject placement and the four CFA phases all keep the support they had.
 fn block_stride(per_channel: usize, blocks_across: usize) -> usize {
-    fn gcd(mut a: usize, mut b: usize) -> usize {
-        while b != 0 {
-            (a, b) = (b, a % b);
-        }
-        a
-    }
     let wanted = (per_channel / NE_TARGET_BLOCKS).max(1);
     (wanted..)
         .find(|s| gcd(*s, blocks_across.max(1)) == 1)
@@ -1298,13 +1321,7 @@ pub async fn denoise_in_tiles(
     mut done: impl FnMut(f32),
 ) {
     let (width, height) = (mosaic.width, mosaic.height);
-    // The pyramid's coarsest level reaches past any halo this is handed, so a tile would denoise
-    // differently from the frame it was cut from: whole frame only.
-    if pyramid_runs(amounts, cfa) {
-        denoise_with(gpu, galosh, mosaic, cfa, amounts, fit).await;
-        done(1.0);
-        return;
-    }
+    let halo = reach(amounts.shrink, halo);
     // Split evenly rather than into whole tiles, so no strip is left a few pixels wide.
     let spans = move |total: usize| {
         let count = total.div_ceil(tile).max(1);
@@ -1333,13 +1350,12 @@ pub async fn denoise_in_tiles(
             // shrinks every pixel against a different neighbourhood: unaligned, 94% of a 61MP
             // frame comes out different from the same frame denoised whole, by up to 1.6e-3,
             // spread everywhere rather than banded at the seams and identical at halo 64 and at
-            // halo 512 - which is what says it is not reach. Costs the 55 pixels it can add to two
-            // sides of a region, about 5% more area at a 2048 tile.
+            // halo 512 - which is what says it is not reach.
             //
             // Scaled because the alignment must also be a whole period of the pattern - an origin
             // off one relabels every colour in the region - and because the coarse level's tiles
             // sit on the same grid one octave further down.
-            let (lattice_x, lattice_y) = lattice(cfa);
+            let (lattice_x, lattice_y) = lattice(cfa, amounts.shrink);
             let left = x0.saturating_sub(halo) / lattice_x * lattice_x;
             let top = y0.saturating_sub(halo) / lattice_y * lattice_y;
             let right = (x1 + halo).min(width);
@@ -2693,6 +2709,10 @@ mod tests {
                 super::PYRAMID_LEVELS
             ),
             format!("public static const int TILE = {};", super::PYRAMID_TILE),
+            format!(
+                "public static const int STRIDE = {};",
+                super::PYRAMID_STRIDE
+            ),
         ] {
             assert!(SLANG.contains(&line), "pyramid.slang does not say `{line}`");
         }
@@ -3175,6 +3195,86 @@ mod tests {
                 "{ticks:?} went backwards"
             );
             assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
+        }
+    }
+
+    /// The same for either pyramid, at tile sizes on neither lattice, and the reach its halo is
+    /// floored at measured: one photosite moved in the middle of the frame moves nothing further
+    /// than [`super::PYRAMID_REACH`] from it. A tiling with too small a halo is only caught where a
+    /// tile's edge falls within reach of real structure, which the reach check catches anywhere.
+    #[test]
+    fn the_pyramid_tiles_without_moving_a_sample() {
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let kernels = device(gpu).expect("the GALOSH kernels");
+        let (w, h) = (1792usize, 1344usize);
+        let mosaic = frame(w, h);
+        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &rggb()));
+        let denoised = |samples: &[f32], amounts: Amounts| {
+            let whole = crate::condition::Mosaic::upload(gpu, samples, w, h);
+            pollster::block_on(super::denoise_with(
+                gpu,
+                kernels,
+                &whole,
+                &rggb(),
+                amounts,
+                fit,
+            ));
+            read(gpu, &whole)
+        };
+        for shrink in [Shrink::Pyramid, Shrink::ColourPyramid] {
+            let amounts = Amounts {
+                shrink,
+                ..Amounts::from_sliders(50.0, 100.0)
+            };
+            let whole = denoised(&mosaic, amounts);
+
+            // At either end of a coarsest site, which is where its reach runs farthest one way.
+            for (cx, cy) in [(w / 2, h / 2), (w / 2 + 15, h / 2 + 15)] {
+                let mut moved = mosaic.clone();
+                moved[cy * w + cx] += 0.25;
+                let farthest = denoised(&moved, amounts)
+                    .iter()
+                    .zip(&whole)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .map(|(at, _)| (at % w).abs_diff(cx).max((at / w).abs_diff(cy)))
+                    .max()
+                    .expect("moving a photosite moved its own output");
+                assert!(
+                    farthest <= super::PYRAMID_REACH,
+                    "{shrink:?}: a photosite at {cx},{cy} reached {farthest}, past {}",
+                    super::PYRAMID_REACH
+                );
+            }
+
+            for tile in [300usize, 700] {
+                let mut tiled = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+                pollster::block_on(super::denoise_in_tiles(
+                    gpu,
+                    kernels,
+                    &mut tiled,
+                    &rggb(),
+                    amounts,
+                    fit,
+                    crate::RENDITION_TILE_HALO,
+                    tile,
+                    |_| {},
+                ));
+                if let Some((at, (&got, &expected))) = read(gpu, &tiled)
+                    .iter()
+                    .zip(&whole)
+                    .enumerate()
+                    .find(|(_, (a, b))| a != b)
+                {
+                    panic!(
+                        "{shrink:?}: a {tile}px tiling moved sample {at}: {got} instead of {expected}"
+                    );
+                }
+            }
         }
     }
 

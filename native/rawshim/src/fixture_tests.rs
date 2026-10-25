@@ -1585,12 +1585,22 @@ mod decode_geometry {
     /// **On both patterns, because the origin owes the pattern as well as the shrinkage.** A region
     /// that starts a whole `SHRINK_LATTICE` in is on no whole period of a 6x6, and a denoise that
     /// read the colours one phase out is exactly what it looks like: the ISO 4000 fixture came back
-    /// woven with a diagonal cross-hatch. `galosh::lattice` is what this holds.
+    /// woven with a diagonal cross-hatch. `galosh::lattice` is what this holds, and for the pyramid
+    /// `galosh::PYRAMID_REACH` too, whose coarsest level reads several times the blocks' halo.
     #[test]
     fn a_denoised_region_is_the_frame_it_was_cut_from() {
         let galosh = crate::galosh::Detail::at(40.0, 40.0);
         let upscaler = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
-        for (path, detail) in [(sony(), galosh), (fuji_noisy(), galosh), (sony(), upscaler)] {
+        let pyramid = galosh.using(crate::galosh::Denoiser::Pyramid);
+        let hybrid = galosh.using(crate::galosh::Denoiser::Hybrid);
+        for (path, detail) in [
+            (sony(), galosh),
+            (fuji_noisy(), galosh),
+            (sony(), upscaler),
+            (sony(), pyramid),
+            (fuji_noisy(), pyramid),
+            (sony(), hybrid),
+        ] {
             let path = path.to_str().unwrap().to_string();
             let path = path.as_str();
             let whole = crate::decode_frame_denoised(path, 0, detail, Default::default())
@@ -1601,7 +1611,8 @@ mod decode_geometry {
 
             // Small and lattice-aligned, small and not, and then large enough that the denoise tiles
             // the region as well as the frame - which is the arrangement a cropped render produces
-            // and the one no test asked about.
+            // and the one no test asked about. Not under the pyramid, whose render tile no fixture
+            // reaches: `galosh`'s `the_pyramid_tiles_without_moving_a_sample` cuts it small.
             let regions = [
                 crate::Tile {
                     left: 504,
