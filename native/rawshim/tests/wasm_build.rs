@@ -162,6 +162,7 @@ fn the_page_imports_the_entry_points_this_declares() {
             "holdBuffers",
             "releaseBuffers",
             "holdRaw",
+            "heifView",
             "holdPlanes",
             "holdPixels",
             "holdPicture",
