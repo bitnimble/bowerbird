@@ -76,8 +76,10 @@ test('a small batch syncs scoped to the changed paths', async () => {
 test('a batch over MAX_SCOPE falls back to a full scan', async () => {
   for (let i = 0; i < 300; i++) writeFileSync(path.join(root, `bulk-${i}.arw`), '');
   await settle(() => calls.length > 0);
+  expect(calls).not.toHaveLength(0);
   expect(calls[0]).toBeUndefined(); // undefined scope == full scan
-});
+  // Windows runners sometimes take 5s+ to create the 300 files.
+}, 30_000);
 
 test('SYNC_IN_PROGRESS re-queues the paths so the retry stays scoped', async () => {
   failWith = new AppError('SYNC_IN_PROGRESS', 'busy');
