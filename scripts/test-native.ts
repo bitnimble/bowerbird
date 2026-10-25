@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ICD } from './get-swiftshader';
+import { warnOfMissingFixtures } from './missing_fixtures';
 
 /** Cargo's target selectors that name *one* target. The plural forms select all of them. */
 const ONE_TARGET = new Set(['--test', '--lib', '--bin', '--example', '--doc', '--bench']);
@@ -66,6 +67,7 @@ function main(): void {
     process.exit(2);
   }
 
+  warnOfMissingFixtures();
   const cargo = [
     'test',
     '--profile',

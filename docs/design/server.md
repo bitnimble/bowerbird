@@ -621,7 +621,7 @@ only uses a local server as a fixture. A file mixing both kinds is split: the re
 load librawshim, which this suite does not build. They remain in their normal unit suites and run
 in separate Bun processes here so module mocks cannot leak into real watcher tests. The runner also tests the updater and lens database crates and compiles the
 shell's shared export-path module directly with Rust, without building the GUI or image pipeline.
-The frozen root and web installs, Rust toolchain and `assets/reference_frame.ARW` from Git LFS
+The frozen root and web installs, Rust toolchain and `assets/reference_frame.ARW` from `bun run get:reference-frame`
 are enough to run it. The release workflow requires this suite to pass on Linux, macOS and Windows
 before starting any full build or publishing, Android's included.
 

@@ -358,7 +358,7 @@ release reuse caches saved by earlier releases.
 by `.bun-version`, `rust-toolchain.toml` and `.android-ndk-version`, which the workflow, both
 Dockerfiles and `android-build.ts` all read. Every download sits behind a cache: the toolchains,
 both lockfiles' packages, crates, the pinned trees, vcpkg's port builds, Gradle, the Windows
-bundler's NSIS, wasm-pack and wasm-bindgen, and the one LFS file a job reads. A cache holding
+bundler's NSIS, wasm-pack and wasm-bindgen. A cache holding
 several pins (packages, crates, pinned trees, Gradle) restores its last save when its key misses,
 so a moved pin fetches what moved and nothing else. The image's cache mounts travel through the
 same cache (`buildkit-cache-dance`), apt's downloads among them.

@@ -76,8 +76,8 @@ fn fixture(name: &str) -> PathBuf {
     // silently getting nothing is worse than being told the checkout is incomplete -
     // that is how a suite rots into passing without running.
     assert!(
-        path.is_file(),
-        "{} is missing. These fixtures are Git LFS objects; run `git lfs pull`.",
+        std::fs::metadata(&path).is_ok_and(|file| file.len() > 1024),
+        "{} is missing or an LFS pointer; run `bun run get:fixtures`.",
         path.display(),
     );
     path

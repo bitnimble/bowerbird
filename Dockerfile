@@ -164,6 +164,16 @@ RUN --mount=type=cache,id=bowerbird-environments,target=/root/.cache,sharing=loc
   && rm native/rawshim/.environments \
   && cp -a "$tree" native/rawshim/.environments
 
+# The render benchmark's frame, from its release asset.
+FROM base AS reference-frame
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates
+COPY scripts/get-reference-frame.ts ./scripts/
+COPY src/services/processing/renditions/reference_frame.ts ./src/services/processing/renditions/
+RUN bun run scripts/get-reference-frame.ts
+
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
 # that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
 FROM base AS slangc
@@ -416,8 +426,7 @@ COPY --chown=bun:bun native/entrypoint.sh native/report_gpu.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json VERSION ./
 COPY --chown=bun:bun src ./src
-COPY --chown=bun:bun assets/reference_frame.ARW ./assets/reference_frame.ARW
-RUN bun -e 'import { assertReferenceFrame } from "./src/services/processing/renditions/reference_frame.ts"; assertReferenceFrame("./assets/reference_frame.ARW")'
+COPY --from=reference-frame --chown=bun:bun /app/assets/reference_frame.ARW ./assets/reference_frame.ARW
 # `bun run restore` is the documented way back from a bad catalogue (§4.9), and the
 # backups it reads are on a named volume inside this image's world. Left out, the
 # only supported deployment is the one deployment that cannot restore its own

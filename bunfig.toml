@@ -2,4 +2,4 @@
 exact = false
 
 [test]
-preload = ["./web/src/test_stylex.ts"]
+preload = ["./web/src/test_stylex.ts", "./scripts/warn_missing_fixtures.ts"]

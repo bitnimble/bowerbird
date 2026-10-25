@@ -1,6 +1,6 @@
 # Where the fixtures came from
 
-RAWs, snapshots, mosaics and `avif-planes/` use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
+RAWs, snapshots, mosaics and `avif-planes/` use Git LFS (`.gitattributes`), which a clone leaves as pointers (`.lfsconfig`). Run `bun run get:fixtures` before fixture suites.
 
 ## AFXT2721.RAF
 

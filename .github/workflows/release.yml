@@ -104,10 +104,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: ./.github/actions/lfs
-        with:
-          include: assets/reference_frame.ARW
       - uses: ./.github/actions/bun-deps
+      - run: bun run get:reference-frame
       - uses: ./.github/actions/rust
       - uses: Swatinem/rust-cache@v2
         with:
@@ -132,9 +130,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: ./.github/actions/lfs
-        with:
-          include: assets/reference_frame.ARW
 
       # A runner has ~14GB free, and the native stage's target dirs are ~3GB that the cache
       # below holds twice while it saves. The toolchains this image does not use are what

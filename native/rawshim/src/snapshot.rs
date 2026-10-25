@@ -275,7 +275,7 @@ impl Snapshot {
 
     pub fn decode(bytes: &[u8]) -> Result<Snapshot, String> {
         if bytes.starts_with(b"version https://git-lfs") {
-            return Err("an LFS pointer rather than the picture: `git lfs pull`".into());
+            return Err("an LFS pointer rather than the picture: `bun run get:fixtures`".into());
         }
         let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
             .read_info()
@@ -575,7 +575,7 @@ mod tests {
     fn an_lfs_pointer_is_named_as_one() {
         let pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n";
         let error = Snapshot::decode(pointer).expect_err("not a picture");
-        assert!(error.contains("git lfs pull"), "{error}");
+        assert!(error.contains("bun run get:fixtures"), "{error}");
     }
 
     #[test]

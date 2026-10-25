@@ -3,6 +3,7 @@
     "setup": [
       "[ ! -f $PASEO_SOURCE_CHECKOUT_PATH/.env ] || cp $PASEO_SOURCE_CHECKOUT_PATH/.env $PASEO_WORKTREE_PATH/",
       "[ ! -f $PASEO_SOURCE_CHECKOUT_PATH/web/.env ] || cp $PASEO_SOURCE_CHECKOUT_PATH/web/.env $PASEO_WORKTREE_PATH/web/",
+      "[ ! -f $PASEO_SOURCE_CHECKOUT_PATH/assets/reference_frame.ARW ] || { mkdir -p $PASEO_WORKTREE_PATH/assets && cp $PASEO_SOURCE_CHECKOUT_PATH/assets/reference_frame.ARW $PASEO_WORKTREE_PATH/assets/; }",
       "scripts/subwt.sh",
       "bun install",
       "cd web && bun install",

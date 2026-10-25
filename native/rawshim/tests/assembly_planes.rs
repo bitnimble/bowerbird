@@ -17,8 +17,8 @@ fn one_source_recipe(name: &str) -> (Composition, String) {
         .join("../../test/fixtures")
         .join(name);
     assert!(
-        path.is_file(),
-        "{} is missing. These fixtures are Git LFS objects; run `git lfs pull`.",
+        std::fs::metadata(&path).is_ok_and(|file| file.len() > 1024),
+        "{} is missing or an LFS pointer; run `bun run get:fixtures`.",
         path.display(),
     );
     let path = path.to_str().expect("a printable path").to_string();

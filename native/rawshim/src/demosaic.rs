@@ -1697,7 +1697,7 @@ mod tests {
             assert_eq!(
                 bytes.len(),
                 w * h * 4,
-                "{name}.f32 is the wrong size; an LFS pointer needs `git lfs pull`"
+                "{name}.f32 is the wrong size; an LFS pointer needs `bun run get:fixtures`"
             );
             let mosaic: Vec<f32> = bytes
                 .chunks_exact(4)

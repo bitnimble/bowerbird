@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { isAbsolute, join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { assertReferenceFrame, fetchReferenceFrame, REFERENCE_FRAME } from '../reference_frame';
+import { fetchReferenceFrame, REFERENCE_FRAME } from '../reference_frame';
 
 const scratch = mkdtempSync(join(tmpdir(), 'bowerbird-reference-frame-'));
 
@@ -10,7 +10,11 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 test('the fixed reference frame is found without using the process working directory', () => {
   expect(isAbsolute(REFERENCE_FRAME.path)).toBe(true);
-  expect(() => assertReferenceFrame()).not.toThrow();
+  expect(Bun.file(REFERENCE_FRAME.path).size).toBe(REFERENCE_FRAME.byteLength);
+});
+
+test('a frame already in place is not downloaded again', async () => {
+  await fetchReferenceFrame(REFERENCE_FRAME.path, 'http://127.0.0.1:9/unreachable');
 });
 
 test('a missing frame is downloaded where it was asked for', async () => {
@@ -26,5 +30,5 @@ test('a missing frame is downloaded where it was asked for', async () => {
     served.stop(true);
   }
 
-  expect(() => assertReferenceFrame(into)).not.toThrow();
+  expect(Bun.file(into).size).toBe(REFERENCE_FRAME.byteLength);
 });
