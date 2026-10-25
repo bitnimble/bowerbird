@@ -64,7 +64,7 @@ function build(over: {
   const settings = {
     get: jest.fn(() => ({ ...DEFAULT_SETTINGS, ...over.settings })),
   } as unknown as SettingsRepository;
-  const photoPaths = {} as unknown as PhotoPathsRepository;
+  const photoPaths = { cameraFileOf: jest.fn(() => null) } as unknown as PhotoPathsRepository;
   const photoNavigation = {} as unknown as PhotoNavigationRepository;
   const photoComposites = {} as unknown as PhotoCompositesRepository;
   const photoMetadata = {} as unknown as PhotoMetadataRepository;

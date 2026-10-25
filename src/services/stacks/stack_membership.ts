@@ -1,4 +1,5 @@
 import type { Database } from '../../db/driver';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 import { stamp } from '../replication/stamps';
 import { tombstone } from '../replication/tombstones';
 
@@ -117,7 +118,8 @@ export class StackMembership {
            ORDER BY (is_deleted = 1 OR is_hidden = 1 OR COALESCE(triage, '') = 'rejected'
                      OR EXISTS (SELECT 1 FROM photo_sources s
                                   JOIN photos composite ON composite.id = s.composed_id
-                                 WHERE s.photo_id = photos.id AND composite.is_deleted = 0)),
+                                 WHERE s.photo_id = photos.id AND composite.is_deleted = 0)
+                     OR NOT ${notACameraFile('photos.')}),
                     COALESCE(date_taken, date_added) DESC, id DESC
            LIMIT 1)`,
       )

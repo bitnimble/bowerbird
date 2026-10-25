@@ -241,7 +241,9 @@ stack) stay lower case, as do other terms except at the start of a string.
 | unstack       | Split a stack back into single photos                                                  | ungroup                                   |
 | original      | The RAW file as the camera wrote it                                                    | source, master, negative                  |
 | local copy    | An original stored on this device                                                      | cached copy, download                     |
-| embedded JPEG | The JPEG the camera stored inside the RAW                                              | camera JPEG, preview JPEG                 |
+| embedded JPEG | The JPEG the camera stored inside the RAW                                              | preview JPEG                              |
+| camera JPEG   | The JPEG file the camera wrote beside the RAW, shown as 1 photo with it                | sidecar JPEG, duplicate                   |
+| camera HEIC   | The HEIC file the camera wrote beside the RAW, shown as 1 photo with it                | camera HEIF, sidecar HEIC, duplicate      |
 | Bin           | Where deleted photos go before their files leave the disk                              | trash, recycle bin, deleted               |
 | hide          | Take a shoot out of view without deleting it                                           | archive, collapse                         |
 | read-only     | A library Bowerbird never changes on disk                                              | locked, protected                         |

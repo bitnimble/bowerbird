@@ -23,6 +23,7 @@ export function build(over: {
   } as unknown as PhotoStateRepository;
   const photoPaths = {
     getBasicByIds: jest.fn(() => []),
+    withLinkedPhotos: jest.fn((ids: readonly string[]) => [...ids]),
     setFilePath: jest.fn(),
     markDeleted: jest.fn(),
     transaction: (fn: () => unknown) => fn(),

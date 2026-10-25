@@ -52,6 +52,7 @@ function build(over: {
 }) {
   const photoPaths = {
     getBasicById: jest.fn(() => null),
+    cameraFileOf: jest.fn(() => null),
     ...over.photoPaths,
   } as unknown as PhotoPathsRepository;
   const photoListing = {
@@ -870,6 +871,56 @@ describe('PhotoReadService renditions', () => {
     expect(got.renditions?.embedded.built).toBe(true);
   });
 
+  it('offers a linked camera file as its own file, and nothing where none is linked', () => {
+    expect(detailFor(library).renditions?.camera).toEqual({
+      path: null,
+      built: false,
+      bytes: null,
+      hdr: false,
+    });
+    const { read } = build({
+      photoListing: { getById: jest.fn(() => detail) },
+      libraries: { getConfiguration: jest.fn(() => library) },
+      photoPaths: {
+        cameraFileOf: jest.fn(() => ({
+          id: 'j1',
+          library_id: library.id,
+          shoot_id: null,
+          recipe: { kind: 'file' as const, path: 'a.jpg' },
+        })),
+      },
+    });
+    expect(read.get('p1').renditions?.camera).toMatchObject({
+      path: path.join('/r', 'a.jpg'),
+      built: true,
+      hdr: false,
+    });
+  });
+
+  it("hands over a linked camera JPEG at its RAW's turn", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-camera-'));
+    try {
+      writeFileSync(path.join(root, 'a.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+      const file = {
+        id: 'j1',
+        library_id: library.id,
+        shoot_id: null,
+        recipe: { kind: 'file' as const, path: 'a.jpg' },
+      };
+      const { service } = build({
+        photoPaths: { cameraFileOf: jest.fn(() => file), getBasicById: jest.fn(() => file) },
+        photoListing: {
+          editOrientation: jest.fn((photoId: string) => (photoId === 'p1' ? 90 : 0)),
+        },
+        libraries: { getConfiguration: jest.fn(() => ({ ...library, root_path: root })) },
+      });
+      const jpeg = await service.cameraJpeg('p1');
+      expect(Buffer.from(jpeg!).includes(Buffer.from('Exif'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('opens at the camera JPEG for a library that serves it, and at the full render otherwise', () => {
     expect(detailFor(library).shown_rendition).toBe('embedded');
     expect(detailFor({ ...library, rendition_source: 'render' }).shown_rendition).toBe('full');
@@ -924,6 +975,25 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
       ...over,
     };
   }
+
+  it('opens at the camera JPEG where one is linked, and at what is promised where none is', () => {
+    const linked = ctx({
+      lastViewerRendition: 'camera',
+      builtRenditions: new Set(['embedded', 'camera']),
+    });
+    expect(resolveShownRendition(linked)).toBe('camera');
+    expect(resolveRenditionToBuild(linked)).toBeNull();
+    expect(resolveShownRendition({ ...linked, builtRenditions: new Set(['embedded']) })).toBe(
+      'embedded',
+    );
+    expect(
+      resolveShownRendition({
+        ...linked,
+        librarySource: 'render',
+        builtRenditions: new Set(['embedded']),
+      }),
+    ).toBe('full');
+  });
 
   // The setting chooses between a RAW's renders, and a finished picture has none: it is its own
   // file until edited, whatever the library pre-renders and whichever rendition was last chosen.

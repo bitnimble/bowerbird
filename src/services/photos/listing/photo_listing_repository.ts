@@ -12,7 +12,7 @@ import type {
 import {
   detailColumns,
   type DetailRow,
-  NOT_A_FRAME,
+  NOT_STOOD_FOR,
   summaryColumns,
   type SummaryRow,
   WHOLE_STACK,
@@ -28,6 +28,7 @@ import {
   type MemberScope,
   orderByClause,
 } from './photo_query';
+import { notACameraFile } from '../paths/photo_paths_repository';
 
 /** Runs of positions in a filtered listing, both ends inclusive (§18.3.3). */
 export type SelectionRanges = readonly { start: number; end: number }[];
@@ -270,7 +271,9 @@ export class PhotoListingRepository {
     baseParams: string[],
     filters: PhotoListFilters,
   ): PhotoModelsResponse {
-    const { where, params } = scoped(fromWhere, baseParams, filters);
+    const scope = scoped(fromWhere, baseParams, filters);
+    const { params } = scope;
+    const where = `${scope.where} AND ${notACameraFile('photos.')}`;
     const pairs = this.db
       .query(
         `SELECT DISTINCT photos.camera_model, photos.lens_model ${where}
@@ -303,7 +306,9 @@ export class PhotoListingRepository {
     baseParams: string[],
     filters: PhotoListFilters,
   ): PhotoDaysResponse {
-    const { where, params } = scoped(fromWhere, baseParams, filters);
+    const scope = scoped(fromWhere, baseParams, filters);
+    const { params } = scope;
+    const where = `${scope.where} AND ${notACameraFile('photos.')}`;
     // substr rather than date(): date_taken is the camera's wall clock stored as a Z
     // string, so its first ten characters are the day the shutter fired wherever it
     // fired - and they are what the range filter above compares against.
@@ -346,7 +351,7 @@ export class PhotoListingRepository {
         ? undefined
         : (this.db
             .query(
-              `SELECT COALESCE(SUM(CASE WHEN ${NOT_A_FRAME} THEN 1 ELSE 0 END), 0) AS members,
+              `SELECT COALESCE(SUM(CASE WHEN ${NOT_STOOD_FOR} THEN 1 ELSE 0 END), 0) AS members,
                         COALESCE(SUM(CASE WHEN ${one.sql} THEN 1 ELSE 0 END), 0) AS entries ${where}`,
             )
             .get(...one.params, ...params) as { members: number; entries: number });
@@ -409,7 +414,11 @@ export class PhotoListingRepository {
     // the collapse: picking one frame of a burst out of an expanded grid must act
     // on that frame alone (§19.5.4).
     const members = conditions(filters, 'm.');
-    const memberVisible = [...(promotion.sql === '' ? [] : [promotion.sql]), ...members.clauses];
+    const memberVisible = [
+      notACameraFile('m.'),
+      ...(promotion.sql === '' ? [] : [promotion.sql]),
+      ...members.clauses,
+    ];
     const standsForStack = filters.expandStacks !== true;
     const rows = this.db
       .query(

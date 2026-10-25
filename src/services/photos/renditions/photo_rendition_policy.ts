@@ -116,7 +116,8 @@ export function resolveShownRendition(ctx: RenditionContext): ViewerRendition {
   if (wanted == null) return guaranteed;
   // The camera's own picture is drawn from where there is one to draw. Bytes inside an original
   // are one from the moment the file is; a composited one is one once it has been composited.
-  if (wanted === 'embedded') return ctx.builtRenditions.has('embedded') ? wanted : guaranteed;
+  if (wanted === 'embedded' || wanted === 'camera')
+    return ctx.builtRenditions.has(wanted) ? wanted : guaranteed;
   const confirmed = ctx.mode === 'best_available' && ctx.builtIsExact;
   return wanted === guaranteed || confirmed ? wanted : guaranteed;
 }
@@ -147,7 +148,7 @@ export function resolveRenditionToBuild(ctx: RenditionContext): ViewerRendition 
   // of work, and the reader's own press is what starts one rather than the memory of a press made
   // on some other photograph. Either way it is shown once it is there
   // (`resolveShownRendition`).
-  if (wanted === 'embedded') return null;
+  if (wanted === 'embedded' || wanted === 'camera') return null;
   return wanted != null && wanted !== shown ? wanted : null;
 }
 
@@ -157,6 +158,7 @@ export function resolveRenditionToBuild(ctx: RenditionContext): ViewerRendition 
 export function builtSetFrom(renditions: PhotoDetail['renditions']): ReadonlySet<ViewerRendition> {
   const built = new Set<ViewerRendition>();
   if (renditions?.embedded.built === true) built.add('embedded');
+  if (renditions?.camera.built === true) built.add('camera');
   if (renditions?.full.built === true) built.add('full');
   if (renditions?.max.built === true) built.add('max');
   return built;
@@ -166,10 +168,11 @@ export function builtSetFrom(renditions: PhotoDetail['renditions']): ReadonlySet
 // stage has written it, and never `max`, which is built on request and leaves no column
 // behind saying so (`processing_service.ts`).
 export function builtSetFromRow(
-  row: Pick<PhotoSummary, 'renditions_built_at' | 'file_path'>,
+  row: Pick<PhotoSummary, 'renditions_built_at' | 'file_path' | 'camera_file_format'>,
 ): ReadonlySet<ViewerRendition> {
   const built = new Set<ViewerRendition>();
   if (hasEmbedded(row.file_path)) built.add('embedded');
+  if (row.camera_file_format != null) built.add('camera');
   if (row.renditions_built_at != null) built.add('full');
   return built;
 }

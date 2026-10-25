@@ -1025,11 +1025,11 @@ export class PhotosPresenter {
     rendition: ViewerRendition,
     cannotDraw: boolean,
   ): Promise<void> {
-    if (cannotDraw && rendition === 'embedded') {
-      this.viewerPresenter.showRendered(photoId);
+    if (cannotDraw && (rendition === 'embedded' || rendition === 'camera')) {
+      this.viewerPresenter.showRendered(photoId, rendition);
       return;
     }
-    if (this.viewer.servedWhole(photoId, rendition)) return;
+    if (this.viewer.servedWhole(photoId, rendition) || rendition === 'camera') return;
     if (this.viewer.overrideFor(photoId) != null) return;
     await this.buildMissingRendition(photoId, rendition);
   }

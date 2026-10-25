@@ -721,7 +721,8 @@ struct DebugReply {
 /// failure, or 0 where there is no preview to serve - which is not an error. That
 /// covers a file with none embedded, and a rotated one whose preview will not take
 /// the EXIF tag that stands it up; `with_embedded_jpeg` says when that happens.
-/// -2 where the requested additional turn cannot be written into EXIF.
+/// -2 where the requested additional turn cannot be written into EXIF, or into a HEIF's
+/// own boxes. A HEIF comes back whole, as a HEIF.
 /// rotate is clockwise degrees in quarter turns; zero keeps the preview unchanged.
 ///
 /// The camera's own JPEG is the one thing besides a finished rendition that leaves
@@ -742,15 +743,15 @@ pub unsafe extern "C" fn bb_extract_embedded(
     let Some(path) = (unsafe { as_str(path) }) else {
         return -1;
     };
-    let Some(rotated) =
-        crate::with_embedded_jpeg(path, |jpeg| crate::jpeg::with_added_rotation(jpeg, rotate))
-    else {
-        return 0;
-    };
-    let Some(bytes) = rotated else {
-        return -2;
-    };
-    unsafe { reply(&bytes, out, out_cap) }
+    crate::guard("bb_extract_embedded", -1, || {
+        let Some(rotated) = crate::turned_camera_picture(path, rotate) else {
+            return 0;
+        };
+        let Some(bytes) = rotated else {
+            return -2;
+        };
+        unsafe { reply(&bytes, out, out_cap) }
+    })
 }
 /// How much of a RAW the spline parser is given before it is given all of it.
 ///

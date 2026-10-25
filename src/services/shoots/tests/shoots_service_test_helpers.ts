@@ -42,6 +42,7 @@ export function mockRules(over: Partial<FolderRulesRepository> = {}): FolderRule
 export function mockPhotos(over: Partial<PhotoPathsRepository> = {}): PhotoPathsRepository {
   return {
     getBasicByIds: jest.fn(() => [] as BasicPhoto[]),
+    withLinkedPhotos: jest.fn((ids: readonly string[]) => [...ids]),
     listUnderFolder: jest.fn(() => [] as BasicPhoto[]),
     setShoot: jest.fn(),
     setFilePath: jest.fn(),

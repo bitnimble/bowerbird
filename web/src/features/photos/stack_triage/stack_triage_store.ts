@@ -1,6 +1,5 @@
 import { computed, observable } from 'mobx';
 import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
-import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { renditionsApi } from '../../../api/renditions';
 import type { AppSettingsStore } from '../../settings/app_settings_store';
 import type { LibrariesStore } from '../../libraries/libraries_store';
@@ -144,7 +143,7 @@ export class StackTriageStore {
    * The rendition the whole session is judged at.
    *
    * Off a member's own library rather than the viewer's answer: `ViewerStore.showing`
-   * is a function of `openPhoto`, which nothing clears when the viewer unmounts. On
+   * is a function of `open`, which nothing clears when the viewer unmounts. On
    * this route that is either the entry photo - pinning one photo's remembered
    * choice onto every member - or nothing at all, where the library lookup misses
    * and the answer silently becomes the camera's JPEG.
@@ -158,7 +157,7 @@ export class StackTriageStore {
    * not a comparison, so this asks the session's question instead - which is why the two
    * per-photo modes fall through to what the library builds rather than to a member's pick.
    */
-  @computed get rendition(): ViewerRendition {
+  @computed get rendition(): 'embedded' | 'full' {
     const first = this.members.values().next().value;
     const library = this.libraries.byId.get(first?.library_id ?? '');
     // **Only where every member actually has one, and this browser can draw it.** Otherwise a
@@ -169,7 +168,7 @@ export class StackTriageStore {
     const allEmbedded = !this.undrawable && members.every((member) => member.has_embedded);
     const rendersAll =
       library?.rendition_source === 'render' && members.every((member) => member.is_raw);
-    const built: ViewerRendition = rendersAll || !allEmbedded ? 'full' : 'embedded';
+    const built = rendersAll || !allEmbedded ? 'full' : 'embedded';
     const mode = this.settings.viewerRenditionMode;
     // The camera's JPEG is the only thing a reader can ask for that every member is certain
     // to have; everything else - a per-photo mode, which is not a claim about the rest, a

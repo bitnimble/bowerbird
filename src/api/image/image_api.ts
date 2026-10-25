@@ -22,6 +22,7 @@ import {
   RENDITION_CONTENT_TYPE,
   isRendition,
   renditionVariant,
+  type Rendition,
 } from '../../services/processing/renditions/renditions';
 import type { ShareService } from '../../services/processing/exports/share_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
@@ -236,52 +237,12 @@ export class ImageApi {
       route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')),
       async (c) => {
         const rendition = c.req.param('rendition') ?? '';
-        if (!isRendition(rendition))
-          throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
         const photoId = c.req.param('photoId');
         if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-        // **Which copy is asked for is one question; how a row answers it is its recipe's.** The
-        // cameras' own picture of a row that names one file is inside that file, and is handed
-        // over unchanged - no resize, no transcode, nothing on disk (§10.2). The same picture of a
-        // row composed out of others is composited from its frames' and filed like any other copy,
-        // there being no file to lift one out of. Every other rendition is ours either way.
-        const { photo, library } = this.photoRenditions.locate(photoId);
-        const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
-        if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) {
-          const original = await this.originals.open(library, photo);
-          if (original != null && isRendered(original))
-            return this.serve(c, originalMediaType(original), () => original);
-          if (original != null || this.fetchThrough == null)
-            return this.serveEmbedded(photo, original, c);
-        }
-        // A photo with no local original, or a composite on a library that keeps none, is not built
-        // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
-        // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
-        takeAsLongAsItTakes(c);
-        await this.fetchThrough?.ensureCurrent(photoId, rendition);
-        // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
-        // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
-        // and a page of a hundred would be a hundred writes.
-        if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
-        if (rendition !== 'grid')
-          this.photoRenditions.markUsed(
-            photoId,
-            renditionVariant(rendition, library.rendition_hdr),
-          );
-        this.photoRenditions.rebuildIfStale(photoId, rendition);
-        if (rendition === 'grid') {
-          const deviceTile = await this.serveDeviceTile(photo, library, c);
-          if (deviceTile != null) return deviceTile;
-        }
-        const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
-        const matching = SdrMatchSchema.catch('still').parse(c.req.query('match'));
-        // A camera JPEG a peer lifted out of its original, or a finished picture a peer sent as it
-        // is, is kept as those bytes, under the name the camera view has.
-        return this.serve(c, lifted ? embeddedMediaType : RENDITION_CONTENT_TYPE, (lib, each) =>
-          tenBit == null
-            ? getRenditionPath(lib, each.id, rendition, lib.rendition_hdr)
-            : tenBit.pathFor(lib, each.id, rendition, matching),
-        );
+        if (rendition === 'camera') return this.serveCameraFile(c, photoId);
+        if (!isRendition(rendition))
+          throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
+        return this.serveRendition(c, photoId, rendition);
       },
     );
     // A rendition a client rendered on its own GPU, from the job `GET /api/photos/:id/renditions/:r/job`
@@ -466,10 +427,86 @@ export class ImageApi {
     return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
   }
 
-  // The camera's own JPEG, lifted out of the RAW and tagged for display. No
+  private async serveRendition(
+    c: Context,
+    photoId: string,
+    rendition: Rendition,
+  ): Promise<Response> {
+    // **Which copy is asked for is one question; how a row answers it is its recipe's.** The
+    // cameras' own picture of a row that names one file is inside that file, and is handed
+    // over unchanged - no resize, no transcode, nothing on disk (§10.2). The same picture of a
+    // row composed out of others is composited from its frames' and filed like any other copy,
+    // there being no file to lift one out of. Every other rendition is ours either way.
+    const { photo, library } = this.photoRenditions.locate(photoId);
+    const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
+    if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) {
+      const original = await this.originals.open(library, photo);
+      if (original != null && isRendered(original))
+        return this.serve(c, photoId, originalMediaType(original), () => original);
+      if (original != null || this.fetchThrough == null)
+        return this.serveEmbedded(photo, original, c);
+    }
+    // A photo with no local original, or a composite on a library that keeps none, is not built
+    // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
+    // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
+    takeAsLongAsItTakes(c);
+    await this.fetchThrough?.ensureCurrent(photoId, rendition);
+    // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
+    // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
+    // and a page of a hundred would be a hundred writes.
+    if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
+    if (rendition !== 'grid')
+      this.photoRenditions.markUsed(photoId, renditionVariant(rendition, library.rendition_hdr));
+    this.photoRenditions.rebuildIfStale(photoId, rendition);
+    if (rendition === 'grid') {
+      const deviceTile = await this.serveDeviceTile(photo, library, c);
+      if (deviceTile != null) return deviceTile;
+    }
+    const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
+    const matching = SdrMatchSchema.catch('still').parse(c.req.query('match'));
+    // A camera JPEG a peer lifted out of its original, or a finished picture a peer sent as it
+    // is, is kept as those bytes, under the name the camera view has.
+    return this.serve(
+      c,
+      photoId,
+      lifted ? embeddedMediaType : RENDITION_CONTENT_TYPE,
+      (lib, each) =>
+        tenBit == null
+          ? getRenditionPath(lib, each.id, rendition, lib.rendition_hdr)
+          : tenBit.pathFor(lib, each.id, rendition, matching),
+    );
+  }
+
+  /** A RAW's linked camera file, at the RAW's turn, which the file's own row has not been given. */
+  private async serveCameraFile(c: Context, rawId: string): Promise<Response> {
+    const file = this.photoRenditions.cameraFileOf(rawId);
+    if (file == null) throw new AppError('NOT_FOUND', `no camera file for ${rawId}`);
+    const rotate = this.photoRead.editOrientation(rawId);
+    if (rotate === 0) return this.serveRendition(c, file, 'embedded');
+    const { photo, library } = this.photoRenditions.locate(file);
+    if (photo.recipe.kind !== 'file') return this.serveRendition(c, file, 'embedded');
+    let bytes =
+      this.fetchThrough?.takesFromPeer(library, photo) === true
+        ? null
+        : await this.originals.open(library, photo);
+    if (bytes == null && this.fetchThrough != null) {
+      takeAsLongAsItTakes(c);
+      await this.fetchThrough.ensureCurrent(file, 'embedded');
+      bytes = getRenditionPath(library, file, 'embedded', library.rendition_hdr);
+    }
+    return this.serveEmbedded(photo, bytes, c, rotate, originalMediaType(photo.recipe.path));
+  }
+
+  // The camera's own picture, lifted out of the file and tagged for display. No
   // demosaic and nothing cached on disk: extraction is a header read plus a copy,
   // which is cheaper than the disk a fourth derivative per photo would cost.
-  private serveEmbedded(photo: BasicPhoto, originalPath: string | null, c: Context): Response {
+  private serveEmbedded(
+    photo: BasicPhoto,
+    originalPath: string | null,
+    c: Context,
+    rotate = this.photoRead.editOrientation(photo.id),
+    mediaType = 'image/jpeg',
+  ): Response {
     const photoId = photo.id;
     if (originalPath == null)
       throw new AppError(
@@ -478,11 +515,10 @@ export class ImageApi {
       );
     // The RAW, not the JPEG inside it: these bytes are part of that file, so its
     // stat moves exactly when they do.
-    const rotate = this.photoRead.editOrientation(photoId);
     const originalEtag = etagOf(Bun.file(originalPath));
     const etag = rotate === 0 ? originalEtag : originalEtag.slice(0, -1) + '-' + rotate + '"';
     const headers = {
-      'Content-Type': 'image/jpeg',
+      'Content-Type': mediaType,
       'Cache-Control': 'no-cache',
       ETag: etag,
       ...TIMING_ALLOW_ORIGIN,
@@ -502,7 +538,12 @@ export class ImageApi {
    */
   private async serveShare(c: Context): Promise<Response> {
     const rendition = c.req.param('rendition') ?? '';
-    if (rendition !== 'full' && rendition !== 'max' && rendition !== 'embedded') {
+    if (
+      rendition !== 'full' &&
+      rendition !== 'max' &&
+      rendition !== 'embedded' &&
+      rendition !== 'camera'
+    ) {
       throw new AppError('NOT_FOUND', `nothing to share as ${rendition}`);
     }
     const photoId = c.req.param('photoId');
@@ -572,17 +613,18 @@ export class ImageApi {
     // client can still seek inside a 25MB download (§13.5). No extension assumed
     // in the URL: a catalogue holds more than one RAW format, so both the media
     // type and the name it lands under come off the file itself.
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     if (form === 'original') {
       return this.serve(
         c,
+        photoId,
         (photo) => originalMediaType(soleInputOf(photo.recipe) ?? ''),
         (lib, photo) => this.originals.open(lib, photo),
         (photo) => soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id,
       );
     }
 
-    const photoId = c.req.param('photoId');
-    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photoRenditions.locate(photoId);
     // The id for a row with no file of its own, which has no filename to take a stem from.
     const stem = (soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
@@ -675,12 +717,11 @@ export class ImageApi {
   // The row and both files still exist, so there is nothing to withhold.
   private async serve(
     c: Context,
+    photoId: string,
     contentType: string | ((photo: BasicPhoto) => string),
     pathFor: PathFor,
     downloadAs?: (photo: BasicPhoto) => string,
   ): Promise<Response> {
-    const photoId = c.req.param('photoId');
-    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photoRenditions.locate(photoId);
 
     const target = await pathFor(library, photo);

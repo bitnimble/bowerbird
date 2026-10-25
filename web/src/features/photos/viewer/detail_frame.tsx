@@ -179,7 +179,8 @@ export const DetailFrame = observer(function DetailFrame({
       ? {
           draws: (source) => {
             const frame = owning.get(source);
-            if (frame == null || frame.rendition === 'embedded') return false;
+            if (frame == null || frame.rendition === 'embedded' || frame.rendition === 'camera')
+              return false;
             return store.detailFor(frame.photoId)?.renditions?.[frame.rendition]?.hdr !== false;
           },
           headroom,

@@ -209,8 +209,10 @@ async function renditionFile(
   rendition: ViewerRendition,
   onStep: (step: OpenStep) => void,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  onStep('rendering');
-  await renditionsApi.build(photoId, rendition);
+  if (rendition !== 'camera') {
+    onStep('rendering');
+    await renditionsApi.build(photoId, rendition);
+  }
   onStep('preparing');
   const source = renditionsApi.hdrSource(renditionsApi.url(photoId, rendition));
   const reply = await fetch(hdrPictures.pixelFile(source), {

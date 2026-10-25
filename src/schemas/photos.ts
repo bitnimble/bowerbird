@@ -33,6 +33,9 @@ export const COMPOSITE_KINDS_SQL = CompositeKindSchema.options
   .map((kind) => `'${kind}'`)
   .join(', ');
 
+export const CameraFileFormatSchema = z.enum(['jpeg', 'heif']);
+export type CameraFileFormat = z.infer<typeof CameraFileFormatSchema>;
+
 export const OriginalElsewhereSchema = z.enum(['reachable', 'unreachable']);
 export type OriginalElsewhere = z.infer<typeof OriginalElsewhereSchema>;
 
@@ -138,6 +141,9 @@ export const PhotoSummarySchema = z.object({
   // False for a finished picture - a JPEG, PNG, HEIC or AVIF - which the viewer shows as its own
   // file until it is edited and as its edit after, with no rendition to choose. True for a composite.
   is_raw: z.boolean().default(true),
+  // The format of the camera file linked to this RAW (`photo_links`), which the viewer offers as
+  // the `camera` rendition.
+  camera_file_format: CameraFileFormatSchema.nullable().default(null),
 });
 export type PhotoSummary = z.infer<typeof PhotoSummarySchema>;
 

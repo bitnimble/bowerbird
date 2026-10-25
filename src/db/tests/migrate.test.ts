@@ -24,6 +24,19 @@ function objectsOfType(db: Database, type: 'table' | 'index' | 'trigger'): strin
   ).map((row) => row.name);
 }
 
+function beforePhotoLinks(db: Database): void {
+  db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0020_photo_links'");
+  for (const trigger of [
+    'photos_link_ins',
+    'photos_link_upd',
+    'photos_unlink',
+    'photos_share_stamp_triage',
+    'photos_share_stamp_hidden',
+  ])
+    db.exec(`DROP TRIGGER ${trigger}`);
+  db.exec('DROP TABLE photo_links');
+}
+
 describe('opening a catalogue', () => {
   it('preserves disabled camera matching across the render-stage migration', () => {
     const db = new Database(':memory:');
@@ -79,6 +92,130 @@ describe('opening a catalogue', () => {
       }),
     );
     expect(hashOf('unscanned')).toBeNull();
+    db.close();
+  });
+
+  it('names camera files as their RAWs do, links the pairs, and gives each pair the later marks', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    beforePhotoLinks(db);
+    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('lib', '/l', 'L');
+    const insert = db.query(
+      `INSERT INTO photos (id, library_id, recipe, format, width, height, date_added, date_taken,
+                           camera_make, camera_model, rating, triage, stamp_triage)
+         VALUES (?, 'lib', json_object('kind', 'file', 'path', ?), ?, 6000, 4000, '2026-01-01',
+                 '2026-03-04T05:06:07.000Z', ?, ?, ?, ?, ?)`,
+    );
+    insert.run('raw', 'Trip/IMG_0001.CR2', 'cr2', 'Canon', 'EOS 100D', 0, null, null);
+    insert.run('jpeg', 'Trip/IMG_0001.JPG', 'jpeg', 'Canon', 'Canon EOS 100D', 4, 'picked', '0002');
+    insert.run('rated', 'Trip/IMG_0002.CR2', 'cr2', 'Canon', 'EOS 100D', 2, null, '0003');
+    insert.run(
+      'rated-jpeg',
+      'Trip/IMG_0002.JPG',
+      'jpeg',
+      'Canon',
+      'Canon EOS 100D',
+      5,
+      null,
+      '0001',
+    );
+    insert.run('heif', 'Trip/IMG_0003.HIF', 'heif', 'Canon', 'Canon EOS 100D', 3, null, '0001');
+    insert.run('heif-raw', 'Trip/IMG_0003.CR2', 'cr2', 'Canon', 'EOS 100D', 0, null, null);
+    insert.run('phone', 'Phone/PXL_1.JPG', 'jpeg', 'Google', 'Pixel 9', 0, null, null);
+    db.exec("INSERT INTO albums (id, name) VALUES ('album', 'Album')");
+    db.exec(
+      "INSERT INTO album_photos (album_id, photo_id, date_added) VALUES ('album', 'jpeg', '2026-02-01')",
+    );
+    db.exec(
+      "INSERT INTO labels (id, library_id, name, colour, position) VALUES ('label', 'lib', 'Keep', 'red', 0)",
+    );
+    db.exec(
+      "INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES ('lib', 'label', 'jpeg', 'old')",
+    );
+
+    runMigrations(db);
+
+    const row = (id: string): unknown =>
+      db.query('SELECT camera_make, camera_model, rating, triage FROM photos WHERE id = ?').get(id);
+    expect(row('jpeg')).toMatchObject({ camera_make: 'Canon', camera_model: 'EOS 100D' });
+    expect(row('phone')).toMatchObject({ camera_make: 'Google', camera_model: 'Pixel 9' });
+    expect(
+      db.query('SELECT raw_id, camera_file_id FROM photo_links ORDER BY raw_id').all(),
+    ).toEqual([
+      { raw_id: 'heif-raw', camera_file_id: 'heif' },
+      { raw_id: 'rated', camera_file_id: 'rated-jpeg' },
+      { raw_id: 'raw', camera_file_id: 'jpeg' },
+    ]);
+    expect(row('raw')).toMatchObject({ rating: 4, triage: 'picked' });
+    expect(row('heif-raw')).toMatchObject({ rating: 3 });
+    expect(row('rated')).toMatchObject({ rating: 2, triage: null });
+    expect(row('rated-jpeg')).toMatchObject({ rating: 2, triage: null });
+    expect(db.query("SELECT photo_id FROM album_photos WHERE photo_id = 'raw'").all()).toEqual([
+      { photo_id: 'raw' },
+    ]);
+    expect(db.query("SELECT photo_id FROM photo_labels WHERE photo_id = 'raw'").all()).toEqual([
+      { photo_id: 'raw' },
+    ]);
+    db.close();
+  });
+
+  it('takes each camera file out of the automatic stack it shared with its RAW', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    beforePhotoLinks(db);
+    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('lib', '/l', 'L');
+    const insert = db.query(
+      `INSERT INTO photos (id, library_id, recipe, format, width, height, date_added, date_taken,
+                           camera_make, camera_model, stack_id, stack_state, is_representative)
+         VALUES (?, 'lib', json_object('kind', 'file', 'path', ?), ?, 6000, 4000, '2026-01-01',
+                 ?, 'Sony', ?, ?, 'stacked', ?)`,
+    );
+    const member = db.query(
+      "INSERT INTO stack_members (library_id, stack_id, photo_id, stamp) VALUES ('lib', ?, ?, '0001')",
+    );
+    const stack = db.query(
+      "INSERT INTO stacks (id, library_id, origin, date_created, stamp) VALUES (?, 'lib', ?, '2026-01-01', '0001')",
+    );
+    const at = (second: number): string => `2026-03-04T05:06:0${second}.000Z`;
+    stack.run('pair', 'auto');
+    insert.run('raw', 'Trip/DSC01.ARW', 'arw', at(1), 'ILCE-7M4', 'pair', 0);
+    insert.run('jpeg', 'Trip/DSC01.JPG', 'jpeg', at(1), 'ILCE-7M4', 'pair', 1);
+    stack.run('burst', 'auto');
+    insert.run('first', 'Trip/DSC02.ARW', 'arw', at(2), 'ILCE-7M4', 'burst', 0);
+    insert.run('first-jpeg', 'Trip/DSC02.JPG', 'jpeg', at(2), 'ILCE-7M4', 'burst', 1);
+    insert.run('second', 'Trip/DSC03.ARW', 'arw', at(3), 'ILCE-7M4', 'burst', 0);
+    stack.run('chosen', 'manual');
+    insert.run('kept', 'Trip/DSC04.ARW', 'arw', at(4), 'ILCE-7M4', 'chosen', 0);
+    insert.run('kept-jpeg', 'Trip/DSC04.JPG', 'jpeg', at(4), 'ILCE-7M4', 'chosen', 1);
+    for (const [stackId, photoId] of [
+      ['pair', 'raw'],
+      ['pair', 'jpeg'],
+      ['burst', 'first'],
+      ['burst', 'first-jpeg'],
+      ['burst', 'second'],
+      ['chosen', 'kept'],
+      ['chosen', 'kept-jpeg'],
+    ])
+      member.run(stackId, photoId);
+
+    runMigrations(db);
+
+    const stacks = (): string[] =>
+      (db.query('SELECT id FROM stacks ORDER BY id').all() as { id: string }[]).map((r) => r.id);
+    const members = (stackId: string): string[] =>
+      (
+        db
+          .query('SELECT photo_id FROM stack_members WHERE stack_id = ? ORDER BY photo_id')
+          .all(stackId) as { photo_id: string }[]
+      ).map((r) => r.photo_id);
+    const stackOf = (id: string): unknown =>
+      db.query('SELECT stack_id, is_representative FROM photos WHERE id = ?').get(id);
+    expect(stacks()).toEqual(['burst', 'chosen']);
+    expect(stackOf('raw')).toEqual({ stack_id: null, is_representative: 1 });
+    expect(stackOf('jpeg')).toEqual({ stack_id: null, is_representative: 1 });
+    expect(members('burst')).toEqual(['first', 'second']);
+    expect(stackOf('first-jpeg')).toEqual({ stack_id: null, is_representative: 1 });
+    expect(members('chosen')).toEqual(['kept', 'kept-jpeg']);
     db.close();
   });
 

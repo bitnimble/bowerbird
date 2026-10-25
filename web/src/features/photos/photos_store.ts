@@ -178,7 +178,7 @@ export function renditionVersion(
   // the ETag is the whole story. A canvas composites one, and then the URL has to move when it
   // lands: a frame that 404d is remembered by its source, so a copy built under the URL that
   // failed is a picture nothing asks for again (`retryEpoch`).
-  if (rendition === 'embedded' && !isComposite(photo)) return 0;
+  if (rendition === 'camera' || (rendition === 'embedded' && !isComposite(photo))) return 0;
   const stamp = rendition === 'grid' ? photo?.tile_built_at : photo?.renditions_built_at;
   return stamp == null ? 0 : Date.parse(stamp);
 }

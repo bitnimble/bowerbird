@@ -2,6 +2,7 @@ import type { Database } from '../../db/driver';
 import type { Ordering } from '../../schemas/common';
 import type { Shoot } from '../../schemas/shoots';
 import { firstPhotoOrderBy, hiddenIs, hiddenShootsSql } from '../photos/listing/photo_query';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 import { stamp } from '../replication/stamps';
 import { forgetCascade, shootsBelow, tombstone } from '../replication/tombstones';
 
@@ -28,7 +29,7 @@ const IS_HIDDEN = `(s.id IN (${hiddenShootsSql()}))`;
 // reports what it holds rather than zero - a row that said nothing would be a row nobody can judge
 // whether to bring back (§12.4). The exemption is `s.id` rather than a bound parameter because the
 // outer query has the shoot right there, being the row these two subqueries hang off.
-const VISIBLE_HERE = hiddenIs('p.', false, 's.id');
+const VISIBLE_HERE = `${hiddenIs('p.', false, 's.id')} AND ${notACameraFile('p.')}`;
 
 // A shoot with no banner of its own shows its first photo, in the shoot's own
 // ordering. Derived rather than written at import: the first photo moves as

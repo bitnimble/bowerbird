@@ -2,6 +2,7 @@ import type { Database } from '../../db/driver';
 import type { Ordering, RenditionSource } from '../../schemas/common';
 import type { Library, LibraryConfiguration } from '../../schemas/libraries';
 import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 import { readStages, writeStages } from '../processing/renditions/render_stages';
 import type { OptionalStage, RenderedRendition } from '../../schemas/render_stages';
 import { stamp } from '../replication/stamps';
@@ -56,11 +57,12 @@ const COLUMNS = `l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering,
   l.include_subfolders, l.include_non_raw, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds,
   l.last_synced_at`;
 const SELECT = `SELECT ${COLUMNS},
-  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
-    AND p.is_missing = 1 AND ${ORIGINAL_ON_PEER}) AS missing_photo_count,
+    AND ${notACameraFile('p.')}) AS photo_count,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
-    AND p.is_missing = 1 AND NOT ${ORIGINAL_ON_PEER}) AS unavailable_photo_count,
+    AND p.is_missing = 1 AND ${ORIGINAL_ON_PEER} AND ${notACameraFile('p.')}) AS missing_photo_count,
+  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
+    AND p.is_missing = 1 AND NOT ${ORIGINAL_ON_PEER} AND ${notACameraFile('p.')}) AS unavailable_photo_count,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
     AND EXISTS (SELECT 1 FROM renditions r WHERE r.photo_id = p.id AND r.used_at IS NOT NULL
       AND r.variant IN ('full', 'full-hdr', 'max', 'max-hdr'))) AS rendered_photo_count

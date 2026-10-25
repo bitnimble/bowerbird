@@ -4,7 +4,7 @@ import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath, getRenditionPath } from '../../../utils/paths';
-import { isRendered } from '../../../utils/scan';
+import { hasEmbeddedJpeg, isRendered } from '../../../utils/scan';
 import type { Originals } from '../../blobs/originals';
 import { isComposite } from '../../../schemas/recipes';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
@@ -119,6 +119,11 @@ export class PhotoRenditionService {
       .catch((err: unknown) => log.warn('could not build a tile', { photo: photoId, err }));
   }
 
+  /** The camera file linked to a RAW, whose own file is the RAW's `camera` rendition. */
+  cameraFileOf(photoId: string): string | null {
+    return this.photoPaths.cameraFileOf(photoId)?.id ?? null;
+  }
+
   // The photo and its library, and nothing else. Everything that serves bytes or
   // builds a file wants these four columns; `get` above assembles the detail
   // view's payload - a second query for album membership, a stat per rendition,
@@ -216,6 +221,21 @@ export class PhotoRenditionService {
     await this.fetchThrough.ensureCurrent(photoId, 'embedded');
     return this.cachedEmbedded(library, photoId);
   }
+  /** A RAW's linked camera JPEG at the RAW's turn. Null where the camera file is not a JPEG. */
+  async cameraJpeg(rawId: string): Promise<Uint8Array | null> {
+    const file = this.photoPaths.cameraFileOf(rawId);
+    if (file == null || file.recipe.kind !== 'file' || !hasEmbeddedJpeg(file.recipe.path))
+      return null;
+    const rotate = this.photoListing.editOrientation(rawId);
+    const { library } = this.locate(file.id);
+    if (this.fetchThrough?.takesFromPeer(library, file) !== true) {
+      const lifted = await this.liftEmbedded(library, file, false, rotate);
+      if (lifted != null || this.fetchThrough == null) return lifted;
+    }
+    await this.fetchThrough.ensureCurrent(file.id, 'embedded');
+    const turned = readEmbeddedJpeg(getRenditionPath(library, file.id, 'embedded', false), rotate);
+    return turned == null ? null : new Uint8Array(turned);
+  }
   /**
    * The same, for a peer: lifted from an original here, or failing that the copy this device has
    * fetched, asked of a device `via` does not name if it is not current. Null where neither is.
@@ -242,11 +262,12 @@ export class PhotoRenditionService {
     photo: BasicPhoto,
     /** A peer's viewer is handed a finished picture as it is, where a share or a download wants a JPEG. */
     asItIs = false,
+    rotate?: number,
   ): Promise<Uint8Array | null> {
     const original = await this.originals.open(library, photo);
     if (original == null) return null;
     if (asItIs && isRendered(original)) return Bun.file(original).bytes();
-    const jpeg = readEmbeddedJpeg(original, this.photoListing.editOrientation(photo.id));
+    const jpeg = readEmbeddedJpeg(original, rotate ?? this.photoListing.editOrientation(photo.id));
     return jpeg == null ? null : new Uint8Array(jpeg);
   }
   private async cachedEmbedded(

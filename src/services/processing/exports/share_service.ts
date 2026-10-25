@@ -13,7 +13,7 @@ export class ShareService {
   constructor(
     private readonly photoRenditions: Pick<
       PhotoRenditionService,
-      'locate' | 'embeddedJpeg' | 'buildRendition'
+      'locate' | 'embeddedJpeg' | 'buildRendition' | 'cameraFileOf' | 'cameraJpeg'
     >,
     private readonly exports: Pick<ExportService, 'shareable'>,
     private readonly activity: LibraryActivity = new LibraryActivity(),
@@ -26,14 +26,23 @@ export class ShareService {
    * there is none.
    */
   async jpeg(photoId: string, rendition: ViewerRendition): Promise<Uint8Array> {
+    if (rendition === 'camera') {
+      const { library } = this.photoRenditions.locate(photoId);
+      const jpeg = await this.activity.track(library.id, 'sharing', photoId, () =>
+        this.photoRenditions.cameraJpeg(photoId),
+      );
+      if (jpeg != null) return jpeg;
+      const file = this.photoRenditions.cameraFileOf(photoId);
+      if (file == null) throw new AppError('NOT_FOUND', `no camera file to share for ${photoId}`);
+      return this.jpeg(file, 'embedded');
+    }
+    const asked = rendition;
     const { photo, library } = this.photoRenditions.locate(photoId);
     return this.activity.track(library.id, 'sharing', photoId, async () => {
       const shared =
-        rendition === 'embedded' &&
-        photo.recipe.kind === 'file' &&
-        !hasEmbeddedJpeg(photo.recipe.path)
+        asked === 'embedded' && photo.recipe.kind === 'file' && !hasEmbeddedJpeg(photo.recipe.path)
           ? await this.built(photoId)
-          : rendition;
+          : asked;
       if (shared === 'embedded' && !isComposite(photo.recipe)) {
         const jpeg = await this.photoRenditions.embeddedJpeg(photoId);
         if (jpeg == null) throw new AppError('NOT_FOUND', `no camera JPEG to share for ${photoId}`);
@@ -54,7 +63,7 @@ export class ShareService {
    * The rendition to share where nobody is looking at one: the first already built, else the
    * camera's JPEG, else `full`, built here.
    */
-  async built(photoId: string): Promise<ViewerRendition> {
+  async built(photoId: string): Promise<Exclude<ViewerRendition, 'camera'>> {
     const { photo, library } = this.photoRenditions.locate(photoId);
     for (const rendition of ['full', 'max'] as const) {
       if (

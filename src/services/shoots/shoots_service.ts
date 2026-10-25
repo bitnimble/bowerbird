@@ -132,7 +132,7 @@ export class ShootsService {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
     const destDir = path.join(library.root_path, shoot.folder_path);
-    const photos = this.photoPaths.getBasicByIds(photoIds);
+    const photos = this.photoPaths.getBasicByIds(this.photoPaths.withLinkedPhotos(photoIds));
     // Validate up front so a cross-library or unknown id can't leave a
     // partially-applied batch (each move commits before the next runs). Reject
     // unknown/soft-deleted ids rather than silently dropping them (matches albums).
@@ -223,7 +223,7 @@ export class ShootsService {
 
     await libraryMutex.run(shoot.library_id, async () => {
       const members = this.photoPaths
-        .getBasicByIds(photoIds)
+        .getBasicByIds(this.photoPaths.withLinkedPhotos(photoIds))
         .filter((photo) => photo.shoot_id === shootId && photo.library_id === shoot.library_id);
       await this.writes.grant(this.movedInto(library, members, library.root_path));
       for (const photo of members) {

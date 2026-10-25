@@ -1,11 +1,12 @@
 import type { Database } from '../../db/driver';
 import type { Label } from '../../schemas/labels';
+import { notACameraFile, withLinkedPhotos } from '../photos/paths/photo_paths_repository';
 import { stamp } from '../replication/stamps';
 import { forgetCascade, tombstone } from '../replication/tombstones';
 
 const SELECT = `SELECT l.id, l.library_id, l.name, l.colour, l.position,
   (SELECT COUNT(*) FROM photo_labels pl JOIN photos p ON p.id = pl.photo_id
-    WHERE pl.label_id = l.id AND p.is_deleted = 0) AS photo_count
+    WHERE pl.label_id = l.id AND p.is_deleted = 0 AND ${notACameraFile('p.')}) AS photo_count
   FROM labels l`;
 
 // Position alone can tie: two peers each adding a label while apart both append at the same place.
@@ -86,9 +87,13 @@ export class LabelsRepository {
          SELECT library_id, ?, id, ? FROM photos WHERE id = ? AND library_id = ?
        ON CONFLICT DO NOTHING`,
     );
+    const asked = new Set(photoIds);
     let added = 0;
     this.db.transaction(() => {
-      for (const photoId of photoIds) added += add.run(labelId, at, photoId, libraryId).changes;
+      for (const photoId of withLinkedPhotos(this.db, photoIds)) {
+        const changes = add.run(labelId, at, photoId, libraryId).changes;
+        if (asked.has(photoId)) added += changes;
+      }
     })();
     return added;
   }
@@ -98,12 +103,13 @@ export class LabelsRepository {
     const remove = this.db.query(
       'DELETE FROM photo_labels WHERE library_id = ? AND label_id = ? AND photo_id = ?',
     );
+    const asked = new Set(photoIds);
     let removed = 0;
     this.db.transaction(() => {
-      for (const photoId of photoIds) {
+      for (const photoId of withLinkedPhotos(this.db, photoIds)) {
         if (remove.run(libraryId, labelId, photoId).changes === 0) continue;
         tombstone(this.db, libraryId, 'photo_label', `${labelId}/${photoId}`, at);
-        removed++;
+        if (asked.has(photoId)) removed++;
       }
     })();
     return removed;

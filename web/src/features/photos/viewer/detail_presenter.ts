@@ -3,6 +3,7 @@ import { photosApi } from '../../../api/photos';
 import { describe } from '../../../errors';
 import { newId } from '../../../../../src/schemas/id';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import type { AppSettingsPresenter } from '../../settings/app_settings_presenter';
 import { sourceKey, type PhotoSource } from '../photos_store';
 import type { ListingStore } from '../grid/listing_store';
@@ -17,10 +18,7 @@ export class DetailPresenter {
     private readonly settings: AppSettingsPresenter,
     private readonly begin: (photoId: string) => void,
     private readonly openCollection: (source: PhotoSource) => Promise<void>,
-    private readonly showRendition: (
-      photoId: string,
-      rendition: 'embedded' | 'full' | 'max',
-    ) => Promise<void>,
+    private readonly showRendition: (photoId: string, rendition: ViewerRendition) => Promise<void>,
     private readonly isCurrent: (photoId: string) => boolean,
     private readonly fail: (error: unknown) => void,
     private readonly enqueue: (run: () => Promise<void>) => Promise<void>,

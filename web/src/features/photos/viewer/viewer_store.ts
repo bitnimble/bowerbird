@@ -45,7 +45,13 @@ export interface ShownImage {
 /** How close to an end of the run the reader may get before it is re-centred. */
 const NEIGHBOUR_MARGIN = 10;
 
-const RENDERS: readonly ViewerRendition[] = ['full', 'max'];
+const choicesOf = (excluded: readonly ViewerRendition[]): readonly ViewerRendition[] =>
+  VIEWER_RENDITIONS.filter((rendition) => !excluded.includes(rendition));
+
+const CHOICES = {
+  camera: { all: VIEWER_RENDITIONS, renders: choicesOf(['embedded']) },
+  none: { all: choicesOf(['camera']), renders: choicesOf(['camera', 'embedded']) },
+} as const;
 
 export class ViewerStore {
   constructor(
@@ -68,19 +74,22 @@ export class ViewerStore {
   /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
   showsHdr(photoId: string): boolean {
     const { rendition } = this.frameOf(photoId);
-    // The server's records call every `embedded` SDR, which a finished picture's own file may not be.
-    if (rendition === 'embedded') return this.shownImageOf(photoId, rendition)?.hdr === true;
+    // The server's records call every whole file SDR, which a finished picture's own may not be.
+    if (rendition === 'embedded' || rendition === 'camera')
+      return this.shownImageOf(photoId, rendition)?.hdr === true;
     return this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true;
   }
 
   /**
    * None for a finished picture (`is_raw`), shown as its own file until edited and as its edit
-   * after. All three until its row lands, since almost every photograph has all three.
+   * after. The camera file only where one is linked and this browser can draw it.
    */
   renditionChoices(photoId: string): readonly ViewerRendition[] {
     const photo = this.photoFor(photoId);
     if (photo?.is_raw === false) return [];
-    return photo?.has_embedded === false ? RENDERS : VIEWER_RENDITIONS;
+    return CHOICES[photo?.camera_file_format != null ? 'camera' : 'none'][
+      photo?.has_embedded === false ? 'renders' : 'all'
+    ].filter((rendition) => !this.isUndrawable(photoId, rendition));
   }
 
   proofOf(photoId: string): 'hdr' | 'srgb' {
@@ -146,7 +155,7 @@ export class ViewerStore {
   // The develop documents behind them, kept and dropped the same way.
   @observable accessor editDocs = new Map<string, EditDoc>();
   @observable accessor orientationVersions = new Map<string, number>();
-  /** Finished pictures whose own file this browser could not draw, shown rendered instead. */
+  /** `photoId:rendition` for each file this browser could not draw, shown rendered instead. */
   @observable accessor undrawable: ReadonlySet<string> = new Set();
   // Every frame the viewer has decoded for the photo it is on, measured off the
   // image rather than taken from a column, which is the question a reader judging
@@ -279,21 +288,12 @@ export class ViewerStore {
     return { path: collectionPath(source), label };
   }
 
-  // The open photo as the client already knows it: the row the grid loaded, or
-  // the last detail when there is no row to have (a deep link, before the
-  // collection behind it is fetched). Everything the viewer has to decide before
-  // its own fetch returns is answered from here.
-  @computed get openPhoto(): PhotoSummary | null {
-    const id = this.open?.id;
-    return id == null ? null : this.photoFor(id);
-  }
-
   /**
    * The stored rendition "Rebuild rendition" would remake, or null where there is none.
    *
    * Whichever is on screen, that being the one the reader is judging - and the render
-   * behind it where that is the camera's JPEG, which is the RAW's own bytes and has no
-   * build to force past. Null unless a file is actually there to remake: this is the one
+   * behind it where that is a file served whole, which has no build to force past.
+   * Null unless a file is actually there to remake: this is the one
    * action that rewrites something rather than making it, so it is offered against what the
    * detail statted rather than against what a library setting suggests should exist.
    */
@@ -302,8 +302,7 @@ export class ViewerStore {
     // a row that composites one remakes it as itself, and one that hands over bytes from inside
     // its own file has no build to force past, so what there is to remake is the render behind
     // it (`renditions.ts`).
-    const target =
-      this.showing === 'embedded' && !isComposite(this.openPhoto) ? 'full' : this.showing;
+    const target = this.servedWhole(this.open?.id ?? '', this.showing) ? 'full' : this.showing;
     return this.detailFor(this.open?.id ?? '')?.renditions?.[target]?.built === true
       ? target
       : null;
@@ -323,8 +322,19 @@ export class ViewerStore {
    * from is a neighbour and the open photo at once.
    */
   frameOf(photoId: string): { source: string; rendition: ViewerRendition } {
-    const rendition = this.overrideFor(photoId) ?? this.shownRenditionOf(photoId);
+    const rendition = this.drawable(
+      photoId,
+      this.overrideFor(photoId) ?? this.shownRenditionOf(photoId),
+    );
     return { source: this.sourceOf(photoId, rendition), rendition };
+  }
+
+  isUndrawable(photoId: string, rendition: ViewerRendition): boolean {
+    return this.undrawable.has(`${photoId}:${rendition}`);
+  }
+
+  private drawable(photoId: string, rendition: ViewerRendition): ViewerRendition {
+    return this.isUndrawable(photoId, rendition) ? 'full' : rendition;
   }
 
   /**
@@ -334,7 +344,7 @@ export class ViewerStore {
   sourceOf(photoId: string, rendition: ViewerRendition): string {
     const url = renditionsApi.url(photoId, rendition, this.renditionVersionOf(photoId, rendition));
     const orientationVersion =
-      rendition === 'embedded' && this.servedWhole(photoId, rendition)
+      (rendition === 'embedded' || rendition === 'camera') && this.servedWhole(photoId, rendition)
         ? this.orientationVersions.get(photoId)
         : null;
     return orientationVersion == null
@@ -346,17 +356,19 @@ export class ViewerStore {
    * Whether this row is served this rendition **whole** - handed over from inside a file it
    * already has - rather than built (`renditions::owedOf`).
    *
-   * True of one thing: the cameras' own picture of a row that names one file, which is bytes
-   * inside that file. A row composed out of others has none to lift, so it composites its
-   * frames' into one and files it like any other copy, and everything about asking for it is
-   * the same as asking for a render.
+   * True of the camera file linked to a RAW, and of the embedded JPEG of a row that names one
+   * file, which is bytes inside that file. A row composed out of others has none to lift, so it
+   * composites its frames' into one and files it like any other copy, and everything about
+   * asking for it is the same as asking for a render.
    *
    * The whole of what the two arms do not share, and both readers of it are about *cost*: a
    * copy that is handed over is there whenever its file is, so there is no build to wait for
    * and no build to ask for when one 404s.
    */
   servedWhole(photoId: string, rendition: ViewerRendition): boolean {
-    return rendition === 'embedded' && !isComposite(this.photoFor(photoId));
+    return (
+      rendition === 'camera' || (rendition === 'embedded' && !isComposite(this.photoFor(photoId)))
+    );
   }
 
   /** Its original is only on devices this one cannot dial, so nothing can build or fetch a picture. */
@@ -365,7 +377,7 @@ export class ViewerStore {
   }
 
   /**
-   * The rendition the reader picked with `i`/`o`/`m`, or null where they have picked none.
+   * The rendition the reader picked with `u`/`i`/`o`/`p`, or null where they have picked none.
    *
    * **Per photograph.** One slot holds it, cleared on the step (`beginDetail`), so it is
    * only ever the open photograph's - and `open` lags the route by a render, so asking
@@ -391,13 +403,12 @@ export class ViewerStore {
       this.detailFor(photoId)?.shown_rendition ??
       this.photoFor(photoId)?.shown_rendition ??
       'embedded';
-    return resolved === 'embedded' && this.undrawable.has(photoId) ? 'full' : resolved;
+    return this.drawable(photoId, resolved);
   }
 
   /** The rendition on screen: the reader's choice for this photo, or what the server resolved. */
   @computed get showing(): ViewerRendition {
-    const open = this.open?.id ?? '';
-    return this.overrideFor(open) ?? this.shownRenditionOf(open);
+    return this.frameOf(this.open?.id ?? '').rendition;
   }
 
   /**

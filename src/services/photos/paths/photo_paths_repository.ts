@@ -3,7 +3,7 @@ import { recipeOf, type StoredRecipe } from '../../../schemas/recipes';
 import { stamp } from '../../replication/stamps';
 import { forgetCascade, tombstone } from '../../replication/tombstones';
 import type { StackMembership } from '../../stacks/stack_membership';
-import { inChunks } from '../photo_batches';
+import { IN_CHUNK, inChunks } from '../photo_batches';
 import { refreshStackOf } from './photo_stack_state';
 
 export const PATH_OF = `json_extract(photos.recipe, '$.path')`;
@@ -33,6 +33,62 @@ export interface DeletedPhoto extends BasicPhoto {
 // half-open range of all strings beginning with P+'/', index-friendly on photo_inputs.path.
 export function folderRange(folderPath: string): [string, string] {
   return [`${folderPath}/`, `${folderPath}0`];
+}
+
+/** Whether the original at `alias` is on no device this library can reach, nor on a backup. */
+const gone = (alias: string): string => `(${alias}is_missing = 1
+  AND NOT EXISTS (SELECT 1 FROM backup_locations b
+                   WHERE b.library_id = ${alias}library_id AND b.photo_id = ${alias}id
+                     AND b.health = 'held')
+  AND NOT EXISTS (SELECT 1 FROM blob_locations b
+                   WHERE b.library_id = ${alias}library_id AND b.photo_id = ${alias}id
+                     AND b.peer_id <> (SELECT peer_id FROM replication_identity WHERE singleton = 1)))`;
+
+/**
+ * Whether the RAW at `raw` stands for the camera file at `file`: binned together, and the RAW's
+ * original to be had wherever the file's is.
+ */
+const standsFor = (raw: string, file: string): string =>
+  `${raw}is_deleted = ${file}is_deleted AND (NOT ${gone(raw)} OR ${gone(file)})`;
+
+/** The camera file the RAW at `alias` offers as its `camera` rendition. */
+export const CAMERA_FILE_OF = (alias: string): string =>
+  `SELECT l.camera_file_id FROM photo_links l JOIN photos file ON file.id = l.camera_file_id
+    WHERE l.raw_id = ${alias}id AND file.is_deleted = ${alias}is_deleted AND NOT ${gone('file.')}
+    ORDER BY l.camera_file_id LIMIT 1`;
+
+/** Whether the row at `alias` is not a camera file its RAW stands for (`NOT_STOOD_FOR`). */
+export const notACameraFile = (alias: string): string => `NOT EXISTS (
+    SELECT 1 FROM photo_links l JOIN photos raw ON raw.id = l.raw_id
+     WHERE l.camera_file_id = ${alias}id AND ${standsFor('raw.', alias)})`;
+
+/** `ids` and each RAW or camera file standing for, or stood for by, one of them. */
+export function withLinkedPhotos(db: Database, ids: readonly string[]): string[] {
+  const linked = new Set(ids);
+  let frontier = [...linked];
+  while (frontier.length > 0) {
+    const found: string[] = [];
+    for (const batch of inChunks(frontier, IN_CHUNK / 2)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      const rows = db
+        .query(
+          `SELECT l.camera_file_id AS id FROM photo_links l
+             JOIN photos raw ON raw.id = l.raw_id JOIN photos file ON file.id = l.camera_file_id
+            WHERE l.raw_id IN (${placeholders}) AND ${standsFor('raw.', 'file.')}
+           UNION SELECT l.raw_id FROM photo_links l
+             JOIN photos raw ON raw.id = l.raw_id JOIN photos file ON file.id = l.camera_file_id
+            WHERE l.camera_file_id IN (${placeholders}) AND ${standsFor('raw.', 'file.')}`,
+        )
+        .all(...batch, ...batch) as { id: string }[];
+      for (const { id } of rows) {
+        if (linked.has(id)) continue;
+        linked.add(id);
+        found.push(id);
+      }
+    }
+    frontier = found;
+  }
+  return [...linked];
 }
 
 // A row that is one file, which is what every question about a path is asked of: a composite
@@ -92,6 +148,19 @@ export class PhotoPathsRepository {
       .query(`SELECT ${BASIC_COLS} FROM photos WHERE id = ?`)
       .get(id) as BasicPhoto | null;
     return row == null ? null : withRecipe(row);
+  }
+  /** The camera file linked to a RAW, offered as its `camera` rendition. */
+  cameraFileOf(rawId: string): BasicPhoto | null {
+    const row = this.db
+      .query(
+        `SELECT ${BASIC_COLS} FROM photos
+          WHERE id = (SELECT (${CAMERA_FILE_OF('raw.')}) FROM photos raw WHERE raw.id = ?)`,
+      )
+      .get(rawId) as BasicPhoto | null;
+    return row == null ? null : withRecipe(row);
+  }
+  withLinkedPhotos(ids: readonly string[]): string[] {
+    return withLinkedPhotos(this.db, ids);
   }
   /** Which library a stack is in, for the paths a panorama's own files sit under. */
   libraryOfStack(stackId: string): string | null {

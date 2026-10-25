@@ -115,6 +115,22 @@ export function readHeaderFields(filePath: string): RawHeaderFields {
   };
 }
 
+/** A body's make and model as its RAW's header names them, from its EXIF spellings. */
+export function cameraNames(
+  make: string,
+  model: string,
+): { make: string | null; model: string | null } {
+  const out = new Uint8Array(128);
+  const status = shim().bb_camera_names(
+    Buffer.from(`${make}\0`),
+    Buffer.from(`${model}\0`),
+    ptr(out),
+    ptr(out, 64),
+  );
+  if (status !== 0) throw new Error(`rawshim could not name the camera ${make} ${model}`);
+  return { make: name(out, 0, 64), model: name(out, 64, 64) };
+}
+
 /** Bytes one photo's stacking descriptor occupies, as the library reports it. */
 export function descriptorSize(): number {
   return Number(shim().bb_descriptor_size());

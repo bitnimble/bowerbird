@@ -3,7 +3,7 @@ import { FolderOpen, HardDriveDownload } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect } from 'react';
 import { PathSegment, route } from '../../../../../src/schemas/route';
-import { type Settings, type ViewerRendition } from '../../../../../src/schemas/settings';
+import { type Settings } from '../../../../../src/schemas/settings';
 import { localDateTime } from '../../../api/dates';
 import { canRevealFile } from '../../../api/transport';
 import {
@@ -201,7 +201,7 @@ export const CameraPanel = observer(function CameraPanel({
 // Which setting wrote the file on screen. `processing_service.target` splits these by
 // rendition, so reading one of them for every rendition reports a number that never touched
 // the other file.
-function qualityLabel(settings: Settings, showing: Exclude<ViewerRendition, 'embedded'>): string {
+function qualityLabel(settings: Settings, showing: 'full' | 'max'): string {
   const quality =
     showing === 'max' ? settings.max_rendition_quality : settings.full_rendition_quality;
   return PhotoDetailStrings.qualityValue(quality);
@@ -221,7 +221,7 @@ export const RenditionPanel = observer(function RenditionPanel({
   const showing = store.showing;
   const shownFile = photo?.renditions?.[showing];
   const shownImage = store.shownImageOf(photoId, showing);
-  const ownFile = showing === 'embedded' && photo?.is_raw === false;
+  const ownFile = showing === 'camera' || (showing === 'embedded' && photo?.is_raw === false);
 
   return (
     <MetaPanel
@@ -279,7 +279,7 @@ export const RenditionPanel = observer(function RenditionPanel({
         [
           PhotoDetailStrings.quality(),
           pending(() =>
-            showing === 'embedded'
+            showing === 'embedded' || showing === 'camera'
               ? PhotoDetailStrings.qualityNotApplicable()
               : settings.settings == null
                 ? PhotoDetailStrings.unknown()

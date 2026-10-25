@@ -1,4 +1,6 @@
 export const RenditionsStrings = {
+  cameraJpeg: () => 'Camera JPEG',
+  cameraHeic: () => 'Camera HEIC',
   embeddedJpeg: () => 'Embedded JPEG',
   renderedRaw: () => 'Rendered RAW',
   renderedRawMaxQuality: () => 'Rendered RAW (max quality)',

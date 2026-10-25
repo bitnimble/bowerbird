@@ -264,3 +264,64 @@ describe('PhotoListingRepository formats', () => {
     ]);
   });
 });
+
+describe('PhotoListingRepository linked photos', () => {
+  function shot(id: string, path: string): void {
+    insert(id, path);
+    db.query(
+      `UPDATE photos SET format = ?, date_taken = '2026-03-04T05:06:07.000Z', camera_make = 'Sony',
+         camera_model = 'ILCE-7M4' WHERE id = ?`,
+    ).run(path.endsWith('.JPG') ? 'jpeg' : 'arw', id);
+  }
+
+  const listed = (filters: PhotoListFilters): [string, string | null][] =>
+    repo
+      .listByLibrary(LIB, 'added_asc', 0, 10, { ...filters, count: true })
+      .photos.filter((p) => p.id.startsWith('pair-'))
+      .map((p) => [p.id, p.camera_file_format]);
+
+  beforeEach(() => {
+    shot('pair-raw', 'Trip/DSC01234.ARW');
+    shot('pair-jpeg', 'Trip/DSC01234.JPG');
+  });
+
+  it('shows a RAW and its camera file as one photograph that offers the file', () => {
+    expect(listed({ includeDeleted: false })).toEqual([['pair-raw', 'jpeg']]);
+    expect(listed({ includeDeleted: false, expandStacks: true })).toEqual([['pair-raw', 'jpeg']]);
+    db.query("UPDATE photos SET format = 'heif' WHERE id = 'pair-jpeg'").run();
+    expect(listed({ includeDeleted: false })).toEqual([['pair-raw', 'heif']]);
+  });
+
+  it('gives the JPEG back when only its RAW is binned or missing', () => {
+    db.query("UPDATE photos SET is_deleted = 1 WHERE id = 'pair-raw'").run();
+    expect(listed({ includeDeleted: false })).toEqual([['pair-jpeg', null]]);
+    db.query("UPDATE photos SET is_deleted = 1 WHERE id = 'pair-jpeg'").run();
+    expect(listed({ includeDeleted: true, isDeleted: true })).toEqual([['pair-raw', 'jpeg']]);
+    db.query("UPDATE photos SET is_deleted = 0 WHERE id IN ('pair-raw', 'pair-jpeg')").run();
+    db.query("UPDATE photos SET is_missing = 1 WHERE id = 'pair-raw'").run();
+    expect(
+      listed({ includeDeleted: false })
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(['pair-jpeg', 'pair-raw']);
+  });
+
+  it('shows one photograph, offering no JPEG, when both files have gone', () => {
+    db.query("UPDATE photos SET is_missing = 1 WHERE id IN ('pair-raw', 'pair-jpeg')").run();
+    expect(listed({ includeDeleted: false })).toEqual([['pair-raw', null]]);
+  });
+
+  it('counts a stack holding both as one photograph', () => {
+    db.query(
+      "UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('live', 'pair-raw', 'pair-jpeg')",
+    ).run();
+    db.query("UPDATE photos SET is_representative = 1 WHERE id = 'pair-jpeg'").run();
+    const page = repo.listByLibrary(LIB, 'added_asc', 0, 10, {
+      includeDeleted: false,
+      count: true,
+    });
+    expect(
+      page.photos.filter((p) => p.stack_id === 'st1').map((p) => [p.id, p.stack_size]),
+    ).toEqual([['pair-raw', 2]]);
+  });
+});

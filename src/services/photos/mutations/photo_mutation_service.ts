@@ -74,7 +74,7 @@ export class PhotoMutationService {
   async delete(photoIds: string[], batch?: string): Promise<void> {
     const failures: string[] = [];
     let deleted = 0;
-    for (const [libraryId, photos] of this.byLibrary(photoIds)) {
+    for (const [libraryId, photos] of this.byLibrary(this.photoPaths.withLinkedPhotos(photoIds))) {
       // Re-read inside the mutex, not before it: `bin_name` can be renamed now
       // (§4.1), and a queued bin move resuming with a stale name would recreate
       // the old folder and land its RAWs where the bin channel never walks.
@@ -222,7 +222,7 @@ export class PhotoMutationService {
   async restore(photoIds: string[]): Promise<void> {
     const failures: string[] = [];
     let restored = 0;
-    const byLibrary = this.deletedByLibrary(photoIds);
+    const byLibrary = this.deletedByLibrary(this.photoPaths.withLinkedPhotos(photoIds));
 
     // Every row's position is tested before any of them is restored, and across
     // every library the batch spans rather than one at a time: an undo is stamped

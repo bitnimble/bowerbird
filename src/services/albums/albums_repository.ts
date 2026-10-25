@@ -2,6 +2,7 @@ import type { Database } from '../../db/driver';
 import type { Ordering } from '../../schemas/common';
 import type { Album } from '../../schemas/albums';
 import { firstPhotoOrderBy, hiddenIs } from '../photos/listing/photo_query';
+import { notACameraFile, withLinkedPhotos } from '../photos/paths/photo_paths_repository';
 
 interface AlbumRow {
   id: string;
@@ -17,7 +18,7 @@ interface AlbumRow {
 // subquery may not reach the enclosing alias, so `ao` is the same row `a` is and is in scope here.
 // An album lists neither the photographs put away nor those in a hidden shoot (§12.4), so neither
 // is counted here and neither can end up as the thumbnail.
-const VISIBLE = hiddenIs('p.', false);
+const VISIBLE = `${hiddenIs('p.', false)} AND ${notACameraFile('p.')}`;
 
 const FIRST_PHOTO = `SELECT p.id FROM photos p
   JOIN album_photos ap ON ap.photo_id = p.id
@@ -90,7 +91,7 @@ export class AlbumsRepository {
     const tx = this.db.transaction((ids: string[]) => {
       for (const pid of ids) stmt.run(albumId, pid, dateAddedIso);
     });
-    tx(photoIds);
+    tx(withLinkedPhotos(this.db, photoIds));
   }
 
   removePhotos(albumId: string, photoIds: string[]): void {
@@ -98,7 +99,7 @@ export class AlbumsRepository {
     const tx = this.db.transaction((ids: string[]) => {
       for (const pid of ids) stmt.run(albumId, pid);
     });
-    tx(photoIds);
+    tx(withLinkedPhotos(this.db, photoIds));
   }
 
   // Album IDs a photo belongs to (used by sync move-detection bias, DESIGN §9.3).

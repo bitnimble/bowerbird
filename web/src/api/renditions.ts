@@ -1,10 +1,15 @@
 import { PathSegment, route } from '../../../src/schemas/route';
 import { type RenditionJobResponse, RenditionJobResponseSchema } from '../../../src/schemas/photos';
+import type { ViewerRendition } from '../../../src/schemas/settings';
 import type { Rendition } from '../../../src/services/processing/renditions/renditions';
 import type { HdrSource } from '../avif/hdr_pictures';
 import { errorFrom, NothingSchema, request } from './request';
 
-function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
+function renditionUrl(
+  photoId: string,
+  rendition: Rendition | ViewerRendition,
+  version = 0,
+): string {
   const url = route(PathSegment.image(), photoId, PathSegment.renditions(), rendition);
   return version === 0 ? url : `${url}?v=${version}`;
 }

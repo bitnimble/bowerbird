@@ -288,9 +288,26 @@ fn read_exif_into(tiff: &[u8], out: &mut BbHeader) {
             .cloned()
             .unwrap_or_default()
     };
-    write_name(&mut out.camera_make, &string(Some(root), 0x010F));
-    write_name(&mut out.camera_model, &string(Some(root), 0x0110));
+    let (make, model) = camera_names(&string(Some(root), 0x010F), &string(Some(root), 0x0110));
+    write_name(&mut out.camera_make, &make);
+    write_name(&mut out.camera_model, &model);
     write_name(&mut out.lens_model, &string(exif, 0xA434));
+}
+
+/// A body's make and model as a RAW's header names it, from the strings its EXIF spells them as.
+///
+/// Through rawler's camera table, as `read_with` reports them: the camera JPEG beside a RAW
+/// says `Canon EOS 100D` where the RAW says `EOS 100D`. A body the table does not know keeps
+/// its EXIF spelling.
+pub fn camera_names(make: &str, model: &str) -> (String, String) {
+    let (make, model) = (make.trim(), model.trim());
+    rawler::global_loader()
+        .get_cameras()
+        .get(&(make.to_owned(), model.to_owned(), String::new()))
+        .map_or_else(
+            || (make.to_owned(), model.to_owned()),
+            |camera| (camera.clean_make.clone(), camera.clean_model.clone()),
+        )
 }
 
 /// The EXIF orientation tag out of a TIFF block, for the two containers that keep their turn
@@ -449,7 +466,7 @@ fn seconds_since_epoch(stamp: &str) -> Option<i64> {
 }
 
 /// Writes a name into its fixed-width field, truncated and always NUL-terminated.
-fn write_name(field: &mut [u8], value: &str) {
+pub(crate) fn write_name(field: &mut [u8], value: &str) {
     let trimmed = value.trim().as_bytes();
     let room = field.len().saturating_sub(1);
     let taken = trimmed.len().min(room);
@@ -489,6 +506,27 @@ mod tests {
         write_name(&mut into, "ILCE-7CR");
         write_name(&mut into, "R8");
         assert_eq!(name(&into), "R8");
+    }
+
+    #[test]
+    fn a_delivered_pictures_camera_is_named_as_its_raw_names_it() {
+        assert_eq!(
+            camera_names("Canon", "Canon EOS 100D"),
+            ("Canon".to_owned(), "EOS 100D".to_owned())
+        );
+        assert_eq!(
+            camera_names("FUJIFILM", "X-T3"),
+            ("Fujifilm".to_owned(), "X-T3".to_owned())
+        );
+        assert_eq!(
+            camera_names("SONY ", "ILCE-1"),
+            ("Sony".to_owned(), "ILCE-1".to_owned())
+        );
+        assert_eq!(
+            camera_names("Google", "Pixel 9"),
+            ("Google".to_owned(), "Pixel 9".to_owned()),
+            "a body the table does not know"
+        );
     }
 
     #[test]

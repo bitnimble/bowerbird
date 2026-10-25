@@ -4,9 +4,13 @@ import { join } from 'node:path';
 import { newId } from '../schemas/id';
 import { DEVICE_NAME_MAX_LENGTH } from '../schemas/replication';
 import { config } from '../config';
+import { cameraNames } from '../services/processing/rawshim/rawshim_ops';
+import { stamp } from '../services/replication/stamps';
+import { StacksRepository } from '../services/stacks/stacks_repository';
 import { computeFileHash } from '../utils/hash';
+import { RENDERED_FORMATS } from '../utils/scan';
 import type { Database } from './driver';
-import { triggers } from './triggers';
+import { linkedPair, photoLinkTriggers, triggers } from './triggers';
 
 const MIGRATIONS = join(import.meta.dir, 'migrations');
 
@@ -68,7 +72,66 @@ function journal(): JournalEntry[] {
 /** Rewrites a migration's SQL cannot express, run in that migration's transaction. */
 const DATA_MIGRATIONS: Partial<Record<string, (db: Database) => void>> = {
   '0018_stat_file_hash': rehashFromStat,
+  '0020_photo_links': linkPhotos,
 };
+
+/**
+ * Names every finished picture's camera as its RAW's header does (`header::camera_names`), links
+ * the pairs that makes match, and takes each camera file out of the automatic stack detection
+ * put it in beside its own RAW.
+ */
+function linkPhotos(db: Database): void {
+  const rendered = `format IN (${RENDERED_FORMATS.map(() => '?').join(', ')})`;
+  // A fresh catalogue has no identity to stamp with until migrations finish (`seedIdentity`).
+  if (db.query(`SELECT 1 FROM photos WHERE ${rendered} LIMIT 1`).get(...RENDERED_FORMATS) == null)
+    return;
+  // Ahead of `triggers()`, so the renames below link their pairs and every new link shares its
+  // marks exactly as a link made after the migration does.
+  db.exec(photoLinkTriggers());
+  const at = stamp(db);
+  const renamed = db.query(
+    `UPDATE photos SET camera_make = ?, camera_model = ?, stamp_imported = ?
+      WHERE camera_make IS ? AND camera_model IS ? AND ${rendered}`,
+  );
+  const cameras = db
+    .query(
+      `SELECT DISTINCT camera_make, camera_model FROM photos
+        WHERE (camera_make IS NOT NULL OR camera_model IS NOT NULL) AND ${rendered}`,
+    )
+    .all(...RENDERED_FORMATS) as { camera_make: string | null; camera_model: string | null }[];
+  for (const camera of cameras) {
+    const named = cameraNames(camera.camera_make ?? '', camera.camera_model ?? '');
+    if (named.make === camera.camera_make && named.model === camera.camera_model) continue;
+    renamed.run(
+      named.make,
+      named.model,
+      at,
+      camera.camera_make,
+      camera.camera_model,
+      ...RENDERED_FORMATS,
+    );
+  }
+  db.exec(`INSERT OR IGNORE INTO photo_links (library_id, raw_id, camera_file_id)
+    SELECT raw.library_id, raw.id, file.id FROM photos raw, photos file
+     WHERE ${linkedPair('raw', 'file', 'file')}`);
+  const stacked = db
+    .query(
+      `SELECT photos.stack_id, photos.id FROM photos
+         JOIN stacks ON stacks.id = photos.stack_id AND stacks.origin = 'auto'
+         JOIN photo_links l ON l.camera_file_id = photos.id`,
+    )
+    .all() as { stack_id: string; id: string }[];
+  const files = Map.groupBy(stacked, (row) => row.stack_id);
+  const stacks = new StacksRepository(db);
+  for (const [stackId, rows] of files) {
+    stacks.removePhotos(
+      stackId,
+      rows.map((row) => row.id),
+      false,
+    );
+    stacks.dissolveIfSpent(stackId, false);
+  }
+}
 
 /**
  * Every scanned row's `file_hash` off the stat columns it digests (DESIGN §9.2), or a row hashed
