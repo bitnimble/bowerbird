@@ -450,16 +450,14 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
                     : UpdatesStrings.lastChecked(relativeTime(status.checked_at))))
             }
           >
+            <Text variant="mono">{status.current}</Text>
             {available == null ? (
-              <>
-                <Text variant="mono">{status.current}</Text>
-                {status.checks && (
-                  <Button disabled={store.checking} onClick={() => void updates.check(true)}>
-                    <RefreshCw size={ICON} />
-                    {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
-                  </Button>
-                )}
-              </>
+              status.checks && (
+                <Button disabled={store.checking} onClick={() => void updates.check(true)}>
+                  <RefreshCw size={ICON} />
+                  {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
+                </Button>
+              )
             ) : (
               // The same dialog the sidebar's badge opens: what is in a release is the thing
               // worth reading before installing it, whichever way you got here.
