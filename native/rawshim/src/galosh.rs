@@ -1,4 +1,4 @@
-//! GALOSH-RAW: the blind denoise, on the Bayer mosaic, on the GPU.
+//! GALOSH-RAW: the blind denoise, on the mosaic, on the GPU.
 //!
 //! **Why the mosaic and not the frame.** Sensor noise is per-photosite. A demosaic averages
 //! neighbouring sites to invent the two colours each site did not record, which correlates
@@ -14,25 +14,11 @@
 //! `include_str!`'d out of `OUT_DIR`. This module is the only thing that dispatches them either
 //! way: a browser reaches these kernels through the wasm build of it rather than by binding them
 //! itself.
-
-const LOESS_STRENGTH: f32 = 1.0;
-
-/// The least luma, in the GAT's units, the chroma pyramid divides a colour difference by
-/// (`loess_chroma_3p_tiled`); `renders --ratio-floor` sweeps it, and a floor of
-/// zero is the pyramid on the differences themselves.
-///
-/// ponytail: zero, so the pyramid runs on the differences as it always did. On `synth_raw
-/// --square`'s lines a floor of 0.5 kept a little more at noise 1 and amplified noise several-fold
-/// at noise 4; most of what the colour walk loses is detail finer than a site, which a share of the
-/// site's luma cannot carry either.
-const RATIO_FLOOR: f32 = 0.0;
-
-static FORCED_RATIO_FLOOR: crate::base::AtomicF32 = crate::base::AtomicF32::new(-1.0);
-
-/// Hold every later denoise to this floor, or a negative for [`RATIO_FLOOR`].
-pub fn force_ratio_floor(floor: f32) {
-    FORCED_RATIO_FLOOR.set(floor);
-}
+//!
+//! **The shrinkage is a multi-scale pyramid.** Each site of the stabilised mosaic (2x2 on Bayer,
+//! 3x3 on X-Trans) goes through an orthonormal transform into one plane per photosite, and every
+//! plane is box-downsampled into four levels, each shrunk as 8x8 DCT blocks at stride 4 (a
+//! soft-thresholded pilot, then a Wiener pass off it) and fused back up through its Laplacian.
 
 /// Workgroups for the IRLS reductions, and the invocations in each.
 ///
@@ -60,7 +46,6 @@ const UNDER_BLACK_SUMS: usize = 24;
 /// readback below and `NoiseFit`'s seeding are the two places this side touches the block, and
 /// `the_params_slots_are_the_ones_the_shader_declares` holds these against the shader's own text.
 const P_UNIFIED_SIGMA: usize = 4;
-const P_INV_SG: usize = 5;
 const P_DARK_REF0: usize = 6;
 const P_ALPHA: usize = 13;
 const P_SIGMA_SQ: usize = 14;
@@ -80,168 +65,48 @@ pub const ALPHA_MIN: f32 = 1e-8;
 /// Held against the shader by `the_achromatic_range_is_the_one_the_shader_declares`.
 pub const ACHROMATIC_RANGE: f32 = 4.0;
 
-/// What `pass12` needs of a workgroup: two 40x40 planes of `float2`, the sample beside its pilot
-/// and the numerator beside its denominator.
-const WORKGROUP_STORAGE: u32 = 2 * 40 * 40 * 8;
-
-/// `pass12.slang`'s `PHASE_SPIN`, keyed by the id its `[vk::constant_id(0)]` fixes rather than by
-/// name: the emitted WGSL renames it, and a key matching no constant is a pipeline the driver
-/// refuses outright.
-const PHASE_SPIN_ID: &str = "0";
-const PHASE_SPIN_Y_ID: &str = "1";
-const PHASE_DIAGONAL_ID: &str = "2";
-/// `lpixel_lh_den_fused`'s, a different kernel with its own numbering.
-const PHASE_POOL_ID: &str = "0";
-
-/// How many of `pass12`'s sixteen phases to run.
-///
-/// **Two, on every frame, and down the diagonal.** Each phase shrinks the same neighbourhood at a
-/// different offset, so the sixteen are estimates of the same block and averaging two lands where
-/// averaging all sixteen does. What the averaging is *for*, though, is that no block boundary falls
-/// in the same place twice, and two phases only manage that if they differ on both axes:
-/// `PHASE_DIAGONAL` is what puts the second at (2, 2) rather than at (2, 0).
-///
-/// **A pair that spins the columns alone stripes a shadow.** Measured on `DSC05443`'s eaves at
-/// slider 100, as the mean second difference of the crop's row means against its column means, a
-/// ratio of one being a crop with no direction to it: column-only reads 0.570 down the rows against
-/// 0.232 across them, a ratio of 2.46, and looks like horizontal lines once the sharpen's amount
-/// multiplies it. The diagonal pair reads 0.220 against 0.278, and four phases 0.196 against 0.212
-/// - no direction either way, and the same picture to the eye at 4x.
-///
-/// **Judged end to end against the camera's own JPEG, which is the only reference that can say
-/// which of two renders is right rather than merely that they differ.** Each arm fits its own
-/// camera match off its own denoised frame, so a shrinkage that cost the fit something would show
-/// here. Over a whole 24MP frame the two arms land 2.343 and 2.352 counts of 255 from the camera;
-/// on an ISO 25600 crop, 9.99 and 10.35. That comparison is what chose two - and it is worth
-/// knowing what it cannot see, since it is a mean over a frame: a one-count pattern that follows
-/// the rows moves it by nothing while being the first thing an eye finds. The row-against-column
-/// figure above is what covers that, and it is the measurement to repeat if this number moves.
-///
-/// Four costs ~45ms more on a 24MP mosaic and buys nothing measurable here.
-///
-/// **Flat, rather than chosen per frame, because nothing about a frame predicts the cost.** Over 43
-/// photographs from two libraries the deviation barely tracks the noise - two frames of one
-/// `at_mid_grey` cost 1.23 and 3.51 counts of 65535, two at twice that 1.30 and 6.33 - so what
-/// varies is the content, which no summary the fit carries can see.
-///
-/// Overridable, which is how those were measured and how `renders --phases` shows a reader the
-/// difference.
-fn phases() -> i32 {
-    match FORCED_SPIN.load(std::sync::atomic::Ordering::Relaxed) {
-        forced if forced > 0 => forced,
-        _ => 2,
-    }
-}
-
-/// The phase count every later run uses, or 0 for [`phases`]'s own answer.
-static FORCED_SPIN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-/// Hold every later denoise to this many phases: 2, 4, 8, 16, or 0 for the default.
-pub fn force_phases(phases: i32) {
-    FORCED_SPIN.store(phases, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Whether the luma phases pool before the inverse (`lpixel_lh_den_fused`).
-///
-/// Overridable for the same reason `phases` is: the pooling is a low-pass on luma that runs at every
-/// amount including zero, and what that costs a frame is a picture question.
-fn phase_pooled() -> bool {
-    !UNPOOLED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static UNPOOLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Hold every later denoise to the inverse with or without the phase pooling.
-pub fn force_phase_pool(pooled: bool) {
-    UNPOOLED.store(!pooled, std::sync::atomic::Ordering::Relaxed);
-}
-
-static UNBRACKETED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Hold every later denoise to smoothing the chroma with or without `chroma_detail`'s bracket.
-pub fn force_chroma_detail(bracketed: bool) {
-    UNBRACKETED.store(!bracketed, std::sync::atomic::Ordering::Relaxed);
-}
-
-const LEVEL_REACH: f32 = 1.5;
-
-static FORCED_LEVEL_REACH: crate::base::AtomicF32 = crate::base::AtomicF32::new(-1.0);
-
-/// Hold every later denoise to this reach, or a negative for [`LEVEL_REACH`].
-pub fn force_level_reach(reach: f32) {
-    FORCED_LEVEL_REACH.set(reach);
-}
-
-/// The tile `pass12` gives one workgroup, and the one `loess_chroma_3p_tiled` does.
-const PASS12_TILE: u32 = 28;
+/// What `ne_finalize` holds in workgroup storage, the most any kernel here does.
+const WORKGROUP_STORAGE: u32 = 23_556;
 
 /// `pyramid.slang`'s shape, which `the_pyramid_is_the_shape_its_shaders_declare` holds to it.
 const PYRAMID_LEVELS: usize = 4;
-const PYRAMID_PLANES: usize = 4;
+const PYRAMID_MAX_PLANES: usize = 9;
 const PYRAMID_TILE: usize = 28;
 const PYRAMID_STRIDE: usize = 4;
 const PYRAMID_PILOT_ID: &str = "0";
-const PYRAMID_THRESHOLDED_GUIDE_ID: &str = "1";
-const PYRAMID_OWN_PILOT_ID: &str = "2";
+const PYRAMID_OWN_PILOT_ID: &str = "1";
 const PYRAMID_FROM_RAW_ID: &str = "0";
 /// The luma Wiener pass's block grids, averaged: one grid leaves block-edge haze on flat ground.
 const PYRAMID_LUMA_OFFSETS: [(usize, usize); 2] = [(0, 0), (2, 2)];
 
-/// A Luminance position's pyramid strength as a share of `pass12`'s, matching its residual grain.
-const PYRAMID_LUMA_MATCH: f32 = 0.62;
+/// How far past a pixel the pyramid reads, in the coarsest level's sites: three 7-site passes and
+/// the fuses' bilinear drift come to 23, and the site's own span rounds it up. Recompute on any
+/// change to the levels, block or passes; `tiling_the_denoise_does_not_move_a_sample` holds it.
+const PYRAMID_REACH_SITES: usize = 24;
+const PYRAMID_COLOUR_BY_LEVEL: [f32; PYRAMID_LEVELS] = [0.5, 0.5, 0.7, 1.0];
 
-/// What a region's origin has to be a multiple of for its denoise to be the frame's.
-///
-/// **`pass12` shrinks within a tile measured from the region's own origin**, so a region that
-/// starts off this grid shrinks every pixel against a different neighbourhood - 94% of a 61MP
-/// frame comes out different, by up to 1.6e-3, spread everywhere rather than banded at the seams.
-/// Doubled because the alignment must also be even: an odd origin relabels every colour, since
-/// every phase pairs samples into 2x2 CFA sites. Whether even is *enough* is the pattern's to say,
-/// which is what [`lattice`] asks it.
-///
-/// **And scaled by [`COARSE_SCALE`], because the coarse level shrinks on a grid of its own.** Its
-/// tiles are measured from the region's origin *divided* by that scale, so an origin aligned only
-/// for the full-resolution pass lands mid-tile down there and the same disagreement comes back one
-/// octave down, where it is `tiling_the_denoise_does_not_move_a_sample` that catches it.
-///
-/// `denoise_in_tiles` rounds to this for its own tiles; anything else cutting a window it intends
-/// to compare against the whole frame - a band of the editor's re-prepare - owes it the same.
-pub const SHRINK_LATTICE: usize = COARSE_SCALE as usize * PASS12_TILE as usize;
-const LOESS_TILE: u32 = 16;
+/// Photosites a side of one of the coarsest level's sites.
+fn coarsest_site(side: usize) -> usize {
+    side << (PYRAMID_LEVELS - 1)
+}
 
-/// What a region's origin has to be a multiple of for the pyramid's block grids to be the frame's
-/// at every level: the coarsest level's block stride, in photosites.
-const PYRAMID_LATTICE: usize = PYRAMID_STRIDE << PYRAMID_LEVELS;
-
-/// How far past a pixel the pyramid reads, in photosites: 23 coarsest sites and the 15 photosites
-/// of a site's own span, with one to spare for a trimmed Bayer extent. Recompute on any change to
-/// the levels, block or passes; `the_pyramid_tiles_without_moving_a_sample` holds it.
-pub const PYRAMID_REACH: usize = 384;
-
-/// The halo a region denoised with `shrink` needs at least, past the `halo` its caller asked for.
-pub fn reach(shrink: Shrink, halo: usize) -> usize {
-    match shrink {
-        Shrink::Blocks => halo,
-        Shrink::Pyramid | Shrink::ColourPyramid => halo.max(PYRAMID_REACH),
-    }
+/// The halo a region of this pattern needs at least, past the `halo` its caller asked for.
+pub fn reach(cfa: &crate::cfa::Cfa, halo: usize) -> usize {
+    let side = site_side(cfa).unwrap_or(2);
+    halo.max(PYRAMID_REACH_SITES * coarsest_site(side))
 }
 
 /// The grid a region's origin has to start on, per axis, for its denoise to be the frame's.
 ///
-/// Claims on one number: [`SHRINK_LATTICE`] is the blocks', [`PYRAMID_LATTICE`] the pyramid's,
-/// which either pyramid shrink owes along with the blocks' (the hybrid runs both, and a pyramid
-/// falls back to the blocks off a Bayer pattern), and a whole period of the pattern is the CFA's,
-/// since every kernel that asks a photosite's colour asks it of the region's own coordinates. So an
-/// origin owes the first common multiple. Bayer's two divides the lattice and this is the lattice
-/// itself; X-Trans's six does not, and the answer is three times it.
-pub fn lattice(cfa: &crate::cfa::Cfa, shrink: Shrink) -> (usize, usize) {
+/// Claims on one number: the coarsest level's block stride, so every level's blocks sit where the
+/// whole frame's do, and a whole period of the pattern, since the site transform is the period's.
+/// So an origin owes the first common multiple: 64 on Bayer, 96 on X-Trans.
+pub fn lattice(cfa: &crate::cfa::Cfa) -> (usize, usize) {
     let multiple = |a: usize, b: usize| a / gcd(a, b) * b;
-    let shrinkage = match shrink {
-        Shrink::Blocks => SHRINK_LATTICE,
-        Shrink::Pyramid | Shrink::ColourPyramid => multiple(SHRINK_LATTICE, PYRAMID_LATTICE),
-    };
+    let side = site_side(cfa).unwrap_or(2);
+    let blocks = PYRAMID_STRIDE * coarsest_site(side);
     let (pw, ph) = cfa.period();
-    (multiple(shrinkage, pw), multiple(shrinkage, ph))
+    (multiple(blocks, pw), multiple(blocks, ph))
 }
 
 fn gcd(mut a: usize, mut b: usize) -> usize {
@@ -311,27 +176,6 @@ pub struct Galosh {
     dark_resid_reduce: Kernel,
     dark_resid_finalize: Kernel,
     dark_sub_full: Kernel,
-    forward_l_stride1: Kernel,
-    chroma_extract_halfres: Kernel,
-    chroma_detail: Kernel,
-    pass12: Kernel,
-    /// The same kernel striding the row phases alone, which runs eight of the sixteen.
-    pass12_half: Kernel,
-    /// And striding both, which runs four.
-    pass12_quarter: Kernel,
-    /// Two phases down the diagonal, at (0, 0) and (2, 2), which is the fewest that spins both axes.
-    pass12_pair: Kernel,
-    lpixel_lh_den_fused: Kernel,
-    box_downsample_2x: Kernel,
-    coarse_smooth: Kernel,
-    coarse_correct: Kernel,
-    loess_chroma_3p_tiled: Kernel,
-    chroma_reconstruct: Kernel,
-    copy_2d_clamped: Kernel,
-    smoothstep_blend_3p: Kernel,
-    reconstruct_bayer: Kernel,
-    restore_mosaic: Kernel,
-    lpixel_lh_den_unpooled: Kernel,
     pyr_pack: Kernel,
     /// `pyr_pack` straight off the conditioned mosaic, for a run handed its fit.
     pyr_pack_raw: Kernel,
@@ -341,26 +185,151 @@ pub struct Galosh {
     pyr_shrink: Kernel,
     /// `pyr_shrink` with each block's gains off its own pilot.
     pyr_shrink_own: Kernel,
-    /// `pyr_shrink` for the hybrid, whose plane 0 arrives denoised by `pass12`.
-    pyr_shrink_thresholded: Kernel,
     pyr_fuse: Kernel,
-    pyr_gather: Kernel,
-    pyr_scatter: Kernel,
     pyr_restore: Kernel,
 }
 
 /// Whether this pattern's mosaic is one GALOSH can filter at all.
-///
-/// **What the chain needs of a pattern is that one period of it holds all three colours**, since
-/// that is what `chroma_extract_halfres` takes its three means over and what `chroma_weights` then
-/// puts back. Everything else reads the period out of its own push and is arithmetic that does not
-/// care how wide it is.
-///
-/// **Asked of the pattern, and not of the frame's dimensions, which is the trap this exists for.**
-/// The only gate before this was `run`'s assertion that both extents are even - and an X-Trans
-/// region satisfies that by accident, because a multiple of six is.
 pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
-    cfa.counts().iter().all(|&count| count > 0)
+    site_side(cfa).is_some()
+}
+
+/// Photosites a side of the smallest square that tiles the period with every colour in each: 2 on
+/// Bayer, 3 on X-Trans.
+fn site_side(cfa: &crate::cfa::Cfa) -> Option<usize> {
+    let (pw, ph) = cfa.period();
+    (2..=3).find(|&side| {
+        pw % side == 0
+            && ph % side == 0
+            && (0..ph / side).all(|down| {
+                (0..pw / side).all(|across| {
+                    let colours = |colour| {
+                        (0..side * side).any(|k| {
+                            cfa.colour_at(down * side + k / side, across * side + k % side)
+                                == colour
+                        })
+                    };
+                    [crate::cfa::RED, crate::cfa::GREEN, crate::cfa::BLUE]
+                        .into_iter()
+                        .all(colours)
+                })
+            })
+    })
+}
+
+/// Each site of one period's orthonormal transform, row-major `PYRAMID_MAX_PLANES` square: the
+/// site's mean, its red-blue and magenta-green differences, then each colour's photosites against
+/// their own mean as gradients across the site. Orthonormal, so the GAT's unit white noise stays
+/// unit and white in every plane, and the transpose undoes it.
+fn site_transform(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
+    let (pw, ph) = cfa.period();
+    let planes = side * side;
+    let mut table = Vec::new();
+    for down in 0..ph / side {
+        for across in 0..pw / side {
+            let colour = |k: usize| cfa.colour_at(down * side + k / side, across * side + k % side);
+            let of = |wanted: u8| -> Vec<f64> {
+                let count = (0..planes).filter(|&k| colour(k) == wanted).count() as f64;
+                (0..planes)
+                    .map(|k| {
+                        if colour(k) == wanted {
+                            1.0 / count
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect()
+            };
+            let (red, green, blue) = (
+                of(crate::cfa::RED),
+                of(crate::cfa::GREEN),
+                of(crate::cfa::BLUE),
+            );
+            let mut candidates = vec![
+                vec![1.0; planes],
+                (0..planes).map(|k| red[k] - blue[k]).collect(),
+                (0..planes)
+                    .map(|k| 0.5 * (red[k] + blue[k]) - green[k])
+                    .collect::<Vec<f64>>(),
+            ];
+            let gradients = |x: f64, y: f64| {
+                let (xx, yy) = (x * x, y * y);
+                [x, y, x * y, xx, yy, xx * y, x * yy, xx * yy]
+            };
+            for wanted in [crate::cfa::GREEN, crate::cfa::RED, crate::cfa::BLUE] {
+                for term in 0..8 {
+                    candidates.push(
+                        (0..planes)
+                            .map(|k| match colour(k) == wanted {
+                                true => gradients((k % side) as f64, (k / side) as f64)[term],
+                                false => 0.0,
+                            })
+                            .collect(),
+                    );
+                }
+            }
+            let mut rows: Vec<Vec<f64>> = Vec::new();
+            for mut candidate in candidates {
+                for row in &rows {
+                    let along: f64 = candidate.iter().zip(row).map(|(c, r)| c * r).sum();
+                    candidate
+                        .iter_mut()
+                        .zip(row)
+                        .for_each(|(c, r)| *c -= along * r);
+                }
+                let norm = candidate.iter().map(|c| c * c).sum::<f64>().sqrt();
+                if norm > 1e-6 && rows.len() < planes {
+                    rows.push(candidate.iter().map(|c| c / norm).collect());
+                }
+            }
+            assert_eq!(
+                rows.len(),
+                planes,
+                "a site's transform spans its photosites"
+            );
+            for p in 0..PYRAMID_MAX_PLANES {
+                for k in 0..PYRAMID_MAX_PLANES {
+                    let value = match p < planes && k < planes {
+                        true => rows[p][k] as f32,
+                        false => 0.0,
+                    };
+                    table.push(value);
+                }
+            }
+        }
+    }
+    table
+}
+
+/// What `pyr_shrink` reads to find a block's colours from its first three planes: those planes of
+/// a flat colour per colour (3x3, plane by colour), its inverse (colour by plane), and each colour's
+/// share of the four parity slots the dark references are kept by (3x4).
+fn colour_basis(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
+    let table = site_transform(cfa, side);
+    let mut flat = [[0.0f64; 3]; 3];
+    for k in 0..side * side {
+        let colour = cfa.colour_at(k / side, k % side) as usize;
+        for (p, row) in flat.iter_mut().enumerate() {
+            row[colour] += f64::from(table[p * PYRAMID_MAX_PLANES + k]);
+        }
+    }
+    let inverse =
+        crate::hdr_fit::invert3(&flat).expect("a site holds every colour, so its colours separate");
+    let (pw, ph) = cfa.period();
+    let mut slots = [[0.0f64; 4]; 3];
+    for y in 0..ph {
+        for x in 0..pw {
+            slots[cfa.colour_at(y, x) as usize][(y & 1) | ((x & 1) << 1)] += 1.0;
+        }
+    }
+    let mut basis = Vec::with_capacity(30);
+    basis.extend(flat.iter().flatten().map(|&v| v as f32));
+    basis.extend(inverse.iter().flatten().map(|&v| v as f32));
+    for counts in slots {
+        let total: f64 = counts.iter().sum();
+        basis.extend(counts.iter().map(|&count| (count / total) as f32));
+    }
+    basis
 }
 
 /// The denoise, or None where this adapter cannot run it.
@@ -377,10 +346,9 @@ pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Galosh> {
 impl Galosh {
     fn new(gpu: &crate::gpu::Gpu) -> Option<Galosh> {
         let limits = gpu.limits();
-        // `pass12` holds its tile, both accumulators and the pilot in workgroup storage, and
-        // `ne_finalize` its per-bin histograms. Both want more than the 16KB a WebGPU device
-        // is only required to offer, so this is asked rather than assumed - a validation
-        // failure would be fatal, since `on_uncaptured_error` panics.
+        // `ne_finalize` wants more than the 16KB a WebGPU device is only required to offer, so
+        // this is asked rather than assumed - a validation failure would be fatal, since
+        // `on_uncaptured_error` panics.
         if limits.max_compute_workgroup_storage_size < WORKGROUP_STORAGE
             || limits.max_compute_invocations_per_workgroup < 256
         {
@@ -483,123 +451,25 @@ impl Galosh {
             dark_resid_reduce: kernel!("dark_resid_reduce_mwg", &[(0, R), (1, R), (2, R), (3, W)]),
             dark_resid_finalize: kernel!("dark_resid_finalize_mwg", &[(0, R), (1, W)]),
             dark_sub_full: kernel!("dark_sub_full", &[(0, W), (5, R)]),
-            forward_l_stride1: kernel!("forward_l_stride1", &[(0, R), (1, W), (2, R), (3, R)]),
-            chroma_extract_halfres: kernel!(
-                "chroma_extract_halfres",
-                &[(0, R), (1, W), (2, W), (3, W)]
-            ),
-            chroma_detail: kernel!(
-                "chroma_detail",
-                &[(0, R), (1, W), (2, W), (3, W), (4, W), (5, W), (6, W)]
-            ),
-            pass12: kernel!("pass12", &[(0, R), (1, W)]),
-            pass12_half: kernel!("pass12", &[(0, R), (1, W)], &[(PHASE_SPIN_Y_ID, 2.0)]),
-            pass12_quarter: kernel!(
-                "pass12",
-                &[(0, R), (1, W)],
-                &[(PHASE_SPIN_ID, 2.0), (PHASE_SPIN_Y_ID, 2.0)]
-            ),
-            pass12_pair: kernel!(
-                "pass12",
-                &[(0, R), (1, W)],
-                &[
-                    (PHASE_SPIN_ID, 2.0),
-                    (PHASE_SPIN_Y_ID, 4.0),
-                    (PHASE_DIAGONAL_ID, 1.0)
-                ]
-            ),
-            lpixel_lh_den_fused: kernel!("lpixel_lh_den_fused", &[(0, R), (1, W), (2, W)]),
-            lpixel_lh_den_unpooled: kernel!(
-                "lpixel_lh_den_fused",
-                &[(0, R), (1, W), (2, W)],
-                &[(PHASE_POOL_ID, 0.0)]
-            ),
-            box_downsample_2x: kernel!("box_downsample_2x", &[(0, R), (1, W)]),
-            loess_chroma_3p_tiled: kernel!(
-                "loess_chroma_3p_tiled",
-                &[(0, R), (1, R), (2, R), (3, R), (4, W), (5, W), (6, W)]
-            ),
-            coarse_smooth: kernel!("coarse_smooth", &[(0, R), (1, W)]),
-            coarse_correct: kernel!("coarse_correct", &[(0, R), (1, R), (2, W)]),
-            chroma_reconstruct: kernel!(
-                "chroma_reconstruct",
-                &[
-                    (0, R),
-                    (1, R),
-                    (2, R),
-                    (3, R),
-                    (4, R),
-                    (5, R),
-                    (6, W),
-                    (7, W),
-                    (8, W)
-                ]
-            ),
-            copy_2d_clamped: kernel!("copy_2d_clamped", &[(0, R), (1, W)]),
-            smoothstep_blend_3p: kernel!(
-                "smoothstep_blend_3p",
-                &[
-                    (0, R),
-                    (1, R),
-                    (2, R),
-                    (3, W),
-                    (4, W),
-                    (5, W),
-                    (6, R),
-                    (7, R),
-                    (8, R),
-                ]
-            ),
-            reconstruct_bayer: kernel!(
-                "reconstruct_bayer",
-                &[(0, R), (1, R), (2, R), (3, R), (4, R), (5, R), (6, W)]
-            ),
-            restore_mosaic: kernel!(
-                "restore_mosaic",
-                &[
-                    (0, R),
-                    (1, R),
-                    (2, R),
-                    (3, R),
-                    (4, W),
-                    (5, R),
-                    (6, R),
-                    (7, R),
-                    (8, R)
-                ]
-            ),
-            pyr_pack: kernel!("pyr_pack", &[(0, R), (1, W), (2, W), (3, R)]),
+            pyr_pack: kernel!("pyr_pack", &[(0, R), (1, W), (2, W), (3, R), (9, R)]),
             pyr_pack_raw: kernel!(
                 "pyr_pack",
-                &[(0, R), (1, W), (2, W), (3, R)],
+                &[(0, R), (1, W), (2, W), (3, R), (9, R)],
                 &[(PYRAMID_FROM_RAW_ID, 1.0)]
             ),
             pyr_down: kernel!("pyr_down", &[(0, R), (1, W)]),
             pyr_pilot: kernel!(
                 "pyr_shrink",
-                &[(0, R), (1, W), (3, R)],
+                &[(0, R), (1, W), (3, R), (4, R), (5, R)],
                 &[(PYRAMID_PILOT_ID, 1.0)]
             ),
-            pyr_shrink: kernel!("pyr_shrink", &[(0, R), (1, W), (3, R)]),
+            pyr_shrink: kernel!("pyr_shrink", &[(0, R), (1, W), (3, R), (4, R), (5, R)]),
             pyr_shrink_own: kernel!(
                 "pyr_shrink",
-                &[(0, R), (1, W), (3, R)],
+                &[(0, R), (1, W), (3, R), (4, R), (5, R)],
                 &[(PYRAMID_OWN_PILOT_ID, 1.0)]
             ),
-            pyr_shrink_thresholded: kernel!(
-                "pyr_shrink",
-                &[(0, R), (1, W), (3, R)],
-                &[(PYRAMID_THRESHOLDED_GUIDE_ID, 1.0)]
-            ),
             pyr_fuse: kernel!("pyr_fuse", &[(0, W), (1, R), (2, R)]),
-            pyr_gather: kernel!(
-                "pyr_gather",
-                &[(0, R), (1, R), (2, R), (3, R), (4, W), (5, W)]
-            ),
-            pyr_scatter: kernel!(
-                "pyr_scatter",
-                &[(0, R), (1, R), (2, R), (3, W), (4, W), (5, W)]
-            ),
             pyr_restore: kernel!(
                 "pyr_restore",
                 &[
@@ -610,37 +480,21 @@ impl Galosh {
                     (5, R),
                     (6, R),
                     (7, R),
-                    (8, R)
+                    (8, R),
+                    (9, R)
                 ]
             ),
         })
     }
 }
 
-/// How hard each half of the denoise works.
-///
-/// `luma` is the shrinkage threshold in units of the frame's own measured noise, so 1.0
-/// means "threshold at exactly what the sensor put there".
-/// `colour` walks four anchors - noisy, the half-res regression, the quarter-res level and the
-/// eighth - so its unit is *how far colour may be smoothed*, in scales rather than in
-/// amount, and it runs 0 to 3. Both zero is the frame untouched.
+/// How hard each half of the denoise works: the noise each Wiener pass assumes, as a multiple of
+/// the deviation the fit measured, for the luma plane and for every other plane. Both zero is the
+/// frame untouched.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Amounts {
     pub luma: f32,
     pub colour: f32,
-    pub shrink: Shrink,
-}
-
-/// What the stabilised mosaic is shrunk by between the fit and the inverse.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Shrink {
-    /// `pass12` on the full-resolution luma, and the chroma regression pyramid.
-    #[default]
-    Blocks,
-    /// Bayer only: another pattern takes `Blocks`.
-    Pyramid,
-    /// `pass12`'s luma, with the colour terms through [`Shrink::Pyramid`]. Bayer only.
-    ColourPyramid,
 }
 
 /// The sensor's noise, as Phase 0 fitted it off this frame.
@@ -802,16 +656,11 @@ impl NoiseModel {
 }
 
 /// What the top of the Luminance track asks the kernels for.
-const TRACK_TOP: f64 = 1.6;
+const TRACK_TOP: f64 = 0.992;
 
 /// How far ahead of luminance the suggestion runs colour, as the panel's own numbers - the two
 /// tracks do not share a top, so this is a lead on the slider a reader sees rather than on the
 /// amount the kernels are handed.
-///
-/// **A lot rather than a little, because what the top of the track buys is mottle** tens of pixels
-/// across, which lives in the top third of the track and nowhere else: measured on `DSC05282` at
-/// ISO 4000, the à trous band whose hole is 32 reads 0.35 codes at two thirds of the track against
-/// 0.13 at the end of it, and the difference is visible on a night sky.
 const COLOUR_LEAD: f64 = 3.2;
 
 const COLOUR_TRACK_TOP: f64 = 3.0;
@@ -819,22 +668,12 @@ const COLOUR_TRACK_TOP: f64 = 3.0;
 impl Amounts {
     /// The Detail panel's two sliders, 0 to 100, in the units the kernels read.
     ///
-    /// **One position, two units, and the landmark is not in the same place on each.** Luminance is
-    /// a multiple of the noise Phase 0 measured, calibrated at 1.0 and so at slider 62.5, with the
-    /// track above that as headroom against the fit reading low - which it does on a frame whose
-    /// quietest blocks still hold texture. [`TRACK_TOP`] stops short of twice calibrated because
-    /// the track ran past what a photograph survives: at 2.0 the noisiest frame in the library was
-    /// not denoised but blurred. Colour is a distance rather than a strength, each whole number of
-    /// it one more anchor up the pyramid, and [`COLOUR_TRACK_TOP`] is the end of what the blend
-    /// answers to rather than a strength anyone chose.
-    ///
-    /// What the two share is the rule that a position is a fraction of a track a reader drags, so
-    /// the useful thing for it to reach is the strongest setting worth shipping.
+    /// A position is a fraction of a track a reader drags, so each track ends at the strongest
+    /// setting worth shipping.
     pub fn from_sliders(luminance: f64, colour: f64) -> Amounts {
         Amounts {
             luma: (luminance.clamp(0.0, 100.0) / 100.0 * TRACK_TOP) as f32,
             colour: (colour.clamp(0.0, 100.0) / 100.0 * COLOUR_TRACK_TOP) as f32,
-            shrink: Shrink::Blocks,
         }
     }
 
@@ -848,10 +687,8 @@ impl Amounts {
 /// **Unset is not zero and not a number a schema could supply: it is this photograph's own.** A
 /// position is a fraction of a track, and what a reader sees at one is that fraction of however
 /// much noise the frame happened to carry - so no fixed pair suits both a base-ISO daylight frame
-/// and an ISO 12800 one. On the colour half that is not a matter of degree: the amount is a
-/// *distance* rather than a strength, so a default high enough to take the mottle off a night sky
-/// is the same default that smooths real colour out of a clean frame, whatever its noise. Left
-/// unset a slider is [`NoiseModel::suggested_amounts`] off the fit of the frame being decoded.
+/// and an ISO 12800 one. Left unset a slider is [`NoiseModel::suggested_amounts`] off the fit of
+/// the frame being decoded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Detail {
     pub luminance: Option<f64>,
@@ -884,20 +721,6 @@ pub enum Denoiser {
     /// Our own network (`crate::upscale`), which denoises the mosaic as it upscales it to twice the
     /// photosites, demosaiced there and taken back to the photo's size.
     Upscaler,
-    /// GALOSH's fit and transform around [`Shrink::Pyramid`].
-    Pyramid,
-    /// GALOSH with [`Shrink::ColourPyramid`].
-    Hybrid,
-}
-
-impl Denoiser {
-    pub fn shrink(self) -> Shrink {
-        match self {
-            Denoiser::Pyramid => Shrink::Pyramid,
-            Denoiser::Hybrid => Shrink::ColourPyramid,
-            Denoiser::Galosh | Denoiser::Pmrid | Denoiser::Upscaler => Shrink::Blocks,
-        }
-    }
 }
 
 impl Detail {
@@ -926,11 +749,12 @@ impl Detail {
         }
     }
 
-    /// This as a decode over a mosaic that is or is not a Bayer one carries it out.
+    /// This as a decode over a mosaic that is or is not a Bayer one carries it out: both networks
+    /// read a 2x2 site, so off Bayer either takes GALOSH at the frame's own amounts.
     pub fn on_bayer(self, bayer: bool) -> Detail {
-        match bayer {
-            true => self,
-            false => self.without_upscaler(),
+        match (bayer, self.denoiser) {
+            (true, _) | (false, Denoiser::Galosh) => self,
+            (false, _) => Detail::AUTO,
         }
     }
 
@@ -987,10 +811,7 @@ impl Detail {
     /// The same pair in the units the kernels read.
     pub fn amounts(&self, fit: Option<NoiseFit>) -> Amounts {
         let (luminance, colour) = self.resolved(fit);
-        Amounts {
-            shrink: self.denoiser.shrink(),
-            ..Amounts::from_sliders(luminance, colour)
-        }
+        Amounts::from_sliders(luminance, colour)
     }
 
     /// The share of the frame's noise variance this denoise leaves, approximately; 1 where it
@@ -1006,7 +827,7 @@ impl Detail {
                 let kept = 1.0 - (luminance / 100.0).clamp(0.0, 1.0);
                 kept * kept
             }
-            Denoiser::Galosh | Denoiser::Pyramid | Denoiser::Hybrid => galosh_noise_left(luminance),
+            Denoiser::Galosh => galosh_noise_left(luminance),
         };
         // No denoise leaves none; a gate at 0 noise sharpens whatever grain did survive.
         left.max(LEAST_NOISE_LEFT) as f32
@@ -1019,15 +840,15 @@ const LEAST_NOISE_LEFT: f64 = 0.02;
 /// ISO 40000 frame with Colour at the frame's own amount.
 const GALOSH_NOISE_LEFT: [(f64, f64); 10] = [
     (0.0, 1.0),
-    (10.0, 0.23),
-    (20.0, 0.18),
-    (30.0, 0.15),
-    (40.0, 0.10),
-    (50.0, 0.052),
-    (62.5, 0.029),
+    (10.0, 0.97),
+    (20.0, 0.85),
+    (30.0, 0.63),
+    (40.0, 0.40),
+    (50.0, 0.19),
+    (62.5, 0.068),
     (75.0, 0.023),
-    (87.5, 0.021),
-    (100.0, 0.020),
+    (87.5, 0.0081),
+    (100.0, 0.0042),
 ];
 
 fn galosh_noise_left(luminance: f64) -> f64 {
@@ -1039,33 +860,6 @@ fn galosh_noise_left(luminance: f64) -> f64 {
     let ((from, left_from), (to, left_to)) = (pair[0], pair[1]);
     left_from + (left_to - left_from) * (luminance - from) / (to - from)
 }
-
-/// **A coarse luma level was built here and removed, and the reason is worth keeping.** An 8x8
-/// block's DC is its own mean, which nothing inside the block distinguishes from the picture, so a
-/// second shrinkage an octave or two down looks like the way to reach it - and by the octave bands
-/// of an a trous decomposition it was: the 4- and 8-pixel bands went from 0.84 and 0.80 to 0.41 and
-/// 0.44 on DSC00982's out-of-focus background.
-///
-/// What those bands could not show is that the correction is itself made of blocks. At a quarter
-/// resolution an 8x8 block spans 32 photosites, and a bilinear upsample of a block-shaped
-/// correction is a soft-edged rectangle; against flat bokeh nothing appears, and against the
-/// lettering on the stake the picture came back covered in hard rectangular patches. The phase spin
-/// does not save it - at every phase the blocking is still there, because what is blocky is the
-/// correction and not the tiling - and it was validated on a featureless crop, which is exactly the
-/// one place the defect cannot be seen.
-///
-/// Whatever reaches that band next has to produce a *smooth* correction, not a block-shaped one.
-///
-/// Full-resolution pixels to one of that level's, kept because `SHRINK_LATTICE` is still stated in
-/// terms of it: a region's origin has to suit the coarsest grid any pass might use.
-pub const COARSE_SCALE: i32 = 4;
-
-/// How far two of that band's samples may differ and still pool, per unit of the Luminance slider.
-///
-/// In the plane's own units, where a full-resolution GAT sample's noise is one and two box averages
-/// have taken it down. Above the noise the bilateral pools and the band's mottle goes; below a real
-/// eight-pixel edge it stops, which is what keeps this from flattening a face.
-const COARSE_RANGE: f32 = 2.0;
 
 /// How many dispatches a run records before it stops, which is `usize::MAX` for everything but
 /// the profile sweep.
@@ -1172,49 +966,10 @@ fn table_key(fit: &NoiseFit) -> (u32, u32) {
     (fit.alpha.to_bits(), fit.sigma_sq.to_bits())
 }
 
-/// A LOESS dispatch's seven buffers: the guide first, as the kernel declares them.
-fn loess_binds<'a>(
-    guide: &'a crate::gpu::Buffer,
-    src: &'a [crate::gpu::Buffer; 3],
-    dst: &'a [crate::gpu::Buffer; 3],
-) -> [(u32, &'a crate::gpu::Buffer); 7] {
-    [
-        (0, guide),
-        (1, &src[0]),
-        (2, &src[1]),
-        (3, &src[2]),
-        (4, &dst[0]),
-        (5, &dst[1]),
-        (6, &dst[2]),
-    ]
-}
-
-fn reconstruct_binds<'a>(
-    coarse: &'a [crate::gpu::Buffer; 3],
-    guide: &'a [crate::gpu::Buffer; 3],
-    out: &'a [crate::gpu::Buffer; 3],
-) -> [(u32, &'a crate::gpu::Buffer); 9] {
-    [
-        (0, &coarse[0]),
-        (1, &coarse[1]),
-        (2, &coarse[2]),
-        (3, &guide[0]),
-        (4, &guide[1]),
-        (5, &guide[2]),
-        (6, &out[0]),
-        (7, &out[1]),
-        (8, &out[2]),
-    ]
-}
-
 /// The whole denoise: a mosaic in [0, 1] goes in, the same mosaic denoised comes back.
 ///
-/// Even dimensions, because every phase pairs rows and columns into 2x2 CFA sites; the
-/// caller trims an odd edge before it gets here.
-///
-/// ponytail: the frame is denoised whole, which at 61MP is a little over a gigabyte of
-/// device buffers. Band it with an overlap if that ever fails to allocate - every phase but
-/// the noise fit and the IRLS is local with a bounded halo, so the bands are independent.
+/// Even dimensions, because the fit pairs rows and columns into 2x2 CFA sites; the caller trims an
+/// odd edge before it gets here.
 pub async fn denoise(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
@@ -1268,17 +1023,6 @@ struct ShrinkPass {
     tiles_y: u32,
 }
 
-/// Whether the pyramid shrinks this frame, rather than the blocks it falls back to off a Bayer
-/// pattern or, for the hybrid, with no colour to shrink.
-fn pyramid_runs(amounts: Amounts, cfa: &crate::cfa::Cfa) -> bool {
-    cfa.is_bayer()
-        && match amounts.shrink {
-            Shrink::Blocks => false,
-            Shrink::Pyramid => true,
-            Shrink::ColourPyramid => amounts.colour > 0.0,
-        }
-}
-
 /// The tile a progressive denoise is cut into, and what a caller with no reason to choose should
 /// pass as `denoise_in_tiles`' `tile`.
 ///
@@ -1321,7 +1065,8 @@ pub async fn denoise_in_tiles(
     mut done: impl FnMut(f32),
 ) {
     let (width, height) = (mosaic.width, mosaic.height);
-    let halo = reach(amounts.shrink, halo);
+    let halo = reach(cfa, halo);
+    let (lattice_x, lattice_y) = lattice(cfa);
     // Split evenly rather than into whole tiles, so no strip is left a few pixels wide.
     let spans = move |total: usize| {
         let count = total.div_ceil(tile).max(1);
@@ -1345,36 +1090,21 @@ pub async fn denoise_in_tiles(
     let mut finished = 0usize;
     for (y0, y1) in spans(height) {
         for (x0, x1) in spans(width) {
-            // **Aligned to `pass12`'s workgroup, not merely to a CFA site.** `pass12` shrinks
-            // within a shared tile measured from the region's origin, so an origin off that grid
-            // shrinks every pixel against a different neighbourhood: unaligned, 94% of a 61MP
-            // frame comes out different from the same frame denoised whole, by up to 1.6e-3,
-            // spread everywhere rather than banded at the seams and identical at halo 64 and at
-            // halo 512 - which is what says it is not reach.
-            //
-            // Scaled because the alignment must also be a whole period of the pattern - an origin
-            // off one relabels every colour in the region - and because the coarse level's tiles
-            // sit on the same grid one octave further down.
-            let (lattice_x, lattice_y) = lattice(cfa, amounts.shrink);
+            // On the lattice, not merely a CFA site: every level's DCT blocks are laid from the
+            // region's origin, so an origin off it shrinks every pixel against other blocks.
             let left = x0.saturating_sub(halo) / lattice_x * lattice_x;
             let top = y0.saturating_sub(halo) / lattice_y * lattice_y;
-            let right = (x1 + halo).min(width);
-            let bottom = (y1 + halo).min(height);
-            let (span_w, span_h) = cfa.align_extent(right - left, bottom - top);
-            let (right, bottom) = (left + span_w, top + span_h);
-            if right > left && bottom > top {
-                let (rw, rh) = (right - left, bottom - top);
-                let window = mosaic.window(gpu, left, top, rw, rh);
-                denoise_with(gpu, galosh, &window, cfa, amounts, fit).await;
-                let (x1, y1) = (x1.min(right), y1.min(bottom));
-                window.copy_rect(
-                    gpu,
-                    (x0 - left, y0 - top),
-                    &filtered,
-                    (x0, y0),
-                    (x1 - x0, y1 - y0),
-                );
-            }
+            let (right, bottom) =
+                cfa.aligned_end((left, top), (x1 + halo, y1 + halo), (width, height));
+            let window = mosaic.window(gpu, left, top, right - left, bottom - top);
+            denoise_with(gpu, galosh, &window, cfa, amounts, fit).await;
+            window.copy_rect(
+                gpu,
+                (x0 - left, y0 - top),
+                &filtered,
+                (x0, y0),
+                (x1 - x0, y1 - y0),
+            );
             finished += 1;
             done(finished as f32 / tiles as f32);
         }
@@ -1387,14 +1117,14 @@ pub async fn denoise_in_tiles(
 /// The editor's open wants this and no denoise: its frame crosses to a client that denoises on its
 /// own (§10.9), but the loupe tiles it fetches afterwards are the server's and do want it. Running
 /// the fit alone costs the two whole-frame transforms the reductions read through, and none of the
-/// shrinkage, the chroma pyramid or the inverse.
+/// shrinkage or the inverse.
 pub async fn fit(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
 ) -> NoiseFit {
-    // Straight off the caller's frame: a fit stops before `restore_mosaic`, which is the only
+    // Straight off the caller's frame: a fit stops before `pyr_restore`, which is the only
     // dispatch that writes what it was given, so there is nothing here to protect it from.
     run(gpu, galosh, mosaic, cfa, Work::FitOnly).await
 }
@@ -1420,7 +1150,7 @@ pub enum Fit {
 /// the bands of a re-prepare are handed the frame's own, and a reader who opens at Detail 0 and
 /// moves the slider afterwards would otherwise have nothing to hand them - so a frame that filters
 /// nothing still measures, which is exactly what [`Fit::Only`] is. It is the two whole-frame
-/// transforms and none of the shrinkage, chroma pyramid or inverse.
+/// transforms and none of the shrinkage or inverse.
 ///
 /// **The noise is all this decides.** The capture's blur is measured on the prepared frame by
 /// `base::measure_edge_spread`, which every path through `open::measure` runs whatever this
@@ -1460,18 +1190,13 @@ async fn run(
         Work::FitOnly => Amounts::default(),
         Work::Denoise { amounts, .. } => amounts,
     };
-    let amounts = Amounts {
-        colour: amounts.colour * 2.0 / (pw.max(ph) as f32),
-        ..amounts
-    };
     let supplied = match work {
         Work::Denoise { fit: Some(fit), .. } => Some(fit),
         _ => None,
     };
     let fit_only = matches!(work, Work::FitOnly);
-    let pyramid = !fit_only && amounts.shrink == Shrink::Pyramid && pyramid_runs(amounts, cfa);
-    let colour_pyramid =
-        !fit_only && amounts.shrink == Shrink::ColourPyramid && pyramid_runs(amounts, cfa);
+    let side = site_side(cfa).expect("GALOSH filters a pattern only where it has a site");
+    let planes = side * side;
     assert!(
         width % 2 == 0 && height % 2 == 0,
         "the mosaic's dimensions pair into 2x2 sites"
@@ -1484,9 +1209,6 @@ async fn run(
 
     let (w, h) = (width as i32, height as i32);
     let npix = width * height;
-    let (hw, hh) = (width / 2, height / 2);
-    let (cq_w, cq_h) = (hw / 2, hh / 2);
-    let (ce_w, ce_h) = (cq_w / 2, cq_h / 2);
 
     let storage = wgpu::BufferUsages::STORAGE;
     // A run of this allocates about five frames of working planes; they go when the recording
@@ -1502,38 +1224,31 @@ async fn run(
             })
         };
     }
-    macro_rules! trio {
-        ($label:expr, $len:expr) => {
-            [
-                plane!($label, $len),
-                plane!($label, $len),
-                plane!($label, $len),
-            ]
-        };
-    }
 
-    // The caller's own frame, filtered where it lies. `restore_mosaic` is the only dispatch that
+    // The caller's own frame, filtered where it lies. `pyr_restore` is the only dispatch that
     // writes it and a fit stops before that one.
     let raw = mosaic.buffer.clone();
     recording.holding(&raw);
 
-    // Two full-resolution scratch planes carry four roles between them, because a plane at
-    // 61MP is 240MB. `full_a` is the GAT frame until the chroma has been taken out of it,
-    // then the shrinkage's output; `full_b` is the luma transform until `pass12` has read
-    // it, then the overlap average that guides the chroma home.
-    let full_a = plane!("galosh in_gat / L_cs_den", npix);
-    // Zero-length for a fit, which stops before any of them is read. The fit needs `full_a` and
-    // the params block and nothing else, and the rest is most of the gigabyte this holds at 61MP -
-    // a cost the editor's open should not pay for a number.
-    let tail = |len: usize| if fit_only || pyramid { 0 } else { len };
-    let full_b = plane!("galosh L_cs / L_pixel", tail(npix));
+    // The pyramid's levels, the sites first. Zero-length for a fit, which stops before any of them
+    // is read: they are most of the gigabyte this holds at 61MP, a cost the editor's open should
+    // not pay for a number.
+    let mut level_sizes = [(width.div_ceil(side), height.div_ceil(side)); PYRAMID_LEVELS];
+    for level in 1..PYRAMID_LEVELS {
+        let (lw, lh) = level_sizes[level - 1];
+        level_sizes[level] = (lw.div_ceil(2), lh.div_ceil(2));
+    }
+    let levelled = |level: usize| {
+        let (lw, lh) = level_sizes[level];
+        if fit_only { 0 } else { planes * lw * lh }
+    };
+    // The GAT frame, then the sites' level shrunk: free once the sites are packed out of it.
+    let full_a = plane!("galosh in_gat / sites shrunk", npix.max(levelled(0)));
 
     // Copied back with the frame: what Phase 0 fitted is the only physical description of
     // this photograph's noise anything has, and a caller choosing an amount wants it.
     // Seeded where the caller brought the frame's own statistics, so the dispatches that would
-    // have measured them can be skipped. The slots are `prelude.slang`'s, and the two derived ones
-    // go in with them: `P_INV_SG` is `unified_sigma`'s reciprocal, which only that kernel would
-    // otherwise write.
+    // have measured them can be skipped. The slots are `prelude.slang`'s.
     let mut seed = [0f32; 32];
     if let Some(fit) = supplied {
         // Floored like `ne_finalize`'s, because this is the same slot by another route and the
@@ -1541,7 +1256,6 @@ async fn run(
         seed[P_ALPHA] = fit.alpha.max(ALPHA_MIN);
         seed[P_SIGMA_SQ] = fit.sigma_sq;
         seed[P_UNIFIED_SIGMA] = fit.unified_sigma;
-        seed[P_INV_SG] = 1.0 / fit.unified_sigma;
         seed[P_DARK_REF0..P_DARK_REF0 + 4].copy_from_slice(&fit.dark_ref);
     }
     let mut seed_bytes = Vec::with_capacity(seed.len() * 4);
@@ -1618,64 +1332,7 @@ async fn run(
         .filter(|&channel| cfa.colour_at(channel / pw, channel % pw) == 1)
         .fold(0u64, |mask, channel| mask | 1 << channel);
 
-    let half = tail(hw * hh);
-    let l_h_den = plane!("galosh L_h_den", half);
-    // The coarse band's own planes: a half-resolution stepping stone, then the quarter it is
-    // smoothed at. Not `l_h_den` for the first, which is a decimation taken for the chroma guide
-    // and so still carries every bit of the fine noise the average here is what removes.
-    let (lcw, lch) = (hw / 2, hh / 2);
-    let walks = amounts.luma > 0.0;
-    let coarse_half = plane!("galosh L coarse half", if walks { half } else { 0 });
-    let coarse = plane!("galosh L coarse", if walks { tail(lcw * lch) } else { 0 });
-    let coarse_den = plane!(
-        "galosh L coarse den",
-        if walks { tail(lcw * lch) } else { 0 }
-    );
-    // Which anchors the walk reaches, which is what decides whether a level is built at all: the
-    // blend reads the ones above it, and a plane nothing has written is bound as the noisy anchor
-    // instead. The quarter level alone is a quarter of a gigabyte at 61MP, so a slider in the lower
-    // third of the track pays for neither.
-    let walks_third = amounts.colour > 1.0 && !colour_pyramid;
-    let walks_fourth = amounts.colour > 2.0 && !colour_pyramid;
-    let quarter = |len: usize| if walks_third { tail(len) } else { 0 };
-    let eighth = |len: usize| if walks_fourth { tail(len) } else { 0 };
-    let l_q = plane!("galosh L_q", quarter(cq_w * cq_h));
-    let l_e = plane!("galosh L_e", eighth(ce_w * ce_h));
-    let c_h = trio!("galosh C_h", half);
-    // The half-res regression, and where the blend writes its answer back: nothing reads the
-    // regression again afterwards, so a fifth trio of half-res planes would only be moving
-    // values between two addresses.
-    let c_loess_h = trio!("galosh C_loess_h / C_h_den", half);
-    // `chroma_detail` models the 2x2 transform's three differences, which only a Bayer site has.
-    let reconstructs_bayer = cfa.is_bayer();
-    let restores_detail = !UNBRACKETED.load(std::sync::atomic::Ordering::Relaxed);
-    let brackets = amounts.colour > 0.0 && reconstructs_bayer && restores_detail;
-    let c_detail = trio!("galosh C detail", if brackets { half } else { 0 });
-    let c_q = trio!("galosh C_q", quarter(cq_w * cq_h));
-    let c_loess_q = trio!("galosh C_loess_q", quarter(cq_w * cq_h));
-    let c_q_h = trio!("galosh quarter candidate", quarter(hw * hh));
-    let c_e = trio!("galosh C_e", eighth(ce_w * ce_h));
-    let c_loess_e = trio!("galosh C_loess_e", eighth(ce_w * ce_h));
-    let c_e_q = trio!("galosh refined quarter", eighth(cq_w * cq_h));
-    let c_e_h = trio!("galosh eighth candidate", eighth(hw * hh));
-
-    // The pyramid's levels, the half-resolution sites first. The whole-site pyramid's level 0
-    // shrinks into `full_a`, free once the sites are packed out of it and exactly their size.
-    let mut level_sizes = [(hw, hh); PYRAMID_LEVELS];
-    for level in 1..PYRAMID_LEVELS {
-        let (lw, lh) = level_sizes[level - 1];
-        level_sizes[level] = (lw.div_ceil(2), lh.div_ceil(2));
-    }
-    let levelled = |level: usize| {
-        let (lw, lh) = level_sizes[level];
-        if pyramid || colour_pyramid {
-            PYRAMID_PLANES * lw * lh
-        } else {
-            0
-        }
-    };
-    // Uncleared: every plane the output depends on is written whole before it is read. The hybrid
-    // never writes plane 0 of its shrunk, boxed or pilot levels, and never reads it back.
+    // Uncleared: every plane the output depends on is written whole before it is read.
     macro_rules! scratch {
         ($label:expr, $len:expr) => {
             recording.scratch(&wgpu::BufferDescriptor {
@@ -1691,11 +1348,7 @@ async fn run(
         .collect();
     let pyramid_shrunk: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
         .map(|level| {
-            let len = if level == 0 && pyramid {
-                0
-            } else {
-                levelled(level)
-            };
+            let len = if level == 0 { 0 } else { levelled(level) };
             scratch!("galosh pyramid shrunk", len)
         })
         .collect();
@@ -1703,8 +1356,24 @@ async fn run(
     let pyramid_boxed: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS - 1)
         .map(|level| scratch!("galosh pyramid boxed", levelled(level + 1)))
         .collect();
-    // One level's pilot at a time, so the largest level's plane serves them all.
-    let pyramid_pilot = scratch!("galosh pyramid pilot", levelled(0));
+    // One level's luma pilot at a time, so the largest level's luma plane serves them all.
+    let pyramid_pilot = scratch!("galosh pyramid pilot", levelled(0) / planes);
+    let transform = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("galosh site transform"),
+        contents: &site_transform(cfa, side)
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect::<Vec<u8>>(),
+        usage: storage,
+    });
+    let basis = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("galosh colour basis"),
+        contents: &colour_basis(cfa, side)
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect::<Vec<u8>>(),
+        usage: storage,
+    });
 
     let fitted = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("galosh fitted model"),
@@ -1750,162 +1419,43 @@ async fn run(
         packed[1],
         packed[2],
     ]);
-    let [gain_c1, gain_c2] = cfa.chroma_gain().map(Word::F);
-    let extract = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-        Word::I(pw as i32),
-        Word::I(ph as i32),
-        packed[0],
-        packed[1],
-        packed[2],
-        gain_c1,
-        gain_c2,
-        Word::I(reconstructs_bayer as i32),
-    ]);
-    let detail_push = |subtract: bool| {
-        [
-            Word::I(w),
-            Word::I(h),
-            Word::I(hw as i32),
-            Word::I(hh as i32),
-            Word::I(subtract as i32),
-        ]
-    };
-    let detail_predict = pushes.add(&detail_push(false));
-    let detail_out = pushes.add(&detail_push(true));
-    let forward = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(hw as i32),
-        Word::I(pw as i32),
-        Word::I(ph as i32),
-        packed[0],
-        packed[1],
-        packed[2],
-        gain_c1,
-        gain_c2,
-        Word::I(reconstructs_bayer as i32),
-    ]);
-    let shrink = pushes.add(&[Word::I(w), Word::I(h), Word::F(amounts.luma)]);
-    let down_coarse = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
-    let smooth_coarse = pushes.add(&[
-        Word::I(lcw as i32),
-        Word::I(lch as i32),
-        Word::F(amounts.luma * COARSE_RANGE),
-    ]);
-    let coarse_correct = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(lcw as i32),
-        Word::I(lch as i32),
-        Word::I(COARSE_SCALE),
-    ]);
-    let overlap = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(hw as i32),
-        Word::I(reconstructs_bayer as i32),
-    ]);
-    let down_h = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
-    let green_sign = Word::F(if !reconstructs_bayer {
-        0.0
-    } else if cfa.colour_at(0, 0) == crate::cfa::GREEN {
-        1.0
-    } else {
-        -1.0
-    });
-    let floor = Word::F(FORCED_RATIO_FLOOR.or(f64::from(RATIO_FLOOR)));
-    let loess = |w: usize, h: usize, noise: f32| {
-        [
-            Word::I(w as i32),
-            Word::I(h as i32),
-            Word::F(LOESS_STRENGTH),
-            floor,
-            Word::F(noise),
-            green_sign,
-        ]
-    };
-    let loess_h = pushes.add(&loess(hw, hh, 1.0));
-    let down_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32)]);
-    let loess_q = pushes.add(&loess(cq_w, cq_h, 0.5));
-    let loess_e = pushes.add(&loess(ce_w, ce_h, 0.25));
-    let inverse = pushes.add(&[
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-        Word::I(pw as i32),
-        Word::I(ph as i32),
-        packed[0],
-        packed[1],
-        packed[2],
-        gain_c1,
-        gain_c2,
-        Word::I(reconstructs_bayer as i32),
-    ]);
-    let blend = pushes.add(&[
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-        Word::F(if reconstructs_bayer {
-            amounts.colour.max(1.0)
-        } else {
-            amounts.colour
-        }),
-    ]);
-    let reconstruct_bayer = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-        packed[0],
-        Word::F(amounts.colour),
-        Word::I(phase_pooled() as i32),
-        Word::I(restores_detail as i32),
-    ]);
-    let whole_to_whole = pushes.add(&[Word::I(w), Word::I(h), Word::I(w), Word::I(h)]);
-    let reach = Word::F(FORCED_LEVEL_REACH.or(f64::from(LEVEL_REACH)));
-    let reconstruct = |fw: usize, fh: usize, cw: usize, ch: usize, noise: f32| {
-        [
-            Word::I(fw as i32),
-            Word::I(fh as i32),
-            Word::I(cw as i32),
-            Word::I(ch as i32),
-            Word::F(noise),
-            reach,
-            green_sign,
-        ]
-    };
-    let reconstruct_q_h = pushes.add(&reconstruct(hw, hh, cq_w, cq_h, 1.0));
-    let reconstruct_e_q = pushes.add(&reconstruct(cq_w, cq_h, ce_w, ce_h, 0.5));
-    let reconstruct_e_h = pushes.add(&reconstruct(hw, hh, cq_w, cq_h, 0.5));
-
     let size_words = |level: usize| {
         let (lw, lh) = level_sizes[level];
         [Word::I(lw as i32), Word::I(lh as i32)]
     };
-    let pack_push = pushes.add(&[[Word::I(w), Word::I(h)], size_words(0), size_words(1)].concat());
-    let between = |level: usize| [size_words(level), size_words(level + 1)].concat();
+    let site_push = pushes.add(
+        &[
+            &[Word::I(w), Word::I(h)][..],
+            &size_words(0),
+            &size_words(1),
+            &[
+                Word::I(side as i32),
+                Word::I((pw / side) as i32),
+                Word::I((ph / side) as i32),
+            ],
+        ]
+        .concat(),
+    );
+    let between = |level: usize| {
+        [
+            &size_words(level)[..],
+            &size_words(level + 1),
+            &[Word::I(planes as i32)],
+        ]
+        .concat()
+    };
     let down_pushes: Vec<u32> = (1..PYRAMID_LEVELS - 1)
         .map(|level| pushes.add(&between(level)))
         .collect();
     let fuse_pushes: Vec<u32> = (0..PYRAMID_LEVELS - 1)
         .map(|level| pushes.add(&between(level)))
         .collect();
-    let luma_strength = (PYRAMID_LUMA_MATCH * amounts.luma).powi(2);
-    // The hybrid's plane 0 is the luma `pass12` already denoised, there only to guide the colour.
-    let (first_plane, guide_strength) = match colour_pyramid {
-        true => (1, 0.0),
-        false => (0, luma_strength),
-    };
+    let luma_strength = amounts.luma * amounts.luma;
     let mut passes_over = |offsets: &[(usize, usize)]| -> Vec<Vec<ShrinkPass>> {
         (0..PYRAMID_LEVELS)
             .map(|level| {
                 let (lw, lh) = level_sizes[level];
-                let colour = match level {
-                    0 => 0.5 * amounts.colour,
-                    _ => amounts.colour,
-                };
+                let colour = PYRAMID_COLOUR_BY_LEVEL[level] * amounts.colour;
                 let colour_strength = luma_strength.max(colour * colour);
                 offsets
                     .iter()
@@ -1923,9 +1473,7 @@ async fn run(
                                 Word::I(first),
                                 Word::F(0.25f32.powi(level as i32)),
                                 Word::F(1.0 / offsets.len() as f32),
-                                Word::F(guide_strength),
-                                Word::F(colour_strength),
-                                Word::F(colour_strength),
+                                Word::F(luma_strength),
                                 Word::F(colour_strength),
                                 Word::I((pass > 0) as i32),
                             ])
@@ -1943,7 +1491,6 @@ async fn run(
     };
     let luma_passes = passes_over(&PYRAMID_LUMA_OFFSETS);
     let single_passes = passes_over(&[(0, 0)]);
-    let restore_push = pushes.add(&[&[Word::I(w)][..], &size_words(0), &size_words(1)].concat());
 
     let uniforms = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("galosh pushes"),
@@ -1999,9 +1546,6 @@ async fn run(
         )
     };
     let (fx, fy) = groups(width, height, 16);
-    let (hx, hy) = groups(hw, hh, 16);
-    let (qx, qy) = groups(cq_w, cq_h, 16);
-    let (ex, ey) = groups(ce_w, ce_h, 16);
 
     lap("allocate");
     let encoder = recording.encoder();
@@ -2031,12 +1575,9 @@ async fn run(
                     .unwrap_or_else(|held| held.into_inner())
                     .push((kernel.name, x * y));
             }
-            // **A pass each, rather than one for the chain.** The planes here carry several roles
-            // between them, so most dispatches read what the one before them wrote; in a single
-            // pass on Metal those reads landed before the write did, and `pass12` denoised a frame
-            // that was still being transformed under it - 1.9M of its tile samples read back as
-            // something other than what they were copied from. A pass boundary is where WebGPU
-            // guarantees the write is visible.
+            // **A pass each, rather than one for the chain.** Most dispatches read what the one
+            // before them wrote, and in a single pass on Metal those reads landed before the write
+            // did. A pass boundary is where WebGPU guarantees the write is visible.
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, group, &[offset]);
@@ -2078,10 +1619,11 @@ async fn run(
             run(&galosh.ne_finalize, &g, finalize, 1, 1);
         }
 
-        // Phase 1: into the GAT domain, and the table that comes back out of it. A pyramid handed
-        // its fit has nothing left to measure on the stabilised frame, so its pack stabilises the
-        // mosaic as it reads it and this phase, the normalising and the dark subtraction go.
-        let packs_raw = pyramid && supplied.is_some();
+        // Phase 1: into the GAT domain, and the table that comes back out of it. A run handed its
+        // fit has nothing left to measure on the stabilised frame, so its pack stabilises the
+        // mosaic as it reads it, and this phase, the normalising and the dark subtraction are
+        // skipped.
+        let packs_raw = supplied.is_some();
         if !packs_raw {
             let g = bind(
                 &galosh.gat_forward_full,
@@ -2148,7 +1690,7 @@ async fn run(
         // slot, so what the reduction would report as a fixed-pattern offset is the frame's own
         // colour - subtracted here and added back by the inverse, and in between it is a
         // checkerboard the shrinkage sees. Left at zero instead.
-        if supplied.is_none() && reconstructs_bayer {
+        if supplied.is_none() && cfa.is_bayer() {
             for iteration in 0..3 {
                 run(&galosh.dark_ref_reduce, &reduce, wh, DR_WORKGROUPS, 1);
                 run(&galosh.dark_ref_finalize, &reduce_fin, n_wg, 1, 1);
@@ -2170,365 +1712,113 @@ async fn run(
         let size = |level: usize| level_sizes[level];
         let noisy = &pyramid_noisy;
         let shrunk = |level: usize| match level {
-            0 if pyramid => &full_a,
+            0 => &full_a,
             _ => &pyramid_shrunk[level],
         };
-        // Levels 0 and 1 in `noisy`, already written: the rest built, every level shrunk, and
-        // fused back up as far as level 1.
-        macro_rules! shrink_pyramid {
-            () => {
-                for level in 1..PYRAMID_LEVELS - 1 {
-                    let g = bind(
-                        &galosh.pyr_down,
-                        &[(0, &noisy[level]), (1, &noisy[level + 1])],
-                    );
-                    let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
-                    run(&galosh.pyr_down, &g, down_pushes[level - 1], dx, dy);
-                }
-                for level in 0..PYRAMID_LEVELS {
-                    let pilot = &pyramid_pilot;
-                    // The pyramid's colour takes its gains off each block's own pilot, so only
-                    // its luma is piloted; the hybrid's colour reads the pilot plane.
-                    let (colour, piloted) = match colour_pyramid {
-                        true => (&galosh.pyr_shrink_thresholded, PYRAMID_PLANES),
-                        false => (&galosh.pyr_shrink_own, 1),
-                    };
-                    // The luma shrinks before the colour, whose slope is fitted to it; the hybrid's
-                    // luma is the `pass12` it came with. The pilot reads no pilot; any plane of the
-                    // right usage stands in.
-                    let single = &single_passes[level];
-                    let passes = [
-                        (
-                            &galosh.pyr_pilot,
-                            pilot,
-                            &noisy[level],
-                            first_plane,
-                            piloted,
-                            single,
-                        ),
-                        (
-                            &galosh.pyr_shrink,
-                            shrunk(level),
-                            pilot,
-                            first_plane,
-                            1,
-                            &luma_passes[level],
-                        ),
-                        (colour, shrunk(level), pilot, 1, PYRAMID_PLANES, single),
-                    ];
-                    for (kernel, out, guide, from, to, over) in passes {
-                        if from >= to {
-                            continue;
-                        }
-                        let g = bind(kernel, &[(0, &noisy[level]), (1, out), (3, guide)]);
-                        for pass in over {
-                            let push = match from {
-                                0 => pass.from_luma,
-                                _ => pass.from_colour,
-                            };
-                            let across = pass.tiles_x * (to - from) as u32;
-                            run(kernel, &g, push, across, pass.tiles_y);
-                        }
-                    }
-                    if level + 1 < PYRAMID_LEVELS {
-                        let g = bind(
-                            &galosh.pyr_down,
-                            &[(0, shrunk(level)), (1, &pyramid_boxed[level])],
-                        );
-                        let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
-                        run(&galosh.pyr_down, &g, fuse_pushes[level], dx, dy);
-                    }
-                }
-                for level in (1..PYRAMID_LEVELS - 1).rev() {
-                    let g = bind(
-                        &galosh.pyr_fuse,
-                        &[
-                            (0, shrunk(level)),
-                            (1, &pyramid_boxed[level]),
-                            (2, shrunk(level + 1)),
-                        ],
-                    );
-                    let (ux, uy) = groups(size(level).0, size(level).1, 16);
-                    run(&galosh.pyr_fuse, &g, fuse_pushes[level], ux, uy);
-                }
-            };
-        }
-
-        if pyramid {
-            let (pack, mosaic) = match packs_raw {
-                true => (&galosh.pyr_pack_raw, &raw),
-                false => (&galosh.pyr_pack, &full_a),
-            };
-            let g = bind(
-                pack,
-                &[(0, mosaic), (1, &noisy[0]), (2, &noisy[1]), (3, &params)],
-            );
-            let (px, py) = groups(size(1).0, size(1).1, 16);
-            run(pack, &g, pack_push, px, py);
-            shrink_pyramid!();
-            let g = bind(
-                &galosh.pyr_restore,
-                &[
-                    (0, &full_a),
-                    (1, &pyramid_boxed[0]),
-                    (2, shrunk(1)),
-                    (4, &raw),
-                    (5, &lut_d),
-                    (6, &lut_x),
-                    (7, &lut_params),
-                    (8, &params),
-                ],
-            );
-            run(&galosh.pyr_restore, &g, restore_push, hx, hy);
-            done.set(true);
-        }
-
-        // Phases 4 and 3: the chroma per site, then the plane the shrinkage reads.
-        //
-        // Chroma first, which is the order the dependency runs in off a pattern wider than a 2x2:
-        // there Phase 3 takes each photosite's colour offset off the frame, and the offset is what
-        // Phase 4 just measured.
-        let g = bind(
-            &galosh.chroma_extract_halfres,
-            &[(0, &full_a), (1, &c_h[0]), (2, &c_h[1]), (3, &c_h[2])],
-        );
-        run(&galosh.chroma_extract_halfres, &g, extract, hx, hy);
-        let g = bind(
-            &galosh.forward_l_stride1,
-            &[(0, &full_a), (1, &full_b), (2, &c_h[0]), (3, &c_h[1])],
-        );
-        run(&galosh.forward_l_stride1, &g, forward, fx, fy);
-
-        // Phase 5: the shrinkage. `full_a` held the GAT frame until the dispatch above.
-        //
-        // **At zero luma the shrinkage is the frame, so it is copied rather than computed.**
-        // `does_anything` is an *or*, so denoising colour alone reaches here with nothing to
-        // threshold - and this kernel is the largest single stage of the denoise, half of it at
-        // four phases and better than a third at the shipped two.
-        // `at_zero_luma_the_shrinkage_returns_the_frame` is the claim that the copy is the same
-        // picture.
-        let shrinkage = match phases() {
-            2 => &galosh.pass12_pair,
-            4 => &galosh.pass12_quarter,
-            8 => &galosh.pass12_half,
-            _ => &galosh.pass12,
+        let (pack, mosaic) = match packs_raw {
+            true => (&galosh.pyr_pack_raw, &raw),
+            false => (&galosh.pyr_pack, &full_a),
         };
-        match amounts.luma > 0.0 {
-            true => {
-                let g = bind(shrinkage, &[(0, &full_b), (1, &full_a)]);
-                let (px, py) = groups(width, height, PASS12_TILE);
-                run(shrinkage, &g, shrink, px, py);
-            }
-            false => {
-                let g = bind(&galosh.copy_2d_clamped, &[(0, &full_b), (1, &full_a)]);
-                run(&galosh.copy_2d_clamped, &g, whole_to_whole, fx, fy);
-            }
-        }
-
-        // Phase 6: the phases averaged back. `full_b` held the transform.
-        let pooled = if phase_pooled() {
-            &galosh.lpixel_lh_den_fused
-        } else {
-            &galosh.lpixel_lh_den_unpooled
-        };
-        let g = bind(pooled, &[(0, &full_a), (1, &full_b), (2, &l_h_den)]);
-        run(pooled, &g, overlap, fx, fy);
-
-        // Phase 6b: the band the full-resolution pass is blind to, smoothed rather than shrunk.
-        if walks {
-            // Each push is the *source's* shape, this kernel's destination being half of it.
+        let g = bind(
+            pack,
+            &[
+                (0, mosaic),
+                (1, &noisy[0]),
+                (2, &noisy[1]),
+                (3, &params),
+                (9, &transform),
+            ],
+        );
+        let (px, py) = groups(size(1).0, size(1).1, 16);
+        run(pack, &g, site_push, px, py);
+        for level in 1..PYRAMID_LEVELS - 1 {
             let g = bind(
-                &galosh.box_downsample_2x,
-                &[(0, &full_b), (1, &coarse_half)],
+                &galosh.pyr_down,
+                &[(0, &noisy[level]), (1, &noisy[level + 1])],
             );
-            run(&galosh.box_downsample_2x, &g, wh, hx, hy);
-            let g = bind(
-                &galosh.box_downsample_2x,
-                &[(0, &coarse_half), (1, &coarse)],
-            );
-            let (lx, ly) = groups(lcw, lch, 16);
-            run(&galosh.box_downsample_2x, &g, down_coarse, lx, ly);
-            let g = bind(&galosh.coarse_smooth, &[(0, &coarse), (1, &coarse_den)]);
-            run(&galosh.coarse_smooth, &g, smooth_coarse, lx, ly);
+            let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
+            run(&galosh.pyr_down, &g, down_pushes[level - 1], dx, dy);
         }
-
-        let filters_colour = amounts.colour > 0.0;
-        if brackets {
-            for push in [detail_predict, detail_out] {
+        for level in 0..PYRAMID_LEVELS {
+            // The pilot reads no pilot; any plane of the right usage stands in.
+            let pilot = &pyramid_pilot;
+            let single = &single_passes[level];
+            let passes = [
+                (&galosh.pyr_pilot, pilot, &noisy[level], 0, 1, single),
+                (
+                    &galosh.pyr_shrink,
+                    shrunk(level),
+                    pilot,
+                    0,
+                    1,
+                    &luma_passes[level],
+                ),
+                (
+                    &galosh.pyr_shrink_own,
+                    shrunk(level),
+                    pilot,
+                    1,
+                    planes,
+                    single,
+                ),
+            ];
+            for (kernel, out, guide, from, to, over) in passes {
                 let g = bind(
-                    &galosh.chroma_detail,
+                    kernel,
                     &[
-                        (0, &full_a),
-                        (1, &c_h[0]),
-                        (2, &c_h[1]),
-                        (3, &c_h[2]),
-                        (4, &c_detail[0]),
-                        (5, &c_detail[1]),
-                        (6, &c_detail[2]),
+                        (0, &noisy[level]),
+                        (1, out),
+                        (3, guide),
+                        (4, &basis),
+                        (5, &params),
                     ],
                 );
-                run(&galosh.chroma_detail, &g, push, hx, hy);
+                for pass in over {
+                    let push = match from {
+                        0 => pass.from_luma,
+                        _ => pass.from_colour,
+                    };
+                    let across = pass.tiles_x * (to - from) as u32;
+                    run(kernel, &g, push, across, pass.tiles_y);
+                }
+            }
+            if level + 1 < PYRAMID_LEVELS {
+                let g = bind(
+                    &galosh.pyr_down,
+                    &[(0, shrunk(level)), (1, &pyramid_boxed[level])],
+                );
+                let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
+                run(&galosh.pyr_down, &g, fuse_pushes[level], dx, dy);
             }
         }
-        if colour_pyramid {
+        for level in (1..PYRAMID_LEVELS - 1).rev() {
             let g = bind(
-                &galosh.pyr_gather,
+                &galosh.pyr_fuse,
                 &[
-                    (0, &l_h_den),
-                    (1, &c_h[0]),
-                    (2, &c_h[1]),
-                    (3, &c_h[2]),
-                    (4, &noisy[0]),
-                    (5, &noisy[1]),
+                    (0, shrunk(level)),
+                    (1, &pyramid_boxed[level]),
+                    (2, shrunk(level + 1)),
                 ],
             );
-            let (gx, gy) = groups(size(1).0, size(1).1, 16);
-            run(&galosh.pyr_gather, &g, fuse_pushes[0], gx, gy);
-            shrink_pyramid!();
-            let g = bind(
-                &galosh.pyr_scatter,
-                &[
-                    (0, shrunk(0)),
-                    (1, &pyramid_boxed[0]),
-                    (2, shrunk(1)),
-                    (3, &c_loess_h[0]),
-                    (4, &c_loess_h[1]),
-                    (5, &c_loess_h[2]),
-                ],
-            );
-            run(&galosh.pyr_scatter, &g, fuse_pushes[0], hx, hy);
+            let (ux, uy) = groups(size(level).0, size(level).1, 16);
+            run(&galosh.pyr_fuse, &g, fuse_pushes[level], ux, uy);
         }
-        if walks_third {
-            for (from, to) in [
-                (&l_h_den, &l_q),
-                (&c_h[0], &c_q[0]),
-                (&c_h[1], &c_q[1]),
-                (&c_h[2], &c_q[2]),
-            ] {
-                let g = bind(&galosh.box_downsample_2x, &[(0, from), (1, to)]);
-                run(&galosh.box_downsample_2x, &g, down_h, qx, qy);
-            }
-        }
-
-        if walks_fourth {
-            for (from, to) in [
-                (&l_q, &l_e),
-                (&c_q[0], &c_e[0]),
-                (&c_q[1], &c_e[1]),
-                (&c_q[2], &c_e[2]),
-            ] {
-                let g = bind(&galosh.box_downsample_2x, &[(0, from), (1, to)]);
-                run(&galosh.box_downsample_2x, &g, down_q, ex, ey);
-            }
-        }
-
-        if filters_colour && !colour_pyramid {
-            let g = bind(
-                &galosh.loess_chroma_3p_tiled,
-                &loess_binds(&l_h_den, &c_h, &c_loess_h),
-            );
-            let (lx, ly) = groups(hw, hh, LOESS_TILE);
-            run(&galosh.loess_chroma_3p_tiled, &g, loess_h, lx, ly);
-        }
-
-        if walks_third {
-            let g = bind(
-                &galosh.loess_chroma_3p_tiled,
-                &loess_binds(&l_q, &c_q, &c_loess_q),
-            );
-            let (lx, ly) = groups(cq_w, cq_h, LOESS_TILE);
-            run(&galosh.loess_chroma_3p_tiled, &g, loess_q, lx, ly);
-        }
-        if walks_fourth {
-            let g = bind(
-                &galosh.loess_chroma_3p_tiled,
-                &loess_binds(&l_e, &c_e, &c_loess_e),
-            );
-            let (lx, ly) = groups(ce_w, ce_h, LOESS_TILE);
-            run(&galosh.loess_chroma_3p_tiled, &g, loess_e, lx, ly);
-        }
-
-        if walks_third {
-            let g = bind(
-                &galosh.chroma_reconstruct,
-                &reconstruct_binds(&c_loess_q, &c_loess_h, &c_q_h),
-            );
-            run(&galosh.chroma_reconstruct, &g, reconstruct_q_h, hx, hy);
-        }
-
-        if walks_fourth {
-            let g = bind(
-                &galosh.chroma_reconstruct,
-                &reconstruct_binds(&c_loess_e, &c_loess_q, &c_e_q),
-            );
-            run(&galosh.chroma_reconstruct, &g, reconstruct_e_q, qx, qy);
-            let g = bind(
-                &galosh.chroma_reconstruct,
-                &reconstruct_binds(&c_e_q, &c_q_h, &c_e_h),
-            );
-            run(&galosh.chroma_reconstruct, &g, reconstruct_e_h, hx, hy);
-        }
-
-        // Phase 8: the colour strength, as a walk along those four anchors, answered back
-        // over the regression it walks from.
-        if filters_colour && !colour_pyramid {
-            let g = bind(
-                &galosh.smoothstep_blend_3p,
-                &[
-                    (0, if walks_third { &c_q_h[0] } else { &c_h[0] }),
-                    (1, if walks_third { &c_q_h[1] } else { &c_h[1] }),
-                    (2, if walks_third { &c_q_h[2] } else { &c_h[2] }),
-                    (3, &c_loess_h[0]),
-                    (4, &c_loess_h[1]),
-                    (5, &c_loess_h[2]),
-                    // The first anchor where the fourth was never built, which is never read: a
-                    // binding cannot be left empty, and a plane of no length cannot be bound.
-                    (6, if walks_fourth { &c_e_h[0] } else { &c_h[0] }),
-                    (7, if walks_fourth { &c_e_h[1] } else { &c_h[1] }),
-                    (8, if walks_fourth { &c_e_h[2] } else { &c_h[2] }),
-                ],
-            );
-            run(&galosh.smoothstep_blend_3p, &g, blend, hx, hy);
-        }
-        if reconstructs_bayer {
-            let g = bind(
-                &galosh.reconstruct_bayer,
-                &[
-                    (0, &c_loess_h[0]),
-                    (1, &c_loess_h[1]),
-                    (2, &c_loess_h[2]),
-                    (3, &full_a),
-                    (4, &raw),
-                    (5, &params),
-                    (6, &full_b),
-                ],
-            );
-            run(&galosh.reconstruct_bayer, &g, reconstruct_bayer, fx, fy);
-        }
-        if walks {
-            let g = bind(
-                &galosh.coarse_correct,
-                &[(0, &coarse_den), (1, &coarse), (2, &full_b)],
-            );
-            run(&galosh.coarse_correct, &g, coarse_correct, fx, fy);
-        }
-        let chroma = if filters_colour { &c_loess_h } else { &c_h };
-
         let g = bind(
-            &galosh.restore_mosaic,
+            &galosh.pyr_restore,
             &[
-                (0, &chroma[0]),
-                (1, &chroma[1]),
-                (2, &chroma[2]),
-                (3, &full_b),
+                (0, &full_a),
+                (1, &pyramid_boxed[0]),
+                (2, shrunk(1)),
                 (4, &raw),
                 (5, &lut_d),
                 (6, &lut_x),
                 (7, &lut_params),
                 (8, &params),
+                (9, &transform),
             ],
         );
-        run(&galosh.restore_mosaic, &g, inverse, fx, fy);
+        let (rx, ry) = groups(size(0).0, size(0).1, 16);
+        run(&galosh.pyr_restore, &g, site_push, rx, ry);
     }
     // Only where nothing was supplied. Phase 0 and Phase 2 are the dispatches that write these
     // slots, both are skipped when the caller brought a fit, and `irls_seed` - the one thing that
@@ -2616,23 +1906,8 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
 mod tests {
     use super::{
         ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, Denoiser, Detail, LUT_SIZE, NoiseFit,
-        NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, SIGMA_BINS,
-        Shrink, denoise, device, phases,
+        NoiseModel, P_ALPHA, P_DARK_REF0, P_SIGMA_SQ, P_UNIFIED_SIGMA, SIGMA_BINS, denoise, device,
     };
-
-    /// How many phases every frame is shrunk over, which is a quality decision rather than a tuning.
-    ///
-    /// **Raising it costs a multiple of the shrinkage for a difference nobody could point at.** The
-    /// measurements behind the number are on [`super::phases`]; what this pins is that the number
-    /// stays a deliberate change, since nothing else in the suite fails when it moves - a frame
-    /// denoised over sixteen phases is a *correct* picture, only a slower one.
-    ///
-    /// The pair is only safe *because* it runs down the diagonal, so the two move together: two
-    /// phases without `PHASE_DIAGONAL` is the striped shadow [`super::phases`] measures.
-    #[test]
-    fn every_frame_is_shrunk_over_two_phases() {
-        assert_eq!(phases(), 2);
-    }
 
     /// The params slots, against the shader that declares them.
     ///
@@ -2659,7 +1934,6 @@ mod tests {
         };
         for (name, here) in [
             ("P_UNIFIED_SIGMA", P_UNIFIED_SIGMA),
-            ("P_INV_SG", P_INV_SG),
             ("P_DARK_REF0", P_DARK_REF0),
             ("P_ALPHA", P_ALPHA),
             ("P_SIGMA_SQ", P_SIGMA_SQ),
@@ -2701,8 +1975,8 @@ mod tests {
         const SLANG: &str = include_str!("../../../slang/galosh/pyramid.slang");
         for line in [
             format!(
-                "public static const int PLANES = {};",
-                super::PYRAMID_PLANES
+                "public static const int MAX_PLANES = {};",
+                super::PYRAMID_MAX_PLANES
             ),
             format!(
                 "public static const int LEVELS = {};",
@@ -2720,11 +1994,6 @@ mod tests {
         let pack = include_str!("../../../slang/galosh/pyr_pack.slang");
         for (slang, id, name) in [
             (shrink, super::PYRAMID_PILOT_ID, "PILOT"),
-            (
-                shrink,
-                super::PYRAMID_THRESHOLDED_GUIDE_ID,
-                "THRESHOLDED_GUIDE",
-            ),
             (shrink, super::PYRAMID_OWN_PILOT_ID, "OWN_PILOT"),
             (pack, super::PYRAMID_FROM_RAW_ID, "FROM_RAW"),
         ] {
@@ -2820,48 +2089,25 @@ mod tests {
         );
     }
 
-    /// The Detail track's landmarks.
-    ///
     /// Every host reaches the kernels through this function, so what needs pinning is not two
     /// implementations against each other but this one against the numbers it is meant to produce.
     #[test]
     fn the_track_ends_where_a_photograph_still_survives_it() {
-        // The calibrated point - exactly the noise Phase 0 measured, treated as noise - is not the
-        // midpoint. The track stops short of twice it, so 1.0 sits above the middle.
-        let calibrated = Amounts::from_sliders(62.5, 62.5);
-        assert!(
-            (calibrated.luma - 1.0).abs() < 1e-6,
-            "luma {}",
-            calibrated.luma
-        );
-
-        // Colour's landmarks are its anchors, one per third of the track: the half-resolution
-        // regression exactly at a third, the quarter-resolution level at two thirds, and the walk
-        // above each that `walks_third` and `walks_fourth` gate on.
-        let third = Amounts::from_sliders(0.0, 100.0 / 3.0);
-        assert!((third.colour - 1.0).abs() < 1e-6, "colour {}", third.colour);
-        let two_thirds = Amounts::from_sliders(0.0, 200.0 / 3.0);
-        assert!(
-            (two_thirds.colour - 2.0).abs() < 1e-6,
-            "colour {}",
-            two_thirds.colour
-        );
-
-        // The end of each track. Luminance stops where the library's noisiest frame was still a
-        // photograph rather than a blur; colour stops where `smoothstep_blend_3p` stops answering,
-        // which is the fourth anchor exactly.
-        assert!((Amounts::from_sliders(100.0, 100.0).luma - 1.6).abs() < 1e-6);
+        assert!((Amounts::from_sliders(100.0, 100.0).luma - 0.992).abs() < 1e-6);
         assert!((Amounts::from_sliders(100.0, 100.0).colour - 3.0).abs() < 1e-6);
         assert_eq!(Amounts::from_sliders(0.0, 0.0).does_anything(), false);
 
         // **What `photo_edits.ts` actually ships, in the units the kernels read.** The schema's
         // defaults are positions on this track, so moving the track's top moves what every stored
-        // edit means - these two by a fifth when it came down from twice the calibrated point. A
-        // position is pinned here rather than there because this is the only side that can say what
-        // it is worth, and a silent change to what the shipped default denoises at is precisely the
-        // thing nothing else in either suite would notice.
+        // edit means. A position is pinned here rather than there because this is the only side
+        // that can say what it is worth, and a silent change to what the shipped default denoises
+        // at is precisely the thing nothing else in either suite would notice.
         let shipped = Amounts::from_sliders(20.0, 30.0);
-        assert!((shipped.luma - 0.32).abs() < 1e-6, "luma {}", shipped.luma);
+        assert!(
+            (shipped.luma - 0.1984).abs() < 1e-6,
+            "luma {}",
+            shipped.luma
+        );
         assert!(
             (shipped.colour - 0.9).abs() < 1e-6,
             "colour {}",
@@ -2889,22 +2135,18 @@ mod tests {
         assert!((35.0..45.0).contains(&luma), "luma {luma}");
         assert_eq!(
             colour, 100.0,
-            "the noisiest frame in the library does not ask for every scale"
+            "the noisiest frame in the library does not reach the end of the Colour track"
         );
 
         // A frame the ramp puts mid-track, where the lead is the lead rather than the clamp: this
-        // is `IMG_4138` at ISO 2000, whose colour still runs past 50, where the chroma pyramid
-        // stops an octave short of the eighth-resolution anchor.
+        // is `IMG_4138` at ISO 2000.
         let (luma, colour) = at(0.00235);
         assert!(colour > luma, "colour {colour} does not lead luma {luma}");
         assert!(
             (colour - luma * COLOUR_LEAD).abs() < 1e-6,
             "colour {colour} is not the lead"
         );
-        assert!(
-            (55.0..75.0).contains(&colour),
-            "colour {colour} does not reach the coarse level"
-        );
+        assert!((55.0..75.0).contains(&colour), "colour {colour}");
     }
 
     /// What an unset slider resolves to, and what a decode may conclude before it has measured.
@@ -2970,8 +2212,8 @@ mod tests {
                 previous = now;
             }
         }
-        assert!((left(62.5, Denoiser::Galosh) - 0.029).abs() < 1e-6);
-        assert!((left(56.25, Denoiser::Galosh) - 0.0405).abs() < 1e-6);
+        assert!((left(62.5, Denoiser::Galosh) - 0.068).abs() < 1e-6);
+        assert!((left(56.25, Denoiser::Galosh) - 0.129).abs() < 1e-6);
         assert!((left(50.0, Denoiser::Pmrid) - 0.25).abs() < 1e-6);
         assert!((left(75.0, Denoiser::Upscaler) - 0.0625).abs() < 1e-6);
         for denoiser in [Denoiser::Galosh, Denoiser::Pmrid, Denoiser::Upscaler] {
@@ -3122,121 +2364,46 @@ mod tests {
     /// Tiling is a schedule and not a filter, and the progress it reports is a fraction.
     ///
     /// **The failure this exists for is silent and looks like a denoise.** A halo dropped, an
-    /// origin off `pass12`'s grid or at odd parity, a crop-back off by a row: nothing errors, no
-    /// dimension is wrong, and the picture is simply not the one an export would produce. Three
-    /// tile sizes, none a multiple of the 56 the origins round to, because a geometry bug commonly
-    /// survives the size it was written against.
+    /// origin off the lattice or a period, a crop-back off by a row: nothing errors, no dimension
+    /// is wrong, and the picture is simply not the one an export would produce. Tile sizes on no
+    /// lattice, because a geometry bug commonly survives the size it was written against.
     ///
-    /// **1792 and not 512, though 512 would run in a third of the time.** Unaligned tiling leaves a
-    /// 512px frame bit-identical anyway, so a frame that size cannot tell the rounding from its
-    /// absence and this test would pass against the bug it exists for.
+    /// And the reach the halo is floored at, measured: one photosite moved in the middle of the
+    /// frame moves nothing further than [`super::reach`] from it. A tiling with too small a halo is
+    /// only caught where a tile's edge falls within reach of real structure, which the reach check
+    /// catches anywhere.
     #[test]
     fn tiling_the_denoise_does_not_move_a_sample() {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else {
-            return;
-        };
-        let Some(kernels) = device(gpu) else { return };
-
-        let (w, h) = (1792usize, 1792usize);
-        let mosaic = frame(w, h);
-        // Colour at the end of its track, because the halo is sized for the deepest level the walk
-        // can reach and the eighth-resolution anchor is the deepest: at 50 the chroma pyramid stops
-        // an octave short and a halo too small for it would still pass.
-        let amounts = Amounts::from_sliders(50.0, 100.0);
-        // The frame's own, handed to every tile: measured per tile it would be each tile's
-        // statistics, which is a different denoise before any halo is considered.
-        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-        let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &rggb()));
-        let whole = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-        pollster::block_on(super::denoise_with(
-            gpu,
-            kernels,
-            &whole,
-            &rggb(),
-            amounts,
-            fit,
-        ));
-        let whole = read(gpu, &whole);
-
-        for tile in [128usize, 192, 256] {
-            let mut tiled = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-            let mut ticks = Vec::new();
-            pollster::block_on(super::denoise_in_tiles(
-                gpu,
-                kernels,
-                &mut tiled,
-                &rggb(),
-                amounts,
-                fit,
-                crate::RENDITION_TILE_HALO,
-                tile,
-                |done| ticks.push(done),
-            ));
-            let actual = read(gpu, &tiled);
-            assert_eq!(actual.len(), whole.len());
-            if let Some((at, (&got, &expected))) = actual
-                .iter()
-                .zip(&whole)
-                .enumerate()
-                .find(|(_, (a, b))| a != b)
-            {
-                panic!("a {tile}px tiling moved sample {at}: {got} instead of {expected}");
-            }
-            assert!(
-                ticks.len() > 1,
-                "a {tile}px tiling reported {} tiles",
-                ticks.len()
-            );
-            assert!(
-                ticks.windows(2).all(|pair| pair[1] > pair[0]),
-                "{ticks:?} went backwards"
-            );
-            assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
-        }
-    }
-
-    /// The same for either pyramid, at tile sizes on neither lattice, and the reach its halo is
-    /// floored at measured: one photosite moved in the middle of the frame moves nothing further
-    /// than [`super::PYRAMID_REACH`] from it. A tiling with too small a halo is only caught where a
-    /// tile's edge falls within reach of real structure, which the reach check catches anywhere.
-    #[test]
-    fn the_pyramid_tiles_without_moving_a_sample() {
-        let _held = ONE_DENOISE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let kernels = device(gpu).expect("the GALOSH kernels");
-        let (w, h) = (1792usize, 1344usize);
+        // Neither a whole number of X-Trans periods, so the last tile ends mid-period.
+        let (w, h) = (1730usize, 1342usize);
         let mosaic = frame(w, h);
-        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-        let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &rggb()));
-        let denoised = |samples: &[f32], amounts: Amounts| {
-            let whole = crate::condition::Mosaic::upload(gpu, samples, w, h);
-            pollster::block_on(super::denoise_with(
-                gpu,
-                kernels,
-                &whole,
-                &rggb(),
-                amounts,
-                fit,
-            ));
-            read(gpu, &whole)
-        };
-        for shrink in [Shrink::Pyramid, Shrink::ColourPyramid] {
-            let amounts = Amounts {
-                shrink,
-                ..Amounts::from_sliders(50.0, 100.0)
+        let amounts = Amounts::from_sliders(50.0, 100.0);
+        for cfa in [rggb(), xtrans()] {
+            // The frame's own, handed to every tile: measured per tile it would be each tile's
+            // statistics, which is a different denoise before any halo is considered.
+            let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+            let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &cfa));
+            let denoised = |samples: &[f32]| {
+                let whole = crate::condition::Mosaic::upload(gpu, samples, w, h);
+                pollster::block_on(super::denoise_with(
+                    gpu, kernels, &whole, &cfa, amounts, fit,
+                ));
+                read(gpu, &whole)
             };
-            let whole = denoised(&mosaic, amounts);
+            let whole = denoised(&mosaic);
 
             // At either end of a coarsest site, which is where its reach runs farthest one way.
-            for (cx, cy) in [(w / 2, h / 2), (w / 2 + 15, h / 2 + 15)] {
+            let span = super::coarsest_site(super::site_side(&cfa).expect("a site"));
+            let reach = super::reach(&cfa, 0);
+            for (cx, cy) in [(w / 2, h / 2), (w / 2 + span - 1, h / 2 + span - 1)] {
                 let mut moved = mosaic.clone();
                 moved[cy * w + cx] += 0.25;
-                let farthest = denoised(&moved, amounts)
+                let farthest = denoised(&moved)
                     .iter()
                     .zip(&whole)
                     .enumerate()
@@ -3245,24 +2412,24 @@ mod tests {
                     .max()
                     .expect("moving a photosite moved its own output");
                 assert!(
-                    farthest <= super::PYRAMID_REACH,
-                    "{shrink:?}: a photosite at {cx},{cy} reached {farthest}, past {}",
-                    super::PYRAMID_REACH
+                    farthest <= reach,
+                    "{cfa:?}: a photosite at {cx},{cy} reached {farthest}, past {reach}"
                 );
             }
 
             for tile in [300usize, 700] {
                 let mut tiled = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+                let mut ticks = Vec::new();
                 pollster::block_on(super::denoise_in_tiles(
                     gpu,
                     kernels,
                     &mut tiled,
-                    &rggb(),
+                    &cfa,
                     amounts,
                     fit,
                     crate::RENDITION_TILE_HALO,
                     tile,
-                    |_| {},
+                    |done| ticks.push(done),
                 ));
                 if let Some((at, (&got, &expected))) = read(gpu, &tiled)
                     .iter()
@@ -3271,9 +2438,19 @@ mod tests {
                     .find(|(_, (a, b))| a != b)
                 {
                     panic!(
-                        "{shrink:?}: a {tile}px tiling moved sample {at}: {got} instead of {expected}"
+                        "{cfa:?}: a {tile}px tiling moved sample {at}: {got} instead of {expected}"
                     );
                 }
+                assert!(
+                    ticks.len() > 1,
+                    "a {tile}px tiling reported {} tiles",
+                    ticks.len()
+                );
+                assert!(
+                    ticks.windows(2).all(|pair| pair[1] > pair[0]),
+                    "{ticks:?} went backwards"
+                );
+                assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
             }
         }
     }
@@ -3355,7 +2532,6 @@ mod tests {
             Amounts {
                 luma: 1.0,
                 colour: 1.0,
-                ..Amounts::default()
             },
         ));
         let denoised = read(gpu, &uploaded);
@@ -3377,13 +2553,8 @@ mod tests {
         );
     }
 
-    /// A silhouette edge must not come back wearing a stripe.
-    ///
-    /// The inverse pairs the phase-averaged luma with chroma that exists only at site phase,
-    /// so any luma the average mixes across a hard step prints on the two adjacent rows with
-    /// alternating sign - `lpixel_lh_den_fused` weighs its phases to prevent exactly this,
-    /// and this is the pin that holds it. A row's mean change is the stripe's own measure:
-    /// legitimate denoising is zero-mean over a row, the stripe is not.
+    /// A silhouette edge must not come back wearing a stripe. A row's mean change is the stripe's
+    /// own measure: legitimate denoising is zero-mean over a row, the stripe is not.
     #[test]
     fn a_hard_edge_comes_back_without_a_stripe() {
         let Some(gpu) = crate::gpu::device() else {
@@ -3427,7 +2598,6 @@ mod tests {
                 .map(|col| f64::from(denoised[row * width + col] - noisy[row * width + col]))
                 .sum::<f64>()
                 / width as f64;
-            // The plain average printed 0.005 here; the weighted one leaves 0.0002.
             assert!(
                 mean.abs() < 0.001,
                 "row {row} moved by {mean:.5} on average, which is a stripe rather than a denoise",
@@ -3685,8 +2855,8 @@ mod tests {
 
     /// A colour step at the top of the Colour track must stay where the scene put it.
     ///
-    /// The coarse levels are box downsamples, so taken whole the eighth spread a saturated green
-    /// on grey across sixteen pixels; `LEVEL_REACH` is the pin's subject.
+    /// The coarse levels are box downsamples, so a fuse that took one whole would spread a
+    /// saturated green on grey across its sites.
     #[test]
     fn a_colour_step_does_not_bleed_off_the_coarse_levels() {
         let Some(gpu) = crate::gpu::device() else {
@@ -3734,7 +2904,6 @@ mod tests {
                 .sum::<f32>()
                 / (height / 2) as f32;
             let off = (mean - level(x, 0)).abs() / 0.07;
-            // Ungated, six pixels off the step read a quarter of it and twelve read 0.07.
             assert!(off < 0.03, "column {x} carries {off:.3} of the step");
         }
     }
@@ -3785,14 +2954,14 @@ mod tests {
                 1.0,
                 [
                     [
-                        [1.297094919, 0.712056294],
-                        [0.619382527, 0.474773657],
-                        [0.362962954, 0.334762412],
+                        [1.096333498, 0.496347845],
+                        [0.857262617, 0.558589090],
+                        [0.694794283, 0.570835065],
                     ],
                     [
-                        [2.455099568, 1.143731500],
-                        [1.131751345, 0.889216033],
-                        [0.737119740, 0.651836320],
+                        [1.622444252, 0.633909965],
+                        [1.317668894, 0.820364125],
+                        [1.092765995, 0.802207144],
                     ],
                 ],
             ),
@@ -3800,14 +2969,14 @@ mod tests {
                 1.35,
                 [
                     [
-                        [1.239549811, 0.673791894],
-                        [0.595188773, 0.438468152],
-                        [0.327387536, 0.286349654],
+                        [0.662404700, 0.361501898],
+                        [0.478916292, 0.264678290],
+                        [0.437765863, 0.311357993],
                     ],
                     [
-                        [2.249911676, 1.032192491],
-                        [1.023864620, 0.789141386],
-                        [0.637942304, 0.559494575],
+                        [0.951171657, 0.418388562],
+                        [0.782900003, 0.373220468],
+                        [0.684463680, 0.443636453],
                     ],
                 ],
             ),
@@ -3815,14 +2984,14 @@ mod tests {
                 2.0,
                 [
                     [
-                        [1.130417958, 0.589624808],
-                        [0.582204233, 0.400156991],
-                        [0.331636811, 0.273442708],
+                        [0.322350548, 0.306784691],
+                        [0.207024123, 0.148761067],
+                        [0.277144994, 0.227971706],
                     ],
                     [
-                        [1.944914664, 0.827576316],
-                        [0.870718198, 0.625624022],
-                        [0.546510353, 0.483125570],
+                        [0.768952835, 0.345108736],
+                        [0.483009320, 0.205263645],
+                        [0.436517772, 0.300653922],
                     ],
                 ],
             ),
@@ -3830,14 +2999,14 @@ mod tests {
                 3.0,
                 [
                     [
-                        [1.115272005, 0.581262017],
-                        [0.558324149, 0.369815323],
-                        [0.294650478, 0.227699657],
+                        [0.349276615, 0.301597329],
+                        [0.207132086, 0.146991116],
+                        [0.276766438, 0.229558114],
                     ],
                     [
-                        [1.893297836, 0.798270642],
-                        [0.780362605, 0.542186515],
-                        [0.440758418, 0.387218849],
+                        [0.594889805, 0.343928446],
+                        [0.398224721, 0.199053366],
+                        [0.412301377, 0.293668612],
                     ],
                 ],
             ),
@@ -3889,7 +3058,6 @@ mod tests {
                 let amounts = Amounts {
                     luma: 0.528,
                     colour,
-                    ..Amounts::default()
                 };
                 pollster::block_on(super::denoise_with(
                     gpu, galosh, &uploaded, &cfa, amounts, fit,
@@ -4089,7 +3257,6 @@ mod tests {
                 .map(|at| denoised[at])
                 .collect();
             let lift = ring.iter().sum::<f32>() / ring.len() as f32 / outside - 1.0;
-            // A ceiling of half on the interior gains read 0.16 here, one pixel out.
             assert!(
                 lift.abs() < 0.04,
                 "{band}px outside the rim is lifted by {lift:.3}"
@@ -4144,11 +3311,7 @@ mod tests {
                     galosh,
                     &uploaded,
                     &cfa,
-                    Amounts {
-                        luma: 0.0,
-                        colour,
-                        ..Amounts::default()
-                    },
+                    Amounts { luma: 0.0, colour },
                     fit,
                 ));
                 let rgb = pollster::block_on(crate::demosaic::demosaic_plane(
@@ -4218,11 +3381,11 @@ mod tests {
 
     /// Texture on a coloured surface must survive the colour denoise.
     ///
-    /// A site's three differences carry the brightness change across it as well as its hue, so a
-    /// pyramid that smooths them as hue takes the texture with the noise and the inverse rebuilds
-    /// each site flat - skin and hair come back painted, with the site grid showing through.
-    /// `chroma_detail` is the pin's subject. Green, because on a coloured surface the modulation
-    /// lands in the greens alone and a grey model of it would miss most of it.
+    /// A site's differences carry the brightness change across it as well as its hue, so a shrink
+    /// that smooths them as hue takes the texture with the noise and the inverse rebuilds each site
+    /// flat - skin and hair come back painted, with the site grid showing through. Green, because
+    /// on a coloured surface the modulation lands in the greens alone and a grey model of it would
+    /// miss most of it.
     #[test]
     fn texture_on_a_coloured_surface_survives_the_colour_denoise() {
         let Some(gpu) = crate::gpu::device() else {
@@ -4270,7 +3433,6 @@ mod tests {
             }
         }
         let kept = along / power;
-        // 0.69 with the bracket and 0.33 without it.
         assert!(
             kept > 0.6,
             "the colour denoise kept {kept:.3} of the texture"
@@ -4281,6 +3443,10 @@ mod tests {
     /// being indexed by the same 2x2 slot.
     fn rggb() -> crate::cfa::Cfa {
         crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern")
+    }
+
+    fn xtrans() -> crate::cfa::Cfa {
+        crate::cfa::tests::parse(crate::cfa::tests::XTRANS, 6, 6)
     }
 
     /// Xorshift from `seed`, uniform on [0, 1).
@@ -4369,7 +3535,6 @@ mod tests {
                 Amounts {
                     luma: 0.528,
                     colour,
-                    ..Amounts::default()
                 },
                 fit,
             ));
@@ -4408,7 +3573,6 @@ mod tests {
                 Amounts {
                     luma: 0.528,
                     colour,
-                    ..Amounts::default()
                 },
                 fit,
             ));
@@ -4457,7 +3621,6 @@ mod tests {
                 Amounts {
                     luma: 0.528,
                     colour,
-                    ..Amounts::default()
                 },
                 fit,
             ));
@@ -4498,7 +3661,6 @@ mod tests {
             Amounts {
                 luma: 1.0,
                 colour: 1.0,
-                ..Amounts::default()
             },
         ));
         let denoised = read(gpu, &uploaded);
@@ -4528,102 +3690,228 @@ mod tests {
         );
     }
 
-    /// The pyramid and the hybrid denoise the same frame as the blocks do, finite, flat ground
-    /// quieter and the edge still an edge; the pyramid handed its fit stabilises inside its pack
-    /// and must come back the frame it does measuring its own.
+    /// **More Colour never leaves a saturated colour more coloured grain**: the channels of a
+    /// period disagree less, in proportion to their levels, the stronger the Colour.
+    ///
+    /// The GAT is near a square root, so equal noise on every colour in it is a larger swing in
+    /// proportion on a dim channel than a bright one: colour shrunk toward no slope against the luma
+    /// turned the luma's own noise into colour, and past 1.8 the dim green of this blue rose with
+    /// the strength (0.393 to 0.427 of its level on X-Trans) while red and blue fell. Grey grain
+    /// is equal swings in proportion, so a bright channel may rise toward it; disagreement may not.
     #[test]
-    fn the_pyramid_shrinks_a_frame_whether_handed_its_fit_or_not() {
+    fn more_colour_never_leaves_a_saturated_colour_more_coloured_grain() {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
-        let (width, height) = (256, 192);
-        let noisy = frame(width, height);
-        let fitted = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        let fit = pollster::block_on(super::fit(gpu, galosh, &fitted, &rggb()));
-        for shrink in [Shrink::Pyramid, Shrink::ColourPyramid] {
-            let amounts = Amounts {
+        let (width, height) = (576, 576);
+        let levels = [0.008f32, 0.0016, 0.027];
+        for cfa in [rggb(), xtrans()] {
+            let mut uniform = uniform_from(0x2545_f491_4f6c_dd1d);
+            let noisy: Vec<f32> = (0..width * height)
+                .map(|at| {
+                    let level = levels[cfa.colour_at(at / width, at % width) as usize];
+                    let deviation = (1.0e-3 * level + 0.002f32 * 0.002).sqrt();
+                    let bell = (uniform() + uniform() + uniform() + uniform() - 2.0) * 1.732;
+                    level + bell * deviation
+                })
+                .collect();
+            let (pw, ph) = cfa.period();
+            let mut previous = f64::INFINITY;
+            for colour in [1.2, 1.8, 2.4, 3.0] {
+                let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                pollster::block_on(denoise(
+                    gpu,
+                    galosh,
+                    &uploaded,
+                    &cfa,
+                    Amounts { luma: 0.0, colour },
+                ));
+                let denoised = read(gpu, &uploaded);
+                let (mut disagreement, mut periods) = (0.0f64, 0.0f64);
+                for top in (96..height - 96).step_by(ph) {
+                    for left in (96..width - 96).step_by(pw) {
+                        let mut swing = [0.0f64; 3];
+                        let mut counts = [0.0f64; 3];
+                        for y in top..top + ph {
+                            for x in left..left + pw {
+                                let c = cfa.colour_at(y, x) as usize;
+                                swing[c] +=
+                                    f64::from(denoised[y * width + x]) / f64::from(levels[c]) - 1.0;
+                                counts[c] += 1.0;
+                            }
+                        }
+                        let [red, green, blue] = std::array::from_fn(|c| swing[c] / counts[c]);
+                        disagreement += (red - green).powi(2) + (blue - green).powi(2);
+                        periods += 1.0;
+                    }
+                }
+                let disagreement = (disagreement / periods).sqrt();
+                assert!(
+                    disagreement <= previous * 1.01,
+                    "{cfa:?}, colour {colour}: the channels disagree by {disagreement:.4}, up from {previous:.4}"
+                );
+                previous = disagreement;
+            }
+        }
+    }
+
+    /// X-Trans is shrunk as 3x3 sites: flat ground loses most of its noise, and an edge stays an
+    /// edge rather than a ramp.
+    #[test]
+    fn an_xtrans_frame_loses_its_noise_and_keeps_its_edge() {
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let cfa = xtrans();
+        let (width, height) = (288, 192);
+        let mut uniform = uniform_from(0x2545_f491_4f6c_dd1d);
+        let noisy: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let (x, y) = (at % width, at / width);
+                let level = [0.20, 0.34, 0.12][cfa.colour_at(y, x) as usize];
+                let bright = if x > width / 2 { 0.45 } else { 0.0 };
+                (level + bright + (uniform() + uniform() - 1.0) * 0.05).clamp(0.0, 1.0)
+            })
+            .collect();
+        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &cfa,
+            Amounts {
                 luma: 1.0,
                 colour: 1.0,
-                shrink,
-                ..Amounts::default()
-            };
-            let measured = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-            pollster::block_on(denoise(gpu, galosh, &measured, &rggb(), amounts));
-            let measured = read(gpu, &measured);
-            assert!(
-                measured.iter().all(|v| v.is_finite() && *v <= 1.0),
-                "{shrink:?}: the output stays finite and below saturation",
-            );
-            let before = variance(&noisy, width, 8, 8, 40);
-            let after = variance(&measured, width, 8, 8, 40);
-            assert!(
-                after < before * 0.5,
-                "{shrink:?}: a flat field should lose most of its variance: {before} -> {after}",
-            );
-            let step = |frame: &[f32]| {
-                let row = 96 * width;
-                frame[row + width / 2 + 8] - frame[row + width / 2 - 8]
-            };
-            assert!(
-                step(&measured) > step(&noisy) * 0.9,
-                "{shrink:?}: the edge should survive: {} -> {}",
-                step(&noisy),
-                step(&measured),
-            );
+            },
+        ));
+        let denoised = read(gpu, &uploaded);
 
+        let spread = |frame: &[f32]| {
+            let samples: Vec<f32> = (0..16)
+                .flat_map(|j| (0..16).map(move |i| frame[(12 + 6 * j) * width + 12 + 6 * i]))
+                .collect();
+            let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+            samples.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / samples.len() as f32
+        };
+        let (before, after) = (spread(&noisy), spread(&denoised));
+        assert!(
+            after < before * 0.5,
+            "a flat field should lose most of its variance: {before} -> {after}"
+        );
+        let step = |frame: &[f32]| {
+            let row = 96 * width;
+            frame[row + width / 2 + 12] - frame[row + width / 2 - 12]
+        };
+        assert!(
+            step(&denoised) > step(&noisy) * 0.9,
+            "the edge should survive: {} -> {}",
+            step(&noisy),
+            step(&denoised),
+        );
+    }
+
+    /// A run handed its fit stabilises inside its pack, and must come back the frame a run
+    /// measuring its own does.
+    #[test]
+    fn a_given_fit_denoises_as_the_frames_own_does() {
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let (width, height) = (288, 192);
+        let noisy = frame(width, height);
+        let amounts = Amounts {
+            luma: 1.0,
+            colour: 1.0,
+        };
+        for cfa in [rggb(), xtrans()] {
+            let measured = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let fit = pollster::block_on(denoise(gpu, galosh, &measured, &cfa, amounts));
             let given = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-            pollster::block_on(super::denoise_with(
-                gpu,
-                galosh,
-                &given,
-                &rggb(),
-                amounts,
-                fit,
-            ));
+            pollster::block_on(super::denoise_with(gpu, galosh, &given, &cfa, amounts, fit));
             let worst = read(gpu, &given)
                 .iter()
-                .zip(&measured)
+                .zip(read(gpu, &measured))
                 .map(|(a, b)| (a - b).abs())
                 .fold(0f32, f32::max);
             assert!(
                 worst < 1e-5,
-                "{shrink:?}: a given fit moved a sample by {worst}"
+                "{cfa:?}: a given fit moved a sample by {worst}"
             );
         }
     }
 
-    /// Off a Bayer pattern both pyramid shrinks are the blocks', sample for sample.
+    /// At almost no strength the frame comes back as it went in, on a frame whose GAT sits far from
+    /// zero: X-Trans's luma plane is thrice a photosite, and read noise lifts it further.
     #[test]
-    fn a_non_bayer_frame_takes_the_blocks_under_either_pyramid() {
+    fn a_frame_at_almost_no_strength_comes_back_itself() {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
-        let cfa = crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
-        let (width, height) = (128, 96);
+        let (width, height) = (288, 192);
         let noisy = frame(width, height);
-        let denoised = |shrink: Shrink| {
-            let mosaic = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-            pollster::block_on(denoise(
-                gpu,
-                galosh,
-                &mosaic,
-                &cfa,
+        for cfa in [rggb(), xtrans()] {
+            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let fit = pollster::block_on(super::fit(gpu, galosh, &uploaded, &cfa));
+            for amounts in [
                 Amounts {
-                    luma: 1.0,
-                    colour: 1.0,
-                    shrink,
-                    ..Amounts::default()
+                    luma: 0.0,
+                    colour: 0.001,
                 },
-            ));
-            read(gpu, &mosaic)
-        };
-        let blocks = denoised(Shrink::Blocks);
-        for shrink in [Shrink::Pyramid, Shrink::ColourPyramid] {
-            assert!(denoised(shrink) == blocks, "{shrink:?} moved a sample");
+                Amounts {
+                    luma: 0.001,
+                    colour: 0.0,
+                },
+            ] {
+                let denoised = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                pollster::block_on(super::denoise_with(
+                    gpu, galosh, &denoised, &cfa, amounts, fit,
+                ));
+                let worst = read(gpu, &denoised)
+                    .iter()
+                    .zip(&noisy)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                assert!(
+                    worst < 1e-4,
+                    "{cfa:?} at {amounts:?}: a sample moved by {worst}"
+                );
+            }
+        }
+    }
+
+    /// Every site transform is orthonormal, so the inverse is its transpose and white noise stays
+    /// white and unit in every plane.
+    #[test]
+    fn every_site_transform_is_orthonormal() {
+        let patterns = [
+            rggb(),
+            crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern"),
+            xtrans(),
+        ];
+        for cfa in patterns {
+            let side = super::site_side(&cfa).expect("a site");
+            let planes = side * side;
+            let n = super::PYRAMID_MAX_PLANES;
+            for site in super::site_transform(&cfa, side).chunks(n * n) {
+                for p in 0..planes {
+                    for q in 0..planes {
+                        let dot: f32 = (0..planes).map(|k| site[p * n + k] * site[q * n + k]).sum();
+                        let expected = if p == q { 1.0 } else { 0.0 };
+                        assert!(
+                            (dot - expected).abs() < 1e-5,
+                            "{cfa:?}: rows {p} and {q} meet at {dot}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

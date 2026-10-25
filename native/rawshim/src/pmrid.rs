@@ -974,7 +974,7 @@ pub fn pointwise(packed: usize) -> Vec<Pointwise> {
 /// The pack is a 2x2 of red, both greens and blue, which is what a Bayer CFA is and what PMRID was
 /// trained on. An X-Trans frame has no such site.
 pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
-    crate::galosh::filters(cfa)
+    cfa.is_bayer()
 }
 
 /// The whole denoise: a mosaic in [0, 1] goes in, the same mosaic denoised comes back.
@@ -983,8 +983,7 @@ pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
 /// network reads a photosite and multiplies in again afterwards.
 ///
 /// **The sliders mean something else here than they do for GALOSH, and that is not a mismatch to
-/// paper over.** GALOSH's Luminance is a multiple of the noise it measured, calibrated so that 62.5
-/// is once; what the network predicts is a residual it already decided the size of, so a position
+/// paper over.** GALOSH's Luminance is a multiple of the noise it measured; what the network predicts is a residual it already decided the size of, so a position
 /// is the share of that residual to keep and 100 is the whole of it. The panel shows one pair of
 /// positions either way, and a reader moving between the two denoisers is choosing a different
 /// filter, not the same filter at a different strength.

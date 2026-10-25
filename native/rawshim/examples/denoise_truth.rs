@@ -6,16 +6,16 @@
 //!
 //! A window of a clean frame is darkened to the noisy frame's median level and given the noise
 //! the noisy frame's own fit describes, so the truth behind the noise is known. Each denoiser
-//! (`galosh`, `pyramid`, `hybrid`, or `noisy` for none) then filters it at the amounts the fit
-//! suggests, and the error against the truth is reported in units of the noise's own deviation
-//! there: 1 is the noise untouched, 0 the truth.
+//! (`galosh`, or `noisy` for none) then filters it at the amounts the fit suggests, and the error
+//! against the truth is reported in units of the noise's own deviation there: 1 is the noise
+//! untouched, 0 the truth.
 //!
 //! Split by how much detail the truth has around each site, because one number cannot tell noise
 //! left behind from detail taken away: on flat ground every bit of error is noise, on texture it is
 //! mostly blur. The flat ground's error correlation at a few site lags says whether what is left is
 //! grain or strokes. Each result is also written demosaiced as `<denoiser>.png`, beside `truth.png`.
 
-use rawshim::galosh::{Amounts, Denoiser, Detail};
+use rawshim::galosh::{Amounts, Detail};
 
 /// Site detail, in deviations of the noise, under which ground counts as flat and over which it
 /// counts as textured.
@@ -113,13 +113,8 @@ fn main() {
         let filtered = match name.as_str() {
             "noisy" => noisy.clone(),
             other => {
-                let denoiser = match other {
-                    "galosh" => Denoiser::Galosh,
-                    "pyramid" => Denoiser::Pyramid,
-                    "hybrid" => Denoiser::Hybrid,
-                    unknown => panic!("{unknown} is not a denoiser"),
-                };
-                let amounts: Amounts = Detail::AUTO.using(denoiser).amounts(Some(fit));
+                assert_eq!(other, "galosh", "{other} is not a denoiser");
+                let amounts: Amounts = Detail::AUTO.amounts(Some(fit));
                 let mosaic = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
                 pollster::block_on(rawshim::galosh::denoise_with(
                     gpu, kernels, &mosaic, &cfa, amounts, fit,

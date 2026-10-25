@@ -10,6 +10,7 @@ struct Push {
     int fine_h;
     int coarse_w;
     int coarse_h;
+    int planes;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -25,7 +26,7 @@ void pyr_down(uint3 id : SV_DispatchThreadID)
     let y0 = 2 * cy;
     let x1 = min(x0 + 1, pc.fine_w - 1);
     let y1 = min(y0 + 1, pc.fine_h - 1);
-    for (int p = 0; p < PLANES; p++) {
+    for (int p = 0; p < pc.planes; p++) {
         let sum = fine[at_plane(p, x0, y0, pc.fine_w, pc.fine_h)]
             + fine[at_plane(p, x1, y0, pc.fine_w, pc.fine_h)]
             + fine[at_plane(p, x0, y1, pc.fine_w, pc.fine_h)]

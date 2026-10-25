@@ -1,6 +1,6 @@
 // Phase 2(b): each CFA slot's own dark reference, subtracted.
 //
-// `restore_mosaic` adds the same four numbers back.
+// `pyr_restore` adds the same four numbers back.
 import prelude;
 
 [vk::binding(0, 0)] RWStructuredBuffer<float> in_gat_full;

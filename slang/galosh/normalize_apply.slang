@@ -17,5 +17,5 @@ void normalize_apply(uint3 id : SV_DispatchThreadID)
     let fx = int(id.x);
     let fy = int(id.y);
     if (fx >= pc.width || fy >= pc.height) { return; }
-    in_gat_full[fy * pc.width + fx] *= params[P_INV_SG];
+    in_gat_full[fy * pc.width + fx] /= params[P_UNIFIED_SIGMA];
 }

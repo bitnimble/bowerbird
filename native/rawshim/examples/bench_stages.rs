@@ -224,13 +224,6 @@ fn staged(laps: &[(&'static str, String, f64)]) -> Vec<(String, f64)> {
 /// own fit, so the amount would move with the ramp and with whichever photographs are in the
 /// fixture set, and a ratchet on what a stage costs wants its inputs held still.
 ///
-/// **What that costs is the top of the Colour track, and the gap is real.** 30 is 0.9 in the units
-/// the kernels read, below the 1.0 and 2.0 that gate the quarter- and eighth-resolution chroma
-/// levels (`galosh::run`), so `denoise` here is the half-resolution regression and nothing above
-/// it. A cost regression in either coarse level is invisible to this budget. Closing it means
-/// naming a colour past 66.7 and re-recording every adapter's table, which is a deliberate act and
-/// not one to fold into an unrelated change.
-///
 /// Everything else is spelled out rather than defaulted for the opposite reason: what this measures
 /// is the shipped configuration and serde's absent-field defaults are not it.
 ///

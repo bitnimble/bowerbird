@@ -3,16 +3,27 @@
 // `WINDOW`. Gains off the noisy coefficients themselves pass noise that clears the bar whole, as
 // isolated DCT ripples on flat ground.
 import pyramid;
+import prelude;
+import "../times.slang";
 
 [vk::binding(0, 0)] StructuredBuffer<float> noisy;
 [vk::binding(1, 0)] RWStructuredBuffer<float> shrunk;
 [vk::binding(3, 0)] StructuredBuffer<float> pilot;
+/// `galosh::colour_basis`: planes 0 to 2 of a flat colour, the colours back out of them, and each
+/// colour's share of the four dark references.
+[vk::binding(4, 0)] StructuredBuffer<float> basis;
+[vk::binding(5, 0)] StructuredBuffer<float> params;
 
 [vk::binding(20, 0)] ConstantBuffer<Level> pc;
 
 /// The colour-to-luma slope's regulariser, in coefficients' worth of this plane's noise: unfloored,
 /// a flat-luma block fits its noise as colour.
 static const float GUIDE_FLOOR = 8.0;
+
+/// How far, in this level's noise deviations, a coarse level's colour may move a sample. Removing
+/// noise moves one by about a deviation; the rest is colour smoothed in from across an edge, which a
+/// block a coarse level wide always spans.
+static const float COARSE_REACH = 4.0;
 
 /// A strength of zero has a flat block divide nothing by nothing.
 static const float TINY = 1e-20;
@@ -24,13 +35,8 @@ static const float FIXED = 65536.0;
 [vk::constant_id(0)]
 const int PILOT = 0;
 
-/// The hybrid's colour: guided by noisy plane 0's DCT thresholded at its bar, since its plane 0
-/// arrives denoised.
-[vk::constant_id(1)]
-const int THRESHOLDED_GUIDE = 0;
-
 /// Gains off this block's own pilot rather than the overlapped pilot plane.
-[vk::constant_id(2)]
+[vk::constant_id(1)]
 const int OWN_PILOT = 0;
 
 groupshared Atomic<int> sum[TILE * TILE];
@@ -51,6 +57,46 @@ float pilot_of(float b, float cut)
     return sign(b) * max(abs(b) - cut, 0.0);
 }
 
+/// How far colour plane `plane` moves per unit of luma when the block's light moves without
+/// changing colour.
+///
+/// Equal noise on every colour in the GAT is not grey: the GAT is near a square root, so a dim
+/// channel of a saturated colour swings further in proportion than a bright one. Colour shrunk to
+/// a slope of 0 leaves exactly that, and the stronger the shrink the more of it.
+float colourless_slope(int plane, int rows[8], int columns[8])
+{
+    float mean[3];
+    [ForceUnroll]
+    for (int p = 0; p < 3; p++) {
+        let at = p * pc.w * pc.h;
+        var total = 0.0;
+        [ForceUnroll]
+        for (int i = 0; i < 64; i++) { total += noisy[at + rows[i / 8] + columns[i % 8]]; }
+        mean[p] = total / 64.0;
+    }
+    let a = max(params[P_ALPHA], ALPHA_MIN);
+    let at_black = gat_sigma_at_black(a, params[P_SIGMA_SQ]);
+    let unified = params[P_UNIFIED_SIGMA];
+    let row = times(plane, 3);
+    var luma = 0.0;
+    var colour = 0.0;
+    [ForceUnroll]
+    for (int c = 0; c < 3; c++) {
+        var level = 0.0;
+        [ForceUnroll]
+        for (int p = 0; p < 3; p++) { level += basis[9 + c * 3 + p] * mean[p]; }
+        [ForceUnroll]
+        for (int slot = 0; slot < 4; slot++) {
+            level += basis[18 + c * 4 + slot] * params[P_DARK_REF0 + slot];
+        }
+        let root = 0.5 * a * max(level, 0.0) * unified;
+        let lift = max(root * root - at_black * at_black, 0.0) / (a * max(root, TINY) * unified);
+        luma += basis[c] * lift;
+        colour += basis[row + c] * lift;
+    }
+    return luma > TINY ? colour / luma : 0.0;
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
@@ -61,14 +107,13 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
     let x0 = (int(group.x) - column * pc.tiles_x) * TILE - pc.offset_x;
     let y0 = int(group.y) * TILE - pc.offset_y;
 
-    let guided = PILOT == 0 && plane != 0;
-    let residual = guided && THRESHOLDED_GUIDE == 0;
+    let residual = PILOT == 0 && plane != 0;
     for (int k = lane; k < TILE * TILE; k += 64) { sum[k].store(0); }
     GroupMemoryBarrierWithGroupSync();
 
     let bx = lane % BLOCK;
     let by = lane / BLOCK;
-    let noise = pc.strength[plane] * pc.variance;
+    let noise = (plane == 0 ? pc.luma_strength : pc.colour_strength) * pc.variance;
     int rows[8];
     int columns[8];
     [ForceUnroll]
@@ -103,28 +148,33 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
     // feature too faint to clear the noise survives through the slope, which carries a 63rd of
     // the noise. The guide less its mean, so the block's mean is untouched.
     var slope = 0.0;
-    var guide_mean = 0.0;
     if (residual) {
-        var sum_l = 0.0;
-        var sum_ll = 0.0;
-        var sum_b = 0.0;
-        var sum_bl = 0.0;
+        // The guide in `g`, which only plane 0 reads as gains. Centred before squaring: a luma
+        // plane sits thousands of deviations from zero, where raw sums cancel to noise in f32.
+        var guide_mean = 0.0;
         [ForceUnroll]
         for (int i = 0; i < 64; i++) {
-            let l = shrunk[rows[i / 8] + columns[i % 8]];
-            sum_l += l;
-            sum_ll += l * l;
-            sum_b += b[i];
-            sum_bl += b[i] * l;
+            g[i] = shrunk[rows[i / 8] + columns[i % 8]];
+            guide_mean += g[i];
         }
-        guide_mean = sum_l / 64.0;
-        let along = sum_bl - guide_mean * sum_b;
-        let power = GUIDE_FLOOR * noise + max(sum_ll - guide_mean * sum_l, 0.0);
-        slope = along / max(power, TINY);
+        guide_mean /= 64.0;
+        var along = 0.0;
+        var energy = 0.0;
         [ForceUnroll]
         for (int i = 0; i < 64; i++) {
-            b[i] -= slope * (shrunk[rows[i / 8] + columns[i % 8]] - guide_mean);
+            g[i] -= guide_mean;
+            along += b[i] * g[i];
+            energy += g[i] * g[i];
         }
+        // Toward the colourless slope by as much of the guide as is noise, which no fit can see:
+        // this plane's noise and the luma's are independent, so on flat ground the fit reads 0.
+        var prior = 0.0;
+        if (plane < 3) { prior = colourless_slope(plane, rows, columns); }
+        let floor = GUIDE_FLOOR * noise;
+        let guide_noise = min(energy, 63.0 * pc.variance);
+        slope = (along + prior * (guide_noise + floor)) / max(energy + floor, TINY);
+        [ForceUnroll]
+        for (int i = 0; i < 64; i++) { b[i] -= slope * g[i]; }
     }
     dct_forward(b);
     // The block's mean is the level below's to decide, so it passes untouched.
@@ -139,38 +189,22 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
             let p = pilot_of(b[i], cut);
             b[i] *= p * p / max(p * p + noise, TINY);
         }
-    } else if (guided && !residual) {
-        // The same slope off the noisy guide's own transform, with only the structure past this
-        // plane's bar kept: a luma noise spike would come back as colour speckle at the slope.
-        float l[64];
-        [ForceUnroll]
-        for (int y = 0; y < 8; y++) {
-            [ForceUnroll]
-            for (int x = 0; x < 8; x++) { l[y * 8 + x] = noisy[rows[y] + columns[x]]; }
-        }
-        dct_forward(l);
-        let bar = PILOT_THRESHOLD * PILOT_THRESHOLD * noise;
-        var along = 0.0;
-        var power = GUIDE_FLOOR * noise;
-        [ForceUnroll]
-        for (int i = 1; i < 64; i++) {
-            if (l[i] * l[i] < bar) { l[i] = 0.0; }
-            along += b[i] * l[i];
-            power += l[i] * l[i];
-        }
-        let fitted = along / max(power, TINY);
-        [ForceUnroll]
-        for (int i = 1; i < 64; i++) { b[i] = g[i] * b[i] + (1.0 - g[i]) * fitted * l[i]; }
     } else {
         [ForceUnroll]
         for (int i = 1; i < 64; i++) { b[i] *= g[i]; }
     }
     dct_inverse(b);
-    if (residual) {
+    if (residual && pc.variance < 1.0) {
+        let reach = COARSE_REACH * sqrt(pc.variance * (1.0 + slope * slope));
         [ForceUnroll]
         for (int i = 0; i < 64; i++) {
-            b[i] += slope * (shrunk[rows[i / 8] + columns[i % 8]] - guide_mean);
+            let before = noisy[own + rows[i / 8] + columns[i % 8]] - slope * g[i];
+            b[i] = before - reach * tanh((before - b[i]) / reach);
         }
+    }
+    if (residual) {
+        [ForceUnroll]
+        for (int i = 0; i < 64; i++) { b[i] += slope * g[i]; }
     }
 
     [ForceUnroll]

@@ -202,20 +202,12 @@ export const EditDocSchema = z
     // reads them as GALOSH's own two knobs (`galosh::Amounts`), on the mosaic, wherever the
     // frame is being built.
     //
-    // **Luminance's landmark sits above its middle, not at its end.** The shrinkage
-    // normalises the plane to the noise it measured, so 62.5 is the calibrated point -
-    // exactly that much treated as noise - and what is above it is headroom for the
-    // measurement being wrong, since a frame whose quietest blocks still hold texture reads
-    // low and would otherwise be stuck under-denoised. Colour's landmarks are its thirds,
-    // one per level of the chroma pyramid it walks.
-    //
     // **Null is the photograph's own, and it is the default because no fixed pair can be.**
     // A position is a fraction of a track, and what a reader sees at one is that fraction of
     // however much noise the frame carried - so a number that suits an ISO 12800 night frame
-    // is one that smooths a base-ISO daylight frame for nothing. On the colour half that is
-    // not a matter of degree, the amount being a *distance* rather than a strength. Left
-    // null the decode answers with `NoiseModel::suggested_amounts` off this frame's own fit,
-    // which declines a clean frame outright.
+    // is one that smooths a base-ISO daylight frame for nothing. Left null the decode answers
+    // with `NoiseModel::suggested_amounts` off this frame's own fit, which declines a clean
+    // frame outright.
     luminanceNoise: z.number().int().min(0).max(100).nullable().default(null),
     colourNoise: z.number().int().min(0).max(100).nullable().default(null),
     // Null is the library's.

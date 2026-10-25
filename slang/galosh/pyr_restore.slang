@@ -1,7 +1,8 @@
-// The half-resolution sites fused with the level below them and taken back to photosites: the
-// Walsh-Hadamard transform undone, the dark reference added back, and out of the GAT.
+// The sites fused with the level below them and taken back to photosites: the site transform
+// undone, the dark reference added back, and out of the GAT.
 import prelude;
 import pyramid;
+import "../times.slang";
 
 [vk::binding(0, 0)] StructuredBuffer<float> sites;
 [vk::binding(1, 0)] StructuredBuffer<float> boxed;
@@ -11,20 +12,34 @@ import pyramid;
 [vk::binding(6, 0)] StructuredBuffer<float> lut_x;
 [vk::binding(7, 0)] StructuredBuffer<float> lut_params;
 [vk::binding(8, 0)] StructuredBuffer<float> params;
+[vk::binding(9, 0)] StructuredBuffer<float> transform;
 
-struct Push {
-    int width;
-    int w0;
-    int h0;
-    int w1;
-    int h1;
-};
-[vk::binding(20, 0)] ConstantBuffer<Push> pc;
+[vk::binding(20, 0)] ConstantBuffer<Sites> pc;
 
-float photosite(float coded, int slot)
+void restore<let SIDE : int>(int x, int y)
 {
-    let value = (coded + params[P_DARK_REF0 + slot]) * params[P_UNIFIED_SIGMA];
-    return min(gat_inv_lut(lut_d, lut_x, lut_params, value, uint(LUT_SIZE)), 1.0);
+    float site[MAX_PLANES];
+    [ForceUnroll]
+    for (int p = 0; p < SIDE * SIDE; p++) {
+        site[p] = sites[at_plane(p, x, y, pc.w0, pc.h0)]
+            + upsampled_difference(below, boxed, p, x, y, pc.w1, pc.h1);
+    }
+    let rows = transform_at(x, y, pc.across, pc.down);
+    [ForceUnroll]
+    for (int k = 0; k < SIDE * SIDE; k++) {
+        let px = times(x, SIDE) + k % SIDE;
+        let py = times(y, SIDE) + k / SIDE;
+        if (px >= pc.width || py >= pc.height) { continue; }
+        var coded = 0.0;
+        [ForceUnroll]
+        for (int p = 0; p < SIDE * SIDE; p++) {
+            coded += transform[rows + p * MAX_PLANES + k] * site[p];
+        }
+        // `dark_sub_full`'s slots: row parity in the low bit, column parity above it.
+        let slot = (py & 1) | ((px & 1) << 1);
+        let value = (coded + params[P_DARK_REF0 + slot]) * params[P_UNIFIED_SIGMA];
+        out_raw[py * pc.width + px] = min(gat_inv_lut(lut_d, lut_x, lut_params, value, uint(LUT_SIZE)), 1.0);
+    }
 }
 
 [shader("compute")]
@@ -34,21 +49,10 @@ void pyr_restore(uint3 id : SV_DispatchThreadID)
     let x = int(id.x);
     let y = int(id.y);
     if (x >= pc.w0 || y >= pc.h0) { return; }
-
-    float4 s;
-    for (int p = 0; p < PLANES; p++) {
-        s[p] = sites[at_plane(p, x, y, pc.w0, pc.h0)]
-            + upsampled_difference(below, boxed, p, x, y, pc.w1, pc.h1);
+    // Unrolled per side, so every array index is a constant and the arrays stay in registers.
+    if (pc.side == 2) {
+        restore<2>(x, y);
+    } else {
+        restore<3>(x, y);
     }
-    let a = 0.5 * (s.x + s.y + s.z + s.w);
-    let b = 0.5 * (s.x - s.y + s.z - s.w);
-    let c = 0.5 * (s.x + s.y - s.z - s.w);
-    let d = 0.5 * (s.x - s.y - s.z + s.w);
-
-    // `dark_sub_full`'s slots: row parity in the low bit, column parity above it.
-    let top = 2 * y * pc.width + 2 * x;
-    out_raw[top] = photosite(a, 0);
-    out_raw[top + 1] = photosite(b, 2);
-    out_raw[top + pc.width] = photosite(c, 1);
-    out_raw[top + pc.width + 1] = photosite(d, 3);
 }

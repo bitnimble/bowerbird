@@ -76,9 +76,7 @@ export const EFFECTS: readonly SliderSpec[] = [
  *
  * **0 to 100 rather than -100 to 100**, unlike every slider above: there is no such thing as
  * negative noise reduction, and a snap point in the middle of a track whose left half does not
- * exist would invite one. Luminance's landmark is its middle, where it removes exactly the noise
- * the frame was measured to have; colour's are its thirds, one per level of the chroma pyramid it
- * walks.
+ * exist would invite one.
  *
  * **The denoise pair start wherever the photograph puts them**, which is why neither carries a
  * neutral: a position is a fraction of a track and what a reader sees at one is that fraction of

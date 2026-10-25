@@ -88,34 +88,6 @@ impl Cfa {
 
     /// How many photosites of each colour one period holds: `[8, 20, 8]` for X-Trans, `[1, 2, 1]`
     /// for Bayer. What the demultiplexing's baseband weights are built from.
-    /// What each of the denoise's two chroma axes carries of one photosite's noise.
-    ///
-    /// **The shrinkage's threshold is calibrated against an axis that carries exactly one sigma**,
-    /// which the 2x2 pair does by construction: four independent samples at a magnitude of a half.
-    /// A period's pair is built from per-colour *means* instead, so each axis carries only what
-    /// averaging over that many samples leaves - `mR - mB` is `sqrt(1/nR + 1/nB)` and
-    /// `mR - 2mG + mB` is `sqrt(1/nR + 4/nG + 1/nB)`. On X-Trans's 8, 20 and 8 that is half a sigma
-    /// and two thirds, unequal to each other as well as to the pair the threshold was measured
-    /// against, so both axes are read as noisier than they are and shrunk too hard - which takes
-    /// colour detail out while leaving the noise that motivated the slider.
-    ///
-    /// Counted off the pattern rather than written down for X-Trans, because the denoise takes any
-    /// period whose colours are all present and each of them divides differently.
-    pub fn chroma_gain(&self) -> [f32; 2] {
-        if self.is_bayer() {
-            return [1.0, 1.0];
-        }
-        let counts = self.counts();
-        let share = |colour: usize, weight: f32| match counts[colour] {
-            0 => 0.0,
-            n => weight / n as f32,
-        };
-        [
-            (share(0, 1.0) + share(2, 1.0)).sqrt(),
-            (share(0, 1.0) + share(1, 4.0) + share(2, 1.0)).sqrt(),
-        ]
-    }
-
     pub fn counts(&self) -> [usize; 3] {
         let mut counts = [0usize; 3];
         for &colour in &self.colours[..self.slots()] {
@@ -201,6 +173,25 @@ impl Cfa {
     pub fn align_extent(&self, width: usize, height: usize) -> (usize, usize) {
         let (w, h) = (self.width as usize, self.height as usize);
         (width / w * w, height / h * h)
+    }
+
+    /// A window's far corner trimmed to whole periods from `origin`, except along an edge of the
+    /// frame it reaches, where it ends with the frame: so does the frame's own pass, and a window
+    /// trimmed short of it leaves the frame's last photosites to something else.
+    pub fn aligned_end(
+        &self,
+        origin: (usize, usize),
+        end: (usize, usize),
+        frame: (usize, usize),
+    ) -> (usize, usize) {
+        let trim = |from: usize, to: usize, edge: usize, period: usize| match to >= edge {
+            true => edge,
+            false => from + (to - from) / period * period,
+        };
+        (
+            trim(origin.0, end.0, frame.0, self.width as usize),
+            trim(origin.1, end.1, frame.1, self.height as usize),
+        )
     }
 
     /// The period's colours two bits apiece, twelve to a word.

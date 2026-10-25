@@ -58,10 +58,10 @@ fn every_stage_hands_its_working_planes_back() {
     };
     let samples = textured();
 
-    // GALOSH takes about five frames of working planes - the two full-resolution scratch planes and
-    // the half- and quarter-resolution trios - and none of it may outlive the call.
+    // GALOSH takes about five frames of working planes - the GAT frame and the pyramid's levels -
+    // and none of it may outlive the call.
     match rawshim::galosh::device(gpu) {
-        None => eprintln!("SKIPPED: this adapter has no room for pass12's tile."),
+        None => eprintln!("SKIPPED: this adapter has no room for the noise fit's workgroup."),
         Some(kernels) => gives_it_back("denoise", || {
             let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
             pollster::block_on(rawshim::galosh::denoise(

@@ -4,19 +4,12 @@
 // names are the kernel's own - and the host writes one 256-byte-aligned slot per dispatch and
 // binds it with a dynamic offset.
 module prelude;
-import "../px.slang";
 import "../light.slang";
-
-public static const Span<Tap> COLOUR_GUIDE_RADIUS = { 1 };
-public static const float GREEN_DIFFERENCE_VARIANCE = 6.0;
-public static const float DETAIL_TAPS[3] = { 29.0 / 64.0, -1.0 / 8.0, 1.0 / 64.0 };
-public static const float PHASE_BW = 4.0;
 
 // `params_buf` slots. Every consumer reads them off the device: only α, σ² and the IRLS scale
 // ever cross back to the host.
 public static const int P_SIGMA_CH0 = 0;
 public static const int P_UNIFIED_SIGMA = 4;
-public static const int P_INV_SG = 5;
 public static const int P_DARK_REF0 = 6;
 public static const int P_S_SCALE = 10;
 public static const int P_ALPHA = 13;
@@ -48,100 +41,6 @@ public uint cfa_colour(Pattern p, int r, int c)
     let word = slot / 12u;
     let packed = word == 0u ? p.packed0 : (word == 1u ? p.packed1 : p.packed2);
     return (packed >> ((slot - word * 12u) * 2u)) & 3u;
-}
-
-public float2 colour_axes(float3 c, float green_sign)
-{
-    if (green_sign == 0.0) { return c.xy; }
-    return float2((c.x - green_sign * c.y) / sqrt(2.0), c.z);
-}
-
-public float green_confidence(float difference)
-{
-    let observed = difference * difference;
-    return max(observed - GREEN_DIFFERENCE_VARIANCE, 0.0) / max(observed, 1e-10);
-}
-
-public float luma_sample(StructuredBuffer<float> luma, int width, int height, int x, int y)
-{
-    return luma[clamp(y, 0, height - 1) * width + clamp(x, 0, width - 1)];
-}
-
-public float pooled_luma(StructuredBuffer<float> luma, int width, int height, int x, int y, bool pooled)
-{
-    x = clamp(x, 0, width - 1);
-    y = clamp(y, 0, height - 1);
-    let centre = luma_sample(luma, width, height, x, y);
-    if (!pooled) { return centre; }
-    var sum = 0.0;
-    var weights = 0.0;
-    for (int dy = -1; dy <= 1; dy++) {
-        let sy = y + dy;
-        if (sy < 0 || sy >= height) { continue; }
-        for (int dx = -1; dx <= 1; dx++) {
-            let sx = x + dx;
-            if (sx < 0 || sx >= width) { continue; }
-            let value = luma_sample(luma, width, height, sx, sy);
-            let delta = value - centre;
-            let weight = float((2 - abs(dx)) * (2 - abs(dy)))
-                * exp(-delta * delta / (2.0 * PHASE_BW * PHASE_BW));
-            sum += weight * value;
-            weights += weight;
-        }
-    }
-    return sum / weights;
-}
-
-float brightness_across(StructuredBuffer<float> luma, int width, int height, int x, int y)
-{
-    var result = 0.0;
-    for (int k = 1; k <= 3; k++) {
-        result += DETAIL_TAPS[k - 1] * (luma_sample(luma, width, height, x + k, y)
-            - luma_sample(luma, width, height, x - k, y));
-    }
-    return result;
-}
-
-public float3 brightness_derivatives(StructuredBuffer<float> luma, int width, int height, int x, int y)
-{
-    let across = brightness_across(luma, width, height, x, y);
-    var down = 0.0;
-    var mixed = 0.0;
-    for (int k = 1; k <= 3; k++) {
-        down += DETAIL_TAPS[k - 1] * (luma_sample(luma, width, height, x, y + k)
-            - luma_sample(luma, width, height, x, y - k));
-        mixed += DETAIL_TAPS[k - 1] * (brightness_across(luma, width, height, x, y + k)
-            - brightness_across(luma, width, height, x, y - k));
-    }
-    return float3(across, down, mixed);
-}
-
-/// How far a photosite of this colour sits from the luma its neighbourhood carries, in terms of
-/// the two chroma planes `chroma_extract_halfres` writes: `C1 = mR - mB`, `C2 = mR - 2mG + mB`.
-///
-/// Luma being `(mR + 2mG + mB) / 4`, subtracting it from each colour's own mean leaves
-/// `(2C1 + C2) / 4` at a red, `-C2 / 4` at a green and `(-2C1 + C2) / 4` at a blue - which is
-/// what makes the plane the shrinkage reads free of the pattern, whatever the pattern is.
-/// What a period's two chroma axes carry of a photosite's own noise, so that both arrive at the
-/// shrinkage carrying one sigma as the 2x2 pair does.
-///
-/// **The threshold every chroma stage applies is calibrated against a unit-gain axis.** Bayer's
-/// pair is `0.5 * (r -+ gb +- gr - b)`, four independent samples at a magnitude of a half, so each
-/// axis carries exactly the sample's own sigma and the calibration is invisible. A period's pair is
-/// built from *means* instead - 8 red, 20 green and 8 blue over a 6x6 - so `mR - mB` carries
-/// `sqrt(1/8 + 1/8)` of it and `mR - 2mG + mB` carries `sqrt(1/8 + 4/20 + 1/8)`: half a sigma and
-/// two thirds, unequal to each other as well as to the pair the threshold was measured on. Left
-/// unnormalised the shrinkage reads both axes as noisier than they are and shrinks accordingly,
-/// which takes colour detail out and leaves the noise that motivated it.
-///
-/// Applied at the extraction and undone in the inverse, so the transform is still its own inverse.
-/// `Cfa::chroma_gain` counts it off the pattern and pushes it; nothing here can, the period being
-/// up to thirty-six sites and this being read once per photosite.
-public float2 chroma_weights(uint colour)
-{
-    if (colour == 0u) { return float2(0.5, 0.25); }
-    if (colour == 2u) { return float2(-0.5, 0.25); }
-    return float2(0.0, -0.25);
 }
 
 // The block mean above which the envelope fit reads no variance.

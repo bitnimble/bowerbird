@@ -1412,27 +1412,6 @@ pub(crate) fn sharpens(samples: usize, width: usize, height: usize, amount: f64)
     amount > 0.0 && width >= 3 && height >= 3 && samples >= width * height * 3
 }
 
-pub(crate) struct AtomicF32(std::sync::atomic::AtomicU32);
-
-impl AtomicF32 {
-    pub(crate) const fn new(value: f32) -> AtomicF32 {
-        AtomicF32(std::sync::atomic::AtomicU32::new(value.to_bits()))
-    }
-
-    pub(crate) fn set(&self, value: f32) {
-        self.0
-            .store(value.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// What was forced, or `default` while nothing non-negative has been.
-    pub(crate) fn or(&self, default: f64) -> f32 {
-        match f32::from_bits(self.0.load(std::sync::atomic::Ordering::Relaxed)) {
-            forced if forced >= 0.0 => forced,
-            _ => default as f32,
-        }
-    }
-}
-
 /// Richardson-Lucy against a frame already in VRAM. `sharpens` is its precondition.
 ///
 /// Four dispatches per iteration over ping-pong luma planes, then the neighbourhood range and the

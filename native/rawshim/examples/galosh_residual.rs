@@ -1,7 +1,7 @@
 //! What GALOSH leaves behind when it is asked to remove nothing.
 //!
 //! ```text
-//! galosh_residual [--side N] [--noise A] [--luma L] [--colour C] [--pool 0|1]
+//! galosh_residual [--side N] [--noise A] [--luma L] [--colour C]
 //! ```
 //!
 //! A denoise at an amount too small to shrink anything should hand back the frame it was given:
@@ -26,7 +26,6 @@ fn main() {
             "--noise" => noise = value.parse().expect("a number"),
             "--luma" => luma = value.parse().expect("a number"),
             "--colour" => colour = value.parse().expect("a number"),
-            "--pool" => rawshim::galosh::force_phase_pool(value != "0"),
             other => panic!("unknown flag {other}"),
         }
     }

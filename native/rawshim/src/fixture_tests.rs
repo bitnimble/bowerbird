@@ -233,10 +233,9 @@ fn tile_job(
         levels,
         scene_peak: None,
         photo_analysis: None,
-        // **On, and that took a bug to learn.** Off, this compared everything about a tile
-        // except the one stage that reads a *neighbourhood* of the region it was handed - so a
-        // region decode whose origin sat off `pass12`'s shrinkage grid shrank every pixel
-        // against a different neighbourhood than the frame did, and nothing said so.
+        // **On**: off, this would compare everything about a tile except the one stage that reads
+        // a *neighbourhood* of the region it was handed, so a region decode whose origin sat off
+        // the shrinkage's lattice would shrink against other blocks than the frame did, unseen.
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
         denoiser: crate::galosh::Denoiser::Galosh,
@@ -677,20 +676,9 @@ mod decode_geometry {
 
     /// Asking for more colour denoising never returns a rougher picture.
     ///
-    /// **The amount is a distance up the chroma pyramid, and a level is an anchor rather than a
-    /// knob**, so a threshold crossed part way along the track can bring in a level that makes the
-    /// picture worse and nothing about the slider would say so. On a period wider than a 2x2 that
-    /// is what happened: `chroma_extract_halfres` takes its value over a whole period, so every
-    /// level above the first has three times the support it has on a 2x2, and past the first that
-    /// support has crossed the picture's own edges - which the joint upsample then puts back against
-    /// luma's, as a coloured blotch. Measured before the divide, on this frame's darkest blue, the
-    /// track fell to 1.72/3.52 at 33 and jumped to 2.55/3.98 at 40, `walks_third` turning the
-    /// quarter-resolution level on at 33.3.
-    ///
-    /// The claim is the end of the track against the middle of it, which is where the jump was, and
-    /// it is made on the mosaic rather than on a render: a rendered roughness runs through the gamut
-    /// rule and the tone curve, neither of which is linear, so it is not a measurement of what the
-    /// denoise did.
+    /// The claim is the end of the track against the middle of it, and it is made on the mosaic
+    /// rather than on a render: a rendered roughness runs through the gamut rule and the tone curve,
+    /// neither of which is linear, so it is not a measurement of what the denoise did.
     #[test]
     fn more_colour_denoising_does_not_return_a_rougher_mosaic() {
         let path = fuji_noisy();
@@ -705,10 +693,11 @@ mod decode_geometry {
             .expect("the frame reads back")
         };
         // Neighbour to neighbour over the green channel, which every position of the period holds
-        // something of, against the level - the same shape of measure the pane test takes.
+        // something of, against the level - the same shape of measure the pane test takes. Inside
+        // the blue pane and clear of its edges: an edge's contrast is not roughness.
         let roughness = |frame: &crate::frame::Frame| {
             let samples = frame.samples16().expect("16-bit");
-            let (x0, y0, side) = (2078usize, 1020, 64);
+            let (x0, y0, side) = (2150usize, 1006, 32);
             let at = |x: usize, y: usize| {
                 f64::from(crate::resident::level_of_bits(
                     samples[(y * frame.width + x) * 3 + 1],
@@ -1379,9 +1368,7 @@ mod decode_geometry {
     /// agreeing.** Both fixtures are daylight, which is the half of the ramp that declines: the
     /// Canon's read floor is 9.9e-5 against a `GATE` of 6e-4 and resolves to 0/0, and the Sony's is
     /// 7.0e-4, just over, resolving to 2/6. So the Sony carries the whole claim and carries it at
-    /// the bottom of the track - the coarse chroma levels are not reached here, and
-    /// `the_suggested_colour_runs_ahead_of_the_luminance` is what pins the ramp where they are. A
-    /// ramp moved until the Sony was declined too would leave this green and empty, which is what
+    /// the bottom of the track. A ramp moved until the Sony was declined too would leave this green and empty, which is what
     /// the count at the end refuses.
     #[test]
     fn an_unset_detail_is_the_frame_it_was_measured_on() {
@@ -1572,35 +1559,25 @@ mod decode_geometry {
     /// A denoised region is the frame's own pixels, whatever size the region is.
     ///
     /// **The denoise is the one stage that reads a neighbourhood of the region it was handed**, so
-    /// it is the one that can make a window stop being a piece of the picture. `pass12` shrinks
-    /// against tiles laid from the region's own origin, which is why that origin is rounded down to
-    /// `SHRINK_LATTICE` - and `a_tile_is_graded_as_the_rendition_is` pins the result for one 512px
-    /// rectangle in one place.
+    /// it is the one that can make a window stop being a piece of the picture. Its blocks are laid
+    /// from the region's own origin, which is why that origin is rounded down to `galosh::lattice`
+    /// - and `a_tile_is_graded_as_the_rendition_is` pins the result for one 512px rectangle in one
+    /// place.
     ///
     /// One rectangle is not the claim. A region large enough to be denoised in tiles of its own, a
     /// region whose origin sits at an awkward offset, a region up against the frame's edge: each is
     /// a different arrangement of the same arithmetic, and a render that restricts its decode to a
     /// crop asks for all of them. This sweeps the sizes and origins that a crop actually produces.
     ///
-    /// **On both patterns, because the origin owes the pattern as well as the shrinkage.** A region
-    /// that starts a whole `SHRINK_LATTICE` in is on no whole period of a 6x6, and a denoise that
-    /// read the colours one phase out is exactly what it looks like: the ISO 4000 fixture came back
-    /// woven with a diagonal cross-hatch. `galosh::lattice` is what this holds, and for the pyramid
-    /// `galosh::PYRAMID_REACH` too, whose coarsest level reads several times the blocks' halo.
+    /// **On both patterns, because the origin owes the pattern as well as the shrinkage.** A denoise
+    /// that read the colours one phase out is exactly what it looks like: the ISO 4000 fixture came
+    /// back woven with a diagonal cross-hatch. `galosh::lattice` is what this holds, and
+    /// `galosh::reach`, whose coarsest level reads hundreds of photosites.
     #[test]
     fn a_denoised_region_is_the_frame_it_was_cut_from() {
         let galosh = crate::galosh::Detail::at(40.0, 40.0);
         let upscaler = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
-        let pyramid = galosh.using(crate::galosh::Denoiser::Pyramid);
-        let hybrid = galosh.using(crate::galosh::Denoiser::Hybrid);
-        for (path, detail) in [
-            (sony(), galosh),
-            (fuji_noisy(), galosh),
-            (sony(), upscaler),
-            (sony(), pyramid),
-            (fuji_noisy(), pyramid),
-            (sony(), hybrid),
-        ] {
+        for (path, detail) in [(sony(), galosh), (fuji_noisy(), galosh), (sony(), upscaler)] {
             let path = path.to_str().unwrap().to_string();
             let path = path.as_str();
             let whole = crate::decode_frame_denoised(path, 0, detail, Default::default())
@@ -1609,10 +1586,9 @@ mod decode_geometry {
             let (width, height) = (whole.width, whole.height);
             let samples = whole.samples16().expect("a 16-bit decode");
 
-            // Small and lattice-aligned, small and not, and then large enough that the denoise tiles
-            // the region as well as the frame - which is the arrangement a cropped render produces
-            // and the one no test asked about. Not under the pyramid, whose render tile no fixture
-            // reaches: `galosh`'s `the_pyramid_tiles_without_moving_a_sample` cuts it small.
+            // Small at an even origin, small at an odd one, half the frame, and against its far edge.
+            // None reaches the denoise's own tile: `galosh`'s
+            // `tiling_the_denoise_does_not_move_a_sample` cuts it small.
             let regions = [
                 crate::Tile {
                     left: 504,

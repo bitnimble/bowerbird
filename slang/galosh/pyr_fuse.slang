@@ -11,6 +11,7 @@ struct Push {
     int h;
     int below_w;
     int below_h;
+    int planes;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -21,7 +22,7 @@ void pyr_fuse(uint3 id : SV_DispatchThreadID)
     let x = int(id.x);
     let y = int(id.y);
     if (x >= pc.w || y >= pc.h) { return; }
-    for (int p = 0; p < PLANES; p++) {
+    for (int p = 0; p < pc.planes; p++) {
         level[at_plane(p, x, y, pc.w, pc.h)] +=
             upsampled_difference(below, boxed, p, x, y, pc.below_w, pc.below_h);
     }

@@ -215,16 +215,21 @@ fn mosaic_stages(width: usize, height: usize) {
         repeat("galosh fit only (the open's)", || {
             block(rawshim::galosh::fit(gpu, kernels, &uploaded, &cfa));
         });
-        let whole = upload(gpu, &mosaic, width, height);
+        // Denoised over and over in place, which costs what a fresh frame does: GALOSH's
+        // dispatch shape is fixed by the frame's size.
+        let scratch = upload(gpu, &mosaic, width, height);
         repeat("galosh denoise, 50/50, given a fit", || {
             block(rawshim::galosh::denoise_with(
-                gpu, kernels, &whole, &cfa, amounts, fit,
+                gpu, kernels, &scratch, &cfa, amounts, fit,
             ));
         });
+        drop(scratch);
+        let whole = upload(gpu, &mosaic, width, height);
+        block(rawshim::galosh::denoise_with(
+            gpu, kernels, &whole, &cfa, amounts, fit,
+        ));
         let whole = read(gpu, &whole);
 
-        // The halo is the denoise's own rather than the demosaic's: the chroma pyramid goes to a
-        // quarter of what it is handed and the joint upsample reads a neighbourhood coming back.
         let halo = rawshim::EDITOR_TILE_HALO;
 
         // One region at a time, over a range of sizes. Tiling costs far more than the halo can
@@ -283,8 +288,8 @@ fn mosaic_stages(width: usize, height: usize) {
             .fold(0f32, f32::max);
         println!("  {:<34} worst {worst:e}", "a measured fit vs a given one");
 
-        kernel_by_kernel(gpu, kernels, &uploaded, &cfa, amounts, Some(fit), 24);
-        kernel_by_kernel(gpu, kernels, &uploaded, &cfa, amounts, None, 44);
+        kernel_by_kernel(gpu, kernels, &uploaded, &cfa, amounts, Some(fit), 32);
+        kernel_by_kernel(gpu, kernels, &uploaded, &cfa, amounts, None, 56);
 
         // What tiling costs, against the halo and against the tile size, which are two separate
         // taxes and not one: the halo grows every region, and a tile size that does not divide the
@@ -320,12 +325,8 @@ fn mosaic_stages(width: usize, height: usize) {
         }
 
         // Through `denoise_in_tiles` rather than `for_each_tile` above, which aligns a region to a
-        // CFA site where `pass12` needs `SHRINK_LATTICE`: driven from this loop's geometry the same
-        // comparison reads 4.5e-1, which is that rounding and not the tiling.
-        //
-        // What is left - 8.1e-2, and the same at 1024 as at 2048, so reach rather than seams - is
-        // the chroma pyramid reading past `RENDITION_TILE_HALO`. Under a 16-bit count, since
-        // `a_denoised_region_is_the_frame_it_was_cut_from` pins the output exactly.
+        // CFA site where the denoise needs `galosh::lattice` and its halo short of `galosh::reach`:
+        // this one is exact.
         let mut tiled = upload(gpu, &mosaic, width, height);
         block(rawshim::galosh::denoise_in_tiles(
             gpu,
@@ -382,10 +383,7 @@ fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32
 
 /// What each dispatch in the chain costs, by running the chain truncated at every length.
 ///
-/// The reason to want it: the two Detail sliders enter the chain at one dispatch each - the luma
-/// amount at `pass12` and the colour amount at `smoothstep_blend_3p` - so what a slider could skip
-/// if the run before it were kept is exactly the cost of everything ahead of its own dispatch.
-/// Nothing outside can see that, because the whole chain is one compute pass.
+/// Nothing outside can see one dispatch's cost, because the whole chain is one recording.
 ///
 /// **Read the spread before believing a delta.** Each figure is a difference of two whole runs, so
 /// it carries both runs' variance, and every run re-allocates the frame's buffers before it
@@ -393,8 +391,8 @@ fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32
 /// tail rows change nothing and whatever they report is this machine's noise floor, which is the
 /// bar a delta has to clear to mean something.
 ///
-/// Handed no fit, the sweep covers the twenty-one reductions a measuring run opens with, which are
-/// a third of what the stage costs and which no caller can otherwise separate from the filtering.
+/// Handed no fit, the sweep covers the reductions a measuring run opens with, which no caller can
+/// otherwise separate from the filtering.
 fn kernel_by_kernel(
     gpu: &'static rawshim::gpu::Gpu,
     kernels: &'static rawshim::galosh::Galosh,

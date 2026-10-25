@@ -1,9 +1,8 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler|pyramid|hybrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
-//!         [--as-export] [--defocus r,b] [--phases 2|4|8|16] [--pool 0|1]
-//!         [--chroma-detail 0|1] [--reach N] [--ratio-floor N]
+//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
+//!         [--as-export] [--defocus r,b]
 //!         [--ev N] [--edge N]
 //!         [--camera-crop <dir>]
 //! ```
@@ -581,31 +580,6 @@ fn main() {
                 let stops: f64 = args.next().expect("a number").parse().expect("a number");
                 stages.ev = Some(Stops::measured(stops));
             }
-            // How much of the shrinkage's cycle spin to run. What fewer phases cost is a picture
-            // question, and a mean deviation over a frame cannot say whether an eye finds it.
-            "--phases" => {
-                let phases: i32 = args.next().expect("4, 8 or 16").parse().expect("a number");
-                rawshim::galosh::force_phases(phases);
-            }
-            // The luma phases' pooling before the inverse, a low-pass that runs at every amount:
-            // off is the exact inverse of the stride-1 transform, for seeing what the pooling
-            // alone does.
-            "--pool" => rawshim::galosh::force_phase_pool(args.next().expect("0 or 1") != "0"),
-            // The colour pyramid with or without `chroma_detail`'s bracket, which is what says how
-            // much fine luma the colour denoise would otherwise take with it.
-            "--chroma-detail" => {
-                rawshim::galosh::force_chroma_detail(args.next().expect("0 or 1") != "0")
-            }
-            "--ratio-floor" => {
-                rawshim::galosh::force_ratio_floor(
-                    args.next().expect("a number").parse().expect("a number"),
-                );
-            }
-            "--reach" => {
-                rawshim::galosh::force_level_reach(
-                    args.next().expect("a number").parse().expect("a number"),
-                );
-            }
             // **The aberration to take off, rather than the one this frame measures.** What the
             // defringe does to a picture is decided entirely by this pair, so holding everything
             // else still and moving only it is how to see what a change to the *estimate* is worth
@@ -656,15 +630,11 @@ fn main() {
             // Which filter those positions drive, which is a document's choice and so is here
             // rather than a build of its own.
             "--denoiser" => {
-                let asked = args
-                    .next()
-                    .expect("galosh, pmrid, upscaler, pyramid or hybrid");
+                let asked = args.next().expect("galosh, pmrid or upscaler");
                 detail = detail.using(match asked.as_str() {
                     "galosh" => rawshim::galosh::Denoiser::Galosh,
                     "pmrid" => rawshim::galosh::Denoiser::Pmrid,
                     "upscaler" => rawshim::galosh::Denoiser::Upscaler,
-                    "pyramid" => rawshim::galosh::Denoiser::Pyramid,
-                    "hybrid" => rawshim::galosh::Denoiser::Hybrid,
                     other => panic!("{other} is not a denoiser"),
                 });
             }

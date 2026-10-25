@@ -1,14 +1,14 @@
-// The multi-scale shrinkage's shared shape: four planes a level, each 2x2 site of the stabilised
-// mosaic taken through the orthonormal Walsh-Hadamard transform, so the unit noise the GAT left
-// stays unit and white in every plane.
+// The multi-scale shrinkage's shared shape: a plane per photosite of a site, each site of the
+// stabilised mosaic (2x2 on Bayer, 3x3 on X-Trans) taken through an orthonormal transform
+// (`galosh::site_transform`), so the unit noise the GAT left stays unit and white in every plane.
 //
-// Plane 0 is the site's luma; 1, 2 and 3 its horizontal, vertical and diagonal differences, which
-// on any Bayer phase are the colour differences plus whatever detail sits at the mosaic's Nyquist.
+// Plane 0 is the site's mean; 1 and 2 its red-blue and magenta-green differences; the rest the
+// detail inside the site, each colour's photosites against their own mean.
 module pyramid;
 
-public static const int PLANES = 4;
+public static const int MAX_PLANES = 9;
 
-/// The levels below the half-resolution sites, each a 2x2 box of the one above.
+/// The levels from the sites down, each a 2x2 box of the one above.
 public static const int LEVELS = 4;
 
 /// One workgroup of `pyr_shrink`: the pixels it writes, and the 8x8 blocks at stride 4 that cover
@@ -32,10 +32,32 @@ public struct Level {
     public int first;
     public float variance;
     public float share;
-    /// Per plane, in multiples of `variance`.
-    public float4 strength;
+    /// In multiples of `variance`: plane 0's, then every other plane's.
+    public float luma_strength;
+    public float colour_strength;
     public int accumulate;
 };
+
+/// What `pyr_pack` and `pyr_restore` read: the mosaic's extent, the first two levels', the site's
+/// side in photosites, and the sites one period spans across and down.
+public struct Sites {
+    public int width;
+    public int height;
+    public int w0;
+    public int h0;
+    public int w1;
+    public int h1;
+    public int side;
+    public int across;
+    public int down;
+};
+
+/// Where the site at (x, y)'s transform starts in the table: one period's sites hold one each, a
+/// `MAX_PLANES` row per plane, `across` sites to a period's row and `down` to its column.
+public int transform_at(int x, int y, int across, int down)
+{
+    return ((y % down) * across + x % across) * MAX_PLANES * MAX_PLANES;
+}
 
 static const float DCT[64] = {
     0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339,

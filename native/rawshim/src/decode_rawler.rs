@@ -708,36 +708,41 @@ async fn region_mosaic(
     // Grown by what reads past the tile, and by the denoise's own window, then aligned so the
     // pattern inside the region is the pattern the frame has.
     //
-    // **Down to `pass12`'s grid, not merely to a CFA site**, which `Held::window` learnt first and
-    // this path did not: the shrinkage tiles from the region's own origin, so a window starting off
-    // that lattice shrinks every pixel against a different neighbourhood and stops being a piece of
-    // the frame. A whole CFA site is enough only to keep the colours right. Measured on the Sony at
-    // Detail 40, a 512px loupe tile sat 254 counts of 65535 from the render it exists to predict.
+    // **Down to the denoise's lattice, not merely to a CFA site**: the shrinkage lays its blocks
+    // from the region's own origin, so a window starting off that lattice shrinks every pixel
+    // against other blocks and stops being a piece of the frame. A whole CFA site is enough only to
+    // keep the colours right.
     //
     // Costs the few rows it can add to two sides, which are halo either way.
-    let halo = crate::tile_halo(halo);
-    let reach = RCD_MARGIN + detailed_halo(crate::gpu::device(), detail, halo) + extra.raw();
+    //
     // The pattern off the dummy decode, which is the whole reason that decode happens before this:
     // the region's origin has to land on a whole period as well as on the shrinkage's grid, and
     // which period that is is the file's to say.
     let cfa = cfa_of(&shape)?;
-    let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa, detail.denoiser.shrink());
+    let halo = crate::tile_halo(halo);
+    let reach = RCD_MARGIN + detailed_halo(crate::gpu::device(), detail, &cfa, halo) + extra.raw();
+    let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
     let (left, top) = (
         (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
         (origin.1 + tile.top).saturating_sub(reach) / lattice_y * lattice_y,
     );
-    let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);
-    let bottom = (origin.1 + tile.top + tile.height + reach).min(frame_h);
     // Both extents whole periods as well as both origins, because the denoise pairs samples into 2x2
     // sites and refuses a region that does not. Trimmed rather than grown: the last column is halo,
-    // which is there to be eaten, and at the frame's own edge there is nothing to grow into. A caller
-    // asking for an odd-sized tile is ordinary - the loupe rounds a span to whole pixels - so this
-    // is the common path rather than a guard against a strange request.
-    let (span_w, span_h) = cfa.align_extent(right - left, bottom - top);
-    let (right, bottom) = (left + span_w, top + span_h);
+    // which is there to be eaten. A caller asking for an odd-sized tile is ordinary - the loupe
+    // rounds a span to whole pixels - so this is the common path rather than a guard against a
+    // strange request.
+    let (right, bottom) = cfa.aligned_end(
+        (left, top),
+        (
+            origin.0 + tile.left + tile.width + reach,
+            origin.1 + tile.top + tile.height + reach,
+        ),
+        (frame_w, frame_h),
+    );
     if right <= left || bottom <= top {
         return None;
     }
+    let (span_w, span_h) = (right - left, bottom - top);
     // Wider again for the highlight field alone, which only the frame's own grid and reach make the
     // frame's (`highlight::reach`); the stages after it run over the region above.
     let (field_left, field_top, field_w, field_h) = match demosaiced {
@@ -749,11 +754,17 @@ async fn region_mosaic(
                 left.saturating_sub(field_reach) / grid * grid,
                 top.saturating_sub(field_reach) / grid * grid,
             );
-            let (field_w, field_h) = cfa.align_extent(
-                (right + field_reach).min(frame_w) - field_left,
-                (bottom + field_reach).min(frame_h) - field_top,
+            let (field_right, field_bottom) = cfa.aligned_end(
+                (field_left, field_top),
+                (right + field_reach, bottom + field_reach),
+                (frame_w, frame_h),
             );
-            (field_left, field_top, field_w, field_h)
+            (
+                field_left,
+                field_top,
+                field_right - field_left,
+                field_bottom - field_top,
+            )
         }
     };
     let region = rawler::imgop::Rect::new(
@@ -1659,24 +1670,26 @@ impl Held {
         let tile = as_sensor_rect(tile, extent.0, extent.1, upright);
 
         let halo = crate::tile_halo(halo);
-        let reach = RCD_MARGIN + detailed_halo(gpu, detail, halo);
-        // **Down to `pass12`'s grid, not merely to a CFA site.** The shrinkage tiles from the
-        // region's own origin, so a window that starts off that lattice shrinks every pixel
-        // against a different neighbourhood and the band stops being the frame. Costs the few
-        // rows it can add to two sides, which are halo either way.
-        // And a whole period with it, which the lattice alone only happens to give for a pattern
-        // whose period divides it. See `region_mosaic`'s copy of this.
-        let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa, detail.denoiser.shrink());
+        let reach = RCD_MARGIN + detailed_halo(gpu, detail, &cfa, halo);
+        // **Down to the denoise's lattice, not merely to a CFA site.** The shrinkage lays its
+        // blocks from the region's own origin, so a window that starts off that lattice shrinks
+        // every pixel against other blocks and the band stops being the frame. Costs the few rows
+        // it can add to two sides, which are halo either way. See `region_mosaic`'s copy of this.
+        let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
         let (left, top) = (
             (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
             (origin.1 + tile.top).saturating_sub(reach) / lattice_y * lattice_y,
         );
-        let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);
-        let bottom = (origin.1 + tile.top + tile.height + reach).min(frame_h);
         // Both extents whole periods as well as both origins: the denoise pairs samples into 2x2
         // sites and refuses a region that does not.
-        let (span_w, span_h) = cfa.align_extent(right - left, bottom - top);
-        let (right, bottom) = (left + span_w, top + span_h);
+        let (right, bottom) = cfa.aligned_end(
+            (left, top),
+            (
+                origin.0 + tile.left + tile.width + reach,
+                origin.1 + tile.top + tile.height + reach,
+            ),
+            (frame_w, frame_h),
+        );
         if right <= left || bottom <= top {
             return None;
         }
@@ -1902,9 +1915,7 @@ impl Held {
                                             }
                                         }
                                     }
-                                    crate::galosh::Denoiser::Galosh
-                                    | crate::galosh::Denoiser::Pyramid
-                                    | crate::galosh::Denoiser::Hybrid => {
+                                    crate::galosh::Denoiser::Galosh => {
                                         denoise_in_tiles(
                                             gpu,
                                             kernels,
@@ -2003,17 +2014,9 @@ impl Held {
 /// only finer progressive updates, which is a latency question and not this module's.
 pub const RENDER_TILE: usize = 2048;
 
-/// [`RENDER_TILE`] for the pyramid's denoise, whose halo is four times the blocks'.
-const PYRAMID_RENDER_TILE: usize = 8192;
-
-/// The tile the denoise is cut into: the pyramid's wherever it runs rather than falling back to the
-/// blocks off a Bayer pattern.
-fn denoise_tile(shrink: crate::galosh::Shrink, cfa: &crate::cfa::Cfa) -> usize {
-    match (shrink, cfa.is_bayer()) {
-        (crate::galosh::Shrink::Blocks, _) | (_, false) => RENDER_TILE,
-        _ => PYRAMID_RENDER_TILE,
-    }
-}
+/// The tile the denoise is cut into, wider than [`RENDER_TILE`] for its reach of hundreds of
+/// photosites.
+const DENOISE_TILE: usize = 8192;
 
 /// Where the tiles fall along one axis, as `(start, end)` pairs.
 ///
@@ -2058,8 +2061,7 @@ async fn denoise_over(
     // because the tiles' halos read real mosaic either side of every interior seam, and the band at
     // the region's own edge is the halo the crop discards. Below one tile the machinery would cut
     // one tile and copy it twice, so that stays the single pass it has always been.
-    let tile = denoise_tile(detail.denoiser.shrink(), cfa);
-    let tiled = mosaic.width > tile || mosaic.height > tile;
+    let tiled = mosaic.width > DENOISE_TILE || mosaic.height > DENOISE_TILE;
     if let Some(gpu) = gpu {
         let denoises = (only || detail.could_do_anything()) && crate::galosh::filters(cfa);
         if let Some(kernels) = crate::galosh::device(gpu).filter(|_| denoises) {
@@ -2179,9 +2181,6 @@ async fn denoise_in_tiles(
     fit: crate::galosh::NoiseFit,
     halo: usize,
 ) {
-    // `galosh`'s own, which rounds each region's origin to the shrinkage's grid: `pass12` shrinks
-    // inside a tile indexed from the region origin, so a region off the grid shifts the tiling under
-    // every pixel and denoises against a neighbourhood the whole-frame answer never uses.
     crate::galosh::denoise_in_tiles(
         gpu,
         kernels,
@@ -2190,7 +2189,7 @@ async fn denoise_in_tiles(
         amounts,
         fit,
         halo,
-        denoise_tile(amounts.shrink, cfa),
+        DENOISE_TILE,
         |_| {},
     )
     .await;
@@ -2474,22 +2473,24 @@ const HALVING_REACH: usize = (RCD_MARGIN + 6).div_ceil(2);
 /// over its upscale holds as many planes as over a [`RENDER_TILE`].
 const UPSCALE_TILE: usize = RENDER_TILE / 2;
 
-/// The halo a region read for `detail` needs past its tile: for the pyramid its reach, for the
-/// upscaler the network's and [`HALVING_REACH`], each rounded out to a whole site, so that a loupe
-/// tile is the whole frame's.
+/// The halo a region read for `detail` needs past its tile: for GALOSH its reach, for the upscaler
+/// the network's and [`HALVING_REACH`], each rounded out to a whole site, so that a loupe tile is
+/// the whole frame's.
 fn detailed_halo(
     gpu: Option<&'static crate::gpu::Gpu>,
     detail: crate::galosh::Detail,
+    cfa: &crate::cfa::Cfa,
     halo: usize,
 ) -> usize {
-    let halo = crate::galosh::reach(detail.denoiser.shrink(), halo);
-    if detail.denoiser != crate::galosh::Denoiser::Upscaler {
-        return halo;
+    match detail.on_bayer(cfa.is_bayer()).denoiser {
+        crate::galosh::Denoiser::Galosh => crate::galosh::reach(cfa, halo),
+        crate::galosh::Denoiser::Pmrid => halo,
+        crate::galosh::Denoiser::Upscaler => gpu
+            .and_then(crate::upscale::device)
+            .map_or(halo, |upscaler| {
+                halo.max(upscaler.margin() + HALVING_REACH + 2)
+            }),
     }
-    gpu.and_then(crate::upscale::device)
-        .map_or(halo, |upscaler| {
-            halo.max(upscaler.margin() + HALVING_REACH + 2)
-        })
 }
 
 /// [`demosaic_in_tiles`] through the upscaler: each tile of the crop upscaled from the undenoised

@@ -675,10 +675,9 @@ pub struct Tile {
 impl Tile {
     /// The window grown by `halo` on every side, which is what a tile needs.
     ///
-    /// The denoise is local with a bounded reach - the chroma pyramid goes to a quarter of the
-    /// frame and the joint upsample reads a neighbourhood on the way back - so a tile denoised
-    /// on its own disagrees with its neighbour along the seam unless both were computed with
-    /// the context that reaches across it. The halo is trimmed off by the demosaic's own crop.
+    /// The denoise is local with a bounded reach, so a tile denoised on its own disagrees with its
+    /// neighbour along the seam unless both were computed with the context that reaches across
+    /// it. The halo is trimmed off by the demosaic's own crop.
     pub fn with_halo(self, halo: usize) -> Tile {
         Tile {
             left: self.left.saturating_sub(halo),
@@ -689,20 +688,9 @@ impl Tile {
     }
 }
 
-/// How much context the mosaic denoise needs either side of a tile, where what a seam costs is
-/// worth more than what it costs to avoid.
-///
-/// **96 is where the join is exact and 32 is where it stops being visible**, and they are not the
-/// same question. Measured by `examples/halo_seams.rs` over photographs and by
-/// `examples/halo_pattern.rs` over a field built to be worse than any of them: the join's excess
-/// over its own neighbourhood falls to the baseline at 32 and stays there, while 16 is still a
-/// line at several times it.
-///
-/// **What sets the exact one is the coarse level's reach, not the full-resolution pass's.** That
-/// pass depends on about fourteen pixels either side and was exact at 64; the level below it works
-/// on a plane [`galosh::COARSE_SCALE`] times smaller, so the same fourteen of *its* samples are
-/// four times as far across the frame. `tiling_the_denoise_does_not_move_a_sample` is what says
-/// where that lands.
+/// How much context a tile is given either side, where what a seam costs is worth more than what
+/// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
+/// GALOSH reads farther and raises it to its own ([`galosh::reach`]).
 ///
 /// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
 /// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
@@ -710,10 +698,6 @@ impl Tile {
 pub const RENDITION_TILE_HALO: usize = 96;
 
 /// The same, for a tile the editor draws and then replaces.
-///
-/// Past the knee, and a multiple of four for the chroma pyramid. What it buys is set by the tile
-/// size rather than by itself: over a 61MP frame the whole 16-to-64 range is 9% at 2048 tiles and
-/// 37% at 512, so the halo is cheap and small tiles are not.
 pub const EDITOR_TILE_HALO: usize = 32;
 
 /// Set by the seam harnesses to cut one frame at several halos from one process, which is the only

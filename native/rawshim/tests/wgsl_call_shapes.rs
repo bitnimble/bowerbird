@@ -2,8 +2,8 @@
 //!
 //! Metal's AIR-to-ISA backend drops such calls: past a pressure threshold that moves with the
 //! caller's live state, every iteration after the first walks straight past the call site - the
-//! callee never executes and the destination reads zeros. Measured on an M5 Pro, macOS 26, in
-//! `pass12`, where a constant frame came out at 0.64; the reduction lives with the Apple report.
+//! callee never executes and the destination reads zeros. Measured on an M5 Pro, macOS 26, where a
+//! constant frame came out at 0.64; the reduction lives with the Apple report.
 //! The threshold cannot be pinned from WGSL - it depends on what else is live at the call and on
 //! whether the compiler inlines, neither of which this side controls - so the rule is structural.
 //!

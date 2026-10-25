@@ -476,10 +476,9 @@ void fit_score(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
 
         // **Accumulated by a select over all nine rather than by a subscript**, so the two arrays
         // keep constant indices and stay in registers: a dynamically-indexed local array gets a
-        // scratch allocation in device memory, which `pass12` records at ten seconds for a frame.
-        // Measured here at 150k pairs, a single probe is 0.89ms with the index constant, 1.94 with
-        // the select, and 1.89 with the subscript - so the select is worth having and the gap to
-        // the first is what the pooling itself costs.
+        // scratch allocation in device memory. Measured here at 150k pairs, a single probe is
+        // 0.89ms with the index constant, 1.94 with the select, and 1.89 with the subscript - so
+        // the select is worth having and the gap to the first is what the pooling itself costs.
         let at = bucket_of(t.xyz);
         [ForceUnroll]
         for (int i = 0; i < BIAS_BUCKETS; i++) {

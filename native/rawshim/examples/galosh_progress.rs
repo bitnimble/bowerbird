@@ -9,10 +9,9 @@
 //! one-directional - a smaller tile is always slower overall, because every tile is grown by the
 //! halo - so the row to ship is the smallest one whose total is still close to the largest's.
 //!
-//! The last column is the reason `denoise_in_tiles` rounds its origins to `pass12`'s workgroup: it
-//! reads 0 at every size, and without that rounding it reads ~1.6e-3 over 94% of the frame, at
-//! every size and at every halo up to 512. `describe` is what says which of the two a run is - a
-//! halo too short bands the difference along the seams, a misplaced origin spreads it everywhere.
+//! The last column should read 0 at every size, `denoise_in_tiles` rounding its origins to
+//! `galosh::lattice` and its halo up to `galosh::reach`. `describe` says what a failure is - a halo
+//! too short bands the difference along the seams, a misplaced origin spreads it everywhere.
 //!
 //! The mosaic is synthesised at the file's own dimensions rather than decoded from it, for the
 //! reason `open_bench` gives: no phase of GALOSH branches on a sample value, so the dispatch shape
