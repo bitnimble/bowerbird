@@ -217,7 +217,8 @@ float3 finished_light(uint2 at)
 float3 recovery_at(uint2 at)
 {
     let map = uint2(finish.gain_shape.xy);
-    let taps = gain_taps(at, uint2(finish.placed.zw), map);
+    GainTaps taps;
+    gain_taps(at, uint2(finish.placed.zw), map, taps);
     float3 corner[4];
     for (uint k = 0; k < 4; k = k + 1) {
         let texel = uint2(taps.at[k] % map.x, taps.at[k] / map.x);

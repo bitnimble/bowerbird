@@ -119,8 +119,9 @@ float3 light_at(uint x, uint y)
 /// The gain map at a point of the source as its three normalised recovery values.
 float3 recovery_at(uint x, uint y)
 {
-    let taps = gain_taps(uint2(x, y), uint2(params.src_width, params.src_height),
-                         uint2(params.gain_width, params.gain_height));
+    GainTaps taps;
+    gain_taps(uint2(x, y), uint2(params.src_width, params.src_height),
+              uint2(params.gain_width, params.gain_height), taps);
     float3 corner[4];
     for (uint k = 0; k < 4; k = k + 1) {
         let base = wide<Drawn>(taps.at[k]) * 3;

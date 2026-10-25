@@ -17,7 +17,7 @@ public struct GainTaps {
 /// Bilinear rather than nearest because the map is stored at a fraction of the picture's
 /// resolution - half is usual, a quarter is legal - and a nearest read of one puts a staircase
 /// along every highlight edge it brightens.
-public GainTaps gain_taps(uint2 at, uint2 picture, uint2 map)
+public void gain_taps(uint2 at, uint2 picture, uint2 map, out GainTaps taps)
 {
     // The pixel's centre in the map's grid, which is the sampling both sides of a gain map agree
     // on: the two rasters cover the same picture, so the centres line up rather than the corners.
@@ -33,10 +33,8 @@ public GainTaps gain_taps(uint2 at, uint2 picture, uint2 map)
     let y0 = uint(floor(v));
     let x1 = min(x0 + 1, map.x - 1);
     let y1 = min(y0 + 1, map.y - 1);
-    GainTaps taps;
     taps.at = uint4(y0 * map.x + x0, y0 * map.x + x1, y1 * map.x + x0, y1 * map.x + x1);
     taps.fraction = float2(u - floor(u), v - floor(v));
-    return taps;
 }
 
 public float3 blended(GainTaps taps, float3 corner[4])
