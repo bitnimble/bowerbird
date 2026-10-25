@@ -60,23 +60,19 @@ function links(db: Database): [string, string][] {
   ).map((row) => [row.raw_id, row.camera_file_id]);
 }
 
-interface Marks {
-  rating: number;
-  triage: string | null;
-  notes: string | null;
-  is_hidden: number;
-}
-
-function marksOf(db: Database, id: string): Marks {
-  return db
-    .query('SELECT rating, triage, notes, is_hidden FROM photos WHERE id = ?')
-    .get(id) as Marks;
-}
-
-function mark(db: Database, id: string, rating: number, at: string): void {
+function inAlbum(db: Database, id: string): void {
+  db.query("INSERT OR IGNORE INTO albums (id, name) VALUES ('a1', 'Trip')").run();
   db.query(
-    "UPDATE photos SET rating = ?, triage = 'picked', notes = ?, stamp_triage = ? WHERE id = ?",
-  ).run(rating, `${id} notes`, at, id);
+    "INSERT INTO album_photos (album_id, photo_id, date_added) VALUES ('a1', ?, '2026-01-02')",
+  ).run(id);
+}
+
+function albumsOf(db: Database, id: string): string[] {
+  return (
+    db.query('SELECT album_id FROM album_photos WHERE photo_id = ?').all(id) as {
+      album_id: string;
+    }[]
+  ).map((row) => row.album_id);
 }
 
 describe('photoLinkTriggers', () => {
@@ -86,6 +82,7 @@ describe('photoLinkTriggers', () => {
     insertShot(db, 'raw', 'Trip/DSC01234.ARW');
     insertShot(db, 'other', 'Trip/DSC01235.JPG');
     expect(links(db)).toEqual([['raw', 'jpeg']]);
+    expect(db.query('SELECT pending FROM photo_links').all()).toEqual([{ pending: 1 }]);
   });
 
   it("links a camera's HEIF the way it links a JPEG", () => {
@@ -95,128 +92,53 @@ describe('photoLinkTriggers', () => {
     expect(links(db)).toEqual([['raw', 'heif']]);
   });
 
-  it('gives a RAW arriving late the marks its camera file was given first', () => {
+  it("gives each half the other's albums when the pair links", () => {
     const db = openMigrated();
     insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    mark(db, 'jpeg', 4, '0002');
-    db.query("UPDATE photos SET is_hidden = 1, stamp_hidden = '0002' WHERE id = 'jpeg'").run();
+    inAlbum(db, 'jpeg');
     insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    expect(marksOf(db, 'raw')).toEqual({
-      rating: 4,
-      triage: 'picked',
-      notes: 'jpeg notes',
-      is_hidden: 1,
-    });
-  });
-
-  it('keeps the later marks of the two when a pair links', () => {
-    const db = openMigrated();
-    insertShot(db, 'raw', 'Trip/DSC01234.ARW', { taken: null });
-    insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    mark(db, 'jpeg', 2, '0001');
-    mark(db, 'raw', 5, '0003');
-    db.query("UPDATE photos SET date_taken = '2026-03-04T05:06:07.000Z' WHERE id = 'raw'").run();
-    expect(marksOf(db, 'jpeg')).toMatchObject({ rating: 5, notes: 'raw notes' });
-    expect(marksOf(db, 'raw')).toMatchObject({ rating: 5, notes: 'raw notes' });
-  });
-
-  it('carries a mark on either half to the other', () => {
-    const db = openMigrated();
-    insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    mark(db, 'raw', 3, '0001');
-    expect(marksOf(db, 'jpeg')).toMatchObject({ rating: 3, triage: 'picked' });
-    mark(db, 'jpeg', 1, '0002');
-    expect(marksOf(db, 'raw')).toMatchObject({ rating: 1, notes: 'jpeg notes' });
-    db.query("UPDATE photos SET is_hidden = 1, stamp_hidden = '0003' WHERE id = 'raw'").run();
-    expect(marksOf(db, 'jpeg').is_hidden).toBe(1);
-  });
-
-  it("carries a mark on one camera file to its RAW's other", () => {
-    const db = openMigrated();
-    insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    insertShot(db, 'heif', 'Trip/DSC01234.HIF');
-    mark(db, 'jpeg', 4, '0001');
-    expect(marksOf(db, 'heif')).toMatchObject({ rating: 4, notes: 'jpeg notes' });
-  });
-
-  it('gives no half a label whose removal from it is later than the label', () => {
-    const db = openMigrated();
-    insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    db.query(
-      "INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES ('lib', 'l1', 'jpeg', '0001')",
-    ).run();
-    db.query(
-      `INSERT INTO replication_log (library_id, entity, row_id, stamp, deleted)
-         VALUES ('lib', 'photo_label', 'l1/raw', '0002', 1)`,
-    ).run();
-    insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    expect(links(db)).toEqual([['raw', 'jpeg']]);
-    expect(db.query("SELECT 1 FROM photo_labels WHERE photo_id = 'raw'").all()).toEqual([]);
+    expect(albumsOf(db, 'raw')).toEqual(['a1']);
   });
 
   it('keeps a link a rename still matches, without forming it again', () => {
     const db = openMigrated();
     insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    db.query(
-      "INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES ('lib', 'l1', 'jpeg', '0001')",
-    ).run();
+    inAlbum(db, 'jpeg');
     insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    db.query("DELETE FROM photo_labels WHERE photo_id = 'raw'").run();
+    db.query("DELETE FROM album_photos WHERE photo_id = 'raw'").run();
     db.exec(
-      `UPDATE photos SET recipe = json_object('kind', 'file', 'path', 'Moved/DSC01234.ARW') WHERE id = 'raw'`,
+      `UPDATE photos SET recipe = json_object('kind', 'file', 'path', 'Trip/dsc01234.arw') WHERE id = 'raw'`,
     );
     expect(links(db)).toEqual([['raw', 'jpeg']]);
-    expect(db.query("SELECT 1 FROM photo_labels WHERE photo_id = 'raw'").all()).toEqual([]);
+    expect(albumsOf(db, 'raw')).toEqual([]);
   });
 
   it('leaves a pair alone when a scan writes back the header it already had', () => {
     const db = openMigrated();
     insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    db.query(
-      "INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES ('lib', 'l1', 'jpeg', '0001')",
-    ).run();
+    inAlbum(db, 'jpeg');
     insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    db.query("DELETE FROM photo_labels WHERE photo_id = 'raw'").run();
+    db.query("DELETE FROM album_photos WHERE photo_id = 'raw'").run();
     db.query(
       "UPDATE photos SET date_taken = date_taken, camera_make = camera_make WHERE id = 'raw'",
     ).run();
-    expect(db.query("SELECT 1 FROM photo_labels WHERE photo_id = 'raw'").all()).toEqual([]);
     expect(links(db)).toEqual([['raw', 'jpeg']]);
+    expect(albumsOf(db, 'raw')).toEqual([]);
   });
 
-  it("gives each half the other's labels and albums when the pair links", () => {
+  it('links only within one folder, whatever case the names are in', () => {
     const db = openMigrated();
-    insertShot(db, 'jpeg', 'Trip/DSC01234.JPG');
-    db.query(
-      "INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES ('lib', 'l1', 'jpeg', '0001')",
-    ).run();
-    db.query("INSERT INTO albums (id, name) VALUES ('a1', 'Trip')").run();
-    db.query(
-      "INSERT INTO album_photos (album_id, photo_id, date_added) VALUES ('a1', 'jpeg', '2026-01-02')",
-    ).run();
     insertShot(db, 'raw', 'Trip/DSC01234.ARW');
-    expect(
-      db.query("SELECT label_id, stamp FROM photo_labels WHERE photo_id = 'raw'").all(),
-    ).toEqual([{ label_id: 'l1', stamp: '0001' }]);
-    expect(db.query("SELECT album_id FROM album_photos WHERE photo_id = 'raw'").all()).toEqual([
-      { album_id: 'a1' },
-    ]);
-  });
-
-  it('links across folders, as a card split between two slots lands', () => {
-    const db = openMigrated();
-    insertShot(db, 'raw', 'Slot 1/DSC01234.ARW');
-    insertShot(db, 'jpeg', 'Slot 2/dsc01234.jpg');
+    insertShot(db, 'export', 'Exports/DSC01234.JPG');
+    insertShot(db, 'jpeg', 'Trip/dsc01234.jpg');
     expect(links(db)).toEqual([['raw', 'jpeg']]);
   });
 
   it('leaves apart a counter that wrapped and a second body with the same names', () => {
     const db = openMigrated();
     insertShot(db, 'raw', 'A/DSC01234.ARW');
-    insertShot(db, 'wrapped', 'B/DSC01234.JPG', { taken: '2027-01-01T00:00:00.000Z' });
-    insertShot(db, 'body', 'C/DSC01234.JPG', { model: 'ILCE-7RM5' });
+    insertShot(db, 'wrapped', 'A/DSC01234.JPG', { taken: '2027-01-01T00:00:00.000Z' });
+    insertShot(db, 'body', 'A/DSC01234.jpg', { model: 'ILCE-7RM5' });
     expect(links(db)).toEqual([]);
   });
 
@@ -242,6 +164,10 @@ describe('photoLinkTriggers', () => {
     expect(links(db)).toEqual([]);
     db.exec(
       `UPDATE photos SET recipe = json_object('kind', 'file', 'path', 'Elsewhere/DSC01234.JPG') WHERE id = 'jpeg'`,
+    );
+    expect(links(db)).toEqual([]);
+    db.exec(
+      `UPDATE photos SET recipe = json_object('kind', 'file', 'path', 'Trip/DSC01234.JPG') WHERE id = 'jpeg'`,
     );
     expect(links(db)).toEqual([['raw', 'jpeg']]);
     db.exec("DELETE FROM photos WHERE id = 'raw'");

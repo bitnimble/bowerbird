@@ -2,6 +2,7 @@ import type { Database } from '../../../db/driver';
 import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { HeaderMetadata } from '../../processing/analysis/metadata';
 import { stamp } from '../../replication/stamps';
+import { reconcileLinks } from '../links/linked_photos';
 import { IS_A_FILE } from '../paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../renditions/photo_processing_repository';
 
@@ -69,33 +70,36 @@ export class PhotoMetadataRepository {
   }
 
   private writeMetadata(photoId: string, fields: PhotoMetadataFields, only: string): void {
-    this.db
-      .query(
-        `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
             longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
             camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?, metadata_provisional = 0,
             stamp_imported = COALESCE(?, stamp_imported) WHERE id = ? ${only}`,
-      )
-      .run(
-        fields.width,
-        fields.height,
-        fields.orientation,
-        fields.date_taken,
-        fields.date_taken_offset,
-        fields.latitude,
-        fields.longitude,
-        fields.iso,
-        fields.shutter_speed,
-        fields.aperture,
-        fields.focal_length,
-        fields.camera_make,
-        fields.camera_model,
-        fields.lens_model,
-        fields.capture_sequence,
-        // A header read again over the same file is no new import fact (§5.4: write only if different).
-        this.differs(photoId, fields) ? stamp(this.db) : null,
-        photoId,
-      );
+        )
+        .run(
+          fields.width,
+          fields.height,
+          fields.orientation,
+          fields.date_taken,
+          fields.date_taken_offset,
+          fields.latitude,
+          fields.longitude,
+          fields.iso,
+          fields.shutter_speed,
+          fields.aperture,
+          fields.focal_length,
+          fields.camera_make,
+          fields.camera_model,
+          fields.lens_model,
+          fields.capture_sequence,
+          // A header read again over the same file is no new import fact (§5.4: write only if different).
+          this.differs(photoId, fields) ? stamp(this.db) : null,
+          photoId,
+        );
+      reconcileLinks(this.db, [photoId]);
+    })();
   }
 
   private differs(photoId: string, fields: PhotoMetadataFields): boolean {

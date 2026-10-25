@@ -30,7 +30,11 @@ import { peerId } from '../stamps';
 import { coverage, packVector } from '../vectors';
 import { differences, invariants, LIB, makePeer, replicatedState, Rng, type Peer } from './peers';
 
-const PHOTOS = ['p1', 'p2', 'p3', 'p4', 'p5'];
+// p1 and p2 each have the camera's JPEG of the same shot beside them, which links to them
+// (`photo_links`).
+const PHOTOS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p1-jpeg', 'p2-jpeg'];
+const fileOf = (id: string): string =>
+  id.endsWith('-jpeg') ? `${id.slice(0, -'-jpeg'.length)}.jpg` : `${id}.arw`;
 const SHOOTS = ['s1', 's2'];
 // Where this process's seeds start, so a long run can be split across several of them
 // (`scripts/converge.ts`, which is what `bun run converge` drives).
@@ -51,7 +55,7 @@ function seed(peer: Peer): void {
       library_id: LIB,
       shoot_id: null,
       file_hash: `hash-${id}`,
-      file_path: `${id}.arw`,
+      file_path: fileOf(id),
       file_size: 100,
       width: 60,
       height: 40,
@@ -66,8 +70,8 @@ function seed(peer: Peer): void {
       shutter_speed: null,
       aperture: null,
       focal_length: null,
-      camera_make: null,
-      camera_model: null,
+      camera_make: 'Sony',
+      camera_model: 'ILCE-7M4',
       lens_model: null,
       binned: null,
     } as never);
@@ -103,11 +107,14 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
       shootId,
     );
   },
-  (peer, rng) =>
+  // Few names, so a RAW and a JPEG moved onto one stem link mid-walk.
+  (peer, rng) => {
+    const id = rng.pick(PHOTOS);
     new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).setFilePath(
-      rng.pick(PHOTOS),
-      `moved-${rng.int(50)}.arw`,
-    ),
+      id,
+      `moved-${rng.int(8)}${fileOf(id).slice(fileOf(id).lastIndexOf('.'))}`,
+    );
+  },
   (peer, rng) => {
     const id = rng.pick(PHOTOS);
     const paths = new PhotoPathsRepository(peer.db, new StackMembership(peer.db));
@@ -115,8 +122,8 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
       peer.db,
       new PhotoProcessingRepository(peer.db, new RenditionsRepository(peer.db)),
     );
-    if (metadata.isBinned(id)) paths.markRestored(id, `${id}.arw`);
-    else paths.markDeleted(id, `${id}.arw`, `batch-${rng.int(10)}`);
+    if (metadata.isBinned(id)) paths.markRestored(id, fileOf(id));
+    else paths.markDeleted(id, fileOf(id), `batch-${rng.int(10)}`);
   },
   (peer, rng) => {
     const stacks = new StacksRepository(peer.db);
@@ -553,7 +560,9 @@ describe('convergence', () => {
       ]);
       expect(peer.db.query('SELECT photo_id FROM photo_labels ORDER BY photo_id').all()).toEqual([
         { photo_id: 'p1' },
+        { photo_id: 'p1-jpeg' },
         { photo_id: 'p2' },
+        { photo_id: 'p2-jpeg' },
         { photo_id: 'p3' },
       ]);
     }
@@ -608,7 +617,12 @@ describe('convergence', () => {
       laptop.db
         .query("SELECT photo_id FROM photo_labels WHERE label_id = 'label-b' ORDER BY photo_id")
         .all(),
-    ).toEqual([{ photo_id: 'p1' }, { photo_id: 'p2' }]);
+    ).toEqual([
+      { photo_id: 'p1' },
+      { photo_id: 'p1-jpeg' },
+      { photo_id: 'p2' },
+      { photo_id: 'p2-jpeg' },
+    ]);
   });
 
   // The rule the random walk exercises by accident, stated on its own so that a

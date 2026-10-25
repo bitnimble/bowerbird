@@ -1,6 +1,13 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
-import { applyChanges, dissolveEmptiedStacks, observePage, rebuildCandidates } from './apply';
+import { reconcileLinks } from '../photos/links/linked_photos';
+import {
+  applyChanges,
+  dissolveEmptiedStacks,
+  observePage,
+  rebuildCandidates,
+  shareTakenAcrossLinks,
+} from './apply';
 import { stampBefore, stampPeer } from './clock';
 import { mergeLabelsNamedAlike, repair } from './repair';
 import { peerId } from './stamps';
@@ -249,6 +256,7 @@ function accept(into: Replica, intake: Intake, next: Page): void {
       // this page could not take.
       for (const photoId of rebuildCandidates(applied.taken)) intake.edited.add(photoId);
       repair(into.db, into.libraryId);
+      shareTakenAcrossLinks(into.db, applied.taken);
     })();
     intake.applied += next.changes.length;
   }
@@ -263,6 +271,7 @@ function close(into: Replica, intake: Intake, peer: string, delivered: Vector): 
     // this peer can honestly say has ended (§5.2).
     dissolveEmptiedStacks(into.db, into.libraryId);
     mergeLabelsNamedAlike(into.db, into.libraryId);
+    reconcileLinks(into.db);
     repair(into.db, into.libraryId);
     advance(into.db, into.libraryId, delivered);
     recordPeer(into.db, into.libraryId, peer, delivered);

@@ -1,6 +1,7 @@
 import type { Database } from '../../db/driver';
 import type { Label } from '../../schemas/labels';
-import { notACameraFile, withLinkedPhotos } from '../photos/paths/photo_paths_repository';
+import { withEveryLinkedPhoto } from '../photos/links/linked_photos';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 import { stamp } from '../replication/stamps';
 import { forgetCascade, tombstone } from '../replication/tombstones';
 
@@ -90,7 +91,7 @@ export class LabelsRepository {
     const asked = new Set(photoIds);
     let added = 0;
     this.db.transaction(() => {
-      for (const photoId of withLinkedPhotos(this.db, photoIds)) {
+      for (const photoId of withEveryLinkedPhoto(this.db, photoIds)) {
         const changes = add.run(labelId, at, photoId, libraryId).changes;
         if (asked.has(photoId)) added += changes;
       }
@@ -106,7 +107,7 @@ export class LabelsRepository {
     const asked = new Set(photoIds);
     let removed = 0;
     this.db.transaction(() => {
-      for (const photoId of withLinkedPhotos(this.db, photoIds)) {
+      for (const photoId of withEveryLinkedPhoto(this.db, photoIds)) {
         if (remove.run(libraryId, labelId, photoId).changes === 0) continue;
         tombstone(this.db, libraryId, 'photo_label', `${labelId}/${photoId}`, at);
         if (asked.has(photoId)) removed++;

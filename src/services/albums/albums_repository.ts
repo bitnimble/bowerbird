@@ -2,7 +2,8 @@ import type { Database } from '../../db/driver';
 import type { Ordering } from '../../schemas/common';
 import type { Album } from '../../schemas/albums';
 import { firstPhotoOrderBy, hiddenIs } from '../photos/listing/photo_query';
-import { notACameraFile, withLinkedPhotos } from '../photos/paths/photo_paths_repository';
+import { withEveryLinkedPhoto } from '../photos/links/linked_photos';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 
 interface AlbumRow {
   id: string;
@@ -91,7 +92,7 @@ export class AlbumsRepository {
     const tx = this.db.transaction((ids: string[]) => {
       for (const pid of ids) stmt.run(albumId, pid, dateAddedIso);
     });
-    tx(withLinkedPhotos(this.db, photoIds));
+    tx(withEveryLinkedPhoto(this.db, photoIds));
   }
 
   removePhotos(albumId: string, photoIds: string[]): void {
@@ -99,7 +100,7 @@ export class AlbumsRepository {
     const tx = this.db.transaction((ids: string[]) => {
       for (const pid of ids) stmt.run(albumId, pid);
     });
-    tx(withLinkedPhotos(this.db, photoIds));
+    tx(withEveryLinkedPhoto(this.db, photoIds));
   }
 
   // Album IDs a photo belongs to (used by sync move-detection bias, DESIGN §9.3).

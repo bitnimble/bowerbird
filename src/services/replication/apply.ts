@@ -11,6 +11,7 @@ import { observeStamp, stamp as stampFor } from './stamps';
 import type { Cell, Change, LiveChange, Tombstone } from '../../schemas/replication';
 import { keyPartsOf, parseable, whereKey, whereSidecar } from './stream';
 import { forgetCascade, shootsBelow, tombstone, unbury } from './tombstones';
+import { shareAcrossLinks } from '../photos/links/linked_photos';
 
 // Merging what arrived into what is here (docs/replication.md §5).
 //
@@ -91,6 +92,23 @@ export function applyChanges(db: Database, libraryId: string, changes: readonly 
     }
   }
   return { deferred, taken };
+}
+
+/**
+ * Shares what a page brought across linked photographs (`shareAcrossLinks`), once `repair` has
+ * placed them in their stacks.
+ */
+export function shareTakenAcrossLinks(db: Database, taken: readonly Change[]): void {
+  shareAcrossLinks(
+    db,
+    taken.flatMap((change) =>
+      change.kind === 'photo'
+        ? [change.rowId]
+        : change.kind === 'photo_label'
+          ? change.rowId.split('/').slice(1)
+          : [],
+    ),
+  );
 }
 
 /**

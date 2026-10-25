@@ -200,11 +200,12 @@ export const photoInputs = sqliteTable(
 );
 
 // A RAW and the JPEG or HEIF the camera wrote beside it, two files of one photograph: same
-// library, same filename stem, same capture second, same body. The camera file is hidden behind
-// the RAW in listings and offered as the RAW's `camera` rendition.
+// library, same folder, same filename stem, same capture second, same body. The camera file is
+// hidden behind the RAW in listings and offered as the RAW's `camera` rendition.
 //
 // Derived like photo_inputs, and replicated by nothing: every column it is matched on travels in
 // photo.imported or photo.placement, so each peer links the same pairs (photoLinkTriggers).
+// `pending` until `reconcileLinks` has shared marks and labels across it.
 export const photoLinks = sqliteTable(
   'photo_links',
   {
@@ -215,11 +216,15 @@ export const photoLinks = sqliteTable(
     cameraFileId: text('camera_file_id')
       .notNull()
       .references(() => photos.id, { onDelete: 'cascade' }),
+    pending: integer('pending').notNull().default(1),
   },
   (t) => [
     primaryKey({ columns: [t.rawId, t.cameraFileId] }),
     // The hiding direction: given a photograph, is it a RAW's camera file.
     index('idx_photo_links_camera_file').on(t.cameraFileId),
+    index('idx_photo_links_pending')
+      .on(t.pending)
+      .where(sql`${t.pending} = 1`),
   ],
 );
 

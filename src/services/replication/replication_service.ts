@@ -19,7 +19,14 @@ import {
   type UnpairRequest,
 } from '../../schemas/replication';
 import { libraryMutex } from '../sync/coordination/library_mutex';
-import { applyChanges, dissolveEmptiedStacks, observePage, rebuildCandidates } from './apply';
+import { reconcileLinks } from '../photos/links/linked_photos';
+import {
+  applyChanges,
+  dissolveEmptiedStacks,
+  observePage,
+  rebuildCandidates,
+  shareTakenAcrossLinks,
+} from './apply';
 import { mergeLabelsNamedAlike, repair } from './repair';
 import type { BlobLocations } from '../blobs/blob_locations';
 import { DEFAULT_SKEW_MS } from './clock';
@@ -231,6 +238,7 @@ export class ReplicationService {
         this.db.transaction(() => {
           const held = applyChanges(this.db, request.library_id, request.page.changes);
           repair(this.db, request.library_id);
+          shareTakenAcrossLinks(this.db, held.taken);
           return held;
         })(),
       ),
@@ -260,6 +268,7 @@ export class ReplicationService {
       // held is here, so a stack its removals emptied has genuinely ended (§5.2).
       dissolveEmptiedStacks(this.db, request.library_id);
       mergeLabelsNamedAlike(this.db, request.library_id);
+      reconcileLinks(this.db);
       repair(this.db, request.library_id);
       advance(this.db, request.library_id, delivered);
       recordPeer(this.db, request.library_id, request.peer_id, delivered);

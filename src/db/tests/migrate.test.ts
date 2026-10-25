@@ -26,13 +26,7 @@ function objectsOfType(db: Database, type: 'table' | 'index' | 'trigger'): strin
 
 function beforePhotoLinks(db: Database): void {
   db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0020_photo_links'");
-  for (const trigger of [
-    'photos_link_ins',
-    'photos_link_upd',
-    'photos_unlink',
-    'photos_share_stamp_triage',
-    'photos_share_stamp_hidden',
-  ])
+  for (const trigger of ['photos_link_ins', 'photos_link_upd', 'photos_unlink'])
     db.exec(`DROP TRIGGER ${trigger}`);
   db.exec('DROP TABLE photo_links');
 }
@@ -135,6 +129,7 @@ describe('opening a catalogue', () => {
 
     runMigrations(db);
 
+    expect(db.query('SELECT 1 FROM photo_links WHERE pending = 1').get()).toBeNull();
     const row = (id: string): unknown =>
       db.query('SELECT camera_make, camera_model, rating, triage FROM photos WHERE id = ?').get(id);
     expect(row('jpeg')).toMatchObject({ camera_make: 'Canon', camera_model: 'EOS 100D' });
@@ -159,7 +154,7 @@ describe('opening a catalogue', () => {
     db.close();
   });
 
-  it('takes each camera file out of the automatic stack it shared with its RAW', () => {
+  it("puts each RAW in its camera file's place in a stack, dissolving a stack of the pair alone", () => {
     const db = new Database(':memory:');
     runMigrations(db);
     beforePhotoLinks(db);
@@ -187,6 +182,11 @@ describe('opening a catalogue', () => {
     stack.run('chosen', 'manual');
     insert.run('kept', 'Trip/DSC04.ARW', 'arw', at(4), 'ILCE-7M4', 'chosen', 0);
     insert.run('kept-jpeg', 'Trip/DSC04.JPG', 'jpeg', at(4), 'ILCE-7M4', 'chosen', 1);
+    stack.run('picked', 'manual');
+    insert.run('lone', 'Trip/DSC05.ARW', 'arw', at(5), 'ILCE-7M4', null, 1);
+    insert.run('lone-jpeg', 'Trip/DSC05.JPG', 'jpeg', at(5), 'ILCE-7M4', 'picked', 1);
+    insert.run('other', 'Trip/DSC06.ARW', 'arw', at(6), 'ILCE-7M4', 'picked', 0);
+    db.query("UPDATE photos SET stack_state = 'none' WHERE id = 'lone'").run();
     for (const [stackId, photoId] of [
       ['pair', 'raw'],
       ['pair', 'jpeg'],
@@ -195,6 +195,8 @@ describe('opening a catalogue', () => {
       ['burst', 'second'],
       ['chosen', 'kept'],
       ['chosen', 'kept-jpeg'],
+      ['picked', 'lone-jpeg'],
+      ['picked', 'other'],
     ])
       member.run(stackId, photoId);
 
@@ -210,12 +212,14 @@ describe('opening a catalogue', () => {
       ).map((r) => r.photo_id);
     const stackOf = (id: string): unknown =>
       db.query('SELECT stack_id, is_representative FROM photos WHERE id = ?').get(id);
-    expect(stacks()).toEqual(['burst', 'chosen']);
+    expect(stacks()).toEqual(['burst', 'picked']);
     expect(stackOf('raw')).toEqual({ stack_id: null, is_representative: 1 });
     expect(stackOf('jpeg')).toEqual({ stack_id: null, is_representative: 1 });
     expect(members('burst')).toEqual(['first', 'second']);
     expect(stackOf('first-jpeg')).toEqual({ stack_id: null, is_representative: 1 });
-    expect(members('chosen')).toEqual(['kept', 'kept-jpeg']);
+    expect(stackOf('kept')).toEqual({ stack_id: null, is_representative: 1 });
+    expect(members('picked')).toEqual(['lone', 'other']);
+    expect(stackOf('lone')).toMatchObject({ stack_id: 'picked' });
     db.close();
   });
 

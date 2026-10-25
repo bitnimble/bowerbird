@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { newId } from '../schemas/id';
 import { DEVICE_NAME_MAX_LENGTH } from '../schemas/replication';
 import { config } from '../config';
+import { reconcileLinks } from '../services/photos/links/linked_photos';
 import { cameraNames } from '../services/processing/rawshim/rawshim_ops';
 import { stamp } from '../services/replication/stamps';
-import { StacksRepository } from '../services/stacks/stacks_repository';
 import { computeFileHash } from '../utils/hash';
 import { RENDERED_FORMATS } from '../utils/scan';
 import type { Database } from './driver';
@@ -77,16 +77,15 @@ const DATA_MIGRATIONS: Partial<Record<string, (db: Database) => void>> = {
 
 /**
  * Names every finished picture's camera as its RAW's header does (`header::camera_names`), links
- * the pairs that makes match, and takes each camera file out of the automatic stack detection
- * put it in beside its own RAW.
+ * the pairs that makes match, and reconciles them (`reconcileLinks`).
  */
 function linkPhotos(db: Database): void {
   const rendered = `format IN (${RENDERED_FORMATS.map(() => '?').join(', ')})`;
   // A fresh catalogue has no identity to stamp with until migrations finish (`seedIdentity`).
   if (db.query(`SELECT 1 FROM photos WHERE ${rendered} LIMIT 1`).get(...RENDERED_FORMATS) == null)
     return;
-  // Ahead of `triggers()`, so the renames below link their pairs and every new link shares its
-  // marks exactly as a link made after the migration does.
+  // Ahead of `triggers()`, so the renames below link their pairs as a scan after the migration
+  // would.
   db.exec(photoLinkTriggers());
   const at = stamp(db);
   const renamed = db.query(
@@ -114,23 +113,7 @@ function linkPhotos(db: Database): void {
   db.exec(`INSERT OR IGNORE INTO photo_links (library_id, raw_id, camera_file_id)
     SELECT raw.library_id, raw.id, file.id FROM photos raw, photos file
      WHERE ${linkedPair('raw', 'file', 'file')}`);
-  const stacked = db
-    .query(
-      `SELECT photos.stack_id, photos.id FROM photos
-         JOIN stacks ON stacks.id = photos.stack_id AND stacks.origin = 'auto'
-         JOIN photo_links l ON l.camera_file_id = photos.id`,
-    )
-    .all() as { stack_id: string; id: string }[];
-  const files = Map.groupBy(stacked, (row) => row.stack_id);
-  const stacks = new StacksRepository(db);
-  for (const [stackId, rows] of files) {
-    stacks.removePhotos(
-      stackId,
-      rows.map((row) => row.id),
-      false,
-    );
-    stacks.dissolveIfSpent(stackId, false);
-  }
+  reconcileLinks(db);
 }
 
 /**

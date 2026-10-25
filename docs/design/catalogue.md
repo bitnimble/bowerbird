@@ -180,8 +180,9 @@ touches the recipe.
 #### 4.2.2 A RAW and its camera file are one photograph
 
 `photo_links (library_id, raw_id, camera_file_id)` pairs a RAW with the JPEG or HEIF the camera
-wrote beside it: same library, same filename stem (case-insensitive, any folder, so a dual-slot card split across
-folders still pairs), same `date_taken` to the second, same `camera_make` and `camera_model`.
+wrote beside it: same library, same folder, same filename stem (case-insensitive), same
+`date_taken` to the second, same `camera_make` and `camera_model`. An edited export keeps its
+original's stem and capture data, so the folder is what keeps it a photo of its own.
 **Triggers maintain it** (`photoLinkTriggers`) over every column it matches on, so it fills in as
 each row's header is read, whichever file arrives first. Derived, never replicated: every input
 travels in `photo.imported` or `photo.placement`, so each peer links the same pairs.
@@ -197,16 +198,26 @@ What a link changes:
   binned together, and the RAW's original to be had wherever the file's is. Offloaded to a backup
   or held by another device counts as had; a RAW binned alone, or gone from everywhere, gives the
   file back. A stack counts the pair once, and stack detection never offers a linked camera file
-  as a candidate.
-- **Marks are shared.** Rating, verdict and notes (`stamp_triage`) and hiding (`stamp_hidden`) are
-  copied across the linked group whenever one changes, and when a link forms each unit takes the
-  half with the later stamp, so a JPEG rated before its RAW arrives hands the RAW its marks.
-  Each copy is written under the stamp it came with, so two peers linking the same rows agree.
-  Labels and albums are unioned onto both halves when a link forms, skipping a label whose
-  removal from that half is recorded later than the label; a link a rename still matches is kept,
-  not formed again.
-- **Bin, restore, labels, albums and shoot moves** carry both halves while the RAW stands for the
-  file (`withLinkedPhotos`).
+  as a candidate. A camera file stacked when its link forms leaves its stack, and its RAW takes
+  its place if the RAW is unstacked, or in a detected stack while the file's is one a person
+  made; a stack left with one member dissolves.
+- **Marks and labels are shared** (`reconcileLinks`) across a RAW and every camera file linked to
+  it. Rating, verdict and notes (`stamp_triage`) and hiding (`stamp_hidden`) take, per unit, the
+  member with the latest stamp (a tie goes to the RAW, then the larger id), so a JPEG rated
+  before its RAW arrives hands the RAW its marks. A label held by one member goes to the others,
+  unless its removal from one is recorded later, in which case it leaves them all. Copies are
+  written under a stamp minted for them, never the source's: a peer already covering the
+  source's stamp is never sent a copy carrying it, so a peer whose link existed only for a while
+  would hold a value nobody else does. It runs after a mark is written, a header is read, a scan
+  inserts a photo, at the close of a replication session, and in the migration; each page of a
+  session only shares marks and labels (`shareAcrossLinks`), since the stacks a swap reads may
+  still be arriving. Albums do not replicate, and are unioned onto both halves by the trigger
+  when a link forms; a link a rename still matches is kept, not formed again.
+- **Labels and albums** are added and removed across every linked photo
+  (`withEveryLinkedPhoto`), the set they are shared over, so a removal from a camera file whose
+  RAW is gone stays removed.
+- **Bin, restore and shoot moves** carry both halves while the RAW stands for the file
+  (`withLinkedPhotos`).
 - **The viewer** offers the file as the RAW's `camera` rendition, "Camera JPEG" or "Camera HEIC",
   served as that row's own file (`GET /image/:raw/renditions/camera`) at the RAW's rotation:
   a JPEG's EXIF orientation is retagged, a HEIF's `irot` rewritten (`heif::with_added_rotation`),
