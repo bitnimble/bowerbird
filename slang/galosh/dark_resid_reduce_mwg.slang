@@ -41,42 +41,53 @@ void dark_resid_reduce_mwg(
     let n_block_cols = pc.width / 2;
     let total_blocks = n_block_rows * n_block_cols;
 
-    var swr = tally();
-    var sww = tally();
+    // Not `Tally`s, as in `dark_ref_reduce_mwg`.
+    var swr = 0.0;
+    var sww = 0.0;
 
-    for (int bi = gid; bi < total_blocks; bi += total_wis) {
-        let br_idx = bi / n_block_cols;
-        let bc_idx = bi - br_idx * n_block_cols;
-        let br = 2 * br_idx;
-        let bc = 2 * bc_idx;
+    for (int first = gid; first < total_blocks; first += PAIRWISE * total_wis) {
+        float w[PAIRWISE];
+        float wr[PAIRWISE];
+        [ForceUnroll]
+        for (int j = 0; j < PAIRWISE; j++) {
+            w[j] = 0.0;
+            wr[j] = 0.0;
+            let bi = first + j * total_wis;
+            if (bi >= total_blocks) { continue; }
+            let br_idx = bi / n_block_cols;
+            let bc_idx = bi - br_idx * n_block_cols;
+            let br = 2 * br_idx;
+            let bc = 2 * bc_idx;
 
-        let g0 = in_gat_full[br * pc.width + bc];
-        let g1 = in_gat_full[(br + 1) * pc.width + bc];
-        let g2 = in_gat_full[br * pc.width + (bc + 1)];
-        let g3 = in_gat_full[(br + 1) * pc.width + (bc + 1)];
-        let ch_max = max(max(g0, g1), max(g2, g3));
-        let ch_min = min(min(g0, g1), min(g2, g3));
-        if (ch_max - ch_min > ACHROMATIC_RANGE) { continue; }
+            let g0 = in_gat_full[br * pc.width + bc];
+            let g1 = in_gat_full[(br + 1) * pc.width + bc];
+            let g2 = in_gat_full[br * pc.width + (bc + 1)];
+            let g3 = in_gat_full[(br + 1) * pc.width + (bc + 1)];
+            let ch_max = max(max(g0, g1), max(g2, g3));
+            let ch_min = min(min(g0, g1), min(g2, g3));
+            if (ch_max - ch_min > ACHROMATIC_RANGE) { continue; }
 
-        let iv0 = raw[br * pc.width + bc];
-        let iv1 = raw[(br + 1) * pc.width + bc];
-        let iv2 = raw[br * pc.width + (bc + 1)];
-        let iv3 = raw[(br + 1) * pc.width + (bc + 1)];
-        let l_raw = (iv0 + iv1 + iv2 + iv3) * 0.25;
-        let r = l_raw * inv_s;
-        let r2 = r * r;
-        let w = 1.0 / (1.0 + r2 * r2);
-        let d0 = g0 - dr0;
-        let d1 = g1 - dr1;
-        let d2 = g2 - dr2;
-        let d3 = g3 - dr3;
-        let resid2 = d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
-        tally_push(sww, w);
-        tally_push(swr, w * resid2 * 0.25);
+            let iv0 = raw[br * pc.width + bc];
+            let iv1 = raw[(br + 1) * pc.width + bc];
+            let iv2 = raw[br * pc.width + (bc + 1)];
+            let iv3 = raw[(br + 1) * pc.width + (bc + 1)];
+            let l_raw = (iv0 + iv1 + iv2 + iv3) * 0.25;
+            let r = l_raw * inv_s;
+            let r2 = r * r;
+            w[j] = 1.0 / (1.0 + r2 * r2);
+            let d0 = g0 - dr0;
+            let d1 = g1 - dr1;
+            let d2 = g2 - dr2;
+            let d3 = g3 - dr3;
+            let resid2 = d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+            wr[j] = w[j] * resid2 * 0.25;
+        }
+        sww += pairwise(w);
+        swr += pairwise(wr);
     }
 
-    lds[lid * 2 + 0] = tally_sum(swr);
-    lds[lid * 2 + 1] = tally_sum(sww);
+    lds[lid * 2 + 0] = swr;
+    lds[lid * 2 + 1] = sww;
     GroupMemoryBarrierWithGroupSync();
 
     for (int s = WGSIZE / 2; s > 0; s >>= 1) {

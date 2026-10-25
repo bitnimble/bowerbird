@@ -5,6 +5,7 @@
 // here, off the high bit there - and is left alone: both are self-consistent, and each
 // channel's σ is unified away in the next dispatch anyway.
 import prelude;
+import "../times.slang";
 
 [vk::binding(0, 0)] StructuredBuffer<float> in_gat_full;
 [vk::binding(1, 0)] RWStructuredBuffer<int> partial;
@@ -53,25 +54,25 @@ void sigma_per_cfa(uint3 group: SV_GroupID, uint3 local: SV_GroupThreadID)
 
     let bin_scale = float(SIGMA_BINS) / SIGMA_LAP_MAX;
     var my_count = 0;
-    // Rows dealt out across the channel's slices as well as its lanes, so between them the slices
-    // visit every row exactly once and the multiset of Laplacians is one workgroup's.
-    for (int hr = slice * WG + lid; hr < hh; hr += pc.slices * WG) {
+    // Neighbouring lanes read neighbouring column triples; across slices each is visited once.
+    let triples = max(hw, 0) / 3;
+    let items = hh * triples;
+    for (int item = slice * WG + lid; item < items; item += pc.slices * WG) {
+        let hr = item / triples;
+        let hc = times(item - hr * triples, 3);
         let fr = pc.period_h * hr + dy0;
-        if (fr >= pc.height) { continue; }
-        for (int hc = 0; hc < hw - 2; hc += 3) {
-            let fc0 = pc.period_w * hc + dx0;
-            let fc1 = pc.period_w * (hc + 1) + dx0;
-            let fc2 = pc.period_w * (hc + 2) + dx0;
-            if (fc2 >= pc.width) { break; }
-            let a = in_gat_full[fr * pc.width + fc0];
-            let b = in_gat_full[fr * pc.width + fc1];
-            let c = in_gat_full[fr * pc.width + fc2];
-            let lap = abs(a - 2.0 * b + c);
-            var bin = int(lap * bin_scale);
-            if (bin >= SIGMA_BINS) { bin = SIGMA_BINS - 1; }
-            hist[bin].add(1);
-            my_count++;
-        }
+        let fc0 = pc.period_w * hc + dx0;
+        let fc1 = pc.period_w * (hc + 1) + dx0;
+        let fc2 = pc.period_w * (hc + 2) + dx0;
+        if (fr >= pc.height || fc2 >= pc.width) { continue; }
+        let a = in_gat_full[fr * pc.width + fc0];
+        let b = in_gat_full[fr * pc.width + fc1];
+        let c = in_gat_full[fr * pc.width + fc2];
+        let lap = abs(a - 2.0 * b + c);
+        var bin = int(lap * bin_scale);
+        if (bin >= SIGMA_BINS) { bin = SIGMA_BINS - 1; }
+        hist[bin].add(1);
+        my_count++;
     }
     total_count.add(my_count);
     GroupMemoryBarrierWithGroupSync();

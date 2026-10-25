@@ -1,7 +1,7 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
+//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler|pyramid|hybrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
 //!         [--as-export] [--defocus r,b] [--phases 2|4|8|16] [--pool 0|1]
 //!         [--chroma-detail 0|1] [--reach N] [--ratio-floor N]
 //!         [--ev N] [--edge N]
@@ -656,11 +656,15 @@ fn main() {
             // Which filter those positions drive, which is a document's choice and so is here
             // rather than a build of its own.
             "--denoiser" => {
-                let asked = args.next().expect("galosh, pmrid or upscaler");
+                let asked = args
+                    .next()
+                    .expect("galosh, pmrid, upscaler, pyramid or hybrid");
                 detail = detail.using(match asked.as_str() {
                     "galosh" => rawshim::galosh::Denoiser::Galosh,
                     "pmrid" => rawshim::galosh::Denoiser::Pmrid,
                     "upscaler" => rawshim::galosh::Denoiser::Upscaler,
+                    "pyramid" => rawshim::galosh::Denoiser::Pyramid,
+                    "hybrid" => rawshim::galosh::Denoiser::Hybrid,
                     other => panic!("{other} is not a denoiser"),
                 });
             }

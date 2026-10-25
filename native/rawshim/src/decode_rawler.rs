@@ -1902,7 +1902,9 @@ impl Held {
                                             }
                                         }
                                     }
-                                    crate::galosh::Denoiser::Galosh => {
+                                    crate::galosh::Denoiser::Galosh
+                                    | crate::galosh::Denoiser::Pyramid
+                                    | crate::galosh::Denoiser::Hybrid => {
                                         denoise_in_tiles(
                                             gpu,
                                             kernels,

@@ -114,26 +114,21 @@ void ne_block_stats(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
         blk[tid] = raw[(pc.period_h * (y0 + ly) + dy0) * pc.width + (pc.period_w * (x0 + lx) + dx0)];
         GroupMemoryBarrierWithGroupSync();
 
-        // **On every lane, and off `raw` rather than off `blk`, which is what keeps the skip below
-        // workgroup-uniform.** WGSL calls any value read from workgroup storage non-uniform however
-        // plainly every lane computed the same one, so a mean summed from `blk` puts every barrier
-        // past this point in non-uniform control flow and Chrome refuses the module outright, where
-        // naga compiles it. The 64 samples were pulled in by the line above, so these are cache
-        // hits, and every lane sums them in the same y-major order.
-        var sum = 0.0;
-        for (int y = 0; y < BLOCK; y++) {
-            for (int x = 0; x < BLOCK; x++) {
-                sum += raw[(pc.period_h * (y0 + y) + dy0) * pc.width + (pc.period_w * (x0 + x) + dx0)];
-            }
+        // Read only inside `tid == 0`: WGSL calls a value summed from `blk` non-uniform, so a skip
+        // on it puts the barriers below in non-uniform control flow and Chrome refuses the module
+        // (naga compiles it). So a block too bright to use is sorted anyway and written off after.
+        var lane0_mean = 0.0;
+        if (tid == 0) {
+            var sum = 0.0;
+            for (int i = 0; i < BLOCK * BLOCK; i++) { sum += blk[i]; }
+            lane0_mean = sum / float(BLOCK * BLOCK);
         }
-        let mean = sum / float(BLOCK * BLOCK);
 
         // Skipped blocks still write a variance above `ne_finalize`'s `1e9` guard, so a stale slot
         // is never read as one.
-        let usable = green(ch) && mean < BLOCK_MEAN_CEILING;
-        if (!usable) {
+        if (!green(ch)) {
             if (tid == 0) {
-                blk_mean[bi_global] = mean;
+                blk_mean[bi_global] = lane0_mean;
                 blk_var[bi_global] = FLT_MAX;
             }
             GroupMemoryBarrierWithGroupSync();
@@ -166,8 +161,9 @@ void ne_block_stats(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
         if (tid == 0) {
             // MAD to a sigma, then the variance a three-tap Laplacian has on iid noise: 6 sigma².
             let sigma_lap = sorted[LAPS / 2] / 0.6745;
-            blk_var[bi_global] = (sigma_lap * sigma_lap) / 6.0;
-            blk_mean[bi_global] = mean;
+            let usable = lane0_mean < BLOCK_MEAN_CEILING;
+            blk_var[bi_global] = usable ? (sigma_lap * sigma_lap) / 6.0 : FLT_MAX;
+            blk_mean[bi_global] = lane0_mean;
         }
         GroupMemoryBarrierWithGroupSync();
     }

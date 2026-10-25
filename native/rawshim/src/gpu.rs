@@ -930,6 +930,12 @@ impl<'a> Recording<'a> {
         buffer
     }
 
+    pub fn scratch(&mut self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
+        let buffer = self.gpu.own_scratch(descriptor);
+        self.held.push(Kept::Buffer(buffer.clone()));
+        buffer
+    }
+
     pub fn init(&mut self, descriptor: &wgpu::util::BufferInitDescriptor<'_>) -> Buffer {
         let buffer = self.gpu.own_buffer_init(descriptor);
         self.held.push(Kept::Buffer(buffer.clone()));
@@ -1527,6 +1533,16 @@ impl Gpu {
 
     /// A buffer whose life is its own rather than a submission's: a frame, a mosaic, a pyramid.
     pub fn own_buffer(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
+        self.own_buffer_cleared(descriptor, true)
+    }
+
+    /// [`Gpu::own_buffer`] for a plane its user writes whole before reading any of it, so a kept
+    /// one is handed out as it was left rather than zeroed.
+    pub fn own_scratch(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
+        self.own_buffer_cleared(descriptor, false)
+    }
+
+    fn own_buffer_cleared(&self, descriptor: &wgpu::BufferDescriptor<'_>, clear: bool) -> Buffer {
         let keep = keepable(descriptor);
         // Clearable, so a kept one can be handed out as zeroed as a fresh one.
         let usage = match keep {
@@ -1539,9 +1555,11 @@ impl Gpu {
         let buffer = match reused {
             Some(buffer) => {
                 // Stages accumulate into buffers they never cleared, reading a fresh one's zeros.
-                let mut encoder = self.device.create_command_encoder(&Default::default());
-                encoder.clear_buffer(&buffer, 0, None);
-                self.queue.submit([encoder.finish()]);
+                if clear {
+                    let mut encoder = self.device.create_command_encoder(&Default::default());
+                    encoder.clear_buffer(&buffer, 0, None);
+                    self.queue.submit([encoder.finish()]);
+                }
                 buffer
             }
             None => self.device.create_buffer(&wgpu::BufferDescriptor {

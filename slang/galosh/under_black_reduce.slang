@@ -20,6 +20,7 @@ struct Push {
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
 static const int WGSIZE = 256;
+static const int BATCH = 8;
 
 groupshared UnderBlack lds[WGSIZE * BLACK_LEVELS];
 
@@ -39,15 +40,26 @@ void under_black_reduce(
 
     UnderBlack mine[BLACK_LEVELS];
     for (int l = 0; l < BLACK_LEVELS; l++) { under_black_none(mine[l]); }
-    for (int at = gid; at < total; at += total_wis) {
-        let value = raw[at];
-        // Spelled against the comparison, so a sample that is not a number counts as nothing.
-        if (!(value < 0.0)) { continue; }
-        let y = at / pc.width;
-        let x = at - y * pc.width;
-        let level = black_level_of(cfa_colour(pat, y, x), y);
-        let next = x + pc.period_w < pc.width ? at + pc.period_w : at - pc.period_w;
-        under_black_take(mine[level], -value, raw[next] < 0.0);
+    // Loads batched ahead of the skips, taken in the same order.
+    for (int first = gid; first < total; first += BATCH * total_wis) {
+        float values[BATCH];
+        [ForceUnroll]
+        for (int j = 0; j < BATCH; j++) {
+            let at = first + j * total_wis;
+            values[j] = at < total ? raw[at] : 0.0;
+        }
+        [ForceUnroll]
+        for (int j = 0; j < BATCH; j++) {
+            let at = first + j * total_wis;
+            let value = values[j];
+            // Spelled against the comparison, so a sample that is not a number counts as nothing.
+            if (at >= total || !(value < 0.0)) { continue; }
+            let y = at / pc.width;
+            let x = at - y * pc.width;
+            let level = black_level_of(cfa_colour(pat, y, x), y);
+            let next = x + pc.period_w < pc.width ? at + pc.period_w : at - pc.period_w;
+            under_black_take(mine[level], -value, raw[next] < 0.0);
+        }
     }
 
     for (int l = 0; l < BLACK_LEVELS; l++) { lds[lid * BLACK_LEVELS + l] = mine[l]; }

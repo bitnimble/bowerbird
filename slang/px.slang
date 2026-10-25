@@ -28,7 +28,8 @@
 //   rendition size, which is what the colour smoothing did - and what the descriptor window did
 //   the moment a burst began searching on half the plane a pan does.
 //   Print frame borders use a share of the photo's short edge, identical on all four sides.
-// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*` and `QUIET_*` tile, `galosh`'s windows,
+// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*` and `QUIET_*` tile, `galosh`'s windows
+//   (`galosh/pyramid`'s `TILE`, `BLOCK` and `STRIDE` too, in sites of each level),
 //   `galosh/reconstruct_bayer`'s `HALO`, `defocus.slang`'s `STRIDE`, `highlight::CELL_SITES`
 //   (`highlight_field.slang`'s `cell_sites`), `align.slang`'s tile, patch, search
 //   and outlier reaches, and `merge.slang`'s kernel spreads, all on the frames' photosites

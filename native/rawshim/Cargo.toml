@@ -57,6 +57,10 @@ name = "sweep"
 required-features = ["renditions"]
 
 [[example]]
+name = "denoise_truth"
+required-features = ["renditions"]
+
+[[example]]
 name = "pmrid_server"
 required-features = ["renditions"]
 

@@ -39,46 +39,52 @@ void dark_ref_reduce_mwg(
     let n_block_cols = pc.width / 2;
     let total_blocks = n_block_rows * n_block_cols;
 
-    var sw = tally();
-    var sw0 = tally();
-    var sw1 = tally();
-    var sw2 = tally();
-    var sw3 = tally();
+    // Not `Tally`s: five in registers halve this pass's speed. Each add is a pairwise sum of
+    // `PAIRWISE` blocks, some 15 of them an invocation at 61MP.
+    var sw = 0.0;
+    var sg = float4(0.0);
 
-    for (int bi = gid; bi < total_blocks; bi += total_wis) {
-        let br_idx = bi / n_block_cols;
-        let bc_idx = bi - br_idx * n_block_cols;
-        let br = 2 * br_idx;
-        let bc = 2 * bc_idx;
+    for (int first = gid; first < total_blocks; first += PAIRWISE * total_wis) {
+        float w[PAIRWISE];
+        float4 wg[PAIRWISE];
+        [ForceUnroll]
+        for (int j = 0; j < PAIRWISE; j++) {
+            w[j] = 0.0;
+            wg[j] = float4(0.0);
+            let bi = first + j * total_wis;
+            if (bi >= total_blocks) { continue; }
+            let br_idx = bi / n_block_cols;
+            let bc_idx = bi - br_idx * n_block_cols;
+            let br = 2 * br_idx;
+            let bc = 2 * bc_idx;
 
-        let g0 = in_gat_full[br * pc.width + bc];
-        let g1 = in_gat_full[(br + 1) * pc.width + bc];
-        let g2 = in_gat_full[br * pc.width + (bc + 1)];
-        let g3 = in_gat_full[(br + 1) * pc.width + (bc + 1)];
-        let ch_max = max(max(g0, g1), max(g2, g3));
-        let ch_min = min(min(g0, g1), min(g2, g3));
-        if (ch_max - ch_min > ACHROMATIC_RANGE) { continue; }
+            let g0 = in_gat_full[br * pc.width + bc];
+            let g1 = in_gat_full[(br + 1) * pc.width + bc];
+            let g2 = in_gat_full[br * pc.width + (bc + 1)];
+            let g3 = in_gat_full[(br + 1) * pc.width + (bc + 1)];
+            let ch_max = max(max(g0, g1), max(g2, g3));
+            let ch_min = min(min(g0, g1), min(g2, g3));
+            if (ch_max - ch_min > ACHROMATIC_RANGE) { continue; }
 
-        let iv0 = raw[br * pc.width + bc];
-        let iv1 = raw[(br + 1) * pc.width + bc];
-        let iv2 = raw[br * pc.width + (bc + 1)];
-        let iv3 = raw[(br + 1) * pc.width + (bc + 1)];
-        let l_raw = (iv0 + iv1 + iv2 + iv3) * 0.25;
-        let r = l_raw * inv_s;
-        let r2 = r * r;
-        let w = 1.0 / (1.0 + r2 * r2);
-        tally_push(sw, w);
-        tally_push(sw0, w * g0);
-        tally_push(sw1, w * g1);
-        tally_push(sw2, w * g2);
-        tally_push(sw3, w * g3);
+            let iv0 = raw[br * pc.width + bc];
+            let iv1 = raw[(br + 1) * pc.width + bc];
+            let iv2 = raw[br * pc.width + (bc + 1)];
+            let iv3 = raw[(br + 1) * pc.width + (bc + 1)];
+            let l_raw = (iv0 + iv1 + iv2 + iv3) * 0.25;
+            let r = l_raw * inv_s;
+            let r2 = r * r;
+            w[j] = 1.0 / (1.0 + r2 * r2);
+            wg[j] = w[j] * float4(g0, g1, g2, g3);
+        }
+        sw += pairwise(w);
+        sg += pairwise(wg);
     }
 
-    lds[lid * 5 + 0] = tally_sum(sw);
-    lds[lid * 5 + 1] = tally_sum(sw0);
-    lds[lid * 5 + 2] = tally_sum(sw1);
-    lds[lid * 5 + 3] = tally_sum(sw2);
-    lds[lid * 5 + 4] = tally_sum(sw3);
+    lds[lid * 5 + 0] = sw;
+    lds[lid * 5 + 1] = sg.x;
+    lds[lid * 5 + 2] = sg.y;
+    lds[lid * 5 + 3] = sg.z;
+    lds[lid * 5 + 4] = sg.w;
     GroupMemoryBarrierWithGroupSync();
 
     // The tree below is itself pairwise - each step adds two partials of the same size - so a

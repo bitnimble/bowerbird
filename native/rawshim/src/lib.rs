@@ -984,6 +984,7 @@ pub extern "C" fn bb_cancel_job(progress_id: u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_hold_render_memory() {
     pmrid::hold_arenas();
+    gpu::hold_buffers();
 }
 
 /// Ends one `bb_hold_render_memory`; the last frees everything kept.
@@ -992,6 +993,7 @@ pub extern "C" fn bb_hold_render_memory() {
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_release_render_memory() {
     pmrid::release_arenas();
+    gpu::release_buffers();
     release_freed_memory();
 }
 

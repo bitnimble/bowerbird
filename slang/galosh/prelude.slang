@@ -148,8 +148,8 @@ public float2 chroma_weights(uint colour)
 //
 // **Here rather than in `ne_finalize` alone, because two kernels depend on the same bound.** Every
 // read of `blk_var` there is gated on it, so a block above it has no variance worth computing and
-// `ne_block_stats` skips its median outright. Written twice the two could drift apart, and the
-// direction that matters is a block the fit reads whose variance was never computed.
+// `ne_block_stats` writes it off. Written twice the two could drift apart, and the direction that
+// matters is a block the fit reads whose variance was never computed.
 public static const float BLOCK_MEAN_CEILING = 0.97;
 
 /// The side of a block `ne_block_stats` measures, in its channel's own photosites.
@@ -361,8 +361,24 @@ public float gat_inv_lut(
         return min(gat_inv_exact(d, lut_params[2], lut_params[3]), 1.0);
     }
 
-    var lo = 0u;
-    var hi = entries - 1;
+    // The closed form lands within an entry or two of the bracket, so the search gallops out from
+    // there rather than bisecting the whole table: a dozen dependent loads per photosite otherwise.
+    let guess = gat_inv_exact(d, lut_params[2], lut_params[3]) * float(entries - 1);
+    // Spelled against the comparison, so a guess that is not a number starts the walk at entry 0.
+    var lo = guess >= 0.0 ? uint(min(guess, float(entries - 2))) : 0u;
+    var hi = lo + 1;
+    var step = 1u;
+    while (lo > 0 && lut_d[lo] > d) {
+        hi = lo;
+        lo = lo > step ? lo - step : 0u;
+        step *= 2u;
+    }
+    step = 1u;
+    while (hi < entries - 1 && lut_d[hi] <= d) {
+        lo = hi;
+        hi = min(hi + step, entries - 1);
+        step *= 2u;
+    }
     while (lo + 1 < hi) {
         let mid = (lo + hi) >> 1;
         if (lut_d[mid] <= d) { lo = mid; } else { hi = mid; }
@@ -425,6 +441,19 @@ public void tally_push(inout Tally t, float v)
     let occupied = (t.filled & (1u << top)) != 0;
     t.level[top] = select(occupied, t.level[top] + carry, carry);
     t.filled |= (1u << top);
+}
+
+public static const int PAIRWISE = 8;
+
+/// The sum of `PAIRWISE` terms as the tree a [`Tally`] would build of them.
+public float pairwise(float v[PAIRWISE])
+{
+    return ((v[0] + v[1]) + (v[2] + v[3])) + ((v[4] + v[5]) + (v[6] + v[7]));
+}
+
+public float4 pairwise(float4 v[PAIRWISE])
+{
+    return ((v[0] + v[1]) + (v[2] + v[3])) + ((v[4] + v[5]) + (v[6] + v[7]));
 }
 
 /// Smallest block first, so the fold itself keeps the property the levels were built for.
