@@ -46,7 +46,7 @@ CREATE TABLE libraries (
 - `name`, what the library is called in the sidebar and in Settings. Required. On create, an omitted or blank name is filled from the root folder and stored: the last path segment, or when that segment is a four-digit year, `"<parent> <year>"` so date-sorted trees do not all show as `"2025"`. Renaming the folder on disk afterwards does not change the stored name.
 - `ordering`, default ordering for photo listings in this library.
 - `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot _is_ a subfolder, and its photos would never be scanned. Sync keeps shoots in step with the folders on disk (§9.4.1): every folder holding photos is a shoot, and the catalogue cannot disagree with the tree.
-- `include_non_raw`, whether the finished formats are photographs here (§7). Off by default, and a standing rule like the one above it rather than an import-time choice: beside a folder of RAWs a JPEG is usually the camera's own copy of a frame the library already holds, and taking both makes every frame two rows. Turning it off makes the next scan stop finding them, so their rows go `is_missing` exactly as they would had the files been moved off the disk - the same thing `include_subfolders` does to a subfolder's, and not a delete: the rows stay until somebody removes them, and the files are never touched. Asked in the Add-library dialog as well as in Settings, because the import begins as the row lands (§9.8). It is replicated, unlike the rendition settings beside it: what the library _contains_ is the same catalogue on every peer, where where its renditions come from is a statement about one machine's disk.
+- `include_non_raw`, whether the finished formats are photographs here (§7). Off by default, and a standing rule like the one above it rather than an import-time choice: beside a folder of RAWs a JPEG is usually the camera's own copy of a frame the library already holds. Taken anyway, such a JPEG is linked to its RAW and hidden behind it (`photo_links`, §4.2.2). Turning it off makes the next scan stop finding them, so their rows go `is_missing` exactly as they would had the files been moved off the disk - the same thing `include_subfolders` does to a subfolder's, and not a delete: the rows stay until somebody removes them, and the files are never touched. Asked in the Add-library dialog as well as in Settings, because the import begins as the row lands (§9.8). It is replicated, unlike the rendition settings beside it: what the library _contains_ is the same catalogue on every peer, where where its renditions come from is a statement about one machine's disk.
 - `bin_name`, what this library's bin folder is called at its root (§12.3). Per library rather than a constant because the name is also what the live scan skips: a root that already keeps a folder called `Bin` has it adopted as the bin, and everything inside it imports as already-binned rather than as part of the collection (§12.3). The Add-library dialog warns against the folder listing it already has, so that is settled while the name is still being chosen. **NULL means the library has no bin at all**, which is what a library born read-only is: nothing on disk records a binning, so `is_deleted` is the only truth. Nullable rather than `''` because joining `''` onto the root gives the root, which would point the bin channel at the whole library.
 - `read_only`, whether the app may write under `root_path` at all: an archive volume, a NAS export mounted read-only, or a collection the photographer would rather no software rearranged. Almost nothing the catalogue knows was ever about the files, so what this actually turns off is short - binning moves nothing (§12.1), and a shoot has to be a folder that already exists (§4.3). `read_only = 0` with a NULL `bin_name` never persists: clearing the flag needs a `bin_name` in the same request, and makes the folder. Detected, not guessed: `access(dir, W_OK)`, reported per listing by `GET /api/browse`, and a create that says the root is writable when it is not is refused with `READ_ONLY` rather than silently upgraded.
 - `bin_dev` / `bin_ino` / `bin_birthtime`, the bin folder's identity, recorded when the folder is made. A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin what §9.4.1 already handles for a shoot, and it is answered the same way. Re-pointing the library's root clears them, and the next scan's bin channel records the folder it finds there. Deliberately not on the `Library` API type: they would leak into every response.
@@ -173,9 +173,55 @@ by its own id, the queue rebuilds it like anything else, the bin takes it, and r
 _union_ of them for a panorama, so the frame is as wide as anything any source saw; the _intersection_ for
 an assembly, so the result is exactly the ground every frame agrees on and is slightly smaller than any
 single input - so either lays out like any other picture; the canvas itself is an internal of the recipe.
-Its frames are hidden behind it in a collapsed listing (`NOT_A_FRAME`) and shown in the band its badge
+Its frames are hidden behind it in a collapsed listing (`NOT_STOOD_FOR`) and shown in the band its badge
 opens. Nothing about it is a stack: the frames may be stacked, loose or a mixture, and regrouping them never
 touches the recipe.
+
+#### 4.2.2 A RAW and its camera file are one photograph
+
+`photo_links (library_id, raw_id, camera_file_id)` pairs a RAW with the JPEG or HEIF the camera
+wrote beside it: same library, same folder, same filename stem (case-insensitive), same
+`date_taken` to the second, same `camera_make` and `camera_model`. An edited export keeps its
+original's stem and capture data, so the folder is what keeps it a photo of its own.
+**Triggers maintain it** (`photoLinkTriggers`) over every column it matches on, so it fills in as
+each row's header is read, whichever file arrives first. Derived, never replicated: every input
+travels in `photo.imported` or `photo.placement`, so each peer links the same pairs.
+
+The match needs the two headers to name the camera alike. A RAW's names come from rawler's camera
+table (`EOS 100D`, `Fujifilm`) and a finished picture's EXIF spells the same body differently
+(`Canon EOS 100D`, `FUJIFILM`), so `header::camera_names` maps a finished picture's names through
+the same table. A body the table does not know keeps its EXIF names.
+
+What a link changes:
+
+- **Listings** hide the camera file behind the RAW (`NOT_STOOD_FOR`) while the RAW stands for it:
+  binned together, and the RAW's original to be had wherever the file's is. Offloaded to a backup
+  or held by another device counts as had; a RAW binned alone, or gone from everywhere, gives the
+  file back. A stack counts the pair once, and stack detection never offers a linked camera file
+  as a candidate. A camera file stacked when its link forms leaves its stack, and its RAW takes
+  its place if the RAW is unstacked, or in a detected stack while the file's is one a person
+  made; a stack left with one member dissolves.
+- **Marks and labels are shared** (`reconcileLinks`) across a RAW and every camera file linked to
+  it. Rating, verdict and notes (`stamp_triage`) and hiding (`stamp_hidden`) take, per unit, the
+  member with the latest stamp (a tie goes to the RAW, then the larger id), so a JPEG rated
+  before its RAW arrives hands the RAW its marks. A label held by one member goes to the others,
+  unless its removal from one is recorded later, in which case it leaves them all. Copies are
+  written under a stamp minted for them, never the source's: a peer already covering the
+  source's stamp is never sent a copy carrying it, so a peer whose link existed only for a while
+  would hold a value nobody else does. It runs after a mark is written, a header is read, a scan
+  inserts a photo, at the close of a replication session, and in the migration; each page of a
+  session only shares marks and labels (`shareAcrossLinks`), since the stacks a swap reads may
+  still be arriving. Albums do not replicate, and are unioned onto both halves by the trigger
+  when a link forms; a link a rename still matches is kept, not formed again.
+- **Labels and albums** are added and removed across every linked photo
+  (`withEveryLinkedPhoto`), the set they are shared over, so a removal from a camera file whose
+  RAW is gone stays removed.
+- **Bin, restore and shoot moves** carry both halves while the RAW stands for the file
+  (`withLinkedPhotos`).
+- **The viewer** offers the file as the RAW's `camera` rendition, "Camera JPEG" or "Camera HEIC",
+  served as that row's own file (`GET /image/:raw/renditions/camera`) at the RAW's rotation:
+  a JPEG's EXIF orientation is retagged, a HEIF's `irot` rewritten (`heif::with_added_rotation`),
+  whether the file is local or fetched from a peer.
 
 ### 4.3 `shoots` table
 

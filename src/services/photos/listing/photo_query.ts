@@ -3,6 +3,7 @@ import type { Ordering } from '../../../schemas/common';
 import { EditDocSchema } from '../../../schemas/photo_edits';
 import { displaySize } from '../../../schemas/display_size';
 import {
+  type CameraFileFormat,
   COMPOSITE_KINDS_SQL,
   type CompositeKind,
   type OriginalElsewhere,
@@ -24,7 +25,7 @@ import type {
   UnresolvedSummary,
 } from './photo_listing_repository';
 import { EDITED, INPUTS_EDITED } from '../photo_edit_sql';
-import { PATH_OF } from '../paths/photo_paths_repository';
+import { CAMERA_FILE_OF, notACameraFile, PATH_OF } from '../paths/photo_paths_repository';
 
 export function orderByClause(ordering: Ordering, prefix = 'photos.', reversed = false): string {
   const dir = (ascending: boolean): string => (ascending === !reversed ? 'ASC' : 'DESC');
@@ -97,6 +98,7 @@ export const RENDITIONS_BUILT_AT = `${renditionsBuiltAt(
 // drawn from turns on whether it has an edit at all (§18.5), and a listing that carried every
 // develop document would read a page of JSON to answer a boolean.
 const IS_EDITED = `EXISTS (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id AND ${EDITED('e')})`;
+const CAMERA_FILE_FORMAT = `(SELECT f.format FROM photos f WHERE f.id = (${CAMERA_FILE_OF('photos.')})) AS camera_file_format`;
 //
 // Which capture the camera ran, where this row is one frame of a bracket stack: what the merge menu
 // offers for the stack, and whether it offers anything.
@@ -116,7 +118,7 @@ const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN (${CO
 // cameras' pictures carry as well as a render does, where a *frame's* is an edit no JPEG of that
 // frame has in it (`renditions::sourceFor`).
 export function summaryColumns(): string {
-  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, ${IS_OFFLOADED} AS is_offloaded, ${ORIGINAL_ELSEWHERE} AS original_elsewhere, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
+  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, ${IS_OFFLOADED} AS is_offloaded, ${ORIGINAL_ELSEWHERE} AS original_elsewhere, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited, ${CAMERA_FILE_FORMAT}`;
 }
 
 // Whether the original is on a backup rather than on this device (docs/replication.md §14.5), which
@@ -202,12 +204,15 @@ export interface MemberScope {
  * with nothing on screen to say where, which is the one outcome a delete must never produce.
  * Restoring it hides them again, and hard-deleting it drops the edges outright
  * (`photos_forget_inputs`).
+ *
+ * A camera file linked to its RAW (`photo_links`) goes the same way (`notACameraFile`).
  */
-const notAFrame = (alias: string): string => `NOT EXISTS (
+const notStoodFor = (alias: string): string => `NOT EXISTS (
     SELECT 1 FROM photo_sources s JOIN photos composite ON composite.id = s.composed_id
-     WHERE s.photo_id = ${alias}id AND composite.is_deleted = 0)`;
+     WHERE s.photo_id = ${alias}id AND composite.is_deleted = 0)
+  AND ${notACameraFile(alias)}`;
 
-export const NOT_A_FRAME = notAFrame('photos.');
+export const NOT_STOOD_FOR = notStoodFor('photos.');
 
 export function representativeFilter(
   filters: PhotoListFilters,
@@ -217,20 +222,20 @@ export function representativeFilter(
   // absence rather than a filter of its own (§19.5.4) - but a panorama's frames are not stack
   // members and "expand stacks" is not "dismantle my panoramas". A composite stands for its
   // frames in every listing, collapsed or not; the band its badge opens is how they are reached.
-  if (filters.expandStacks === true) return { sql: NOT_A_FRAME, params: [] };
+  if (filters.expandStacks === true) return { sql: NOT_STOOD_FOR, params: [] };
   const { clauses, params } = conditions(filters, 'm.');
   // A member merged into a live panorama is not in the listing either, and leaving it out of
   // this test is how a whole stack vanishes: the flagged member holds the flag while being
-  // hidden by `NOT_A_FRAME`, so the promotion below finds a representative and refuses to
+  // hidden by `NOT_STOOD_FOR`, so the promotion below finds a representative and refuses to
   // promote the siblings that are still visible.
-  const visible = [notAFrame('m.'), ...(member.sql === '' ? [] : [member.sql]), ...clauses].join(
+  const visible = [notStoodFor('m.'), ...(member.sql === '' ? [] : [member.sql]), ...clauses].join(
     ' AND ',
   );
   const inListing = ` AND ${visible}`;
   const memberParams = [...member.params, ...params];
   const taken = (alias: string) => `COALESCE(${alias}date_taken, ${alias}date_added)`;
   return {
-    sql: `${NOT_A_FRAME} AND (photos.is_representative = 1 OR (photos.stack_id IS NOT NULL
+    sql: `${NOT_STOOD_FOR} AND (photos.is_representative = 1 OR (photos.stack_id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM photos m
           WHERE m.stack_id = photos.stack_id AND m.is_representative = 1${inListing})
@@ -261,10 +266,14 @@ export function sizeExpression(
   // grid may read it as a stack (§19.5.4).
   if (filters.expandStacks === true) return { sql: '1', params: [] };
   const { clauses, params } = conditions(filters, 'm.');
-  const visible = [...(counting.sql === '' ? [] : [counting.sql]), ...clauses].join(' AND ');
+  const visible = [
+    notACameraFile('m.'),
+    ...(counting.sql === '' ? [] : [counting.sql]),
+    ...clauses,
+  ].join(' AND ');
   return {
     sql: `CASE WHEN photos.stack_id IS NULL THEN 1 ELSE (
-            SELECT COUNT(*) FROM photos m WHERE m.stack_id = photos.stack_id${visible === '' ? '' : ` AND ${visible}`}
+            SELECT COUNT(*) FROM photos m WHERE m.stack_id = photos.stack_id AND ${visible}
           ) END`,
     params: [...counting.params, ...params],
   };
@@ -284,7 +293,8 @@ export function detailColumns(): string {
     photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden,
     photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
     photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition,
-    photos.stack_id, photos.recipe, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
+    photos.stack_id, photos.recipe, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited,
+    ${CAMERA_FILE_FORMAT}`;
 }
 
 export interface SummaryRow {
@@ -310,6 +320,7 @@ export interface SummaryRow {
   viewer_rendition: ViewerRendition | null;
   is_edited: number;
   frames_edited: number;
+  camera_file_format: CameraFileFormat | null;
   triage: string | null;
   rating: number;
   is_missing: number;
@@ -384,6 +395,7 @@ export function toSummary(row: SummaryRow, ordering: Ordering): UnresolvedSummar
     viewer_rendition: row.viewer_rendition,
     is_edited: row.is_edited === 1,
     frames_edited: row.frames_edited === 1,
+    camera_file_format: row.camera_file_format,
     stack_id: row.stack_id,
     stack_size: row.stack_size ?? 1,
     composite_kind: row.composite_kind,
@@ -480,6 +492,7 @@ export function toDetail(row: DetailRow, albumIds: string[], labelIds: string[])
     has_original: false,
     is_edited: row.is_edited === 1,
     frames_edited: row.frames_edited === 1,
+    camera_file_format: row.camera_file_format,
     ...displayed(row),
     renditions: null,
     album_ids: albumIds,
@@ -639,5 +652,5 @@ export function uncollapsed(
   filters: PhotoListFilters,
 ): { where: string; params: (string | number)[] } {
   const result = scoped(fromWhere, baseParams, filters);
-  return { where: `${result.where} AND ${NOT_A_FRAME}`, params: result.params };
+  return { where: `${result.where} AND ${NOT_STOOD_FOR}`, params: result.params };
 }

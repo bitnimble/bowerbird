@@ -30,8 +30,8 @@ export class RenditionsPresenter {
   //
   // **Whichever rendition is on screen**, since that is the one being looked at: a reader
   // on Rendered RAW (max quality) who asks for a re-render and gets `full` rebuilt is told
-  // the pipeline has not changed, by a picture that was never remade. The camera's JPEG is
-  // the RAW's own bytes and has no build to force past, so from there this remakes the
+  // the pipeline has not changed, by a picture that was never remade. A file served whole
+  // has no build to force past, so from there this remakes the
   // render behind it - and nothing at all where the photograph has no render to remake,
   // which is the same answer the menu greys the action out on (`rerenderTarget`).
   async rerender(photoId: string): Promise<void> {
@@ -48,8 +48,8 @@ export class RenditionsPresenter {
   }
 
   // Builds the rendition the first time and leaves the cached file alone every
-  // time after. The camera's JPEG is never built: it is the RAW's own bytes
-  // (§10.2). False when the build failed, so a caller does not go on to ask for a
+  // time after. The embedded JPEG and the camera file are never built: they are files
+  // already there (§10.2). False when the build failed, so a caller does not go on to ask for a
   // file that is not there.
   private async ensureBuilt(
     photoId: string,
@@ -66,13 +66,14 @@ export class RenditionsPresenter {
     // as a build. Swapping between two renditions already on screen would take that path
     // every time: it raises the building flag - so pressing O for a render already shown
     // flashes "Rendering" over it - and it awaits a detail fetch before the swap is allowed,
-    // which is a delay before the camera's JPEG appears on I, long enough on a slow library
+    // which is a delay before the embedded JPEG appears on I, long enough on a slow library
     // to look as though nothing happened. Both views are kept in the DOM precisely so this
     // is instant.
     //
     // A copy served whole is there whenever its file is, so there is nothing to wait for and no
     // detail to wait for it to be reported in (`store.servedWhole`).
-    if (this.store.servedWhole(photoId, rendition) || !(force || !built)) return true;
+    if (rendition === 'camera' || this.store.servedWhole(photoId, rendition) || !(force || !built))
+      return true;
     if (this.store.unreachable(photoId)) return false;
 
     this.viewer.buildStarted(photoId, rendition);

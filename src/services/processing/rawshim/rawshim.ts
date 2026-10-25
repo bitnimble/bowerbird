@@ -123,6 +123,10 @@ const SYMBOLS = {
   // struct or an array this side allocated.
   bb_read_header: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
   bb_header_size: { args: [], returns: FFIType.u64 },
+  bb_camera_names: {
+    args: [FFIType.cstring, FFIType.cstring, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.i32,
+  },
   // Stacking: descriptors in, group indices out, the whole walk in Rust (§19).
   bb_descriptor_size: { args: [], returns: FFIType.u64 },
   bb_descriptor_format: { args: [], returns: FFIType.u8 },

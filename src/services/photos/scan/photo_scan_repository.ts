@@ -2,6 +2,7 @@ import type { Database } from '../../../db/driver';
 import { fileRecipe } from '../../../schemas/recipes';
 import { formatOf } from '../../../utils/scan';
 import { stamp } from '../../replication/stamps';
+import { reconcileLinks } from '../links/linked_photos';
 import { inChunks } from '../photo_batches';
 import { folderRange, IS_A_FILE } from '../paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../renditions/photo_processing_repository';
@@ -240,6 +241,7 @@ export class PhotoScanRepository {
         record.media_image_id ?? null,
         ...(binned ? [at, at, at] : [at, at]),
       );
+    reconcileLinks(this.db, [record.id]);
   }
   applyModification(photoId: string, fields: ScanModification): void {
     const resized = this.db

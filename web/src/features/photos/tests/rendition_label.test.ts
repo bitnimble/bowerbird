@@ -16,6 +16,16 @@ test("a finished picture's render is its edit only once it is edited", () => {
   );
 });
 
+test("a RAW's linked file is named as the camera's, by its format", () => {
+  const raw = { is_raw: true, is_edited: true };
+  expect(renditionLabel('camera', { ...raw, camera_file_format: 'jpeg' })).toBe(
+    RenditionsStrings.cameraJpeg(),
+  );
+  expect(renditionLabel('camera', { ...raw, camera_file_format: 'heif' })).toBe(
+    RenditionsStrings.cameraHeic(),
+  );
+});
+
 test('a photo not yet loaded is labelled as a RAW', () => {
   expect(renditionLabel('embedded', null)).toBe(RenditionsStrings.embeddedJpeg());
   expect(renditionLabel('max')).toBe(RenditionsStrings.renderedRawMaxQuality());

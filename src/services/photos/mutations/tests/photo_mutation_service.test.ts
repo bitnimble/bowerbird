@@ -8,6 +8,22 @@ import type { Library } from '../../../../schemas/libraries';
 import { fileRecipe } from '../../../../schemas/recipes';
 import { build, detail } from './photo_mutation_service_test_helpers';
 
+describe('PhotoMutationService linked photos', () => {
+  it('bins and restores the camera file with its RAW', async () => {
+    const withLinkedPhotos = jest.fn((ids: readonly string[]) => [...ids, 'jpeg']);
+    const getBasicByIds = jest.fn(() => []);
+    const deletedByIds = jest.fn(() => []);
+    const { service } = build({
+      photoPaths: { withLinkedPhotos, getBasicByIds, getDeletedByIds: deletedByIds },
+    });
+
+    await service.delete(['raw']);
+    expect(getBasicByIds).toHaveBeenCalledWith(['raw', 'jpeg']);
+    await service.restore(['raw']);
+    expect(deletedByIds).toHaveBeenCalledWith(['raw', 'jpeg']);
+  });
+});
+
 describe('PhotoMutationService.delete', () => {
   // getBasicByIds excludes them, which is how a photo already in the Bin is
   // skipped without a per-photo check.

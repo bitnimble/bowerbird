@@ -4,6 +4,7 @@ import { captureSequenceOf } from '../../schemas/capture_sequence';
 import type { Stack, StackOrigin, StackState } from '../../schemas/stacks';
 import type { SequencedFrame } from './brackets';
 import { hiddenIs, orderByClause } from '../photos/listing/photo_query';
+import { notACameraFile } from '../photos/paths/photo_paths_repository';
 import { stamp } from '../replication/stamps';
 import { tombstone } from '../replication/tombstones';
 import { StackMembership } from './stack_membership';
@@ -43,7 +44,8 @@ interface StackRow {
 }
 
 const STACK_COLS = `stacks.id, stacks.library_id, stacks.origin, stacks.date_created,
-  (SELECT COUNT(*) FROM photos WHERE photos.stack_id = stacks.id AND photos.is_deleted = 0) AS photo_count`;
+  (SELECT COUNT(*) FROM photos WHERE photos.stack_id = stacks.id AND photos.is_deleted = 0
+     AND ${notACameraFile('photos.')}) AS photo_count`;
 
 export class StacksRepository {
   private readonly members: StackMembership;
@@ -86,6 +88,7 @@ export class StacksRepository {
     const rows = this.db
       .query(
         `SELECT id FROM photos WHERE stack_id = ? AND is_deleted = ?${visible}
+           AND ${notACameraFile('photos.')}
          ORDER BY ${orderByClause(ordering)}`,
       )
       .all(stackId, deleted ? 1 : 0, ...(deleted || shootId == null ? [] : [shootId])) as {
@@ -116,6 +119,7 @@ export class StacksRepository {
            AND photos.is_deleted = 0
            AND photos.is_missing = 0
            AND ${hiddenIs('photos.', false)}
+           AND ${notACameraFile('photos.')}
            AND (stacks.id IS NULL OR stacks.origin = 'auto')
          ORDER BY COALESCE(photos.date_taken, photos.date_added) ASC, photos.id ASC`,
       )
@@ -319,7 +323,10 @@ export class StacksRepository {
   countMembers(stackId: string): number {
     return (
       this.db
-        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_deleted = 0')
+        .query(
+          `SELECT COUNT(*) AS n FROM photos
+            WHERE stack_id = ? AND is_deleted = 0 AND ${notACameraFile('photos.')}`,
+        )
         .get(stackId) as {
         n: number;
       }

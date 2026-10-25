@@ -16,7 +16,8 @@ DNG (`.dng`), case-insensitive.
 **The finished pictures**, where the library asked for them (`include_non_raw`, §4.1): JPEG
 (`.jpg`, `.jpeg`), PNG (`.png`), HEIC/HEIF (`.heic`, `.heif`, `.hif`) and AVIF (`.avif`). Off by
 default, because beside a folder of RAWs they are usually the camera's own copies of frames the
-library already holds and importing both makes every frame two rows.
+library already holds. A camera JPEG or HEIF imported beside its RAW is linked to it rather than
+shown as a second photograph (catalogue §4.2.2).
 
 The scanner filters by extension, silently ignoring other files. Header sniffing later selects the decoder/metadata reader (§10, §11). Add formats by registering a reader and extending this table, which also defines original media types (§13.5).
 

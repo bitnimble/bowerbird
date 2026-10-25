@@ -141,3 +141,54 @@ describe('what the catalogue knows a file feeds', () => {
     expect(repo.listUnderFolder(LIB, 'Trip').map((row) => row.id)).not.toContain('composed');
   });
 });
+
+describe('PhotoPathsRepository linked photos', () => {
+  beforeEach(() => {
+    for (const [id, path, format] of [
+      ['raw', 'Trip/DSC01234.ARW', 'arw'],
+      ['jpeg', 'Trip/DSC01234.JPG', 'jpeg'],
+    ] as const) {
+      insert(id, path);
+      db.query(
+        `UPDATE photos SET format = ?, date_taken = '2026-03-04T05:06:07.000Z', camera_make = 'Sony',
+           camera_model = 'ILCE-7M4' WHERE id = ?`,
+      ).run(format, id);
+    }
+  });
+
+  it("names a RAW's camera file while the two are in the same place", () => {
+    expect(repo.cameraFileOf('raw')?.id).toBe('jpeg');
+    expect(repo.cameraFileOf('jpeg')).toBeNull();
+    db.query("UPDATE photos SET is_missing = 1 WHERE id = 'jpeg'").run();
+    expect(repo.cameraFileOf('raw')).toBeNull();
+    db.query("UPDATE photos SET is_missing = 0, is_deleted = 1 WHERE id = 'jpeg'").run();
+    expect(repo.cameraFileOf('raw')).toBeNull();
+  });
+
+  it("links a camera's HEIF the way it links a JPEG", () => {
+    db.query(
+      `UPDATE photos SET format = 'heif', recipe = json_set(recipe, '$.path', 'Trip/DSC01234.HIF')
+         WHERE id = 'jpeg'`,
+    ).run();
+    expect(repo.cameraFileOf('raw')?.id).toBe('jpeg');
+  });
+
+  it('takes a camera file along only while its RAW stands for it', () => {
+    db.query("UPDATE photos SET is_missing = 1 WHERE id = 'raw'").run();
+    expect(repo.withLinkedPhotos(['raw'])).toEqual(['raw']);
+    expect(repo.withLinkedPhotos(['jpeg'])).toEqual(['jpeg']);
+    db.query(
+      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size,
+                                     checked_at, health)
+         VALUES (?, 'raw', 'backup', 'DSC01234.ARW', 'h', 1, '2026-01-01', 'held')`,
+    ).run(LIB);
+    expect(repo.withLinkedPhotos(['raw'])).toEqual(['raw', 'jpeg']);
+    expect(repo.cameraFileOf('raw')?.id).toBe('jpeg');
+  });
+
+  it('adds the other half of each linked pair to a selection', () => {
+    expect(repo.withLinkedPhotos(['raw', 'live'])).toEqual(['raw', 'live', 'jpeg']);
+    expect(repo.withLinkedPhotos(['jpeg'])).toEqual(['jpeg', 'raw']);
+    expect(repo.withLinkedPhotos(['live'])).toEqual(['live']);
+  });
+});

@@ -166,6 +166,151 @@ pub fn read(bytes: &[u8]) -> Result<File, String> {
     })
 }
 
+/// These bytes with a clockwise turn of `rotate` degrees added to the primary item's own.
+///
+/// None where it cannot be written: not a HEIF, no primary item, or a layout this does not resize
+/// (a 64-bit box size, a property index past `ipma`'s width, an offset past `iloc`'s).
+pub fn with_added_rotation(bytes: &[u8], rotate: u16) -> Option<Vec<u8>> {
+    if rotate % 90 != 0 || !is_heif(bytes) {
+        return None;
+    }
+    let quarters = (rotate % 360 / 90) as u8;
+    let mut out = bytes.to_vec();
+    if quarters == 0 {
+        return Some(out);
+    }
+    let meta = child(bytes, 0..bytes.len(), b"meta")?;
+    let children = meta.body.start + 4..meta.body.end;
+    let primary = read_pitm(&bytes[child(bytes, children.clone(), b"pitm")?.body])?;
+    let iprp = child(bytes, children.clone(), b"iprp")?;
+    let ipco = child(bytes, iprp.body.clone(), b"ipco")?;
+    let properties: Vec<Span> = spans(bytes, ipco.body.clone()).collect();
+    let (ipma, wide, entry) = spans(bytes, iprp.body.clone())
+        .filter(|span| span.kind(bytes) == b"ipma")
+        .find_map(|span| {
+            let read = ipma_entries(&bytes[span.body.clone()]);
+            let entry = read.entries.into_iter().find(|it| it.id == primary)?;
+            Some((span, read.wide_index, entry))
+        })?;
+    let in_ipma = |at: usize| ipma.body.start + at;
+    let carried = |kind: &[u8; 4]| {
+        entry.associations.iter().find_map(|(at, association)| {
+            let property = properties.get(association.index.wrapping_sub(1))?;
+            (property.kind(bytes) == kind).then_some((in_ipma(*at), property.body.clone()))
+        })
+    };
+    let mirrored = carried(b"imir").is_some();
+    let turned = |current: u8| turned(current, quarters, mirrored);
+    if let Some((_, irot)) = carried(b"irot") {
+        if irot.is_empty() {
+            return None;
+        }
+        let angle = out.get_mut(irot.start)?;
+        *angle = (*angle & !3) | turned(*angle & 3);
+        return Some(out);
+    }
+
+    let index = properties.len() + 1;
+    let association = match wide {
+        true => (0x8000 | u16::try_from(index).ok().filter(|it| *it <= 0x7fff)?)
+            .to_be_bytes()
+            .to_vec(),
+        false => vec![0x80 | u8::try_from(index).ok().filter(|it| *it <= 0x7f)?],
+    };
+    let irot = [0, 0, 0, 9, b'i', b'r', b'o', b't', turned(0)];
+    // MIAF orders `irot` ahead of `imir`.
+    let association_at = carried(b"imir").map_or(in_ipma(entry.end), |(at, _)| at);
+    let insertions = [
+        (ipco.body.end, irot.to_vec()),
+        (association_at, association),
+    ];
+    let shift = |offset: usize| -> usize {
+        insertions
+            .iter()
+            .filter(|(at, _)| *at <= offset)
+            .map(|(_, inserted)| inserted.len())
+            .sum()
+    };
+    let grown = irot.len() + insertions[1].1.len();
+
+    let count = out.get_mut(in_ipma(entry.count_at))?;
+    *count = count.checked_add(1)?;
+    for (span, by) in [
+        (&meta, grown),
+        (&iprp, grown),
+        (&ipco, irot.len()),
+        (&ipma, insertions[1].1.len()),
+    ] {
+        grow(&mut out, span, by)?;
+    }
+    if let Some(iloc) = child(bytes, children, b"iloc") {
+        let base = iloc.body.start;
+        for item in iloc_entries(&bytes[iloc.body]).entries {
+            if item.construction != 0 || item.external {
+                continue;
+            }
+            let shifts: Vec<usize> = item
+                .extents
+                .iter()
+                .map(|extent| Some(shift(item.base.value.checked_add(extent.offset.value)?)))
+                .collect::<Option<_>>()?;
+            if item.base.width > 0 {
+                let Some(&by) = shifts.first() else { continue };
+                if shifts.iter().any(|it| *it != by) {
+                    return None;
+                }
+                rewrite(&mut out, base, &item.base, by)?;
+            } else {
+                for (extent, by) in item.extents.iter().zip(shifts) {
+                    rewrite(&mut out, base, &extent.offset, by)?;
+                }
+            }
+        }
+    }
+    let mut insertions = insertions;
+    insertions.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    for (at, inserted) in insertions {
+        out.splice(at..at, inserted);
+    }
+    Some(out)
+}
+
+/// The `irot` angle that shows a picture `quarters` further clockwise than `current` does.
+fn turned(current: u8, quarters: u8, mirrored: bool) -> u8 {
+    // `irot` is anticlockwise and applied before `imir`, and M.R(t) == R(-t).M.
+    match mirrored {
+        false => current.wrapping_sub(quarters) & 3,
+        true => current.wrapping_add(quarters) & 3,
+    }
+}
+
+/// A box's 32-bit size, grown by `by`.
+fn grow(out: &mut [u8], span: &Span, by: usize) -> Option<()> {
+    let size = be32(out.get(span.start..span.start + 4)?);
+    if span.body.start - span.start != 8 || size as usize != span.body.end - span.start {
+        return None;
+    }
+    let grown = u32::try_from(size as usize + by).ok()?;
+    out[span.start..span.start + 4].copy_from_slice(&grown.to_be_bytes());
+    Some(())
+}
+
+/// An `iloc` number moved on by `by`, at the width the box already gives it.
+fn rewrite(out: &mut [u8], base: usize, field: &Field, by: usize) -> Option<()> {
+    if by == 0 {
+        return Some(());
+    }
+    let value = u64::try_from(field.value.checked_add(by)?).ok()?;
+    let width = field.width;
+    if width > 8 || (width < 8 && value >> (8 * width) != 0) {
+        return None;
+    }
+    let at = base + field.at;
+    out.get_mut(at..at + width)?
+        .copy_from_slice(&value.to_be_bytes()[8 - width..]);
+    Some(())
+}
+
 /// Where an item's bytes are: a run of extents, each an offset and a length.
 struct Location {
     /// 0 is an offset into the file, 1 an offset into the `idat` box.
@@ -635,13 +780,36 @@ fn be32(bytes: &[u8]) -> u32 {
 /// cannot read rather than walking off the end - a truncated file reports the picture it managed
 /// to describe instead of panicking.
 fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8; 4], &[u8])> {
-    let mut at = 0usize;
+    spans(bytes, 0..bytes.len()).map(move |span| (span.kind(bytes), &bytes[span.body]))
+}
+
+/// Where one box sits in the file: its header's first byte and its payload.
+#[derive(Clone)]
+struct Span {
+    start: usize,
+    body: std::ops::Range<usize>,
+}
+
+impl Span {
+    fn kind<'a>(&self, bytes: &'a [u8]) -> &'a [u8; 4] {
+        bytes[self.start + 4..self.start + 8]
+            .try_into()
+            .expect("a span is only made from a whole header")
+    }
+}
+
+/// `boxes`, by position, over the children in `within`.
+fn spans(bytes: &[u8], within: std::ops::Range<usize>) -> impl Iterator<Item = Span> + '_ {
+    let parent_end = within.end.min(bytes.len());
+    let mut at = within.start;
     std::iter::from_fn(move || {
-        let header = bytes.get(at..at + 8)?;
-        let kind: &[u8; 4] = header[4..8].try_into().ok()?;
+        let header = bytes.get(at..at.checked_add(8)?.min(parent_end))?;
+        if header.len() < 8 {
+            return None;
+        }
         let (body_at, size) = match be32(&header[..4]) {
             // Everything to the end of the parent.
-            0 => (at + 8, bytes.len() - at),
+            0 => (at + 8, parent_end - at),
             1 => {
                 let large = bytes.get(at + 8..at + 16)?;
                 let size = u64::from_be_bytes(large.try_into().ok()?) as usize;
@@ -649,18 +817,26 @@ fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8; 4], &[u8])> {
             }
             size => (at + 8, size as usize),
         };
-        let end = at.checked_add(size.max(8))?.min(bytes.len());
-        let body = bytes.get(body_at..end)?;
+        let end = at.checked_add(size.max(8))?.min(parent_end);
+        if body_at > end {
+            return None;
+        }
+        let span = Span {
+            start: at,
+            body: body_at..end,
+        };
         at = end;
-        Some((kind, body))
+        Some(span)
     })
+}
+
+fn child(bytes: &[u8], within: std::ops::Range<usize>, want: &[u8; 4]) -> Option<Span> {
+    spans(bytes, within).find(|span| span.kind(bytes) == want)
 }
 
 /// The first top-level box of this type.
 fn top_level<'a>(bytes: &'a [u8], want: &[u8; 4]) -> Option<&'a [u8]> {
-    boxes(bytes)
-        .find(|(kind, _)| *kind == want)
-        .map(|(_, body)| body)
+    child(bytes, 0..bytes.len(), want).map(|span| &bytes[span.body])
 }
 
 fn read_pitm(body: &[u8]) -> Option<u32> {
@@ -704,6 +880,69 @@ fn read_iinf(body: &[u8]) -> std::collections::HashMap<u32, Entry> {
 
 fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
     let mut out = std::collections::HashMap::new();
+    for entry in iloc_entries(body).entries {
+        // **Checked, because both halves are eight bytes out of the file.** An `iloc` stating
+        // `0xFFFF_FFFF_FFFF_FFFF` for each overflows the add, and `overflow-checks` is on in
+        // every profile this ships - so the sum is a panic rather than a wrong offset, which
+        // on the browser build is a trapped module rather than a photograph that will not
+        // open.
+        let Some(extents) = entry
+            .extents
+            .iter()
+            .map(|extent| {
+                Some((
+                    entry.base.value.checked_add(extent.offset.value)?,
+                    extent.length,
+                ))
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            break;
+        };
+        // A non-zero `data_reference_index` means the extents index a *different* file, and this
+        // reader has only this one - so its offsets would be read out of the wrong bytes and
+        // handed to a decoder as if they were the picture. Declined rather than misread.
+        if !entry.external {
+            out.insert(
+                entry.id,
+                Location {
+                    construction: entry.construction,
+                    extents,
+                },
+            );
+        }
+    }
+    out
+}
+
+/// A number `iloc` states, and where in the box it is written at what width.
+struct Field {
+    at: usize,
+    width: usize,
+    value: usize,
+}
+
+struct IlocExtent {
+    offset: Field,
+    length: usize,
+}
+
+struct IlocEntry {
+    id: u32,
+    construction: u8,
+    external: bool,
+    base: Field,
+    extents: Vec<IlocExtent>,
+}
+
+struct Iloc {
+    entries: Vec<IlocEntry>,
+}
+
+fn iloc_entries(body: &[u8]) -> Iloc {
+    let mut out = Iloc {
+        entries: Vec::new(),
+    };
     let version = body.first().copied().unwrap_or(0);
     let Some(sizes) = body.get(4..6) else {
         return out;
@@ -751,23 +990,24 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
             }
             false => 0,
         };
-        // A non-zero `data_reference_index` means the extents index a *different* file, and this
-        // reader has only this one - so its offsets would be read out of the wrong bytes and
-        // handed to a decoder as if they were the picture. Declined rather than misread.
         let external = body.get(at..at + 2).map(be16).unwrap_or(0) != 0;
         at += 2;
         let Some(base) = number(body, at, base_size) else {
             break;
         };
+        let base = Field {
+            at,
+            width: base_size,
+            value: base,
+        };
         at += base_size;
-        let Some(extents) = body.get(at..at + 2).map(be16) else {
+        let Some(count) = body.get(at..at + 2).map(be16) else {
             break;
         };
         at += 2;
 
-        let mut spans = Vec::new();
-        let mut whole = true;
-        for _ in 0..extents {
+        let mut extents = Vec::new();
+        for _ in 0..count {
             if version >= 1 && index_size > 0 {
                 at += index_size;
             }
@@ -775,42 +1015,67 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
                 number(body, at, offset_size),
                 number(body, at + offset_size, length_size),
             ) else {
-                whole = false;
                 break;
             };
+            extents.push(IlocExtent {
+                offset: Field {
+                    at,
+                    width: offset_size,
+                    value: offset,
+                },
+                length,
+            });
             at += offset_size + length_size;
-            // **Checked, because both halves are eight bytes out of the file.** An `iloc` stating
-            // `0xFFFF_FFFF_FFFF_FFFF` for each overflows the add, and `overflow-checks` is on in
-            // every profile this ships - so the sum is a panic rather than a wrong offset, which
-            // on the browser build is a trapped module rather than a photograph that will not
-            // open.
-            match base.checked_add(offset) {
-                Some(start) => spans.push((start, length)),
-                None => whole = false,
-            }
         }
         // A partial list is worse than none: the cursor is now misaligned, so every later item
         // would be minted from the wrong bytes and could overwrite a good one.
-        if !whole {
+        if extents.len() < usize::from(count) {
             break;
         }
-        if !external {
-            out.insert(
-                id,
-                Location {
-                    construction,
-                    extents: spans,
-                },
-            );
-        }
+        out.entries.push(IlocEntry {
+            id,
+            construction,
+            external,
+            base,
+            extents,
+        });
     }
     out
 }
 
 fn read_ipma(body: &[u8]) -> std::collections::HashMap<u32, Vec<Association>> {
-    let mut out = std::collections::HashMap::new();
+    ipma_entries(body)
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let indices = entry.associations.into_iter().map(|(_, it)| it).collect();
+            (entry.id, indices)
+        })
+        .collect()
+}
+
+struct IpmaEntry {
+    id: u32,
+    /// Where the association count is written.
+    count_at: usize,
+    /// Each association and where it is written.
+    associations: Vec<(usize, Association)>,
+    /// The byte past the last association.
+    end: usize,
+}
+
+struct Ipma {
+    wide_index: bool,
+    entries: Vec<IpmaEntry>,
+}
+
+fn ipma_entries(body: &[u8]) -> Ipma {
     let version = body.first().copied().unwrap_or(0);
     let wide_index = body.get(3).is_some_and(|flags| flags & 1 == 1);
+    let mut out = Ipma {
+        wide_index,
+        entries: Vec::new(),
+    };
     let mut at = 4;
     let count = body.get(at..at + 4).map_or(0, be32) as usize;
     at += 4;
@@ -823,12 +1088,14 @@ fn read_ipma(body: &[u8]) -> std::collections::HashMap<u32, Vec<Association>> {
             false => body.get(at..at + 4).map(be32).inspect(|_| at += 4),
         };
         let Some(id) = id else { break };
+        let count_at = at;
         let Some(associations) = body.get(at).copied() else {
             break;
         };
         at += 1;
         let mut indices = Vec::new();
         for _ in 0..associations {
+            let written_at = at;
             // The top bit is `essential`, which is kept rather than masked away: a property this
             // reader skips is a different question depending on whether the file said it may be.
             let index = match wide_index {
@@ -851,9 +1118,14 @@ fn read_ipma(body: &[u8]) -> std::collections::HashMap<u32, Vec<Association>> {
                     .inspect(|_| at += 1),
             };
             let Some(index) = index else { break };
-            indices.push(index);
+            indices.push((written_at, index));
         }
-        out.insert(id, indices);
+        out.entries.push(IpmaEntry {
+            id,
+            count_at,
+            associations: indices,
+            end: at,
+        });
     }
     out
 }
@@ -1071,6 +1343,72 @@ mod tests {
             catalogue.tone_mapped(49),
             (49, Some((55, Some(b"terms".to_vec()))))
         );
+    }
+
+    fn clockwise(turn: Orientation) -> Orientation {
+        use Orientation::*;
+        match turn {
+            Normal => Rotate90,
+            HorizontalFlip => Transverse,
+            Rotate180 => Rotate270,
+            VerticalFlip => Transpose,
+            Transpose => HorizontalFlip,
+            Rotate90 => Rotate180,
+            Transverse => VerticalFlip,
+            Rotate270 => Normal,
+        }
+    }
+
+    #[test]
+    fn an_added_turn_composes_with_every_rotation_and_mirror() {
+        for quarters in 0..4u8 {
+            for mirrored in [None, Some(0), Some(1)] {
+                let mut expected = turn_of(quarters, mirrored);
+                for added in 0..4u8 {
+                    assert_eq!(
+                        turn_of(turned(quarters, added, mirrored.is_some()), mirrored),
+                        expected,
+                        "irot {quarters}, imir {mirrored:?}, plus {added} clockwise",
+                    );
+                    expected = clockwise(expected);
+                }
+            }
+        }
+    }
+
+    /// Against real files: one that carries no `irot` has to grow its boxes and move every offset
+    /// past them, and the coded bytes must come back unchanged.
+    #[test]
+    fn a_turn_added_to_a_real_file_moves_nothing_but_the_turn() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/avif-planes");
+        let mut grown = 0;
+        for name in [
+            "444.avif",
+            "444-grid.avif",
+            "420-grid.avif",
+            "odd-420.avif",
+            "sdr.avif",
+        ] {
+            let bytes = std::fs::read(fixtures.join(name)).expect(name);
+            let before = read(&bytes).expect(name).primary;
+            let once = with_added_rotation(&bytes, 90).expect(name);
+            let after = read(&once).expect(name).primary;
+            assert_eq!(after.turn, clockwise(before.turn), "{name}");
+            assert!(
+                after.tiles == before.tiles && after.config == before.config,
+                "{name}"
+            );
+            let back = with_added_rotation(&once, 270).expect(name);
+            assert_eq!(
+                back.len(),
+                once.len(),
+                "{name}: the second turn edits in place"
+            );
+            assert_eq!(read(&back).expect(name).primary.turn, before.turn, "{name}");
+            grown += usize::from(once.len() > bytes.len());
+        }
+        assert!(grown > 0, "no fixture took the path that inserts an irot");
     }
 
     /// The `iloc` walk against a hand-built box, since every camera's differs only in its widths.

@@ -859,6 +859,23 @@ fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Opti
         .map(|jpeg| use_bytes(&jpeg))
 }
 
+/// The camera's own picture of this file turned `rotate` degrees further clockwise: a JPEG
+/// retagged, or a HEIF with the turn written into its own boxes. None when the file has no such
+/// picture; Some(None) when it has one this cannot turn.
+#[cfg(feature = "renditions")]
+fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
+    if !decode_rendered::is_rendered(path) {
+        return with_embedded_jpeg(path, |jpeg| jpeg::with_added_rotation(jpeg, rotate));
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if heif::is_heif(&bytes) {
+        return Some(heif::with_added_rotation(&bytes, rotate));
+    }
+    bytes
+        .starts_with(&[0xFF, 0xD8])
+        .then(|| jpeg::with_added_rotation(&bytes, rotate))
+}
+
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
 /// side of the boundary. None when the file embeds no JPEG preview.
 ///
@@ -896,6 +913,44 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
         }
         None => -1,
     }
+}
+
+/// `header::camera_names`, for names a catalogue already holds. Each output is a `BbHeader`
+/// name field, 64 bytes, NUL-padded.
+///
+/// Returns 0, or -1 for a null pointer or a name that is not UTF-8.
+///
+/// # Safety
+/// `make` and `model` must be NUL-terminated C strings, `out_make` and `out_model` writable
+/// for 64 bytes each.
+#[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_camera_names(
+    make: *const c_char,
+    model: *const c_char,
+    out_make: *mut u8,
+    out_model: *mut u8,
+) -> c_int {
+    if make.is_null() || model.is_null() || out_make.is_null() || out_model.is_null() {
+        return -1;
+    }
+    let (Ok(make), Ok(model)) = (
+        unsafe { CStr::from_ptr(make) }.to_str(),
+        unsafe { CStr::from_ptr(model) }.to_str(),
+    ) else {
+        return -1;
+    };
+    let Some((make, model)) = guard("bb_camera_names", None, || {
+        Some(header::camera_names(make, model))
+    }) else {
+        return -1;
+    };
+    unsafe {
+        header::write_name(std::slice::from_raw_parts_mut(out_make, 64), &make);
+        header::write_name(std::slice::from_raw_parts_mut(out_model, 64), &model);
+    }
+    0
 }
 
 /// How far the job running under `progress_id` has got: steps done in the high word, steps in the

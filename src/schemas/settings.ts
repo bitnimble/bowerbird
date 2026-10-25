@@ -5,8 +5,9 @@ import { z } from 'zod';
 // render fitted to the viewer's size, and one at native resolution. `embedded`
 // is one only to the reader choosing between them: it is the camera's own JPEG,
 // served straight out of the RAW rather than resized into HDR or transcoded into
-// AVIF and cached as a file of its own.
-export const VIEWER_RENDITIONS = ['embedded', 'full', 'max'] as const;
+// AVIF and cached as a file of its own. `camera` is the camera JPEG linked to a RAW
+// (`photo_links`), served as that JPEG's own file.
+export const VIEWER_RENDITIONS = ['embedded', 'camera', 'full', 'max'] as const;
 export const ViewerRenditionSchema = z.enum(VIEWER_RENDITIONS);
 export type ViewerRendition = z.infer<typeof ViewerRenditionSchema>;
 

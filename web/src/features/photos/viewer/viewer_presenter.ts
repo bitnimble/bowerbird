@@ -101,8 +101,9 @@ export class ViewerPresenter {
   @action.bound
   forgetEdits(photoId: string, orientationChanged: boolean): void {
     this.store.editDocs.delete(photoId);
-    // The camera's JPEG carries none of the edits just made.
-    if (this.store.overrideFor(photoId) === 'embedded') this.clearRendition();
+    // Neither camera picture carries the edits just made.
+    const override = this.store.overrideFor(photoId);
+    if (override === 'embedded' || override === 'camera') this.clearRendition();
     if (orientationChanged) {
       this.store.orientationVersions.set(
         photoId,
@@ -139,8 +140,8 @@ export class ViewerPresenter {
   }
 
   @action.bound
-  showRendered(photoId: string): void {
-    this.store.undrawable = new Set([...this.store.undrawable, photoId]);
+  showRendered(photoId: string, rendition: ViewerRendition): void {
+    this.store.undrawable = new Set([...this.store.undrawable, `${photoId}:${rendition}`]);
   }
 
   @action.bound

@@ -9,6 +9,7 @@ import type { DetailMode } from './detail_mode';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
 
 const RENDITION_KEYS: Partial<Record<string, ViewerRendition>> = {
+  u: 'camera',
   i: 'embedded',
   o: 'full',
   p: 'max',
@@ -58,7 +59,7 @@ export const DetailKeys = observer(function DetailKeys({
         return;
       }
 
-      if (mode === 'print' && ['i', 'o', 'p'].includes(e.key)) return;
+      if (mode === 'print' && RENDITION_KEYS[e.key] != null) return;
 
       const verdict = culls ? TRIAGE_KEYS[e.key] : undefined;
       const rendition = RENDITION_KEYS[e.key];

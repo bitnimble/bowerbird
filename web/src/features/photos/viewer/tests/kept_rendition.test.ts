@@ -3,6 +3,7 @@
 import { expect, test } from 'bun:test';
 import { type PhotoDetail } from '../../../../../../src/schemas/photos';
 import { photosApi } from '../../../../api/photos';
+import { renditionsApi } from '../../../../api/renditions';
 import { PhotosPresenter } from '../../photos_presenter';
 import { restoreApiAfterTests } from '../../../../test_api';
 import { ListingStore } from '../../grid/listing_store';
@@ -81,6 +82,60 @@ test('a row with no camera picture behind it offers only the renders', async () 
   const asked = store.retryEpoch;
   await presenter.chooseRendition('p1', 'embedded');
   expect(store.retryEpoch).toBe(asked);
+});
+
+test('a RAW with its camera JPEG linked offers it, and shows it without a build', async () => {
+  const { store, presenter } = build();
+  const raw = photosApi.get;
+  photosApi.get = async (photoId: string): Promise<PhotoDetail> => ({
+    ...(await raw(photoId)),
+    camera_file_format: photoId === 'p1' ? 'jpeg' : null,
+  });
+
+  const built: string[] = [];
+  renditionsApi.build = async (photoId, rendition) => {
+    built.push(`${rendition} of ${photoId}`);
+  };
+
+  await presenter.openDetail('p1');
+  expect(store.renditionChoices('p1')).toEqual(['embedded', 'camera', 'full', 'max']);
+  await presenter.chooseRendition('p1', 'camera');
+  expect(store.frameOf('p1').rendition).toBe('camera');
+  expect(store.frameOf('p1').source).toBe('/image/p1/renditions/camera');
+  expect(built).toEqual([]);
+});
+
+test('a picked camera file its browser cannot draw is shown rendered and stops being offered', async () => {
+  const { store, presenter } = build();
+  const raw = photosApi.get;
+  photosApi.get = async (photoId: string): Promise<PhotoDetail> => ({
+    ...(await raw(photoId)),
+    camera_file_format: 'heif',
+  });
+
+  await presenter.openDetail('p1');
+  await presenter.chooseRendition('p1', 'camera');
+  await presenter.frameMissing('p1', 'camera', true);
+  expect(store.frameOf('p1').rendition).toBe('full');
+  expect(store.renditionChoices('p1')).toEqual(['embedded', 'full', 'max']);
+  presenter.holdRendition('p1', 'embedded');
+  expect(store.frameOf('p1').rendition).toBe('embedded');
+});
+
+test('leaving the editor drops a picked camera file, which has no edits in it', async () => {
+  const { store, presenter } = build();
+
+  await presenter.openDetail('p1');
+  presenter.holdRendition('p1', 'camera');
+  presenter.forgetEdits('p1');
+  expect(store.rendition).toBeNull();
+});
+
+test('a RAW with no camera JPEG linked does not offer one', async () => {
+  const { store, presenter } = build();
+
+  await presenter.openDetail('p1');
+  expect(store.renditionChoices('p1')).toEqual(['embedded', 'full', 'max']);
 });
 
 test('a finished picture offers no rendition to choose, and a key asking for one changes nothing', async () => {

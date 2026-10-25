@@ -169,6 +169,7 @@ export class PhotoReadService {
       // view it composites included - is a file the develop settings can leave behind.
       rendition_stale:
         library != null &&
+        shown !== 'camera' &&
         (shown !== 'embedded' || composed) &&
         this.renditions.stale(photo.id, shown, library.rendition_hdr),
       renditions,
@@ -240,6 +241,8 @@ export class PhotoReadService {
     // filed like anything else, or - for a row that names one file - a format question rather
     // than a stat, since the bytes are that file or inside it and are there whenever it is (§10.2).
     const lifted = raw != null && hasEmbedded(filePath);
+    const cameraFile = this.photoPaths.cameraFileOf(photoId);
+    const camera = cameraFile == null ? null : originalPathOf(library, cameraFile);
     return {
       embedded: composesCameraView
         ? stored('embedded')
@@ -249,6 +252,12 @@ export class PhotoReadService {
             bytes: raw != null && lifted ? this.embeddedBytes(raw) : null,
             hdr: false,
           },
+      camera: {
+        path: camera,
+        built: camera != null,
+        bytes: camera == null ? null : (statSync(camera, { throwIfNoEntry: false })?.size ?? null),
+        hdr: false,
+      },
       full: stored('full'),
       max: stored('max'),
     };

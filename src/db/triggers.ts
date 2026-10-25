@@ -1,4 +1,5 @@
-import { COMPOSITE_KINDS_SQL } from '../schemas/photos';
+import { CameraFileFormatSchema, COMPOSITE_KINDS_SQL } from '../schemas/photos';
+import { RENDERED_FORMATS } from '../utils/scan';
 import { renditionVariant } from '../services/processing/renditions/renditions';
 import { replicationTriggers } from '../services/replication/units';
 
@@ -12,7 +13,7 @@ import { replicationTriggers } from '../services/replication/units';
  * Both inserts are gated on the **kind**, not on the shape of what the JSON happens to carry. A
  * recipe arrives from a peer byte-verbatim (`RecipeCellSchema` refines, never transforms), so a
  * `file` recipe with a `sources` array bolted on would otherwise index edges naming any photograph
- * it liked, and `NOT_A_FRAME` hides a photograph that any live row claims as a frame, which is a
+ * it liked, and `NOT_STOOD_FOR` hides a photograph that any live row claims as a frame, which is a
  * paired peer emptying someone's grid one crafted row at a time.
  */
 export function photoInputTriggers(): string {
@@ -37,6 +38,81 @@ export function photoInputTriggers(): string {
       -- scan reconciles against a photograph that is gone.
       DELETE FROM photo_inputs WHERE photo_id = OLD.id;
       DELETE FROM photo_sources WHERE composed_id = OLD.id OR photo_id = OLD.id;
+    END;
+  `;
+}
+
+const RENDERED_FORMATS_SQL = RENDERED_FORMATS.map((format) => `'${format}'`).join(', ');
+
+/** The folder a row's file is in, with its trailing slash, and the file's lowercased stem. */
+const placeOf = (alias: string): { folder: string; stem: string } => {
+  const path = `json_extract(${alias}.recipe, '$.path')`;
+  const folderLength = `length(rtrim(${path}, replace(${path}, '/', '')))`;
+  const name = `substr(${path}, ${folderLength} + 1)`;
+  return {
+    folder: `substr(${path}, 1, ${folderLength})`,
+    stem: `lower(substr(${name}, 1, length(rtrim(${name}, replace(${name}, '.', ''))) - 1))`,
+  };
+};
+
+/**
+ * Whether `raw` and `file` are two files of one photograph (`photo_links`), with the terms
+ * `idx_photos_library_order_taken` leads on stated for `sought`, so the other half is found by
+ * a seek on the capture second.
+ */
+export function linkedPair(raw: string, file: string, sought: string): string {
+  const known = sought === raw ? file : raw;
+  return `${sought}.library_id = ${known}.library_id AND ${sought}.is_deleted IN (0, 1)
+      AND (${sought}.date_taken IS NULL) = 0 AND ${sought}.date_taken = ${known}.date_taken
+      AND ${raw}.format NOT IN (${RENDERED_FORMATS_SQL})
+      AND ${file}.format IN (${CameraFileFormatSchema.options.map((format) => `'${format}'`).join(', ')})
+      AND ${file}.camera_make IS ${raw}.camera_make AND ${file}.camera_model IS ${raw}.camera_model
+      AND json_extract(${raw}.recipe, '$.kind') = 'file' AND json_extract(${file}.recipe, '$.kind') = 'file'
+      AND ${placeOf(file).stem} = ${placeOf(raw).stem}
+      AND ${placeOf(file).folder} = ${placeOf(raw).folder}`;
+}
+
+const LINKED_ON = [
+  'recipe',
+  'format',
+  'date_taken',
+  'camera_make',
+  'camera_model',
+  'library_id',
+] as const;
+
+/**
+ * The triggers that keep `photo_links` in step with the columns a pair is matched on, and give
+ * both halves of a new link each other's albums. Marks and labels replicate, so they are shared
+ * by `reconcileLinks` under a stamp of its own.
+ */
+export function photoLinkTriggers(): string {
+  // Only the links that stopped matching: one kept is not formed again, nor shared across again.
+  const link = `DELETE FROM photo_links WHERE (raw_id = NEW.id OR camera_file_id = NEW.id)
+      AND NOT EXISTS (SELECT 1 FROM photos raw, photos file
+                       WHERE raw.id = photo_links.raw_id AND file.id = photo_links.camera_file_id
+                         AND ${linkedPair('raw', 'file', 'file')});
+    INSERT OR IGNORE INTO photo_links (library_id, raw_id, camera_file_id)
+      SELECT NEW.library_id, raw.id, file.id FROM photos raw, photos file
+       WHERE raw.id = NEW.id AND ${linkedPair('raw', 'file', 'file')};
+    INSERT OR IGNORE INTO photo_links (library_id, raw_id, camera_file_id)
+      SELECT NEW.library_id, raw.id, file.id FROM photos file, photos raw
+       WHERE file.id = NEW.id AND ${linkedPair('raw', 'file', 'raw')};`;
+  const albums = (into: string, from: string): string =>
+    `INSERT OR IGNORE INTO album_photos (album_id, photo_id, date_added)
+       SELECT album_id, NEW.${into}, date_added FROM album_photos WHERE photo_id = NEW.${from};`;
+  return `
+    CREATE TRIGGER IF NOT EXISTS photos_link_ins AFTER INSERT ON photos BEGIN ${link} END;
+    CREATE TRIGGER IF NOT EXISTS photos_link_upd
+      AFTER UPDATE OF ${LINKED_ON.join(', ')} ON photos
+      WHEN ${LINKED_ON.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(' OR ')}
+      BEGIN ${link} END;
+    CREATE TRIGGER IF NOT EXISTS photos_unlink AFTER DELETE ON photos BEGIN
+      DELETE FROM photo_links WHERE raw_id = OLD.id OR camera_file_id = OLD.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS photo_links_albums AFTER INSERT ON photo_links BEGIN
+      ${albums('raw_id', 'camera_file_id')}
+      ${albums('camera_file_id', 'raw_id')}
     END;
   `;
 }
@@ -78,5 +154,10 @@ function renditionTriggers(): string {
  * that would index no inputs, owe no renditions and log no stamp.
  */
 export function triggers(): string {
-  return [photoInputTriggers(), renditionTriggers(), replicationTriggers()].join('\n');
+  return [
+    photoInputTriggers(),
+    photoLinkTriggers(),
+    renditionTriggers(),
+    replicationTriggers(),
+  ].join('\n');
 }

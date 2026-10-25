@@ -47,6 +47,7 @@ function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoS
     shown_rendition: 'embedded',
     has_embedded: true,
     is_raw: true,
+    camera_file_format: null,
   };
 }
 

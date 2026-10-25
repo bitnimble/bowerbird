@@ -4,6 +4,7 @@ import type { ViewerRendition } from '../../../schemas/settings';
 import { stamp } from '../../replication/stamps';
 import type { StackMembership } from '../../stacks/stack_membership';
 import { inChunks } from '../photo_batches';
+import { reconcileLinks } from '../links/linked_photos';
 import { refreshStackOf } from '../paths/photo_stack_state';
 
 export class PhotoStateRepository {
@@ -66,6 +67,7 @@ export class PhotoStateRepository {
       // flag exists to keep the common case an equality test. Rejecting the
       // representative is not an edge case: it is what a triage session does.
       if (changed && fields.triage != null) refreshStackOf(this.db, this.stacks, id);
+      if (changed) reconcileLinks(this.db, [id]);
       return changed;
     })();
   }
@@ -111,6 +113,7 @@ export class PhotoStateRepository {
           .run(...params, ...batch).changes;
       }
       for (const stackId of stacks) this.stacks.refreshRepresentative(stackId);
+      reconcileLinks(this.db, ids);
       return changed;
     })();
   }
@@ -146,6 +149,7 @@ export class PhotoStateRepository {
           .run(hidden ? 1 : 0, at, ...batch).changes;
       }
       for (const stackId of stacks) this.stacks.refreshRepresentative(stackId);
+      reconcileLinks(this.db, ids);
       return changed;
     })();
   }

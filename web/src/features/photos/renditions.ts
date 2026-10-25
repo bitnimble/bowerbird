@@ -10,13 +10,17 @@ import { RenditionsStrings } from './renditions.strings';
 // cannot draw is shown rendered.
 export function renditionLabel(
   rendition: ViewerRendition,
-  photo?: Pick<PhotoSummary, 'is_raw' | 'is_edited'> | null,
+  photo?: (Pick<PhotoSummary, 'is_raw' | 'is_edited'> & Partial<PhotoSummary>) | null,
 ): string {
   if (photo?.is_raw === false)
     return photo.is_edited && rendition !== 'embedded'
       ? RenditionsStrings.edited()
       : RenditionsStrings.original();
   if (rendition === 'embedded') return RenditionsStrings.embeddedJpeg();
+  if (rendition === 'camera')
+    return photo?.camera_file_format === 'heif'
+      ? RenditionsStrings.cameraHeic()
+      : RenditionsStrings.cameraJpeg();
   return rendition === 'full'
     ? RenditionsStrings.renderedRaw()
     : RenditionsStrings.renderedRawMaxQuality();

@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Hono } from 'hono';
 import type { StoredRecipe } from '../../../schemas/recipes';
@@ -22,14 +22,21 @@ import { ImageApi } from '../image_api';
 const LIB = 'lib-embedded-route';
 
 function serving(
-  recipe: StoredRecipe,
+  recipe: StoredRecipe | ((photoId: string) => StoredRecipe),
   fetchThrough: ConstructorParameters<typeof ImageApi>[2] = null,
+  cameraFileOf: (photoId: string) => string | null = () => null,
+  rotate = 0,
 ): Hono {
   const photos = {
-    locate: () => ({
+    locate: (photoId: string) => ({
       library: { id: LIB, root_path: dataPathForLibraryId(LIB) },
-      photo: { id: 'p1', file_path: null, recipe },
+      photo: {
+        id: photoId,
+        file_path: null,
+        recipe: typeof recipe === 'function' ? recipe(photoId) : recipe,
+      },
     }),
+    cameraFileOf,
     rebuildIfStale: () => undefined,
     markUsed: () => undefined,
   };
@@ -37,7 +44,7 @@ function serving(
   app.route(
     route(PathSegment.image()),
     new ImageApi(
-      {} as ConstructorParameters<typeof ImageApi>[0],
+      { editOrientation: () => rotate } as unknown as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       fetchThrough,
       localOriginals(),
@@ -122,6 +129,75 @@ it('names a HEIC by its HEIF media type under each of its extensions', async () 
     );
     expect(answer.headers.get('content-type')).toBe(type!);
   }
+});
+
+it("serves a RAW's camera rendition as its linked JPEG's own file", async () => {
+  writeFileSync(path.join(dataPathForLibraryId(LIB), 'DSC01234.JPG'), 'camera jpeg');
+  const app = serving(
+    (photoId) => ({ kind: 'file', path: photoId === 'jpeg' ? 'DSC01234.JPG' : 'DSC01234.ARW' }),
+    null,
+    (photoId) => (photoId === 'raw' ? 'jpeg' : null),
+  );
+
+  const answer = await app.request(
+    route(PathSegment.image(), 'raw', PathSegment.renditions(), 'camera'),
+  );
+  expect(answer.status).toBe(200);
+  expect(answer.headers.get('content-type')).toBe('image/jpeg');
+  expect(await answer.text()).toBe('camera jpeg');
+
+  const unlinked = await app.request(
+    route(PathSegment.image(), 'jpeg', PathSegment.renditions(), 'camera'),
+  );
+  expect(unlinked.status).toBe(404);
+});
+
+const hasBox = (bytes: Uint8Array, kind: string): boolean =>
+  Buffer.from(bytes).includes(Buffer.from(kind));
+
+it("turns a linked HEIF by the RAW's turn, in its own boxes", async () => {
+  const heif = readFileSync(
+    path.join(import.meta.dir, '../../../../test/fixtures/avif-planes/444.avif'),
+  );
+  expect(hasBox(heif, 'irot')).toBe(false);
+  writeFileSync(path.join(dataPathForLibraryId(LIB), 'DSC01235.HEIC'), heif);
+  const app = serving(
+    (photoId) => ({ kind: 'file', path: photoId === 'heif' ? 'DSC01235.HEIC' : 'DSC01235.ARW' }),
+    null,
+    (photoId) => (photoId === 'raw' ? 'heif' : null),
+    90,
+  );
+
+  const answer = await app.request(
+    route(PathSegment.image(), 'raw', PathSegment.renditions(), 'camera'),
+  );
+  expect(answer.status).toBe(200);
+  expect(answer.headers.get('content-type')).toBe('image/heic');
+  expect(hasBox(new Uint8Array(await answer.arrayBuffer()), 'irot')).toBe(true);
+});
+
+it("turns a linked JPEG a peer holds by the RAW's turn", async () => {
+  writeFileSync(path.join(stored, 'peer-jpeg.avif'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  const peer = {
+    takesFromPeer: () => true,
+    ensureCurrent: () => Promise.resolve(),
+  } as unknown as ConstructorParameters<typeof ImageApi>[2];
+  const app = serving(
+    (photoId) => ({
+      kind: 'file',
+      path: photoId === 'peer-jpeg' ? 'DSC01236.JPG' : 'DSC01236.ARW',
+    }),
+    peer,
+    (photoId) => (photoId === 'raw' ? 'peer-jpeg' : null),
+    90,
+  );
+
+  const answer = await app.request(
+    route(PathSegment.image(), 'raw', PathSegment.renditions(), 'camera'),
+  );
+  expect(answer.status).toBe(200);
+  expect(answer.headers.get('content-type')).toBe('image/jpeg');
+  expect(hasBox(new Uint8Array(await answer.arrayBuffer()), 'Exif')).toBe(true);
 });
 
 it('serves a finished picture a peer sent under its own media type', async () => {

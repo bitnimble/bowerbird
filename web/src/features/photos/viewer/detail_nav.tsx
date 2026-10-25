@@ -78,9 +78,10 @@ import { PhotoTriage } from './detail_triage';
 
 // Renditions of the same frame rather than commands: each is built once and
 // cached, so these read as "which one am I looking at", not "rebuild it now".
-// All three stay on offer whichever is showing, including the step back down to
-// the camera's JPEG: comparing a render against it is a reason to switch.
+// Every one stays on offer whichever is showing, including the step back down to
+// the camera's own pictures: comparing a render against them is a reason to switch.
 const RENDITIONS: Option<ViewerRendition>[] = [
+  { value: 'camera', label: renditionLabel('camera'), icon: <Camera size={ICON} />, hint: 'U' },
   {
     value: 'embedded',
     label: renditionLabel('embedded'),
@@ -676,6 +677,7 @@ function renditionSections(
       label: PhotoDetailStrings.sectionRendition(),
       options: renditions.map((option) => ({
         ...option,
+        label: renditionLabel(option.value, store.photoFor(photoId)),
         active: option.value === store.frameOf(photoId).rendition,
       })),
       onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),

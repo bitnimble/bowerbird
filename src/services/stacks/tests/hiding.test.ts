@@ -122,6 +122,20 @@ describe('what detection is allowed to consider', () => {
     expect(stacks.candidates(LIB).map((c) => c.id)).toEqual(['ordinary']);
   });
 
+  it('leaves out a camera JPEG its RAW stands for', () => {
+    db.query(
+      `UPDATE photos SET format = 'arw', date_taken = '2026-03-04T05:06:07.000Z', camera_make = 'Sony',
+         camera_model = 'ILCE-7M4' WHERE id = 'ordinary'`,
+    ).run();
+    photo('ordinary-jpeg', 'open');
+    db.query(
+      `UPDATE photos SET recipe = json_object('kind', 'file', 'path', 'ordinary.JPG'), format = 'jpeg',
+         date_taken = '2026-03-04T05:06:07.000Z', camera_make = 'Sony', camera_model = 'ILCE-7M4',
+         descriptor = x'00', stack_id = NULL WHERE id = 'ordinary-jpeg'`,
+    ).run();
+    expect(stacks.candidates(LIB).map((c) => c.id)).toEqual(['ordinary']);
+  });
+
   it('takes them back once they are unhidden', () => {
     photoState.setHidden(['put-away'], false);
     db.query("UPDATE shoots SET is_hidden = 0 WHERE id = 'away'").run();
