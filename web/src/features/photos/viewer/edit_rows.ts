@@ -3,7 +3,13 @@ import type { EditDoc } from '../../../../../src/schemas/photo_edits';
 import { displaySize } from '../../../../../src/schemas/display_size';
 import { aspectLabel } from '../../raw_edit/crop/crop_aspect';
 import { EditToolsStrings } from '../../raw_edit/edit_tools.strings';
-import { DUST, EDIT_SLIDERS, reading, type SliderSpec } from '../../raw_edit/edit_sliders';
+import {
+  DUST,
+  EDIT_SLIDERS,
+  REFLECTION,
+  reading,
+  type SliderSpec,
+} from '../../raw_edit/edit_sliders';
 import { RawEditPanelStrings } from '../../raw_edit/raw_edit_panel.strings';
 import { ToneCurveEditorStrings } from '../../raw_edit/tone_curve/tone_curve_editor.strings';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
@@ -20,6 +26,7 @@ const EDIT_LABELS: Partial<Record<keyof EditDoc, () => string>> = {
   colourNoise: PhotoDetailStrings.colourNoise,
   dustSensitivity: PhotoDetailStrings.dustSensitivity,
   dustIntensity: PhotoDetailStrings.dustIntensity,
+  reflectionStrength: PhotoDetailStrings.reflectionStrength,
 };
 
 /**
@@ -67,6 +74,17 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
   if (!doc.dustRemoval)
     rows.push([RawEditPanelStrings.groupDustRemoval(), PhotoDetailStrings.dustRemovalOff()]);
   else DUST.forEach(slider);
+
+  if (doc.reflectionRemoval) {
+    const strokes = doc.reflectionStrokes.length;
+    rows.push([
+      RawEditPanelStrings.groupReflectionRemoval(),
+      strokes === 0
+        ? PhotoDetailStrings.reflectionRemovalOn()
+        : PhotoDetailStrings.strokes(strokes),
+    ]);
+    slider(REFLECTION);
+  }
 
   if (doc.cropAngle !== 0) {
     rows.push([

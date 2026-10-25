@@ -6,6 +6,7 @@ import init, {
   finishDraw,
   heifView,
   holdBuffers,
+  holdDereflectModel,
   holdPicture,
   holdPixels,
   holdPlanes,
@@ -23,7 +24,8 @@ import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environm
 import { upscalerWeightsUrl } from '../../../native/rawshim/pkg/upscaler_weights';
 import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
-import { ModelsStatusSchema } from '../../../src/schemas/models';
+import { ModelsStatusSchema, REFLECTION_MODEL } from '../../../src/schemas/models';
+import type { ReflectionSettings } from '../../../src/schemas/reflection_settings';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { sharpenOf } from '../../../src/schemas/sharpening';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
@@ -333,7 +335,8 @@ class Open {
         return { value, transfer: [value.buffer] };
       }
       case 'holdTile':
-        return { value: JSON.parse(await this.drawing().holdTile(ask.request)) };
+        await reflectionModel(ask.reflection);
+        return { value: JSON.parse(await this.drawing().holdTile(ask.request, ask.reflection)) };
       case 'releaseTile':
         this.drawing().releaseTile();
         return { value: null };
@@ -346,6 +349,7 @@ class Open {
       }
       case 'bandInto': {
         await networkWeights(ask.mosaic.denoiser);
+        await reflectionModel(ask.mosaic.reflection);
         const { enabled, sensitivity, intensity } = ask.mosaic.dust;
         await this.drawing().bandInto(
           ask.mosaic.luminance,
@@ -361,6 +365,7 @@ class Open {
           ask.frame[0],
           ask.frame[1],
           ask.mosaic.repairs,
+          ask.mosaic.reflection,
         );
         return { value: null };
       }
@@ -507,6 +512,7 @@ class Open {
     report: Report,
   ): Promise<string> {
     await networkWeights(mosaic.denoiser);
+    await reflectionModel(mosaic.reflection);
     if (this.held?.request !== request) this.release();
     const held =
       this.held?.held ??
@@ -522,6 +528,7 @@ class Open {
       sensitivity,
       intensity,
       mosaic.repairs,
+      mosaic.reflection,
       report,
     );
   }
@@ -568,6 +575,7 @@ class Open {
       0,
       0,
       '[]',
+      '{}',
       report,
     );
   }
@@ -612,16 +620,50 @@ const NETWORKS: Record<Network, { url: string; hold: (bytes: Uint8Array) => void
 async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<void> {
   if (denoiser === 'galosh') return;
   if (denoiser === 'upscaler') {
-    const revision = await downloadedUpscaler();
+    const downloaded = await downloadedModels();
+    const revision = downloaded?.files.includes('upscaler.bin') ? downloaded.revision : null;
     const key = revision == null ? denoiser : `upscaler@${revision}`;
-    // The module holds one upscaler; a key cached earlier no longer says what it holds.
-    for (const cached of weights.keys()) {
-      if (cached.startsWith('upscaler') && cached !== key) weights.delete(cached);
+    forgetOthers('upscaler', key);
+    if (revision != null) {
+      return held(key, () => downloadedModel(revision, 'upscaler', holdUpscalerModel));
     }
-    if (revision != null) return held(key, () => downloadedModel(revision));
   }
   const { url, hold } = NETWORKS[denoiser];
   await held(denoiser, async () => hold(await bytesAt(url)));
+}
+
+/**
+ * The reflection remover, fetched once for the tab where the document turns it on. A build carries
+ * none, so with no downloaded model the module takes nothing out.
+ */
+async function reflectionModel(reflection: string): Promise<void> {
+  if (!(JSON.parse(reflection) as Partial<ReflectionSettings>).enabled) return;
+  const holds = (models: Downloaded | null): models is Downloaded =>
+    models?.files.includes(`${REFLECTION_MODEL}.bin`) ?? false;
+  let downloaded = await downloadedModels();
+  // A status cached before the reader downloaded it would leave the removal off for a minute.
+  if (!holds(downloaded)) downloaded = await downloadedModels(MODEL_REASK_MS);
+  if (!holds(downloaded)) return;
+  const fetching = (revision: string): Promise<void> => {
+    const key = `${REFLECTION_MODEL}@${revision}`;
+    forgetOthers(REFLECTION_MODEL, key);
+    return held(key, () => downloadedModel(revision, REFLECTION_MODEL, holdDereflectModel));
+  };
+  try {
+    await fetching(downloaded.revision);
+  } catch (why) {
+    // The server serves only the revision in use, which an update since the status was cached moved.
+    const now = await downloadedModels(0);
+    if (!holds(now) || now.revision === downloaded.revision) throw why;
+    await fetching(now.revision);
+  }
+}
+
+/** The module holds one of each model; a key cached earlier no longer says what it holds. */
+function forgetOthers(model: string, key: string): void {
+  for (const cached of weights.keys()) {
+    if (cached.startsWith(model) && cached !== key) weights.delete(cached);
+  }
 }
 
 /** Fetches what `key` names once for the tab, unless a fetch of it failed. */
@@ -644,34 +686,38 @@ async function bytesAt(url: string): Promise<Uint8Array> {
 }
 
 const MODEL_STATUS_MS = 60_000;
-let modelStatus: { at: number; revision: Promise<string | null> } | null = null;
+const MODEL_REASK_MS = 5_000;
+type Downloaded = { revision: string; files: string[] };
+let modelStatus: { at: number; downloaded: Promise<Downloaded | null> } | null = null;
 
 /**
- * The models the app downloaded, by revision, or null for the build's own. Asked at most
- * once a minute rather than per band, and null where there is no server to ask.
+ * The models the app downloaded, by revision and files, or null for the build's own. Asked again
+ * only once the answer in hand is older than `maxAge`, rather than per band, and null where there
+ * is no server to ask.
  */
-function downloadedUpscaler(): Promise<string | null> {
-  if (modelStatus == null || Date.now() - modelStatus.at > MODEL_STATUS_MS) {
+function downloadedModels(maxAge = MODEL_STATUS_MS): Promise<Downloaded | null> {
+  if (modelStatus == null || Date.now() - modelStatus.at >= maxAge) {
     const asked = fetch(route(PathSegment.api(), PathSegment.models(), PathSegment.status()))
       .then(async (answer) => {
         if (!answer.ok) return null;
         const { current } = ModelsStatusSchema.parse(await answer.json());
-        return current.downloaded ? current.revision : null;
+        return current.downloaded ? { revision: current.revision, files: current.files } : null;
       })
       .catch(() => null);
-    modelStatus = { at: Date.now(), revision: asked };
+    modelStatus = { at: Date.now(), downloaded: asked };
   }
-  return modelStatus.revision;
+  return modelStatus.downloaded;
 }
 
-async function downloadedModel(revision: string): Promise<void> {
-  const file = (name: string): string =>
-    route(PathSegment.api(), PathSegment.models(), PathSegment.files(), revision, name);
-  const [manifest, bytes] = await Promise.all([
-    bytesAt(file('upscaler.json')),
-    bytesAt(file('upscaler.bin')),
-  ]);
-  holdUpscalerModel(new TextDecoder().decode(manifest), bytes);
+async function downloadedModel(
+  revision: string,
+  name: string,
+  hold: (manifest: string, bytes: Uint8Array) => void,
+): Promise<void> {
+  const file = (extension: string): string =>
+    route(PathSegment.api(), PathSegment.models(), PathSegment.files(), revision, name + extension);
+  const [manifest, bytes] = await Promise.all([bytesAt(file('.json')), bytesAt(file('.bin'))]);
+  hold(new TextDecoder().decode(manifest), bytes);
 }
 
 /** A print environment's map, fetched once for the tab the first time a scene names it. */

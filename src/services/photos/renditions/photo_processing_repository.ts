@@ -327,6 +327,9 @@ export class PhotoProcessingRepository {
   queueDenoisedWith(denoiser: Denoiser): string[] {
     return this.renditions.queueDenoisedWith(denoiser);
   }
+  queueRemovingReflections(): string[] {
+    return this.renditions.queueRemovingReflections();
+  }
   // Whole library, same tile-only rule as `queueTileRebuild`.
   queueTileRebuildForLibrary(libraryId: string): number {
     this.db

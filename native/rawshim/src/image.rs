@@ -639,15 +639,8 @@ pub fn lens_footprint(
             let mut bounds = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
             for x in 0..width {
                 let (dx, dy) = plan.at(x as f64 + 0.5, y as f64 + 0.5, (width, height));
-                let t = (dx * dx + dy * dy) * RATIO_TABLE_LAST as f64;
-                let slot = if t < RATIO_TABLE_LAST as f64 {
-                    t as usize
-                } else {
-                    RATIO_TABLE_LAST - 1
-                };
                 for table in &tables {
-                    let low = table[slot];
-                    let ratio = low + (table[slot + 1] - low) * (t - slot as f64);
+                    let ratio = ratio_at(table, dx * dx + dy * dy);
                     let px = centre_x + dx * ratio * half;
                     let py = centre_y + dy * ratio * half;
                     bounds = box_of(bounds, (px, py, px, py));
@@ -665,6 +658,53 @@ pub fn lens_footprint(
         end(read_right, full_w) - x0,
         end(read_bottom, full_h) - y0,
     ))
+}
+
+/// A ratio table read at a squared radius, as `warp.slang` reads it.
+fn ratio_at(table: &[f64], squared: f64) -> f64 {
+    let t = squared * RATIO_TABLE_LAST as f64;
+    let slot = if t < RATIO_TABLE_LAST as f64 {
+        t as usize
+    } else {
+        RATIO_TABLE_LAST - 1
+    };
+    let low = table[slot];
+    low + (table[slot + 1] - low) * (t - slot as f64)
+}
+
+/// Where the lens gather reads the frame for each of `points` of the corrected picture, through
+/// green's table: positions stored on the picture as the lens left it, found on the decode.
+pub fn lens_sources(
+    full: crate::px::Size<crate::px::Drawn>,
+    points: &[crate::px::Point<crate::px::Drawn>],
+    lens: &crate::fit::Lens,
+) -> Vec<crate::px::Point<crate::px::Drawn>> {
+    if !moves_pixels(lens.distortion.as_deref(), lens.crop) {
+        return points.to_vec();
+    }
+    let (full_w, full_h) = full.raw();
+    let table = ratio_table(lens.distortion.as_deref().unwrap_or_default(), lens.crop);
+    let half = ((full_w as f64 / 2.0).powi(2) + (full_h as f64 / 2.0).powi(2)).sqrt();
+    let plan = Plan {
+        half_full: half,
+        full: (full_w as f64, full_h as f64),
+        origin: (0.0, 0.0),
+        stride: (1.0, 1.0),
+        cos: 1.0,
+        sin: 0.0,
+        rotate: 0,
+        keystone: None,
+    };
+    let source = |point: &crate::px::Point<crate::px::Drawn>| {
+        let (dx, dy) = plan.at(point.x.raw(), point.y.raw(), (full_w, full_h));
+        let ratio = ratio_at(&table, dx * dx + dy * dy);
+        // The gather's grid puts a pixel's centre on an integer, a stored position its edge.
+        crate::px::Point {
+            x: crate::px::Coordinate::exactly(full_w as f64 / 2.0 + dx * ratio * half),
+            y: crate::px::Coordinate::exactly(full_h as f64 / 2.0 + dy * ratio * half),
+        }
+    };
+    points.iter().map(source).collect()
 }
 
 /// The resample's own blur, as a Gaussian sigma in output pixels, and the whole answer

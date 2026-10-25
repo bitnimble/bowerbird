@@ -6,6 +6,7 @@ import {
 import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
 import type { CameraTone, Denoiser, Repair } from '../../../schemas/photo_edits';
+import type { ReflectionSettings } from '../../../schemas/reflection_settings';
 import type { CameraMatch } from '../../../schemas/render_stages';
 import type { RenderingIntent } from '../../../schemas/rendering_intent';
 import type { HeaderMetadata } from '../analysis/metadata';
@@ -89,6 +90,7 @@ export interface Developed {
   dust: DustSettings;
   /** The reader's repairs, as the document holds them (`crate::repair`). */
   repairs: Repair[];
+  reflection: ReflectionSettings;
   sharpen: number;
   defringe: number;
   /** The photographer's exposure in stops, as the document stores it. */

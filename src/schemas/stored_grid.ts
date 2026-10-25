@@ -1,6 +1,6 @@
-// The grid a repair is written on, and the shape a repair has - without zod, which the page keeps
-// out of its bundle (`display_size.ts` is here for the same reason). `photo_edits.ts` parses what
-// this describes.
+// The grid a repair or a reflection stroke is written on, and their shapes - without zod, which the
+// page keeps out of its bundle (`display_size.ts` is here for the same reason). `photo_edits.ts`
+// parses what this describes.
 
 /**
  * `px::STORED_LONG`: steps across a photograph's long edge on the grid a repair is written on, the
@@ -13,8 +13,20 @@ export const STORED_LONG = 65535;
 export const MOST_REPAIRS = 64;
 export const MOST_REPAIR_VERTICES = 64;
 
+/** The most reflection strokes one photograph holds, and the most points one of them may have. */
+export const MOST_REFLECTION_STROKES = 64;
+export const MOST_STROKE_POINTS = 256;
+
 /** A position on the grid: whole steps. */
 export type StoredPoint = [number, number];
+
+/** A brush stroke over reflection for the network to take out, or over scene it must keep. */
+export interface ReflectionStroke {
+  kind: 'remove' | 'keep';
+  /** On the grid, so steps of the long edge. */
+  radius: number;
+  points: StoredPoint[];
+}
 
 /** A spot or a thing the reader removed, filled from elsewhere in the same photograph. */
 export interface Repair {
@@ -45,14 +57,7 @@ export function storedLoop(
   drawn: readonly { x: number; y: number }[],
   frame: { width: number; height: number },
 ): StoredPoint[] | null {
-  const grid = storedSize(frame.width, frame.height);
-  const onGrid = drawn.map(({ x, y }): StoredPoint => [
-    Math.round(Math.min(Math.max(x, 0), 1) * grid.width),
-    Math.round(Math.min(Math.max(y, 0), 1) * grid.height),
-  ]);
-  const distinct = onGrid.filter(
-    (point, at) => at === 0 || point[0] !== onGrid[at - 1]![0] || point[1] !== onGrid[at - 1]![1],
-  );
+  const distinct = onGrid(drawn, frame);
   if (distinct.length < 3) return null;
   let tolerance = 1;
   let loop = simplified(distinct, tolerance);
@@ -61,6 +66,42 @@ export function storedLoop(
     loop = simplified(distinct, tolerance);
   }
   return loop.length >= 3 && Math.abs(area(loop)) > 0 ? loop : null;
+}
+
+/**
+ * A stroke the reader drew, as fractions of the frame, onto the grid: at most `MOST_STROKE_POINTS`
+ * points, simplified as `storedLoop` simplifies but left open, from `tolerance` steps up. Null where
+ * nothing was drawn.
+ */
+export function storedPolyline(
+  drawn: readonly { x: number; y: number }[],
+  frame: { width: number; height: number },
+  tolerance = 1,
+): StoredPoint[] | null {
+  const distinct = onGrid(drawn, frame);
+  if (distinct.length === 0) return null;
+  let within = tolerance;
+  let line = chain(distinct, within);
+  while (line.length > MOST_STROKE_POINTS) {
+    within *= 1.5;
+    line = chain(distinct, within);
+  }
+  return line;
+}
+
+/** Fractions of the frame onto the grid, held to it, with repeats in a row dropped. */
+function onGrid(
+  drawn: readonly { x: number; y: number }[],
+  frame: { width: number; height: number },
+): StoredPoint[] {
+  const grid = storedSize(frame.width, frame.height);
+  const points = drawn.map(({ x, y }): StoredPoint => [
+    Math.round(Math.min(Math.max(x, 0), 1) * grid.width),
+    Math.round(Math.min(Math.max(y, 0), 1) * grid.height),
+  ]);
+  return points.filter(
+    (point, at) => at === 0 || point[0] !== points[at - 1]![0] || point[1] !== points[at - 1]![1],
+  );
 }
 
 /** Douglas-Peucker over a closed loop, cut at its first vertex and its farthest from it. */

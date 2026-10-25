@@ -22,6 +22,8 @@ export const RawEditPanelStrings = {
   sharpening: () => 'Sharpening',
   sensitivity: () => 'Sensitivity',
   intensity: () => 'Intensity',
+  strength: () => 'Strength',
+  percentUnit: () => '%',
 
   /** A slider's number, signed only where the track has a negative half. */
   reading: (sign: string, value: string) => `${sign}${value}`,
@@ -34,6 +36,7 @@ export const RawEditPanelStrings = {
   noWhiteBalanceMode: () => '-',
   noCameraNeutral: () => 'Camera white balance unavailable for this file',
   noMosaic: () => 'Denoise and highlight recovery unavailable for developed photos',
+  noReflectionRemoval: () => 'Reflection removal unavailable for merged or developed photos',
   // Said of the sensor rather than of the photograph: every frame from this body answers the same
   // way, and a reader who has just watched two sliders disappear wants to know it is the camera.
   noDenoise: () => "Denoise unavailable for this camera's sensor",
@@ -84,6 +87,8 @@ export const RawEditPanelStrings = {
   groupEffects: () => 'Effects',
   groupDetail: () => 'Detail',
   groupDustRemoval: () => 'Dust removal',
+  groupRetouch: () => 'Retouch',
+  groupReflectionRemoval: () => 'Reflection removal',
   groupGeometry: () => 'Geometry',
 
   colourProfile: () => 'Colour profile',

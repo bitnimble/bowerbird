@@ -150,6 +150,8 @@ fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
         photo_analysis,
         dust: Default::default(),
         repairs: Vec::new(),
+        reflection: Default::default(),
+        found: None,
         stated_white: false,
         // The document's defaults, so the open being timed is the one a reader waits for.
         denoise_luminance: None,

@@ -39,15 +39,18 @@ export function fileUrl(revision: string, name: string): string {
   return `${hub()}/${REPOSITORY}/resolve/${revision}/${name}`;
 }
 
-/** These files as `main` has them. */
+/** Those of these files `main` has, as it has them. */
 export async function latest(names: readonly string[]): Promise<HubModels> {
   const main = RevisionSchema.parse(await api('revision/main'));
   const tree = TreeSchema.parse(await api(`tree/${main.sha}`));
-  const files = names.map((name): HubFile => {
-    const entry = tree.find((candidate) => candidate.path === name);
-    if (entry == null) throw new Error(`${REPOSITORY} has no ${name} at ${main.sha}`);
-    return { name, size: entry.size, git_oid: entry.oid, sha256: entry.lfs?.oid ?? null };
-  });
+  const files = tree
+    .filter((entry) => names.includes(entry.path))
+    .map((entry): HubFile => ({
+      name: entry.path,
+      size: entry.size,
+      git_oid: entry.oid,
+      sha256: entry.lfs?.oid ?? null,
+    }));
   return { version: { revision: main.sha, committed_at: main.lastModified }, files };
 }
 

@@ -88,17 +88,19 @@ const PrepareDevelopSchema = EditDocSchema.pick({
   dustRemoval: true,
   dustSensitivity: true,
   dustIntensity: true,
+  reflectionRemoval: true,
+  reflectionStrength: true,
+  reflectionStrokes: true,
 });
 
 /**
- * The settings a client is previewing that run before the samples cross, as `develop`'s JSON, or
+ * The settings a client is previewing that run before the samples cross, as a POST's JSON body, or
  * undefined for the stored document's. Undefined for anything malformed, for `shownIn`'s reason.
  */
-function developIn(c: Context): PrepareDevelop | undefined {
-  const develop = c.req.query('develop');
-  if (develop == null) return undefined;
+async function developIn(c: Context): Promise<PrepareDevelop | undefined> {
+  if (c.req.method !== 'POST') return undefined;
   try {
-    const parsed = PrepareDevelopSchema.safeParse(JSON.parse(develop));
+    const parsed = PrepareDevelopSchema.safeParse(await c.req.json());
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
@@ -349,6 +351,10 @@ export class ImageApi {
     app.get(route(PathSegment.param('photoId'), PathSegment.prepare()), (c) =>
       this.servePrepared(c),
     );
+    // Previewed settings travel in the body: a document's brush strokes outgrow a URL.
+    app.post(route(PathSegment.param('photoId'), PathSegment.prepare()), (c) =>
+      this.servePrepared(c),
+    );
     this.routes = app;
   }
 
@@ -432,7 +438,7 @@ export class ImageApi {
     // whether the frames are on this disk, so a photograph given up to a backup is fetched
     // before the prepare asks (§14.4).
     await this.originals.openAll(library, photo);
-    return pictures.preparePicture(photo.id, shownIn(c), missingIn(c), developIn(c));
+    return pictures.preparePicture(photo.id, shownIn(c), missingIn(c), await developIn(c));
   }
 
   /**

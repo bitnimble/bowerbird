@@ -87,6 +87,7 @@ fn main() {
         scale: Default::default(),
         repairs: Vec::new(),
         drawn: None,
+        removal: None,
     };
     let sidecar_bytes = sidecar.len();
     drop(frame);

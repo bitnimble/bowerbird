@@ -16,6 +16,7 @@ import type {
 import type { ReachMask } from '../../local_decode/local_decoder';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
+import { ReflectionStore } from '../../reflection/reflection_store';
 import { ColourWheelStore } from '../../colour_wheel/colour_wheel_store';
 import type { PrinterProfileSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
@@ -440,6 +441,7 @@ export type Editor = {
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  reflection: ReflectionStore;
   colourWheel: ColourWheelStore;
   loupe: LoupeStore;
   print: PrintStore;
@@ -478,6 +480,7 @@ export function openEditor(): Editor {
   const crop = new CropStore(stage, edit);
   const keystone = new KeystoneStore(stage, edit, crop);
   const repair = new RepairStore(edit, keystone);
+  const reflection = new ReflectionStore(edit, stage);
   const colourWheel = new ColourWheelStore(edit);
   const loupe = new LoupeStore(crop, keystone, repair);
   const print = new PrintStore();
@@ -495,6 +498,7 @@ export function openEditor(): Editor {
     crop,
     keystone,
     repair,
+    reflection,
     colourWheel,
     loupe,
     print,
@@ -506,6 +510,7 @@ export function openEditor(): Editor {
       crop,
       keystone,
       repair,
+      reflection,
       colourWheel,
       loupe,
       print,

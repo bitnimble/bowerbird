@@ -16,6 +16,8 @@ import { KeystoneOverlay } from '../keystone/keystone_overlay';
 import type { KeystoneStore } from '../keystone/keystone_store';
 import { RepairOverlay, TAP_SLOP } from '../repair/repair_overlay';
 import type { RepairStore } from '../repair/repair_store';
+import { ReflectionOverlay } from '../reflection/reflection_overlay';
+import type { ReflectionStore } from '../reflection/reflection_store';
 import { LoupeOverlay } from '../loupe/loupe_overlay';
 import type { LoupeStore } from '../loupe/loupe_store';
 import { NO_SIZE, regionOf, useZoomPan } from '../../photos/viewer/zoom_pan';
@@ -97,6 +99,7 @@ export const RawEditStage = observer(function RawEditStage({
   crop,
   keystone,
   repair,
+  reflection,
   loupe,
   print,
   presenter,
@@ -109,6 +112,7 @@ export const RawEditStage = observer(function RawEditStage({
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  reflection: ReflectionStore;
   loupe: LoupeStore;
   print: PrintStore;
   presenter: RawEditPresenter;
@@ -167,13 +171,14 @@ export const RawEditStage = observer(function RawEditStage({
   const still = fitted || loupe.loupeOpen;
   // The repair tool draws its loop with the one pointer a pan would take - but not while a loop's
   // fills are on offer, when the overlay takes a press only on the fill or where it is read from.
+  // The reflection brush paints with it too.
   const zoom = useZoomPan(
     viewport,
     stage,
     natural,
     undefined,
     !still,
-    !repair.repairing || repair.repairOptions != null,
+    (!repair.repairing || repair.repairOptions != null) && !reflection.painting,
   );
   const { view, box, handlers, zoomed, reset } = zoom;
 
@@ -504,6 +509,13 @@ export const RawEditStage = observer(function RawEditStage({
         <RepairOverlay
           store={repair}
           presenter={presenter.repair}
+          view={view}
+          box={box}
+          natural={natural}
+        />
+        <ReflectionOverlay
+          store={reflection}
+          presenter={presenter.reflection}
           view={view}
           box={box}
           natural={natural}

@@ -57,6 +57,7 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
           sharpening: 30,
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
+          reflection: { enabled: false, strength: 1, strokes: [] },
         },
         null,
         (stage) => stages.push(stage),
@@ -133,6 +134,7 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
           sharpening: 30,
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
+          reflection: { enabled: false, strength: 1, strokes: [] },
         },
         null,
       );

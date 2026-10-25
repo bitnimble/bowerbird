@@ -89,9 +89,10 @@ describe('GET /image/:photoId/prepare', () => {
     expect(got.headers.get('cache-control')).toBe('no-store');
   });
 
-  // What the reader is previewing and has not saved: the denoise, the sharpen and the dust run
-  // before the samples cross, so the stored document alone would prepare the last save.
-  it('passes the Detail and dust being previewed through, and drops a malformed one', async () => {
+  // What the reader is previewing and has not saved: the denoise, the sharpen, the dust and the
+  // reflection removal run before the samples cross, so the stored document alone would prepare
+  // the last save.
+  it('passes the settings being previewed through, and drops a malformed one', async () => {
     const develops: unknown[] = [];
     const app = serving({
       preparePicture: async (_photoId, _shown, _missing, develop) => {
@@ -108,15 +109,22 @@ describe('GET /image/:photoId/prepare', () => {
       dustRemoval: false,
       dustSensitivity: 25,
       dustIntensity: 100,
+      reflectionRemoval: true,
+      reflectionStrength: 150,
+      reflectionStrokes: [{ kind: 'keep', radius: 3000, points: [[100, 200]] }],
     };
     const url = route(PathSegment.image(), 'p1', PathSegment.prepare());
-    await app.request(`${url}?develop=${encodeURIComponent(JSON.stringify(develop))}`);
-    await app.request(
-      `${url}?develop=${encodeURIComponent(JSON.stringify({ ...develop, sharpening: 900 }))}`,
-    );
-    await app.request(`${url}?develop=not-json`);
+    const posting = (body: string): RequestInit => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    await app.request(url, posting(JSON.stringify(develop)));
+    await app.request(url, posting(JSON.stringify({ ...develop, sharpening: 900 })));
+    await app.request(url, posting('not-json'));
+    await app.request(url);
 
-    expect(develops).toEqual([develop, undefined, undefined]);
+    expect(develops).toEqual([develop, undefined, undefined, undefined]);
   });
 
   it('refuses a photograph nothing knows about', async () => {

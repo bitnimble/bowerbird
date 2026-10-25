@@ -120,6 +120,7 @@ test("the build's own models are nothing to download", async () => {
     revision: BASE.sha,
     committed_at: BASE.committed_at,
     downloaded: false,
+    files: ['upscaler.json', 'upscaler.bin'],
   });
   expect(status.available).toBeNull();
 });
@@ -141,6 +142,7 @@ test('a newer model on the hub is offered, downloaded, used and rendered with', 
     revision: NEWER.sha,
     committed_at: NEWER.committed_at,
     downloaded: true,
+    files: ['upscaler.json', 'upscaler.bin'],
   });
   expect(after.available).toBeNull();
   expect(models.file(NEWER.sha, 'upscaler.bin')).toBe(path.join(home, NEWER.sha, 'upscaler.bin'));
@@ -195,6 +197,101 @@ test('every model is held from the download, and only a changed one renders agai
   expect(held).toEqual([]);
   expect(existsSync(home)).toBe(false);
   expect(incomplete.status().current.downloaded).toBe(false);
+});
+
+const REMOVER = (): Model => model('remover', ['remover.json', 'remover.bin']);
+const WITH_REMOVER = { 'remover.json': '{"for":"remover"}', 'remover.bin': 'network' };
+
+test('a hub without a model the app registers still offers the rest', async () => {
+  publish(NEWER);
+  const models = service(BUNDLED, [UPSCALER, REMOVER()]);
+  const status = await models.check();
+  expect(status.error).toBeNull();
+  expect(status.available?.revision).toBe(NEWER.sha);
+  await models.download();
+  expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
+  expect(changed).toEqual(['upscaler']);
+  expect(models.status().current.files).toEqual(['upscaler.json', 'upscaler.bin']);
+});
+
+test('a commit without a model the app uses renders nothing of that model again', async () => {
+  publish({ ...NEWER, files: WITH_REMOVER });
+  const models = service(BUNDLED, [UPSCALER, REMOVER()]);
+  await models.check();
+  await models.download();
+  expect(held).toEqual([['{"for":"remover"}', 'network']]);
+  expect(changed).toEqual(['remover']);
+});
+
+test('a model the build does not carry is offered from the commit the build pins', async () => {
+  publish({ ...BASE, files: { ...BASE.files, ...WITH_REMOVER } });
+  const models = service(BUNDLED, [UPSCALER, REMOVER()]);
+  expect((await models.check()).available?.revision).toBe(BASE.sha);
+  await models.download();
+  expect(changed).toEqual(['remover']);
+  expect(models.status().current.files).toContain('remover.bin');
+});
+
+test('a download from before a model was registered stays in use for what it has', async () => {
+  publish(NEWER);
+  const before = service();
+  await before.check();
+  await before.download();
+  held = [];
+  const later = service(BUNDLED, [UPSCALER, REMOVER()]);
+  await later.load();
+  expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
+  expect(later.status().current.downloaded).toBe(true);
+});
+
+test('a build as new as the download keeps it for a model the build does not carry', async () => {
+  publish({ ...NEWER, files: { ...NEWER.files, ...WITH_REMOVER } });
+  const models = service(BUNDLED, [UPSCALER, REMOVER()]);
+  await models.check();
+  await models.download();
+  held = [];
+  const updated = service({ ...BUNDLED, revision: NEWER.sha, committed_at: NEWER.committed_at }, [
+    UPSCALER,
+    REMOVER(),
+  ]);
+  await updated.load();
+  expect(updated.status().current.downloaded).toBe(true);
+  expect(updated.status().current.files).toContain('remover.bin');
+});
+
+test('a model the renderer refuses keeps what it had, and the rest of the download is used', async () => {
+  publish({ ...NEWER, files: { ...NEWER.files, ...WITH_REMOVER } });
+  const refusing: Model = {
+    ...REMOVER(),
+    hold: () => {
+      throw new Error('this build cannot run the reflection model');
+    },
+  };
+  const models = service(BUNDLED, [UPSCALER, refusing]);
+  await models.check();
+  await models.download();
+  expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
+  expect(changed).toEqual(['upscaler']);
+  const status = models.status();
+  expect(status.current.files).toEqual(['upscaler.json', 'upscaler.bin']);
+  expect(status.error).toMatch(/cannot run/);
+  expect(models.file(NEWER.sha, 'remover.bin')).toBeNull();
+});
+
+test("an older download gives way to the build's newer copy of a model it shares", async () => {
+  publish({ ...NEWER, files: { ...NEWER.files, ...WITH_REMOVER } });
+  const before = service(BUNDLED, [UPSCALER, REMOVER()]);
+  await before.check();
+  await before.download();
+  held = [];
+  const later = service(
+    { ...BUNDLED, revision: 'e'.repeat(40), committed_at: '2026-10-20T00:00:00.000Z' },
+    [UPSCALER, REMOVER()],
+  );
+  await later.load();
+  expect(held).toEqual([['{"for":"remover"}', 'network']]);
+  expect(later.status().current.files).toEqual(['remover.json', 'remover.bin']);
+  expect(later.file(NEWER.sha, 'upscaler.bin')).toBeNull();
 });
 
 test('a file that does not match what the hub lists is refused, and nothing changes', async () => {

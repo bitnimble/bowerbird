@@ -108,6 +108,10 @@ pub struct HeldRaw {
     /// The aberration the open's defringe took off, for the same reason and with the same failure:
     /// the fit is whole-frame, so a strip fitting its own is corrected by its own edges.
     defocus: std::cell::Cell<Option<(f32, f32)>>,
+    /// The reflection the network last found, with the model and strokes it was found by:
+    /// whole-frame like the fit, so found once per set of strokes and taken out of every band and
+    /// tile after.
+    reflection: std::cell::RefCell<Option<Found>>,
     /// The frame this photograph draws from, and everything the grade binds beside it.
     ///
     /// Replaced by each `prepare`, which is what a Detail slider is: the frame changes and the
@@ -419,6 +423,7 @@ impl HeldRaw {
             levels: std::cell::Cell::new(None),
             analysis: std::cell::RefCell::new(None),
             defocus: std::cell::Cell::new(None),
+            reflection: std::cell::RefCell::new(None),
             drawing: std::cell::RefCell::new(None),
             stage: std::cell::RefCell::new(None),
             loupe: std::cell::RefCell::new(None),
@@ -503,6 +508,15 @@ fn repairs_of(json: &str) -> Result<Vec<crate::repair::Repair>, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("rawshim: these repairs are malformed: {e}")))
 }
 
+/// The document's reflection removal, as the page sends it.
+fn reflection_of(json: &str) -> Result<crate::dereflect::Settings, JsValue> {
+    serde_json::from_str(json).map_err(|e| {
+        JsValue::from_str(&format!(
+            "rawshim: this reflection removal is malformed: {e}"
+        ))
+    })
+}
+
 /// Which filter the Detail panel is driving, as the document spells it.
 fn denoiser_of(name: &str) -> Result<crate::galosh::Denoiser, JsValue> {
     serde_json::from_str(&format!("\"{name}\""))
@@ -533,6 +547,12 @@ pub fn hold_upscaler_model(manifest: String, bytes: Vec<u8>) {
     crate::upscale::hold_model(manifest, bytes);
 }
 
+/// The reflection remover the app downloaded (`models/dereflect`'s bundle).
+#[wasm_bindgen(js_name = holdDereflectModel)]
+pub fn hold_dereflect_model(manifest: &str, bytes: &[u8]) -> Result<(), JsValue> {
+    crate::dereflect::hold_model(manifest, bytes).map_err(|why| JsValue::from_str(&why))
+}
+
 /// A print environment's map, which the page fetches before the first scene that names it.
 #[wasm_bindgen(js_name = holdPrintEnvironment)]
 pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
@@ -546,6 +566,17 @@ pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue>
 
 /// Where a fill is read from, from where it lands, on the `px::Stored` grid.
 type Donor = [crate::px::Extent<crate::px::Stored>; 2];
+
+// No lens: the strokes are drawn through the open's camera match, which a layer never predates.
+#[derive(PartialEq)]
+struct FoundBy {
+    model: u64,
+    strokes: Vec<crate::dereflect::Stroke>,
+    detail: crate::galosh::Detail,
+    dust: crate::dust::Settings,
+}
+
+type Found = (FoundBy, std::sync::Arc<crate::dereflect::Layer>);
 
 fn donor_of(json: &str) -> Result<Donor, JsValue> {
     let donor: [i32; 2] = serde_json::from_str(json)
@@ -929,10 +960,12 @@ impl HeldRaw {
         dust_sensitivity: f64,
         dust_intensity: f64,
         repairs: &str,
+        reflection: &str,
         report: &Reporter,
     ) -> Result<String, JsValue> {
         let report = reporting(report);
         let repairs = repairs_of(repairs)?;
+        let reflection = reflection_of(reflection)?;
         // Undefined either side is the document not having said, which the decode answers with this
         // frame's own fit rather than with a number (`galosh::Detail`).
         let detail = crate::galosh::Detail {
@@ -952,8 +985,11 @@ impl HeldRaw {
             intensity: dust_intensity,
         };
         self.look_for_dust(settings, &report).await;
+        let by = HeldRaw::found_by(&reflection.strokes, detail, settings);
         let request = crate::edit::EditRequest {
             repairs,
+            found: self.found(&by),
+            reflection,
             ..self.opened_as()
         };
         let stored = request.stored();
@@ -984,6 +1020,9 @@ impl HeldRaw {
         self.defocus.set(Some(opened.header.defocus));
         if opened.header.photo_analysis.is_some() {
             self.analysis.replace(opened.header.photo_analysis.clone());
+        }
+        if let Some(removal) = &opened.removal {
+            self.keep_found(by, &removal.layer);
         }
         let header = serde_json::to_string(&opened.header)
             .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
@@ -1149,12 +1188,16 @@ impl HeldRaw {
     ///
     /// Returns the window's `keep` rectangle, which is what the page positions the glass by.
     #[wasm_bindgen(js_name = holdTile)]
-    pub async fn hold_tile(&self, request: &str) -> Result<String, JsValue> {
+    pub async fn hold_tile(&self, request: &str, reflection: &str) -> Result<String, JsValue> {
         let request: crate::tile::TileRequest = serde_json::from_str(request).map_err(|e| {
             JsValue::from_str(&format!("rawshim: this tile request is malformed: {e}"))
         })?;
+        let reflection = reflection_of(reflection)?;
         let held = self.mosaic_held()?;
-        let request = self.off_the_held_mosaic(request);
+        let mut request = self.off_the_held_mosaic(request);
+        request.removal = self
+            .removal(&reflection, request.detail(), request.dust)
+            .await?;
         let (frame, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request)
                 .await
@@ -1278,8 +1321,10 @@ impl HeldRaw {
         frame_width: usize,
         frame_height: usize,
         repairs: &str,
+        reflection: &str,
     ) -> Result<(), JsValue> {
         let repairs = repairs_of(repairs)?;
+        let reflection = reflection_of(reflection)?;
         let dust = crate::dust::Settings {
             enabled: dust_enabled,
             sensitivity: dust_sensitivity,
@@ -1288,11 +1333,20 @@ impl HeldRaw {
         // Before the window is cut, since a window cannot look for itself. Costs a whole-frame read
         // on the first band after the switch is thrown, and nothing on the rest of the sweep.
         self.look_for_dust(dust, &crate::open_stage::quiet).await;
-        let mosaic = self.mosaic_held()?;
-        let band = self.band_request(
+        let denoiser = denoiser_of(denoiser)?;
+        let detail = crate::galosh::Detail {
             luminance,
             colour,
-            denoiser_of(denoiser)?,
+            denoiser,
+            highlight_recovery: Some(highlight_recovery),
+        };
+        // The same for the reflection, which the network finds over the whole frame.
+        let removal = self.removal(&reflection, detail, dust).await?;
+        let mosaic = self.mosaic_held()?;
+        let mut band = self.band_request(
+            luminance,
+            colour,
+            denoiser,
             highlight_recovery,
             sharpen,
             dust,
@@ -1302,6 +1356,7 @@ impl HeldRaw {
             frame_height,
             repairs,
         )?;
+        band.removal = removal;
         let (strip, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(mosaic), &band)
                 .await
@@ -1436,6 +1491,7 @@ impl HeldRaw {
             scale: crate::view::Scale::Full,
             repairs,
             drawn: None,
+            removal: None,
         }))
     }
 
@@ -1631,6 +1687,7 @@ impl HeldRaw {
             levels,
             matched: header.camera_match.apply(stored.from_raw.matched.clone()),
             as_shot: header.as_shot,
+            removal: None,
             header: crate::edit::PreparedHeader {
                 width: whole.0,
                 height: whole.1,
@@ -2341,6 +2398,89 @@ impl HeldRaw {
             photo_analysis: self.analysis_bytes(),
             ..self.request.clone()
         }
+    }
+
+    /// Taken before the awaits a layer is found across: a model handed over meanwhile is not the
+    /// one that found it.
+    fn found_by(
+        strokes: &[crate::dereflect::Stroke],
+        detail: crate::galosh::Detail,
+        dust: crate::dust::Settings,
+    ) -> FoundBy {
+        FoundBy {
+            model: crate::dereflect::generation(),
+            strokes: strokes.to_vec(),
+            detail,
+            dust,
+        }
+    }
+
+    fn found(&self, by: &FoundBy) -> Option<std::sync::Arc<crate::dereflect::Layer>> {
+        self.reflection
+            .borrow()
+            .as_ref()
+            .filter(|(found, _)| found == by)
+            .map(|(_, layer)| layer.clone())
+    }
+
+    fn keep_found(&self, by: FoundBy, layer: &std::sync::Arc<crate::dereflect::Layer>) {
+        self.reflection.replace(Some((by, layer.clone())));
+    }
+
+    /// What `settings` take out of this photograph: the layer found for these strokes, or found now
+    /// over the whole frame the open would decode, as it would have found it.
+    async fn removal(
+        &self,
+        settings: &crate::dereflect::Settings,
+        detail: crate::galosh::Detail,
+        dust: crate::dust::Settings,
+    ) -> Result<Option<crate::dereflect::Removal>, JsValue> {
+        if !settings.takes_out() {
+            return Ok(None);
+        }
+        let by = HeldRaw::found_by(&settings.strokes, detail, dust);
+        if let Some(layer) = self.found(&by) {
+            return Ok(Some(crate::dereflect::Removal {
+                layer,
+                strength: settings.strength,
+            }));
+        }
+        let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
+        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        if !crate::dereflect::ready(gpu) {
+            return Ok(None);
+        }
+        let stored = self.opened_as().stored();
+        let fit = self
+            .fit
+            .map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
+        let frame = self
+            .mosaic_held()?
+            .frame(
+                detail,
+                self.request.long_edge,
+                fit,
+                dust.wanted(Some(stored.from_raw.dust.as_deref().unwrap_or(&[]))),
+                &crate::open_stage::quiet,
+            )
+            .await
+            .ok_or_else(|| JsValue::from_str("rawshim: the held mosaic would not finish"))?;
+        let resident = frame
+            .resident()
+            .ok_or_else(|| JsValue::from_str("rawshim: the decode is not on the device"))?;
+        let looked = crate::dereflect::looked(gpu, resident).ok_or_else(refused)?;
+        let full = crate::px::Size::exact(frame.width, frame.height);
+        let removal = crate::dereflect::removal(
+            gpu,
+            &looked,
+            full,
+            settings,
+            stored.from_raw.matched.as_ref(),
+        );
+        if let Some(removal) = &removal {
+            self.keep_found(by, &removal.layer);
+        }
+        Ok(removal)
     }
 
     fn analysis_bytes(&self) -> Option<Vec<u8>> {

@@ -13,8 +13,12 @@ from training.files import write_atomic
 def export(net: torch.nn.Module, plan: dict[str, object], out: Path) -> None:
     """`weights.bin`, flat little-endian f32, and `weights.json`, `plan` plus where each tensor
     sits in it: the layout `get:models` writes PMRID's in."""
+    export_state(net.state_dict(), plan, out)
+
+
+def export_state(state: dict[str, torch.Tensor], plan: dict[str, object], out: Path) -> None:
     tensors, blobs, offset = [], [], 0
-    for name, tensor in net.state_dict().items():
+    for name, tensor in state.items():
         values = tensor.detach().float().cpu().numpy().astype("<f4")
         tensors.append({"name": name, "shape": list(values.shape), "offset": offset})
         blobs.append(values.ravel())

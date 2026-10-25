@@ -103,6 +103,7 @@ pub fn prepared(
         // always true here and there is no peak for it to gate: the peak is measured after a
         // grade, and a prepare hands the frame over before one.
         describes_the_photograph: _,
+        removal: _,
     } = base;
 
     // A window has been through the photograph's own gather already, and a composite through the
@@ -258,6 +259,7 @@ fn windowed(
         // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
         repairs: Vec::new(),
         drawn: Some([shape.0, shape.1]),
+        removal: crate::job::whole_removal(job),
     };
     let prepared = crate::tile::prepared(crate::tile::Source::Held(&held), &request)?;
     let [left, top, kept_width, kept_height] = prepared.keep;

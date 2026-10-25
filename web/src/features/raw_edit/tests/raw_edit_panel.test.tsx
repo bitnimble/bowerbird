@@ -17,6 +17,7 @@ import { CropStore } from '../crop/crop_store';
 import { EditStore } from '../edit/edit_store';
 import { KeystoneStore } from '../keystone/keystone_store';
 import { RepairStore } from '../repair/repair_store';
+import { ReflectionStore } from '../reflection/reflection_store';
 import { ColourWheelStore } from '../colour_wheel/colour_wheel_store';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import { StageStore } from '../stage/stage_store';
@@ -27,6 +28,7 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { kelvinAt, RawEditPanel, trackAt } = await import('../raw_edit_panel');
 const { PrintStore } = await import('../print/print_store');
+const { StoresProvider, useUpdatesStore } = await import('../../../app/stores_context');
 const { RawEditPanelStrings } = await import('../raw_edit_panel.strings');
 const { TEMPERATURE_GREY_AT } = await import('../../../ui/slider');
 
@@ -48,6 +50,13 @@ function recording(): { presenter: RawEditPresenter; calls: { name: string; valu
     settleStraighten: record('settleStraighten'),
     clearKeystone: record('clearKeystone'),
     setCropToFit: record('setCropToFit'),
+    reflection: {
+      setEnabled: record('reflection.setEnabled'),
+      setBrushing: record('reflection.setBrushing'),
+      setMode: record('reflection.setMode'),
+      setSize: record('reflection.setSize'),
+      clear: record('reflection.clear'),
+    },
     print: {},
     colourWheel: { key: 'wheel', attach: () => {} },
   } as unknown as RawEditPresenter;
@@ -72,6 +81,8 @@ function open(
   mosaic = true,
   upscalable = true,
   softProof: StageStore['softProof'] = 'hdr',
+  brushing = false,
+  models: Models | null = HELD,
 ): {
   calls: { name: string; value: unknown }[];
   stage: StageStore;
@@ -83,6 +94,8 @@ function open(
   const crop = new CropStore(stage, edit);
   const keystone = new KeystoneStore(stage, edit, crop);
   const repair = new RepairStore(edit, keystone);
+  const reflection = new ReflectionStore(edit, stage);
+  reflection.brushing = brushing;
   edit.doc = { ...neutralEdits(), ...doc };
   stage.width = 4000;
   stage.height = 3000;
@@ -100,18 +113,65 @@ function open(
   const print = new PrintStore();
   const { presenter, calls } = recording();
   render(
-    <RawEditPanel
-      edit={edit}
-      stage={stage}
-      crop={crop}
-      keystone={keystone}
-      repair={repair}
-      colourWheel={new ColourWheelStore(edit)}
-      print={print}
-      presenter={presenter}
-    />,
+    <StoresProvider>
+      <WithModels models={models}>
+        <RawEditPanel
+          edit={edit}
+          stage={stage}
+          crop={crop}
+          keystone={keystone}
+          repair={repair}
+          reflection={reflection}
+          colourWheel={new ColourWheelStore(edit)}
+          print={print}
+          presenter={presenter}
+        />
+      </WithModels>
+    </StoresProvider>,
   );
   return { calls, stage, crop, print };
+}
+
+/** The server's models as the updates check found them: the files in use, and whether a newer commit is on offer. */
+type Models = { files: string[]; newer: boolean; error: string | null; downloading?: boolean };
+const HELD: Models = {
+  files: ['upscaler.json', 'upscaler.bin', 'dereflect.json', 'dereflect.bin'],
+  newer: false,
+  error: null,
+};
+const WITHOUT_REMOVER = ['upscaler.json', 'upscaler.bin'];
+
+function WithModels({
+  models,
+  children,
+}: {
+  models: Models | null;
+  children: JSX.Element;
+}): JSX.Element {
+  const updates = useUpdatesStore();
+  runInAction(() => {
+    if (models == null) {
+      updates.models = null;
+      return;
+    }
+    updates.models = {
+      current: {
+        revision: 'held',
+        committed_at: '2026-10-26T00:00:00.000Z',
+        downloaded: true,
+        files: models.files,
+      },
+      available: models.newer
+        ? { revision: 'newer', committed_at: '2026-10-27T00:00:00.000Z', bytes: 154_000_000 }
+        : null,
+      downloading: false,
+      checked_at: null,
+      error: null,
+    };
+    updates.modelsFailure = models.error;
+    updates.modelsDownloading = models.downloading ?? false;
+  });
+  return children;
 }
 
 function showTab(name: string): void {
@@ -332,6 +392,7 @@ describe('the edit panel', () => {
           crop={crop}
           keystone={keystone}
           repair={repair}
+          reflection={new ReflectionStore(edit, stage)}
           colourWheel={new ColourWheelStore(edit)}
           print={print}
           presenter={recording().presenter}
@@ -407,6 +468,166 @@ describe('the edit panel', () => {
     showTab('Detail');
     // Both mosaic groups say it, because a Detail slider costs exactly what a dust one does.
     expect(screen.getAllByRole('status', { name: 'Rebuilding the photo…' })).toHaveLength(2);
+  });
+
+  describe('reflection removal', () => {
+    const shut = (role: 'slider' | 'button', name: string): boolean =>
+      (screen.getByRole(role, { name }) as HTMLInputElement | HTMLButtonElement).disabled;
+
+    test('sits under Retouch, its switch handed to the presenter', () => {
+      const { calls } = open();
+      showTab('Retouch');
+      expect(screen.getByRole('group', { name: 'Reflection removal' })).not.toBeNull();
+      const check = screen.getByRole('checkbox', {
+        name: 'Remove reflections',
+      }) as HTMLInputElement;
+
+      expect(check.checked).toBe(false);
+      check.click();
+      expect(calls).toEqual([{ name: 'reflection.setEnabled', value: true }]);
+    });
+
+    test('shuts the strength and the brush until the switch is on', () => {
+      open();
+      showTab('Retouch');
+      expect(shut('slider', 'Strength')).toBe(true);
+      expect(shut('button', 'Brush')).toBe(true);
+      expect(shut('slider', 'Size')).toBe(true);
+      cleanup();
+
+      open({ reflectionRemoval: true });
+      showTab('Retouch');
+      expect(shut('slider', 'Strength')).toBe(false);
+      expect(shut('button', 'Brush')).toBe(false);
+      expect(shut('slider', 'Size')).toBe(false);
+    });
+
+    test('turns the brush on as a pressed button, and off when its tab is left', () => {
+      const { calls } = open({ reflectionRemoval: true });
+      showTab('Retouch');
+      const brush = screen.getByRole('button', { name: 'Brush' });
+      expect(brush.getAttribute('aria-pressed')).toBe('false');
+      brush.click();
+      expect(calls).toEqual([{ name: 'reflection.setBrushing', value: true }]);
+      cleanup();
+
+      const brushing = open(
+        { reflectionRemoval: true },
+        null,
+        false,
+        'live',
+        undefined,
+        true,
+        true,
+        'hdr',
+        true,
+      );
+      showTab('Retouch');
+      expect(screen.getByRole('button', { name: 'Brush' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      );
+      showTab('Light');
+      expect(brushing.calls).toEqual([{ name: 'reflection.setBrushing', value: false }]);
+    });
+
+    test('chooses what a stroke marks', () => {
+      const { calls } = open({ reflectionRemoval: true });
+      showTab('Retouch');
+      const modes = screen.getByRole('radiogroup', { name: 'Brush mode' });
+      expect(
+        within(modes).getByRole('radio', { name: 'Remove' }).getAttribute('aria-checked'),
+      ).toBe('true');
+      act(() => within(modes).getByRole('radio', { name: 'Keep' }).click());
+      expect(calls).toEqual([{ name: 'reflection.setMode', value: 'keep' }]);
+    });
+
+    test('clears strokes only once there are some', () => {
+      open({ reflectionRemoval: true });
+      showTab('Retouch');
+      expect(shut('button', 'Clear strokes')).toBe(true);
+      cleanup();
+
+      const { calls } = open({
+        reflectionRemoval: true,
+        reflectionStrokes: [{ kind: 'remove', radius: 3000, points: [[100, 200]] }],
+      });
+      showTab('Retouch');
+      screen.getByRole('button', { name: 'Clear strokes' }).click();
+      expect(calls.map(({ name }) => name)).toEqual(['reflection.clear']);
+    });
+
+    const withModels = (
+      doc: Partial<ReturnType<typeof neutralEdits>>,
+      models: Models | null,
+    ): void => {
+      open(doc, null, false, 'live', undefined, true, true, 'hdr', false, models);
+      showTab('Retouch');
+    };
+    const switchShut = (): boolean =>
+      (screen.getByRole('checkbox', { name: 'Remove reflections' }) as HTMLInputElement).disabled;
+
+    test('turns on only once the models hold it, and offers the update that does', () => {
+      withModels({}, { files: WITHOUT_REMOVER, newer: true, error: null });
+      expect(screen.getByText('Reflection removal needs an AI models update.')).not.toBeNull();
+      expect(shut('button', 'Update AI models')).toBe(false);
+      expect(switchShut()).toBe(true);
+    });
+
+    test('stays open while the updates check has not answered', () => {
+      withModels({}, null);
+      expect(switchShut()).toBe(false);
+      expect(screen.queryByText('Reflection removal needs an AI models update.')).toBeNull();
+    });
+
+    test('holds the update button while the models download', () => {
+      withModels({}, { files: WITHOUT_REMOVER, newer: true, error: null, downloading: true });
+      expect(shut('button', 'Update AI models')).toBe(true);
+    });
+
+    test('says why there is nothing to update to', () => {
+      withModels({}, { files: WITHOUT_REMOVER, newer: false, error: 'offline' });
+      expect(screen.getByText("We couldn't check for AI models.")).not.toBeNull();
+      expect(screen.queryByRole('button', { name: 'Update AI models' })).toBeNull();
+      cleanup();
+
+      withModels({}, { files: WITHOUT_REMOVER, newer: false, error: null });
+      expect(
+        screen.getByText("The AI models for reflection removal aren't available yet."),
+      ).not.toBeNull();
+    });
+
+    // A document synced from a device that has the models.
+    test('turns off and clears without the models', () => {
+      withModels(
+        {
+          reflectionRemoval: true,
+          reflectionStrokes: [{ kind: 'remove', radius: 3000, points: [[100, 200]] }],
+        },
+        { files: WITHOUT_REMOVER, newer: false, error: null },
+      );
+      expect(switchShut()).toBe(false);
+      expect(shut('button', 'Clear strokes')).toBe(false);
+    });
+
+    test('is unavailable for merged and developed photos', () => {
+      open({}, null, false, 'live', undefined, false);
+      showTab('Retouch');
+      expect(
+        screen.getByText('Reflection removal unavailable for merged or developed photos'),
+      ).not.toBeNull();
+      expect(screen.queryByRole('checkbox', { name: 'Remove reflections' })).toBeNull();
+    });
+
+    test('turns its spinner only while the picture is being rebuilt', () => {
+      open({ reflectionRemoval: true });
+      showTab('Retouch');
+      expect(screen.queryByRole('status', { name: 'Rebuilding the photo…' })).toBeNull();
+      cleanup();
+
+      open({ reflectionRemoval: true }, null, true);
+      showTab('Retouch');
+      expect(screen.getAllByRole('status', { name: 'Rebuilding the photo…' })).toHaveLength(1);
+    });
   });
 
   // The frame is seconds and the document is a small row, so the panel is the reader's own

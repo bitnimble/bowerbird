@@ -387,6 +387,17 @@ export class RenditionsRepository {
    * ponytail: a composite is left as built, though its frames may use the denoiser.
    */
   queueDenoisedWith(denoiser: Denoiser): string[] {
+    return this.queueRenderedWhere(`COALESCE(json_extract(e.doc, '$.denoiser'), l.denoiser) = ?`, [
+      denoiser,
+    ]);
+  }
+
+  /** Both derived stages of every photograph whose edit removes reflections, for a new model. */
+  queueRemovingReflections(): string[] {
+    return this.queueRenderedWhere(`json_extract(e.doc, '$.reflectionRemoval') = 1`, []);
+  }
+
+  private queueRenderedWhere(rendersWith: string, binds: string[]): string[] {
     const queued = new Set<string>();
     for (const [variant, owes] of [
       [`'grid'`, 'TRUE'],
@@ -399,11 +410,11 @@ export class RenditionsRepository {
                JOIN libraries l ON l.id = p.library_id
                LEFT JOIN photo_edits e ON e.photo_id = p.id
               WHERE p.is_missing = 0 AND p.is_deleted = 0 AND ${owes}
-                AND COALESCE(json_extract(e.doc, '$.denoiser'), l.denoiser) = ?
+                AND ${rendersWith}
            ON CONFLICT (photo_id, variant) DO UPDATE SET needs_build = 1
            RETURNING photo_id AS id`,
         )
-        .all(denoiser) as { id: string }[];
+        .all(...binds) as { id: string }[];
       for (const row of rows) queued.add(row.id);
     }
     return [...queued];

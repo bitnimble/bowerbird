@@ -104,7 +104,7 @@ pub const SOURCE_MEASURED: u32 = 4;
 /// One struct because §10.8.1 lifts all of it into the HDR grade together and nothing
 /// may lift a subset. Passed as three loose arguments first, and `fit_all` promptly
 /// forgot the falloff on one of the two routes with every test still green.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Lens {
     /// Radial knots in `SPLINE_UNIT`s, or None where no correction is needed.
     pub distortion: Option<Vec<f64>>,

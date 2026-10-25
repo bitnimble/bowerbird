@@ -7,6 +7,7 @@ import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
 import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
+import { reflectionSettings } from '../../../../../src/schemas/reflection_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { denoiserFor } from '../../../../../src/schemas/denoiser';
 import { sharpeningOf } from '../../../../../src/schemas/sharpening';
@@ -220,7 +221,11 @@ async function renditionFile(
   return new Uint8Array(await reply.arrayBuffer());
 }
 
-/** This photograph's picture, framed as the library framed it, for what this client can show. */
+/**
+ * This photograph's picture, framed as the library framed it, for what this client can show.
+ * `develop` is the settings the reader is previewing that run before the samples cross, where
+ * they differ from the last save.
+ */
 export async function preparedPicture(
   photoId: string,
   shown?: Shown,
@@ -228,9 +233,13 @@ export async function preparedPicture(
   onStep?: (step: OpenStep) => void,
 ): Promise<Uint8Array<ArrayBuffer>> {
   onStep?.('rendering');
-  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, develop), {
+  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown), {
     signal: shown?.signal ?? null,
-    headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+    headers: {
+      [REQUEST_ACTIVITY_HEADER]: 'interactive',
+      ...(develop == null ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(develop == null ? {} : { method: 'POST', body: JSON.stringify(develop) }),
   });
   if (!reply.ok) throw new Error(await refusal(reply));
   return new Uint8Array(await reply.arrayBuffer());
@@ -324,6 +333,7 @@ export function prepareOf(
     sharpening: sharpeningOf(doc?.sharpening ?? null, denoiser),
     dust: dustSettings(doc),
     repairs: doc?.repairs ?? [],
+    reflection: reflectionSettings(doc),
   };
 }
 
@@ -354,6 +364,9 @@ export function developOf(prepare: LocalPrepare): PrepareDevelop {
     dustRemoval: prepare.dust.enabled,
     dustSensitivity: Math.round(prepare.dust.sensitivity * 100),
     dustIntensity: Math.round(prepare.dust.intensity * 100),
+    reflectionRemoval: prepare.reflection.enabled,
+    reflectionStrength: Math.round(prepare.reflection.strength * 100),
+    reflectionStrokes: prepare.reflection.strokes,
   };
 }
 
@@ -370,7 +383,20 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
     // Only where the switch is on: with it off the pair cannot move a photosite, so re-preparing
     // for them would be seconds of work that cannot change the picture.
     (!next.dust.enabled ||
-      (at.dust.sensitivity === next.dust.sensitivity && at.dust.intensity === next.dust.intensity))
+      (at.dust.sensitivity === next.dust.sensitivity &&
+        at.dust.intensity === next.dust.intensity)) &&
+    sameReflectionInference(at, next) &&
+    (!next.reflection.enabled || at.reflection.strength === next.reflection.strength)
+  );
+}
+
+/** Whether the reflection network would see the same input: its strength only blends its answer. */
+export function sameReflectionInference(at: LocalPrepare | null, next: LocalPrepare): boolean {
+  return (
+    at != null &&
+    at.reflection.enabled === next.reflection.enabled &&
+    (!next.reflection.enabled ||
+      JSON.stringify(at.reflection.strokes) === JSON.stringify(next.reflection.strokes))
   );
 }
 

@@ -105,10 +105,13 @@ pub struct TileRequest {
     /// and the sharpen, which is the whole frame's order.
     #[serde(skip)]
     pub drawn: Option<[usize; 2]>,
+    /// The photograph's reflection, found over the whole frame, which a window only takes out.
+    #[serde(skip)]
+    pub removal: Option<crate::dereflect::Removal>,
 }
 
 impl TileRequest {
-    fn detail(&self) -> crate::galosh::Detail {
+    pub(crate) fn detail(&self) -> crate::galosh::Detail {
         crate::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
@@ -360,6 +363,9 @@ pub async fn prepared_on_device(
             return Err("a tile needs a 16-bit scene-linear decode".to_string());
         }
     };
+    if let Some(removal) = &request.removal {
+        removal.take_out(gpu, &resident, reading.origin(), reading.drawn());
+    }
     // The editor's, where it sent them: a quantile of a crop describes where the reader is
     // pointing rather than the photograph, so a tile measuring its own is graded against a white
     // that changes as the loupe moves - and over anything dark, against one far below the frame's,
@@ -954,6 +960,7 @@ mod tests {
             scale: crate::view::Scale::Full,
             repairs: Vec::new(),
             drawn: None,
+            removal: None,
         }
     }
 

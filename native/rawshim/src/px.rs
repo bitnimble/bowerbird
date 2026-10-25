@@ -85,6 +85,10 @@ pub enum Millimetre {}
 /// The camera match's own plane, at the fixed long edge its fit sets (`FIT_LONG_EDGE`).
 pub enum FitPlane {}
 
+/// The reflection remover's plane: the frame shrunk to [`crate::dereflect::EDGE`] on its long
+/// edge, and padded out to whole multiples of [`crate::dereflect::MULTIPLE`].
+pub enum Looked {}
+
 /// The grid an edit document writes a position on: [`STORED_LONG`] steps across the photograph's
 /// long edge, and the short edge in proportion.
 ///
@@ -163,6 +167,7 @@ impl Absolute for Photograph {}
 impl Absolute for Drawn {}
 impl Absolute for Decoded {}
 impl Absolute for FitPlane {}
+impl Absolute for Looked {}
 impl Absolute for Stored {}
 impl Absolute for Composite {}
 impl Absolute for Analysis {}

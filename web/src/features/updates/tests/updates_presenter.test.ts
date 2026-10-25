@@ -62,7 +62,12 @@ function open(): {
 
 function models(available: string | null, downloaded = false): ModelsStatus {
   return {
-    current: { revision: 'bundled', committed_at: '2026-10-01T00:00:00.000Z', downloaded },
+    current: {
+      revision: 'bundled',
+      committed_at: '2026-10-01T00:00:00.000Z',
+      downloaded,
+      files: ['upscaler.json', 'upscaler.bin'],
+    },
     available:
       available == null
         ? null

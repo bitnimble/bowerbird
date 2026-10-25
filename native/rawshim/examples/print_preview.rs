@@ -103,6 +103,8 @@ fn main() -> Result<(), String> {
             highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),
+            reflection: Default::default(),
+            found: None,
             stated_white: false,
         },
         support::STRENGTHS.sharpen,
