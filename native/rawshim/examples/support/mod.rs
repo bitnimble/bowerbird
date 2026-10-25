@@ -36,6 +36,12 @@ pub struct Open<'a> {
     /// The pair to defringe by, in place of the one this frame measures.
     pub defocus: Option<(f32, f32)>,
     pub dust: rawshim::dust::Wanted<'a>,
+    /// Edits the decode's half-float samples before anything measures them, as a stage between the
+    /// decode and the open would.
+    pub edit: Option<&'a dyn Fn(&mut [u16])>,
+    /// The camera match to apply in place of one fitted here. An `edit` needs the unedited frame's:
+    /// the embedded JPEG still shows what the edit took out, and a fit to it puts that back.
+    pub matched: Option<rawshim::hdr_fit::HdrMatch>,
 }
 
 pub struct Opened {
@@ -55,11 +61,13 @@ impl<'a> Open<'a> {
             strengths: STRENGTHS,
             defocus: None,
             dust: rawshim::dust::Settings::default().wanted(None),
+            edit: None,
+            matched: None,
         }
     }
 
     pub fn run(self) -> Option<Opened> {
-        let frame = rawshim::decode::frame_from_path(
+        let mut frame = rawshim::decode::frame_from_path(
             self.path,
             self.detail,
             self.floor,
@@ -67,6 +75,19 @@ impl<'a> Open<'a> {
             rawshim::galosh::wanted(None, self.detail),
             self.dust,
         )?;
+        if let Some(edit) = self.edit {
+            frame = pollster::block_on(frame.to_host())?;
+            let mut samples = frame.samples16()?.to_vec();
+            edit(&mut samples);
+            let gpu = rawshim::gpu::device()?;
+            // Back on the device, since the measure below defringes the frame it is given in place.
+            frame.pixels = rawshim::frame::Pixels::Resident(rawshim::resident::Resident::upload(
+                gpu,
+                &samples,
+                frame.width,
+                frame.height,
+            ));
+        }
         // Handed over as a stored pair, which `open::measure` applies ahead of the fit.
         let long_edge = frame.width.max(frame.height);
         let stored = rawshim::photo_analysis::PhotoAnalysis {
@@ -79,6 +100,10 @@ impl<'a> Open<'a> {
                         defringe: self.strengths.defringe,
                         long_edge,
                     }),
+                ..Default::default()
+            },
+            from_raw: rawshim::photo_analysis::FromRaw {
+                matched: self.matched,
                 ..Default::default()
             },
             ..Default::default()

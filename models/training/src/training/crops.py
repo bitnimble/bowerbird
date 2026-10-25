@@ -17,7 +17,20 @@ from training.metrics import detail
 from training.mosaic import pack, stabilise
 from training.pmrid import Opened, Unreadable, each_with_pmrid, pmrid
 
+
+def load_environment(path: Path) -> None:
+    """The `KEY=value` lines of `path`, if it exists, into the environment, under anything already set."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        key, equals, value = line.partition("=")
+        if equals and not key.lstrip().startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+load_environment(Path(__file__).resolve().parents[3] / ".env")
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "bowerbird" / "denoised-crops"
+DATASETS = Path(os.environ.get("BOWERBIRD_DATASETS", DEFAULT_CACHE.parent))
 
 RAW_SUFFIXES = {
     ".3fr", ".arw", ".cr2", ".cr3", ".dcr", ".dng", ".erf", ".iiq", ".kdc", ".mos", ".nef", ".nrw",
@@ -126,9 +139,13 @@ def records(cache: Path, raws: list[Path], validation: bool) -> Iterator[tuple[P
         if record_path.stem not in current:
             continue
         record = json.loads(record_path.read_text())
-        held_out = int(hashlib.sha1(record["source"].encode()).hexdigest(), 16) % VALIDATION_ONE_IN == 0
-        if record["crops"] and held_out == validation:
+        if record["crops"] and held_out(record["source"]) == validation:
             yield record_path, record
+
+
+def held_out(source: str) -> bool:
+    """Whether the photo at `source` is on the validation side of the split every model shares."""
+    return int(hashlib.sha1(source.encode()).hexdigest(), 16) % VALIDATION_ONE_IN == 0
 
 
 def crops_of(record_path: Path) -> np.ndarray:

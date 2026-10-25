@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["training", "upscaler"]
+members = ["training", "upscaler", "dereflect"]
 
 # The wheel's CUDA major must be one the host driver runs: 570 drivers stop at CUDA 12.8.
 [[tool.uv.index]]

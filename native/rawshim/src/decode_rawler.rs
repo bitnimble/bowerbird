@@ -2358,6 +2358,37 @@ fn upscales(detail: crate::galosh::Detail, noise: Option<crate::galosh::NoiseFit
         && detail.amounts(noise).does_anything()
 }
 
+/// A whole conditioned mosaic demosaiced as [`Held::into_frame`] demosaics a decode reduced `by`,
+/// highlights reconstructed from the mosaic's own field at the shipped colouring.
+pub async fn demosaic_as_decoded(
+    mosaic: &crate::condition::Mosaic,
+    cfa: &crate::cfa::Cfa,
+    colour: crate::demosaic::Colour,
+    by: usize,
+) -> Option<crate::resident::Resident> {
+    let gpu = crate::gpu::device()?;
+    let rcd = crate::demosaic::device(gpu)?;
+    let field = crate::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
+    let detail = crate::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
+    let (width, height) = (mosaic.width, mosaic.height);
+    demosaic_at(
+        gpu,
+        rcd,
+        mosaic,
+        (0, 0),
+        (width, height),
+        cfa,
+        (0, 0, width, height),
+        colour,
+        field.seen().coloured(detail.colouring()),
+        0,
+        detail,
+        None,
+        by,
+    )
+    .await
+}
+
 /// [`demosaic_detailed`], or at `by` > 1 a pixel per `by`x`by` site of `crop`: read straight off the
 /// mosaic, or under the upscaler boxed down from its full-size demosaic over the same sites.
 #[allow(clippy::too_many_arguments)]

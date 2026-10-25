@@ -21,7 +21,7 @@ GRAD_CLIP = 1.0
 AVERAGE_DECAY = 0.999
 LOG_EVERY = 100
 VALIDATION_EVERY = 2000
-VALIDATION_CHUNK = 8
+VALIDATION_CHUNK = 4
 
 Forward = Callable[[torch.Tensor], torch.Tensor]
 """The compiled network under autocast, returning f32."""
@@ -48,25 +48,40 @@ def arguments(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=Path("runs/default"))
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--steps", type=int, default=300_000)
+    parser.add_argument("--keep-every", type=int, default=10_000, help="steps between kept copies of the weights, 0 for none")
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr-floor", type=float, default=0.05, help="share of --lr the schedule ends at")
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--prepare-workers", type=int, default=3, help="each holds a PMRID server")
     return parser
 
 
 def stop_on_signals() -> None:
-    """SIGINT, SIGTERM and SIGHUP all raise `KeyboardInterrupt` once, so a trainer saves and its
-    workers are joined."""
+    """SIGINT, SIGTERM and SIGHUP all raise `KeyboardInterrupt` once, unwinding a trainer's setup so its
+    workers are joined, until `train` takes them over to stop at a step."""
 
     def stop(*_: object) -> None:
-        # A second signal would land in the middle of saving.
+        # A second signal would land in the middle of unwinding.
         for number in STOPPING:
             signal.signal(number, signal.SIG_IGN)
         raise KeyboardInterrupt
 
     for number in STOPPING:
         signal.signal(number, stop)
+
+
+class Stopping:
+    """Whether SIGINT, SIGTERM or SIGHUP has arrived since `listen`."""
+
+    requested = False
+
+    def listen(self) -> None:
+        for number in STOPPING:
+            signal.signal(number, self.request)
+
+    def request(self, *_: object) -> None:
+        self.requested = True
 
 
 def logger(path: Path) -> Callable[[str], None]:
@@ -99,22 +114,27 @@ def train(
     validate: Callable[[Forward, int], None],
     *,
     steps: int,
+    keep_every: int,
     lr: float,
+    lr_floor: float,
     bf16: bool,
     settings: dict[str, object],
     plan: dict[str, object],
     out: Path,
     say: Callable[[str], None],
+    lr_scales: dict[str, float] | None = None,
 ) -> None:
     """Trains `net`, on the GPU, for `steps`, resuming from `out` and exporting `plan` and the
-    weights' moving average there at each validation and on a stopping signal. `objective` gives the
+    weights' moving average there at each validation and on a stopping signal, and a copy of it under
+    `kept/step-N` every `keep_every` steps. `objective` gives the
     loss to step on and the terms to log, from the tensors of a batch; `validate` sees the average.
+    Parameters named under a prefix in `lr_scales` learn at that share of `lr`.
     `settings` must be the same to resume."""
     device = next(net.parameters()).device
     model = torch.compile(net, mode="reduce-overhead")
     average = copy.deepcopy(net).requires_grad_(False)
-    optimiser = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.99), fused=True)
-    schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, warmup_cosine(steps))
+    optimiser = torch.optim.Adam(groups(net, lr, lr_scales or {}), lr=lr, betas=(0.9, 0.99), fused=True)
+    schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, warmup_cosine(steps, floor=lr_floor))
     resume = out / "resume.pt"
     step = load_resume(resume, net, average, optimiser, schedule, settings)
     if step:
@@ -135,37 +155,57 @@ def train(
 
     started, terms = time.monotonic(), []
     skipped = torch.zeros((), dtype=torch.int64, device=device)
-    try:
-        while step < steps:
-            for batch in batches:
-                torch.compiler.cudagraph_mark_step_begin()
-                loss, logged = objective(forward, *(tensor.to(device, non_blocking=True) for tensor in batch))
-                optimiser.zero_grad(set_to_none=True)
-                loss.backward()
-                skipped_now = step_unless_nonfinite(optimiser, trained, GRAD_CLIP)
-                skipped += skipped_now
-                # Without no_grad, each step's lerp chains an autograd node onto the last: ~30KB a step.
-                with torch.no_grad():
-                    torch._foreach_lerp_(averaged, trained, 1 - AVERAGE_DECAY)
-                step += 1
-                schedule.step()
-                terms.append(torch.where(skipped_now, torch.nan, torch.stack([t.detach() for t in logged.values()])))
+    # A flag, not KeyboardInterrupt: raised from a handler, it can land in a GC weakref callback, where Python
+    # swallows it, and the trainer runs on deaf to every later signal.
+    stopping = Stopping()
+    stopping.listen()
+    while step < steps:
+        for batch in batches:
+            torch.compiler.cudagraph_mark_step_begin()
+            loss, logged = objective(forward, *(tensor.to(device, non_blocking=True) for tensor in batch))
+            optimiser.zero_grad(set_to_none=True)
+            loss.backward()
+            skipped_now = step_unless_nonfinite(optimiser, trained, GRAD_CLIP)
+            skipped += skipped_now
+            # Without no_grad, each step's lerp chains an autograd node onto the last: ~30KB a step.
+            with torch.no_grad():
+                torch._foreach_lerp_(averaged, trained, 1 - AVERAGE_DECAY)
+            step += 1
+            schedule.step()
+            terms.append(torch.where(skipped_now, torch.nan, torch.stack([t.detach() for t in logged.values()])))
 
-                if step % LOG_EVERY == 0:
-                    means = torch.stack(terms).nanmean(0).tolist()
-                    shown = " ".join(f"{name} {mean:.5f}" for name, mean in zip(logged, means))
-                    rate = len(terms) / (time.monotonic() - started)
-                    say(f"step {step} {shown} lr {schedule.get_last_lr()[0]:.2e} {rate:.1f} it/s skipped {skipped.item()}")
-                    started, terms = time.monotonic(), []
-                if step % VALIDATION_EVERY == 0 or step == steps:
-                    validate(forward_averaged, step)
-                    save()
-                    started, terms = time.monotonic(), []
-                if step >= steps:
-                    break
-    except KeyboardInterrupt:
-        say(f"stopped at step {step}")
-        save()
+            if step % LOG_EVERY == 0:
+                means = torch.stack(terms).nanmean(0).tolist()
+                shown = " ".join(f"{name} {mean:.5f}" for name, mean in zip(logged, means))
+                rate = len(terms) / (time.monotonic() - started)
+                say(f"step {step} {shown} lr {schedule.get_last_lr()[0]:.2e} {rate:.1f} it/s skipped {skipped.item()}")
+                started, terms = time.monotonic(), []
+            if keep_every and step % keep_every == 0:
+                kept = out / "kept" / f"step-{step}"
+                kept.mkdir(parents=True, exist_ok=True)
+                export(average, plan, kept)
+            if step % VALIDATION_EVERY == 0 or step == steps:
+                save()
+                validate(forward_averaged, step)
+                started, terms = time.monotonic(), []
+            if stopping.requested:
+                say(f"stopped at step {step}")
+                save()
+                return
+            if step >= steps:
+                break
+
+
+def groups(net: torch.nn.Module, lr: float, scales: dict[str, float]) -> list[dict]:
+    """`net`'s trainable parameters, one group per `scales` prefix that names any and one for the rest."""
+    named = [(name, p) for name, p in net.named_parameters() if p.requires_grad]
+    found = []
+    for prefix, scale in scales.items():
+        chosen = [p for name, p in named if name.startswith(prefix)]
+        if chosen:
+            found.append({"params": chosen, "lr": lr * scale})
+        named = [(name, p) for name, p in named if not name.startswith(prefix)]
+    return [{"params": [p for _, p in named], "lr": lr}, *found]
 
 
 @torch.no_grad()
@@ -229,12 +269,15 @@ def load_resume(
     settings: dict[str, object],
 ) -> int:
     """The step `path` was saved at, with everything restored; 0 when there is nothing to resume.
-    Refuses `settings` other than those it was saved with, which resuming would silently mix."""
+    Refuses `settings` other than those it was saved with, which resuming would silently mix. A setting
+    newer than the save matches only while it's off, as the run had it."""
     if not path.exists():
         return 0
     state = torch.load(path, map_location="cuda")
     saved = state["settings"]
-    changed = sorted(name for name in settings if saved.get(name) != settings[name])
+    changed = sorted(
+        name for name in settings if (saved[name] != settings[name] if name in saved else bool(settings[name]))
+    )
     if changed:
         raise SystemExit(f"{path} was saved with " + ", ".join(f"{name} {saved.get(name)}" for name in changed))
     net.load_state_dict(state["net"])

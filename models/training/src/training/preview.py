@@ -1,4 +1,5 @@
-"""Side-by-side PNGs of a model's results, to look at rather than to ship: sRGB, 8 bits, SDR."""
+"""Side-by-side PNGs of a model's results, to look at rather than to ship: sRGB at 8 bits, or the
+library's own HDR coding, PQ Rec.2020 at 16 bits."""
 
 import struct
 import zlib
@@ -32,13 +33,28 @@ def srgb(rgb: torch.Tensor) -> np.ndarray:
 
 
 def write_png(path: Path, rgb: np.ndarray) -> None:
+    """(H, W, 3) 8-bit sRGB codes."""
+    _written(path, rgb, b"")
+
+
+def write_pq_png(path: Path, rgb: np.ndarray) -> None:
+    """(H, W, 3) 16-bit PQ Rec.2020 codes, tagged so an HDR viewer shows them as HDR."""
+    # cICP: BT.2020 primaries (9), ST 2084 transfer (16), RGB (0), full range.
+    _written(path, rgb.astype(">u2"), _chunk(b"cICP", bytes([9, 16, 0, 1])))
+
+
+def _written(path: Path, rgb: np.ndarray, tags: bytes) -> None:
     height, width, _ = rgb.shape
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-
     rows = b"".join(b"\0" + rgb[row].tobytes() for row in range(height))
-    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    header = struct.pack(">IIBBBBB", width, height, rgb.dtype.itemsize * 8, 2, 0, 0, 0)
     path.write_bytes(
-        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", header)
+        + tags
+        + _chunk(b"IDAT", zlib.compress(rows))
+        + _chunk(b"IEND", b"")
     )
+
+
+def _chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))

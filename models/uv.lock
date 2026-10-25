@@ -4,6 +4,7 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "dereflect",
     "training",
     "upscaler",
 ]
@@ -75,6 +76,25 @@ nvrtc = [
 ]
 nvtx = [
     { name = "nvidia-nvtx-cu12", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[package]]
+name = "dereflect"
+version = "0.1.0"
+source = { editable = "dereflect" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "training" },
+    { name = "triton" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "torch", specifier = ">=2.9,<2.12", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "training", editable = "training" },
+    { name = "triton", specifier = ">=3.4" },
 ]
 
 [[package]]

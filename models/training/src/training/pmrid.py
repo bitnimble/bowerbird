@@ -27,11 +27,22 @@ RGGB = [0, 1, 1, 2]
 @dataclass
 class Opened:
     mosaic: np.ndarray
-    """RGGB, conditioned and denoised as the editor does at AUTO."""
+    """RGGB, conditioned, dust removed and denoised as the editor does at AUTO, unless `open` was told
+    to skip them."""
     gains: np.ndarray
     """R, G, B, the largest 1."""
     fit: dict | None
     """GALOSH's `NoiseFit`, or None where it was unusable and nothing was denoised."""
+
+
+@dataclass
+class Decoded:
+    rgb: np.ndarray
+    """(H, W, 3) Rec.2020 light over full scale, as the library decodes the photo unedited."""
+    ceilings: np.ndarray
+    """Where each camera channel saturated, R, G, B, over full scale."""
+    matrix: np.ndarray
+    """Camera to Rec.2020."""
 
 
 @dataclass
@@ -60,15 +71,13 @@ class Pmrid:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
-            # `gpu::leave` exits through `_exit` only under cargo's environment; without it NVIDIA
-            # faults at exit and every worker leaves a core dump.
-            env={**os.environ, "CARGO_MANIFEST_DIR": str(REPOSITORY / "native" / "rawshim")},
+            env=example_environment(),
         )
 
-    def open(self, path: Path, noisy: bool = False) -> Opened:
+    def open(self, path: Path, noisy: bool = False, dusty: bool = False) -> Opened:
         """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer. A `noisy`
-        mosaic skips the denoise."""
-        reply = self.ask({"open": str(path), "out": str(self.exchange), "noisy": noisy})
+        mosaic skips the denoise, a `dusty` one the dust removal."""
+        reply = self.ask({"open": str(path), "out": str(self.exchange), "noisy": noisy, "dusty": dusty})
         mosaic = take(self.exchange, reply["height"], reply["width"])
         red_y, red_x = divmod(reply["cfa"].index(0), 2)
         height, width = ((n - o) // 2 * 2 for n, o in zip(mosaic.shape, (red_y, red_x)))
@@ -77,6 +86,67 @@ class Pmrid:
             gains=np.asarray(reply["gains"], np.float32),
             fit=reply["fit"],
         )
+
+    def decode(self, path: Path, floor: int) -> Decoded:
+        """The photo as the library decodes it for a rendition `floor` on its long edge. Raises
+        `Unreadable` as `open` does."""
+        reply = self.ask({"decode": str(path), "out": str(self.exchange), "floor": floor})
+        return Decoded(
+            rgb=take(self.exchange, reply["height"], reply["width"], 3),
+            ceilings=np.asarray(reply["ceilings"], np.float32),
+            matrix=np.asarray(reply["matrix"], np.float32),
+        )
+
+    def grade(
+        self,
+        path: Path,
+        floor: int,
+        pq: bool,
+        edge: int | None = None,
+        taken: np.ndarray | None = None,
+        gains: list[float] | None = None,
+        alone: bool = False,
+        unedited_levels: bool = False,
+    ) -> np.ndarray:
+        """The photo as the library renders it unedited, `edge` on its long side, as (N, H, W, 3) 16-bit
+        PQ Rec.2020 codes if `pq`, else 8-bit sRGB: once as it is, or with `taken`, (H, W, 3) light in
+        `decode(path, floor)`'s units, once per gain, that much taken out of it, never below black, or
+        with `alone` graded by itself, every image under the photo's own grade. `unedited_levels` keeps
+        the unedited photo's levels, so light added to it shows without the rest of the photo moving."""
+        request = {"grade": str(path), "floor": floor, "out": str(self.exchange), "output": "pq" if pq else "srgb"}
+        if edge is not None:
+            request["edge"] = edge
+        given = self.exchange.with_suffix(".taken")
+        if taken is not None:
+            np.ascontiguousarray(taken, "<f4").tofile(given)
+            request |= {"taken": str(given), "gains": gains or [1.0], "alone": alone, "unedited_levels": unedited_levels}
+        reply = self.ask(request)
+        given.unlink(missing_ok=True)
+        codes = np.fromfile(self.exchange, "<u2").reshape(reply["count"], reply["height"], reply["width"], 3)
+        self.exchange.unlink()
+        return codes if pq else codes.astype(np.uint8)
+
+    def header(self, path: Path) -> dict:
+        """The RAW's `iso`, `shutter` in seconds and `aperture` as an f-number, each 0 where the camera
+        recorded none, from its metadata alone. Raises `Unreadable` as `open` does."""
+        return self.ask({"header": str(path)})
+
+    def develop(self, mosaic: np.ndarray, ceilings: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+        """An RGGB mosaic of camera light, (H, W), clipped at `ceilings`, to (H / 2, W / 2, 3) Rec.2020
+        light as a decode halving it would demosaic it, its highlights reconstructed."""
+        height, width = mosaic.shape
+        np.ascontiguousarray(mosaic, "<f4").tofile(self.exchange)
+        self.ask(
+            {
+                "develop": str(self.exchange),
+                "out": str(self.exchange),
+                "width": width,
+                "height": height,
+                "ceilings": ceilings.tolist(),
+                "matrix": matrix.tolist(),
+            }
+        )
+        return take(self.exchange, height // 2, width // 2, 3)
 
     def denoise(self, mosaics: np.ndarray, gains: np.ndarray, fit: dict) -> np.ndarray:
         """Each of a stack of RGGB mosaics, (N, H, W), denoised against the photo's own fit."""
@@ -183,6 +253,12 @@ class Pmrid:
         if reply["unreadable"]:
             raise Unreadable(reply["error"])
         raise RuntimeError(reply["error"])
+
+
+def example_environment() -> dict[str, str]:
+    # `gpu::leave` exits through `_exit` only under cargo's environment; without it NVIDIA faults at
+    # exit and every run leaves a core dump.
+    return {**os.environ, "CARGO_MANIFEST_DIR": str(REPOSITORY / "native" / "rawshim")}
 
 
 class Unreadable(Exception):
