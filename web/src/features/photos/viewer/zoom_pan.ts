@@ -40,6 +40,7 @@ export function scaleOf(percent: number, fit: number): number {
 }
 
 const WHEEL_SENSITIVITY = 0.0015;
+const WHEEL_IDLE_MS = 150;
 // Scales are floats off a division, so "already at this stop" needs slack.
 export const STOP_EPSILON = 0.001;
 // How far a pointer may travel and still count as a click rather than a drag.
@@ -446,17 +447,38 @@ export function useZoomPan(
   useEffect(() => {
     const stage = gestures.current;
     if (stage == null || !enabled) return;
+    let deltaY = 0;
+    let point: Point = { x: 0, y: 0 };
+    let frame: number | null = null;
+    let idle: ReturnType<typeof setTimeout> | undefined;
 
     function onWheel(e: WheelEvent): void {
       e.preventDefault();
-      zoomTo((currentScale) => currentScale * (1 - e.deltaY * WHEEL_SENSITIVITY), {
-        x: e.clientX,
-        y: e.clientY,
-      });
+      deltaY += e.deltaY;
+      point = { x: e.clientX, y: e.clientY };
+      gestureRect.current ??= viewport.current?.getBoundingClientRect() ?? null;
+      clearTimeout(idle);
+      idle = setTimeout(endWheel, WHEEL_IDLE_MS);
+      frame ??= requestAnimationFrame(applyWheel);
+    }
+    function applyWheel(): void {
+      frame = null;
+      if (deltaY === 0) return;
+      const factor = Math.exp(-deltaY * WHEEL_SENSITIVITY);
+      deltaY = 0;
+      zoomTo((currentScale) => currentScale * factor, point);
+    }
+    function endWheel(): void {
+      if (pinch.current == null) gestureRect.current = null;
     }
     stage.addEventListener('wheel', onWheel, { passive: false });
-    return () => stage.removeEventListener('wheel', onWheel);
-  }, [zoomTo, gestures, enabled]);
+    return () => {
+      stage.removeEventListener('wheel', onWheel);
+      if (frame != null) cancelAnimationFrame(frame);
+      clearTimeout(idle);
+      endWheel();
+    };
+  }, [zoomTo, gestures, viewport, enabled]);
 
   function onPointerDown(e: React.PointerEvent): void {
     if (!enabled) return;
