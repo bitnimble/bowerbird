@@ -16,6 +16,7 @@ export const CompositionSourceSchema = z.object({
       .tuple([z.array(z.number()), z.array(z.number())])
       .nullable()
       .optional(),
+    axis: z.tuple([z.number(), z.number()]).default([0, 0]),
   }),
   gain: z.number().positive(),
 });

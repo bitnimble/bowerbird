@@ -74,7 +74,7 @@ function mergeTwoFrames(): string {
         size: [6000, 4000] as [number, number],
         rotation: [1, 0, 0, 0] as [number, number, number, number],
         focal: 5200,
-        lens: { crop: 1 },
+        lens: { crop: 1, axis: [0, 0] as [number, number] },
         gain: 1,
       })),
       projection: 'cylindrical' as const,

@@ -245,6 +245,9 @@ pub struct HdrColour {
     /// pulls the frame's greys onto the camera's, and the one everything above was fitted under.
     /// None where the frame had no illuminant to move from or too few greys to say where to.
     pub illuminant: Option<crate::white_balance::Illuminant>,
+    /// A DNG's own default rendering rather than a fit (`dng_rendering`), so the lens beside it
+    /// was never measured.
+    pub stated: bool,
 }
 
 /// Hues around the coarse grid's circle.
@@ -1126,6 +1129,7 @@ impl HdrColour {
             exposure: crate::light::Stops::ZERO,
             curve: crate::light::IDENTITY_CURVE.to_vec(),
             illuminant: None,
+            stated: false,
         }
     }
 
@@ -6173,7 +6177,7 @@ pub async fn camera_curve_error(gpu: &'static crate::gpu::Gpu, colour: &HdrColou
     Some(camera_curve(gpu, colour).await?.2)
 }
 
-async fn camera_curve(
+pub(crate) async fn camera_curve(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
 ) -> Option<(crate::light::Stops, Vec<[f64; 2]>, f64)> {

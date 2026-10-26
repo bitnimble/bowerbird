@@ -778,6 +778,7 @@ impl Base {
         let sensor_long = width.max(height) * frame_reduced;
         let as_shot = frame.as_shot;
         let wb_gains = frame.wb_gains;
+        let neutral_ceiling = frame.neutral_ceiling;
         let dust = frame.dust.clone();
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
@@ -806,6 +807,7 @@ impl Base {
             noise,
             matrix,
             as_shot,
+            neutral_ceiling,
         };
         let crate::open::Measured {
             matched,

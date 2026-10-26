@@ -111,6 +111,7 @@ mod tests {
                 crop: 0.8,
                 falloff: None,
                 tca: None,
+                axis: [0.0; 2],
             },
         );
         recipe.sources = vec![recipe.sources[0].clone(); 4];

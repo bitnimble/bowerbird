@@ -81,7 +81,7 @@ export function assemblyRecipeFixture(): AssemblyRecipe {
         size: [100, 100],
         rotation: [0, 0, 0, 1],
         focal: 50,
-        lens: { crop: 1 },
+        lens: { crop: 1, axis: [0, 0] },
         gain: 1,
       },
       {
@@ -89,7 +89,7 @@ export function assemblyRecipeFixture(): AssemblyRecipe {
         size: [100, 100],
         rotation: [0, 0, 0, 1],
         focal: 50,
-        lens: { crop: 1 },
+        lens: { crop: 1, axis: [0, 0] },
         gain: 1,
       },
     ],

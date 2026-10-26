@@ -33,6 +33,8 @@ pub struct LensSpec {
     pub crop: f64,
     pub falloff: Option<(f64, f64)>,
     pub tca: Option<[Vec<f64>; 2]>,
+    #[serde(default)]
+    pub axis: [f64; 2],
 }
 
 impl From<&crate::fit::Lens> for LensSpec {
@@ -42,6 +44,7 @@ impl From<&crate::fit::Lens> for LensSpec {
             crop: lens.crop,
             falloff: lens.falloff,
             tca: lens.tca.clone(),
+            axis: lens.axis,
         }
     }
 }
@@ -59,6 +62,7 @@ impl LensSpec {
             crop: self.crop,
             falloff: self.falloff,
             tca: self.tca.clone(),
+            axis: self.axis,
         }
     }
 }
@@ -383,10 +387,22 @@ pub fn ray_to_source(source: &SourceSpec, ray: [f64; 3]) -> Option<[f64; 2]> {
     ])
 }
 
+/// The point the lens is radial about and the radius its knots end at, in this source's own
+/// full-resolution pixels.
+fn optical_centre(source: &SourceSpec) -> ([f64; 2], f64) {
+    let (cx, cy) = (source.size[0] as f64 * 0.5, source.size[1] as f64 * 0.5);
+    let half = cx.hypot(cy);
+    let [ax, ay] = source.lens.axis;
+    (
+        [cx + ax * half, cy + ay * half],
+        half * crate::fit::reach(source.lens.axis),
+    )
+}
+
 pub fn corrected_to_sensor(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]> {
-    let centre = [source.size[0] as f64 * 0.5, source.size[1] as f64 * 0.5];
+    let (centre, reach) = optical_centre(source);
     let delta = [at[0] - centre[0], at[1] - centre[1]];
-    let radius = delta[0].hypot(delta[1]) / centre[0].hypot(centre[1]);
+    let radius = delta[0].hypot(delta[1]) / reach;
     let crop = source.lens.crop;
     if !crop.is_finite() || crop <= 0.0 {
         return None;
@@ -401,10 +417,9 @@ pub fn corrected_to_sensor(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]
 }
 
 pub fn sensor_to_corrected(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]> {
-    let centre = [source.size[0] as f64 * 0.5, source.size[1] as f64 * 0.5];
+    let (centre, reach) = optical_centre(source);
     let delta = [at[0] - centre[0], at[1] - centre[1]];
-    let half = centre[0].hypot(centre[1]);
-    let radius = delta[0].hypot(delta[1]) / half;
+    let radius = delta[0].hypot(delta[1]) / reach;
     if radius == 0.0 {
         return Some(centre);
     }
@@ -575,6 +590,46 @@ mod tests {
             assert!(
                 (back[0] - x).abs() < 1e-7 && (back[1] - y).abs() < 1e-7,
                 "{back:?}"
+            );
+        }
+    }
+
+    /// A lens off its centre maps a corrected pixel to the sensor where the gather's
+    /// `Lens::read_from` does, and back.
+    #[test]
+    fn an_off_centre_lens_maps_where_the_gather_reads_and_back() {
+        let mut source = recipe(Projection::Cylindrical).sources.remove(0);
+        source.lens = LensSpec {
+            distortion: Some(vec![0.0, -300.0, -900.0, -1800.0]),
+            crop: 1.02,
+            falloff: None,
+            tca: None,
+            axis: [0.03, -0.02],
+        };
+        let lens = source.lens.to_lens();
+        let knots = lens.distortion.clone().unwrap_or_default();
+        let half = 3000.0f64.hypot(2000.0);
+        for at in [
+            [10.0, 20.0],
+            [3000.0, 2000.0],
+            [5990.0, 3990.0],
+            [400.0, 3700.0],
+        ] {
+            let sensor = corrected_to_sensor(&source, at).expect("a sensor position");
+            let (sx, sy) =
+                lens.read_from(((at[0] - 3000.0) / half, (at[1] - 2000.0) / half), |r2| {
+                    let radius = r2.sqrt();
+                    crate::image::sample_radius(&knots, radius, lens.crop) / radius
+                });
+            assert!(
+                (sensor[0] - (3000.0 + sx * half)).abs() < 1e-6
+                    && (sensor[1] - (2000.0 + sy * half)).abs() < 1e-6,
+                "{at:?} reached {sensor:?}",
+            );
+            let back = sensor_to_corrected(&source, sensor).expect("a corrected position");
+            assert!(
+                (back[0] - at[0]).abs() < 1e-6 && (back[1] - at[1]).abs() < 1e-6,
+                "{at:?} came back as {back:?}",
             );
         }
     }

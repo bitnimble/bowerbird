@@ -208,6 +208,19 @@ fn params(
     ] {
         bytes.extend_from_slice(&(value as f32).to_le_bytes());
     }
+    // Zero unless the lens is read here: `axis + (pinhole - axis)` is not `pinhole` in `f32`.
+    let axis = match through {
+        Through::Lens => source_at.lens.axis,
+        Through::Corrected => [0.0; 2],
+    };
+    let reach = crate::fit::reach(axis);
+    for value in [
+        axis[0] * half2.sqrt(),
+        axis[1] * half2.sqrt(),
+        1.0 / (half2 * reach * reach),
+    ] {
+        bytes.extend_from_slice(&(value as f32).to_le_bytes());
+    }
     // std140 rounds a block out to a multiple of sixteen, and the binding is sized by the shader's
     // idea of it rather than by what was written.
     bytes.resize(bytes.len().next_multiple_of(16), 0);
@@ -1802,6 +1815,7 @@ mod tests {
             crop: 1.03,
             falloff: None,
             tca: None,
+            axis: [0.02, -0.015],
         }
     }
 
@@ -1863,22 +1877,25 @@ mod tests {
         let (cx, cy) = (source.size[0] as f64 / 2.0, source.size[1] as f64 / 2.0);
         let (ox, oy) = (at[0] - cx, at[1] - cy);
         let half = (cx * cx + cy * cy).sqrt();
-        let ratio = match through {
-            Through::Corrected => 1.0,
+        let (sx, sy) = match through {
+            Through::Corrected => (ox, oy),
             Through::Lens => {
                 let lens = source.lens.to_lens();
                 let knots = lens.distortion.clone().unwrap_or_default();
-                let radius = (ox * ox + oy * oy).sqrt() / half;
-                match radius == 0.0 {
-                    true => lens.crop,
-                    false => crate::image::sample_radius(&knots, radius, lens.crop) / radius,
-                }
+                let (sx, sy) = lens.read_from((ox / half, oy / half), |squared| {
+                    let radius = squared.sqrt();
+                    match radius == 0.0 {
+                        true => lens.crop,
+                        false => crate::image::sample_radius(&knots, radius, lens.crop) / radius,
+                    }
+                });
+                (sx * half, sy * half)
             }
         };
         let (region_left, region_top, _, _) = region.raw();
         Some([
-            (cx - 0.5) + ox * ratio - region_left as f64,
-            (cy - 0.5) + oy * ratio - region_top as f64,
+            (cx - 0.5) + sx - region_left as f64,
+            (cy - 0.5) + sy - region_top as f64,
         ])
     }
 

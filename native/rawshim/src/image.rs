@@ -638,11 +638,10 @@ pub fn lens_footprint(
         .map(|y| {
             let mut bounds = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
             for x in 0..width {
-                let (dx, dy) = plan.at(x as f64 + 0.5, y as f64 + 0.5, (width, height));
+                let at = plan.at(x as f64 + 0.5, y as f64 + 0.5, (width, height));
                 for table in &tables {
-                    let ratio = ratio_at(table, dx * dx + dy * dy);
-                    let px = centre_x + dx * ratio * half;
-                    let py = centre_y + dy * ratio * half;
+                    let (sx, sy) = lens.read_from(at, |squared| ratio_at(table, squared));
+                    let (px, py) = (centre_x + sx * half, centre_y + sy * half);
                     bounds = box_of(bounds, (px, py, px, py));
                 }
             }
@@ -696,12 +695,12 @@ pub fn lens_sources(
         keystone: None,
     };
     let source = |point: &crate::px::Point<crate::px::Drawn>| {
-        let (dx, dy) = plan.at(point.x.raw(), point.y.raw(), (full_w, full_h));
-        let ratio = ratio_at(&table, dx * dx + dy * dy);
+        let at = plan.at(point.x.raw(), point.y.raw(), (full_w, full_h));
+        let (sx, sy) = lens.read_from(at, |squared| ratio_at(&table, squared));
         // The gather's grid puts a pixel's centre on an integer, a stored position its edge.
         crate::px::Point {
-            x: crate::px::Coordinate::exactly(full_w as f64 / 2.0 + dx * ratio * half),
-            y: crate::px::Coordinate::exactly(full_h as f64 / 2.0 + dy * ratio * half),
+            x: crate::px::Coordinate::exactly(full_w as f64 / 2.0 + sx * half),
+            y: crate::px::Coordinate::exactly(full_h as f64 / 2.0 + sy * half),
         }
     };
     points.iter().map(source).collect()
@@ -1671,6 +1670,7 @@ mod tests {
             crop: 1.02,
             falloff: Some((0.31, -0.04)),
             tca: Some([vec![0.0, 0.0004, 0.0009], vec![0.0, -0.0005, -0.0011]]),
+            axis: [0.03, -0.02],
         }
     }
 
@@ -2161,6 +2161,7 @@ mod tests {
             distortion: Some(knots),
             falloff: None,
             tca: None,
+            axis: [0.0; 2],
         };
         let resident = crate::hdr_fit::levelled_source(gpu, source.as_ref());
         let out = pollster::block_on(crate::hdr_fit::warped_levels(

@@ -14,7 +14,7 @@ const PANORAMA: StoredRecipe = {
       size: [6000, 4000],
       rotation: [1, 0, 0, 0],
       focal: 5200,
-      lens: { crop: 1 },
+      lens: { crop: 1, axis: [0, 0] },
       gain: 1,
     },
     {
@@ -22,7 +22,7 @@ const PANORAMA: StoredRecipe = {
       size: [6000, 4000],
       rotation: [1, 0, 0, 0],
       focal: 5200,
-      lens: { crop: 1 },
+      lens: { crop: 1, axis: [0, 0] },
       gain: 1,
     },
   ],

@@ -447,6 +447,7 @@ pub async fn from_frame(
             noise: frame.noise,
             matrix: frame.matrix,
             as_shot,
+            neutral_ceiling: frame.neutral_ceiling,
         };
         if mosaic {
             report(crate::open_stage::Stage::Matching);

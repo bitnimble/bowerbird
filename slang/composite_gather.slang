@@ -38,7 +38,7 @@ struct Params {
     float focal;
     /// Decoded pixels per full-resolution pixel, which the ratio multiplies into.
     float shrink;
-    /// `1 / half^2` of the full-resolution grid the lens is defined over.
+    /// `1 / half^2` of the full-resolution grid, which the falloff is radial over.
     float inv_half2;
     uint projection;
     uint through;
@@ -54,6 +54,10 @@ struct Params {
     float4 warp_m;
     /// That warp's translation in the same frame, which the identity makes exactly zero.
     float2 warp_t;
+    /// `fit::Lens::axis` in the source's full-resolution pixels.
+    float2 axis;
+    /// `1 / reach^2` of `fit::Lens::reach` in those pixels, which the ratio table is indexed over.
+    float inv_reach2;
 };
 
 /// One tile's §3.7a correction. `assembly_weight::TileWarp`.
@@ -179,13 +183,15 @@ uint3 level_of(float3 value)
 /// `pinhole` is in the source's full-resolution corrected pixels, offset from its own centre.
 float2 source_of(float2 pinhole, uint c)
 {
+    let about = pinhole - params.axis;
     var ratio = 1.0;
     if (params.through == THROUGH_LENS) {
-        ratio = lens_ratio(ratios, dot(pinhole, pinhole) * params.inv_half2, c);
+        ratio = lens_ratio(ratios, dot(about, about) * params.inv_reach2, c);
     }
+    let read = params.axis + about * ratio;
     return float2(
-        (params.source_centre.x + pinhole.x * ratio * params.shrink) - params.region_origin.x,
-        (params.source_centre.y + pinhole.y * ratio * params.shrink) - params.region_origin.y);
+        (params.source_centre.x + read.x * params.shrink) - params.region_origin.x,
+        (params.source_centre.y + read.y * params.shrink) - params.region_origin.y);
 }
 
 /// The pinhole coordinate an output pixel asks this source for, and whether the source is looking

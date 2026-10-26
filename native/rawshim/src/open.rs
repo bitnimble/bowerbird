@@ -58,6 +58,8 @@ pub struct Opening<'a> {
     /// The illuminant the decode balanced against, which the camera match's own white balance is
     /// fitted relative to.
     pub as_shot: Option<crate::white_balance::Illuminant>,
+    /// `crate::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
+    pub neutral_ceiling: f32,
 }
 
 /// Everything an open measured, in the units the stages below it read.
@@ -223,11 +225,54 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         }
     };
     lap("levels");
+
+    let matched = match matched {
+        None if needs_fit && how.camera_match == CameraMatch::LensAndColour => {
+            stated_match(&how.fitting, &levels, how.neutral_ceiling).await
+        }
+        matched => matched,
+    };
+    lap("stated rendering");
     Ok(Measured {
         matched,
         levels,
         defringe,
         blur,
+    })
+}
+
+/// A DNG's own rendering and lens correction, for one with no camera JPEG to match.
+async fn stated_match(
+    fitting: &Fitting<'_>,
+    levels: &crate::tone::Levels,
+    neutral_ceiling: f32,
+) -> Option<crate::hdr_fit::HdrMatch> {
+    let source = match fitting {
+        Fitting::None => return None,
+        Fitting::Preview(bytes) => rawler::rawsource::RawSource::new_from_slice(bytes),
+        #[cfg(feature = "renditions")]
+        Fitting::Profiled(path) => {
+            rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?
+        }
+    };
+    let stated = crate::dng_rendering::Stated::of_source(&source)?;
+    // An editor stage too narrow to pair against the preview fits no match either, and a stored
+    // stated colour would keep every later open from fitting the real one.
+    let previewed = match fitting {
+        Fitting::None => false,
+        Fitting::Preview(bytes) => crate::hdr::match_preview_from_bytes(bytes).is_some(),
+        #[cfg(feature = "renditions")]
+        Fitting::Profiled(path) => crate::hdr::match_preview(path).is_some(),
+    };
+    if previewed {
+        return None;
+    }
+    let colour = stated
+        .colour(crate::gpu::device()?, levels, neutral_ceiling)
+        .await?;
+    Some(crate::hdr_fit::HdrMatch {
+        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(crate::fit::Lens::none),
+        colour: Some(colour),
     })
 }
 
@@ -259,8 +304,7 @@ async fn complete_colour(
 /// The camera match off the file's own embedded preview, with the geometry fitted from the picture.
 ///
 /// Declining is not an error: `hdr::fit_all_from_preview` returns None for a file with no embedded
-/// preview and for one whose fit found too few usable pairs, and the grade then takes its neutral
-/// arm exactly as a rendition's does.
+/// preview and for one whose fit found too few usable pairs.
 async fn fit_from_preview(
     gpu: &'static crate::gpu::Gpu,
     raw: &[u8],

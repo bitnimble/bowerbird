@@ -116,6 +116,10 @@ pub struct Lens {
     /// different magnifications (`tca.rs`). Knots rather than a scalar because a
     /// database curve is radius-dependent and a measured scale is the flat case of one.
     pub tca: Option<[Vec<f64>; 2]>,
+    /// The optical axis the distortion and crop are radial about, as an offset from the frame's
+    /// centre in half-diagonals of the upright frame. Zero for every fitted lens; a DNG's
+    /// WarpRectilinear states its own.
+    pub axis: [f64; 2],
 }
 
 impl Lens {
@@ -126,7 +130,21 @@ impl Lens {
             crop: 1.0,
             falloff: None,
             tca: None,
+            axis: [0.0; 2],
         }
+    }
+
+    /// Where a point of the corrected picture is read from, both as offsets from the frame's
+    /// centre in half-diagonals, given this lens's ratio at a squared radius about its axis in
+    /// [`reach`]es.
+    pub fn read_from(&self, at: (f64, f64), ratio: impl Fn(f64) -> f64) -> (f64, f64) {
+        let (dx, dy) = (at.0 - self.axis[0], at.1 - self.axis[1]);
+        let ratio = ratio((dx * dx + dy * dy) / self.reach().powi(2));
+        (self.axis[0] + dx * ratio, self.axis[1] + dy * ratio)
+    }
+
+    pub fn reach(&self) -> f64 {
+        reach(self.axis)
     }
 
     /// The radius each channel is read at, relative to green's.
@@ -157,6 +175,12 @@ impl Lens {
     }
 }
 
+/// The radius a lens's knots end at about `axis`, in half-diagonals: no corner of the frame is
+/// further from it, so the tables never read past their last entry.
+pub fn reach(axis: [f64; 2]) -> f64 {
+    1.0 + axis[0].hypot(axis[1])
+}
+
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
     /// The falloff the camera corrected and the render did not, or None where the
@@ -180,6 +204,7 @@ impl Profile {
             crop: self.crop,
             falloff: self.gain.as_ref().map(Gain::coefficients),
             tca: self.tca.clone(),
+            axis: [0.0; 2],
         }
     }
 }
@@ -222,6 +247,7 @@ fn candidate(knots: &[f64], crop: f64) -> Lens {
         crop,
         falloff: None,
         tca: None,
+        axis: [0.0; 2],
     }
 }
 
@@ -1195,12 +1221,7 @@ async fn settled_on_registration(
     knots: &[f64],
     crop: f64,
 ) -> Option<(Vec<f64>, f64)> {
-    let lens_of = |knots: &[f64]| Lens {
-        distortion: Some(knots.to_vec()),
-        crop,
-        falloff: None,
-        tca: None,
-    };
+    let lens_of = |knots: &[f64]| candidate(knots, crop);
     let stride =
         (((render.width * render.height) as f64 / SETTLE_POINTS as f64).sqrt() as usize).max(1);
     // **Everything the rounds share, uploaded once.** Only the lens moves between them; the plane

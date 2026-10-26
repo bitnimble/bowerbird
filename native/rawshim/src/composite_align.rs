@@ -821,6 +821,9 @@ fn shared_lenses(
             crate::photo_analysis::decode(bytes)?
                 .from_raw
                 .matched
+                .filter(|m| {
+                    !m.lens.is_identity() || !m.colour.as_ref().is_some_and(|colour| colour.stated)
+                })
                 .map(|m| m.lens)
         })
         .collect();
@@ -904,6 +907,7 @@ fn middle_lens(fits: &[&crate::fit::Lens]) -> Option<crate::fit::Lens> {
         // Whichever the first member fitted: a lateral aberration is a property of the lens and
         // this is the same lens, and a median of two curves that disagree is a third curve.
         tca: fits.iter().find_map(|l| l.tca.clone()),
+        axis: [0, 1].map(|at| middle(fits.iter().map(|l| l.axis[at]).collect())),
     })
 }
 
@@ -1014,6 +1018,41 @@ pub(crate) mod tests {
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(lenses.iter().all(|lens| lens.distortion.is_none()));
+    }
+
+    /// A DNG drawn by its own rendering had nothing to fit its lens against, so its identity lens
+    /// is nobody's measurement; a warp the file states is the camera's.
+    #[test]
+    fn a_stated_rendering_measured_only_the_lens_it_states() {
+        let shared = |lens: crate::fit::Lens| {
+            let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
+            analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
+                lens,
+                colour: Some(crate::hdr_fit::HdrColour {
+                    stated: true,
+                    ..crate::hdr_fit::HdrColour::identity()
+                }),
+            });
+            let stored = crate::photo_analysis::encode(&analysis);
+
+            let mut warnings = Vec::new();
+            let mut lensless = Vec::new();
+            let paths: Vec<String> = ["a"].iter().map(|s| (*s).to_string()).collect();
+            let mut sources = offered(&paths);
+            sources[0].analysis = Some(&stored);
+            let lenses = shared_lenses(&sources, &mut warnings, &mut lensless);
+            (lenses, lensless)
+        };
+
+        assert_eq!(shared(crate::fit::Lens::none()).1, vec![0]);
+
+        let (lenses, lensless) = shared(crate::fit::Lens {
+            distortion: Some(vec![0.0, -400.0, -1200.0]),
+            axis: [0.015625, -0.0078125],
+            ..crate::fit::Lens::none()
+        });
+        assert!(lensless.is_empty());
+        assert_eq!(lenses[0].axis, [0.015625, -0.0078125]);
     }
 
     /// A window straddling the seam of a two-frame panorama comes back as a tile: the composite is

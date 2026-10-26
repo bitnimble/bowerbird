@@ -169,7 +169,7 @@ function panoramaRecipe(): Recipe {
       size: [6000, 4000] as [number, number],
       rotation: [1, 0, 0, 0] as [number, number, number, number],
       focal: 5200,
-      lens: { crop: 1, distortion: [0, -0.01], falloff: null, tca: null },
+      lens: { crop: 1, distortion: [0, -0.01], falloff: null, tca: null, axis: [0, 0] },
       gain: 1,
     })),
     projection: 'cylindrical',
