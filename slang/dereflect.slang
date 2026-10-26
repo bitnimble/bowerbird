@@ -32,11 +32,19 @@ struct Params {
     float scale;
 };
 
+/// Cell type of every buffer but `wide_*`: `half` in the `shader-f16` build.
+#ifndef STORED
+#define STORED float
+#endif
+typealias Stored = STORED;
+
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
-[vk::binding(0, 0)] StructuredBuffer<float> src;
-[vk::binding(1, 0)] StructuredBuffer<float> weights;
-[vk::binding(2, 0)] RWStructuredBuffer<float> dst;
-[vk::binding(3, 0)] StructuredBuffer<float> src2;
+[vk::binding(0, 0)] StructuredBuffer<Stored> src;
+[vk::binding(1, 0)] StructuredBuffer<Stored> weights;
+[vk::binding(2, 0)] RWStructuredBuffer<Stored> dst;
+[vk::binding(3, 0)] StructuredBuffer<Stored> src2;
+[vk::binding(4, 0)] StructuredBuffer<float> wide_src;
+[vk::binding(5, 0)] RWStructuredBuffer<float> wide_dst;
 
 static const uint THREADS = 64;
 static const uint STATE = 16;
@@ -47,10 +55,17 @@ static const uint GATHER_3X3 = 1;
 static const uint GATHER_PATCH = 2;
 static const uint A_FROM_SRC2 = 1;
 static const uint ACCUMULATE = 2;
+/// `layernorm` and `idwt` read from `wide_src`, and `idwt` writes to `wide_dst`.
+static const uint WIDE = 4;
 
 uint index(uint3 id)
 {
     return id.y * pc.span + id.x;
+}
+
+float input(uint at)
+{
+    return (pc.flags & WIDE) != 0 ? wide_src[at] : float(src[at]);
 }
 
 float silu(float x)
@@ -196,7 +211,7 @@ void depthwise(uint3 id : SV_DispatchThreadID)
     for (int yy = y - 1; yy <= y + 1; yy++) {
         for (int xx = x - 1; xx <= x + 1; xx++) {
             if (yy >= 0 && yy < int(pc.height) && xx >= 0 && xx < int(pc.width)) {
-                sum += weights[tap] * src[s_at + uint(yy) * pc.width + uint(xx)];
+                sum += float(weights[tap]) * src[s_at + uint(yy) * pc.width + uint(xx)];
             }
             tap++;
         }
@@ -216,16 +231,16 @@ void layernorm(uint3 id : SV_DispatchThreadID)
     let plane = pc.count;
     let c = pc.in_channels;
     var mean = 0.0;
-    for (uint i = 0; i < c; i++) { mean += src[pc.src_at + i * plane + p]; }
+    for (uint i = 0; i < c; i++) { mean += input(pc.src_at + i * plane + p); }
     mean /= float(c);
     var variance = 0.0;
     for (uint i = 0; i < c; i++) {
-        let d = src[pc.src_at + i * plane + p] - mean;
+        let d = input(pc.src_at + i * plane + p) - mean;
         variance += d * d;
     }
     let scale = 1.0 / sqrt(variance / float(c) + pc.eps);
     for (uint i = 0; i < c; i++) {
-        let v = (src[pc.src_at + i * plane + p] - mean) * scale;
+        let v = (input(pc.src_at + i * plane + p) - mean) * scale;
         dst[pc.dst_at + i * plane + p] = v * weights[pc.weight_at + i] + weights[pc.bias_at + i];
     }
 }
@@ -275,7 +290,7 @@ void scale_add(uint3 id : SV_DispatchThreadID)
     let e = index(id);
     if (e >= pc.count) { return; }
     let c = e / pc.width;
-    dst[pc.dst_at + e] = src[pc.src_at + e] * weights[pc.weight_at + c] + src2[pc.src2_at + e];
+    dst[pc.dst_at + e] = Stored(float(src[pc.src_at + e]) * weights[pc.weight_at + c] + src2[pc.src2_at + e]);
 }
 
 /// `x + y * gamma[c]` in place over `x`, DINOv2's LayerScale residual; `width` the plane size.
@@ -286,7 +301,7 @@ void add_scaled(uint3 id : SV_DispatchThreadID)
     let e = index(id);
     if (e >= pc.count) { return; }
     let c = e / pc.width;
-    dst[pc.dst_at + e] += src[pc.src_at + e] * weights[pc.weight_at + c];
+    dst[pc.dst_at + e] = Stored(dst[pc.dst_at + e] + float(src[pc.src_at + e]) * weights[pc.weight_at + c]);
 }
 
 /// `attention + kv * alpha + q * beta`, in place over the attention.
@@ -296,8 +311,8 @@ void fuse(uint3 id : SV_DispatchThreadID)
 {
     let e = index(id);
     if (e >= pc.count) { return; }
-    dst[pc.dst_at + e] += src[pc.src_at + e] * weights[pc.weight_at]
-        + src2[pc.src2_at + e] * weights[pc.bias_at];
+    dst[pc.dst_at + e] = Stored(dst[pc.dst_at + e] + (float(src[pc.src_at + e]) * weights[pc.weight_at]
+        + float(src2[pc.src2_at + e]) * weights[pc.bias_at]));
 }
 
 /// The output convolution's three channels, in place, scaled by the location gate: `src2` the
@@ -309,8 +324,8 @@ void located(uint3 id : SV_DispatchThreadID)
     let e = index(id);
     if (e >= pc.count) { return; }
     let p = e % pc.width;
-    let open = 1.0 / (1.0 + exp(-src2[pc.src2_at + p]));
-    dst[pc.dst_at + e] *= open * pc.scale;
+    let open = 1.0 / (1.0 + exp(-float(src2[pc.src2_at + p])));
+    dst[pc.dst_at + e] = Stored(float(dst[pc.dst_at + e]) * open * pc.scale);
 }
 
 // --- Wavelets -------------------------------------------------------------------------------
@@ -330,10 +345,10 @@ void dwt(uint3 id : SV_DispatchThreadID)
     let i = p / w2;
     let j = p % w2;
     let at = pc.src_at + c * pc.width * pc.height + 2 * i * pc.width + 2 * j;
-    let a = src[at];
-    let b = src[at + 1];
-    let cc = src[at + pc.width];
-    let d = src[at + pc.width + 1];
+    let a = float(src[at]);
+    let b = float(src[at + 1]);
+    let cc = float(src[at + pc.width]);
+    let d = float(src[at + pc.width + 1]);
     let band = pc.in_channels * half_plane;
     let out = pc.dst_at + c * half_plane + p;
     dst[out] = 0.5 * (a + b + cc + d);
@@ -357,16 +372,25 @@ void idwt(uint3 id : SV_DispatchThreadID)
     let j = p % pc.width;
     let band = pc.out_channels * half_plane;
     let at = pc.src_at + c * half_plane + p;
-    let ll = src[at];
-    let lh = src[at + band];
-    let hl = src[at + times(band, 2)];
-    let hh = src[at + times(band, 3)];
-    let wide = 2 * pc.width;
-    let out = pc.dst_at + c * half_plane * 4 + 2 * i * wide + 2 * j;
-    dst[out] = 0.5 * (ll + lh + hl + hh);
-    dst[out + 1] = 0.5 * (ll + lh - hl - hh);
-    dst[out + wide] = 0.5 * (ll - lh + hl - hh);
-    dst[out + wide + 1] = 0.5 * (ll - lh - hl + hh);
+    let widened = (pc.flags & WIDE) != 0;
+    let ll = widened ? wide_src[pc.src2_at + c * half_plane + p] : float(src[at]);
+    let lh = float(src[at + band]);
+    let hl = float(src[at + times(band, 2)]);
+    let hh = float(src[at + times(band, 3)]);
+    let across = 2 * pc.width;
+    let out = pc.dst_at + c * half_plane * 4 + 2 * i * across + 2 * j;
+    let corners = float4(ll + lh + hl + hh, ll + lh - hl - hh, ll - lh + hl - hh, ll - lh - hl + hh) * 0.5;
+    if (widened) {
+        wide_dst[out] = corners.x;
+        wide_dst[out + 1] = corners.y;
+        wide_dst[out + across] = corners.z;
+        wide_dst[out + across + 1] = corners.w;
+    } else {
+        dst[out] = Stored(corners.x);
+        dst[out + 1] = Stored(corners.y);
+        dst[out + across] = Stored(corners.z);
+        dst[out + across + 1] = Stored(corners.w);
+    }
 }
 
 // --- The selective scan -----------------------------------------------------------------------
@@ -398,9 +422,9 @@ Step scan_step(uint t, uint l)
     let rows = rank + 2 * STATE;
     let x_dbl = pc.src2_at + k * rows * n;
     let place = scan_place(k, l, pc.height, pc.width);
-    var raw = weights[pc.bias_at + t];
+    var raw = float(weights[pc.bias_at + t]);
     let dt_at = pc.weight_at + t * rank;
-    for (uint r = 0; r < rank; r++) { raw += weights[dt_at + r] * src2[x_dbl + r * n + place]; }
+    for (uint r = 0; r < rank; r++) { raw += float(weights[dt_at + r]) * src2[x_dbl + r * n + place]; }
     Step step;
     step.delta = raw > 20.0 ? raw : log(1.0 + exp(raw));
     step.u = src[pc.src_at + d * n + place];
@@ -422,10 +446,10 @@ void scan_chunk(uint t, uint chunk, inout float state[STATE], out float decay[ST
     float a[STATE];
     [ForceUnroll]
     for (uint s = 0; s < STATE; s++) {
-        a[s] = -exp(weights[pc.extra0 + t * STATE + s]);
+        a[s] = -exp(float(weights[pc.extra0 + t * STATE + s]));
         decay[s] = 1.0;
     }
-    let skip = weights[pc.extra1 + t];
+    let skip = float(weights[pc.extra1 + t]);
     let first = chunk * pc.mode;
     let last = min(first + pc.mode, n);
     for (uint l = first; l < last; l++) {
@@ -433,24 +457,24 @@ void scan_chunk(uint t, uint chunk, inout float state[STATE], out float decay[ST
         var y = skip * step.u;
         [ForceUnroll]
         for (uint s = 0; s < STATE; s++) {
-            let b = src2[x_dbl + (rank + s) * n + step.place];
+            let b = float(src2[x_dbl + (rank + s) * n + step.place]);
             let kept = exp(step.delta * a[s]);
             state[s] = kept * state[s] + step.delta * b * step.u;
             decay[s] *= kept;
             if (write) {
-                let c = src2[x_dbl + (rank + STATE + s) * n + step.place];
+                let c = float(src2[x_dbl + (rank + STATE + s) * n + step.place]);
                 y += c * state[s];
             }
         }
-        if (write) { dst[pc.dst_at + t * n + step.place] = y; }
+        if (write) { wide_dst[pc.dst_at + t * n + step.place] = y; }
     }
 }
 
 /// The four-direction selective scan in three passes, each direction's sequence cut into chunks of
-/// `mode` steps. `src` is the LL band `[D][L]`, `src2` the `x_proj` output `[K][R + 2N][L]`; `dst`
-/// takes each direction's `y` at its own place, `[K][D][L]`, and holds the chunks' states from
-/// `state_at`, `[chunk][t][2 * STATE]`. `weight_at` is where `dt_projs_weight` starts, `bias_at`
-/// `dt_projs_bias`, `extra0` `A_logs`, `extra1` `Ds`, `extra2` the rank, `extra3` D.
+/// `mode` steps. `src` is the LL band `[D][L]`, `src2` the `x_proj` output `[K][R + 2N][L]`;
+/// `wide_dst` takes each direction's `y` at its own place, `[K][D][L]`, and holds the chunks' states
+/// from `state_at`, `[chunk][t][2 * STATE]`. `weight_at` is where `dt_projs_weight` starts,
+/// `bias_at` `dt_projs_bias`, `extra0` `A_logs`, `extra1` `Ds`, `extra2` the rank, `extra3` D.
 ///
 /// The first: each chunk run from rest, its end state and decay. `count` is threads times chunks.
 [shader("compute")]
@@ -470,8 +494,8 @@ void scan_ends(uint3 id : SV_DispatchThreadID)
     let at = pc.state_at + e * 2 * STATE;
     [ForceUnroll]
     for (uint s = 0; s < STATE; s++) {
-        dst[at + s] = state[s];
-        dst[at + STATE + s] = decay[s];
+        wide_dst[at + s] = state[s];
+        wide_dst[at + STATE + s] = decay[s];
     }
 }
 
@@ -491,9 +515,9 @@ void scan_carry(uint3 id : SV_DispatchThreadID)
         let at = pc.state_at + (chunk * threads + t) * 2 * STATE;
         [ForceUnroll]
         for (uint s = 0; s < STATE; s++) {
-            let end = dst[at + s];
-            let decay = dst[at + STATE + s];
-            dst[at + s] = carry[s];
+            let end = wide_dst[at + s];
+            let decay = wide_dst[at + STATE + s];
+            wide_dst[at + s] = carry[s];
             carry[s] = decay * carry[s] + end;
         }
     }
@@ -513,11 +537,11 @@ void scan_out(uint3 id : SV_DispatchThreadID)
     float decay[STATE];
     let at = pc.state_at + e * 2 * STATE;
     [ForceUnroll]
-    for (uint s = 0; s < STATE; s++) { state[s] = dst[at + s]; }
+    for (uint s = 0; s < STATE; s++) { state[s] = wide_dst[at + s]; }
     scan_chunk(t, chunk, state, decay, true);
 }
 
-/// The four directions' sum, over `dst`'s first D channels (the LL band the scan read).
+/// The four directions' `y` in `wide_src` summed into `wide_dst`, `[D][L]`.
 [shader("compute")]
 [numthreads(THREADS, 1, 1)]
 void sum4(uint3 id : SV_DispatchThreadID)
@@ -526,7 +550,7 @@ void sum4(uint3 id : SV_DispatchThreadID)
     if (e >= pc.count) { return; }
     let quarter = pc.count;
     let at = pc.src_at + e;
-    dst[pc.dst_at + e] = src[at] + src[at + quarter] + src[at + times(quarter, 2)] + src[at + times(quarter, 3)];
+    wide_dst[pc.dst_at + e] = wide_src[at] + wide_src[at + quarter] + wide_src[at + times(quarter, 2)] + wide_src[at + times(quarter, 3)];
 }
 
 // --- Channel attention ----------------------------------------------------------------------
@@ -558,8 +582,8 @@ void gram(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
     var kk = 0.0;
     var qk = 0.0;
     for (uint p = lane; p < plane; p += REDUCE) {
-        let q = src[pc.src_at + i * plane + p];
-        let k = src2[pc.src2_at + j * plane + p];
+        let q = float(src[pc.src_at + i * plane + p]);
+        let k = float(src2[pc.src2_at + j * plane + p]);
         qq += q * q;
         kk += k * k;
         qk += q * k;
@@ -601,7 +625,7 @@ void softmax(uint3 id : SV_DispatchThreadID)
         dst[row + j] = v;
         sum += v;
     }
-    for (uint j = first; j < first + per_head; j++) { dst[row + j] /= sum; }
+    for (uint j = first; j < first + per_head; j++) { dst[row + j] = Stored(float(dst[row + j]) / sum); }
 }
 
 // --- DINOv2 ---------------------------------------------------------------------------------
@@ -669,7 +693,7 @@ void tokens(uint3 id : SV_DispatchThreadID)
     let d = e / tokens;
     let t = e % tokens;
     let embedded = t == 0 ? weights[pc.weight_at + d] : src[pc.src_at + d * pc.width + t - 1];
-    dst[pc.dst_at + e] = embedded + src2[pc.src2_at + e];
+    dst[pc.dst_at + e] = Stored(float(embedded) + src2[pc.src2_at + e]);
 }
 
 static const uint HEAD = 64;
@@ -765,4 +789,32 @@ void spread(uint3 id : SV_DispatchThreadID)
     let top = src[at + y0 * columns + x0] * (1.0 - wx) + src[at + y0 * columns + x1] * wx;
     let bottom = src[at + y1 * columns + x0] * (1.0 - wx) + src[at + y1 * columns + x1] * wx;
     dst[pc.dst_at + e] = top * (1.0 - wy) + bottom * wy;
+}
+
+// --- Crossing to the frame's planes ---------------------------------------------------------
+
+/// `x` rounded to bfloat16, to nearest even, as torch's `to(torch.bfloat16)`.
+float bfloat16(float x)
+{
+    let bits = asuint(x);
+    return asfloat((bits + 0x7fffu + ((bits >> 16) & 1u)) & 0xffff0000u);
+}
+
+/// The network's input from the frame's `float` planes, rounded to bfloat16 as it trained on it.
+[shader("compute")]
+[numthreads(THREADS, 1, 1)]
+void admit(uint3 id : SV_DispatchThreadID)
+{
+    let e = index(id);
+    if (e >= pc.count) { return; }
+    dst[pc.dst_at + e] = Stored(bfloat16(wide_src[pc.src_at + e]));
+}
+
+[shader("compute")]
+[numthreads(THREADS, 1, 1)]
+void widen(uint3 id : SV_DispatchThreadID)
+{
+    let e = index(id);
+    if (e >= pc.count) { return; }
+    wide_dst[pc.dst_at + e] = float(src[pc.src_at + e]);
 }

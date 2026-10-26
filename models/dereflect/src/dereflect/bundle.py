@@ -15,6 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Bundle the reflection remover with its backbone.")
     parser.add_argument("weights", type=Path)
     parser.add_argument("out", type=Path)
+    parser.add_argument("--stored", choices=["f32", "f16"], default="f32", help="what weights.bin holds")
     args = parser.parse_args()
     exported = load_exported(args.weights)
     backbone = exported.plan.get("semantics")
@@ -24,7 +25,9 @@ def main() -> None:
         f"dino.{name}": value for name, value in dino.load(backbone).state_dict().items() if name != "mask_token"
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    export_state({**exported.state, **described}, {**exported.plan, "bundled": str(args.weights)}, args.out)
+    export_state(
+        {**exported.state, **described}, {**exported.plan, "bundled": str(args.weights)}, args.out, args.stored
+    )
 
 
 if __name__ == "__main__":

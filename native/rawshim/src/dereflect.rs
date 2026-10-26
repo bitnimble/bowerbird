@@ -10,6 +10,43 @@ use crate::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 use crate::resident::Resident;
 
 const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect.wgsl"));
+const WGSL_HALF: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect_half.wgsl"));
+
+/// What the device holds the weights and every tensor in. Arithmetic is `float` either way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cells {
+    Float,
+    Half,
+}
+
+impl Cells {
+    /// `Half` where the device has `shader-f16`.
+    pub fn of(features: wgpu::Features) -> Cells {
+        match features.contains(wgpu::Features::SHADER_F16) {
+            true => Cells::Half,
+            false => Cells::Float,
+        }
+    }
+
+    fn bytes(self) -> usize {
+        match self {
+            Cells::Float => 4,
+            Cells::Half => 2,
+        }
+    }
+
+    fn encoded(self, values: &[f32]) -> Vec<u8> {
+        let mut bytes = match self {
+            Cells::Float => bytemuck::cast_slice(values).to_vec(),
+            Cells::Half => values
+                .iter()
+                .flat_map(|&v| half::f16::from_f32(v).to_le_bytes())
+                .collect(),
+        };
+        bytes.resize(bytes.len().next_multiple_of(4).max(16), 0);
+        bytes
+    }
+}
 
 /// Each side of the network's input is a multiple of this: three halvings, and a fourth inside the
 /// coarsest level's blocks.
@@ -28,13 +65,12 @@ const STATE: usize = 16;
 const THREADS: usize = 64;
 const TILE: usize = 64;
 const SCAN_CHUNK: usize = 1024;
-/// Floats in the largest tensor a run asks for, the first level's scan states over a square plane.
+/// Floats in the largest buffer a run asks for, the first level's scan over a square plane: each
+/// direction's `y`, then the chunks' states. Always `float` (`Run::wide`), whatever the cells.
 const LARGEST_TENSOR: usize = {
     let inner = 2 * DIMS[0];
     let band = EDGE * EDGE / 4;
-    let states = 4 * inner * band + band.div_ceil(SCAN_CHUNK) * 4 * inner * 2 * STATE;
-    let full = inner * EDGE * EDGE;
-    if states > full { states } else { full }
+    4 * inner * band + band.div_ceil(SCAN_CHUNK) * 4 * inner * 2 * STATE
 };
 const OPEN_GATE: f32 = 5.0;
 const LIGHTRR_EPS: f32 = 1e-5;
@@ -51,9 +87,10 @@ const GATHER_3X3: u32 = 1;
 const GATHER_PATCH: u32 = 2;
 const A_FROM_SRC2: u32 = 1;
 const ACCUMULATE: u32 = 2;
+const WIDE: u32 = 4;
 const UNSET: u32 = u32::MAX;
 
-const KERNELS: [&str; 24] = [
+const KERNELS: [&str; 26] = [
     "gemm",
     "depthwise",
     "layernorm",
@@ -78,6 +115,8 @@ const KERNELS: [&str; 24] = [
     "tokens",
     "attention",
     "spread",
+    "admit",
+    "widen",
 ];
 
 #[repr(C)]
@@ -130,9 +169,12 @@ impl Weight {
 pub struct Remover {
     layout: wgpu::BindGroupLayout,
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    cells: Cells,
     net: Buffer,
     dino: Buffer,
     empty: Buffer,
+    /// `wide_dst` where nothing writes it: `empty` is bound for reading in the same dispatch.
+    sink: Buffer,
     tensors: HashMap<String, Weight>,
     /// DINOv2's learned positions, `[1 + 37 * 37][width]`, interpolated on the host per grid.
     positions: Vec<f32>,
@@ -185,8 +227,16 @@ impl Unpacked {
         if blocks.len() != DIMS.len() {
             return Err(format!("{} levels of blocks", blocks.len()));
         }
-        let floats: &[f32] = bytemuck::try_cast_slice(weights)
-            .map_err(|e| format!("the weights are not whole floats: {e}"))?;
+        let floats: Vec<f32> = match manifest["stored"].as_str().unwrap_or("f32") {
+            "f32" => bytemuck::try_cast_slice(weights)
+                .map_err(|e| format!("the weights are not whole floats: {e}"))?
+                .to_vec(),
+            "f16" => weights
+                .chunks_exact(2)
+                .map(|word| half::f16::from_le_bytes([word[0], word[1]]).to_f32())
+                .collect(),
+            other => return Err(format!("the weights are stored as {other}")),
+        };
         let mut net = Vec::new();
         let mut dino = Vec::new();
         let mut tensors = HashMap::new();
@@ -240,11 +290,11 @@ impl Unpacked {
 }
 
 impl Remover {
-    pub fn new(gpu: &Gpu, manifest: &str, weights: &[u8]) -> Result<Remover, String> {
-        Remover::built(gpu, Unpacked::new(manifest, weights)?)
+    pub fn new(gpu: &Gpu, manifest: &str, weights: &[u8], cells: Cells) -> Result<Remover, String> {
+        Remover::built(gpu, Unpacked::new(manifest, weights)?, cells)
     }
 
-    fn built(gpu: &Gpu, unpacked: Unpacked) -> Result<Remover, String> {
+    fn built(gpu: &Gpu, unpacked: Unpacked, cells: Cells) -> Result<Remover, String> {
         let Unpacked {
             net,
             dino,
@@ -255,20 +305,28 @@ impl Remover {
         } = unpacked;
         let limit = gpu.most_bound();
         let sets = [
-            ("network weights", net.len()),
-            ("DINOv2 weights", dino.len()),
+            ("network weights", net.len() * cells.bytes()),
+            ("DINOv2 weights", dino.len() * cells.bytes()),
+            ("largest tensor", LARGEST_TENSOR * 4),
         ];
-        for (set, floats) in sets.into_iter().chain([("largest tensor", LARGEST_TENSOR)]) {
-            let bytes = (floats * 4) as u64;
+        for (set, bytes) in sets {
+            let bytes = bytes as u64;
             if bytes > limit {
                 return Err(format!("{set}: {bytes} bytes, past the adapter's {limit}"));
             }
         }
 
         let device = gpu.describing();
+        let source = match (cells, Cells::of(device.features())) {
+            (Cells::Float, _) => WGSL,
+            (Cells::Half, Cells::Half) => WGSL_HALF,
+            (Cells::Half, Cells::Float) => {
+                return Err("half cells need shader-f16, which the adapter lacks".into());
+            }
+        };
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dereflect"),
-            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
             binding,
@@ -287,6 +345,8 @@ impl Remover {
                 storage(1, true),
                 storage(2, false),
                 storage(3, true),
+                storage(4, true),
+                storage(5, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 20,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -320,10 +380,10 @@ impl Remover {
                 (name, pipeline)
             })
             .collect();
-        let upload = |label: &'static str, floats: &[f32]| {
+        let upload = |label: &'static str, contents: &[u8]| {
             gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
-                contents: bytemuck::cast_slice(floats),
+                contents,
                 usage: wgpu::BufferUsages::STORAGE,
             })
         };
@@ -331,9 +391,11 @@ impl Remover {
         Ok(Remover {
             layout,
             pipelines,
-            net: upload("dereflect weights", &net),
-            dino: upload("dereflect DINOv2", &dino),
-            empty: upload("dereflect empty", &[0.0; 4]),
+            cells,
+            net: upload("dereflect weights", &cells.encoded(&net)),
+            dino: upload("dereflect DINOv2", &cells.encoded(&dino)),
+            empty: upload("dereflect empty", &[0; 16]),
+            sink: upload("dereflect sink", &[0; 16]),
             tensors,
             positions,
             blocks,
@@ -356,19 +418,24 @@ impl Remover {
             free: Free::default(),
             ops: RefCell::new(Vec::new()),
         };
-        let given = Planes {
-            slot: Rc::new(Slot {
-                buffer: given.clone(),
-                free: None,
-            }),
-            at: 0,
-            c: 3 + HINTS,
-            h: height,
-            w: width,
+        let admitted = run.tensor(3 + HINTS, height, width);
+        run.admit(given, &admitted);
+        let coded = run.forward(&admitted);
+        let reflection = match self.cells {
+            Cells::Float => coded.slot.buffer.clone(),
+            Cells::Half => {
+                let wide = gpu.own_buffer(&wgpu::BufferDescriptor {
+                    label: Some("dereflect reflection"),
+                    size: (coded.len() * 4) as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                run.widen(&coded, &wide);
+                wide
+            }
         };
-        let coded = run.forward(&given);
         run.flush();
-        coded.slot.buffer.clone()
+        reflection
     }
 
     fn weight(&self, name: &str) -> Weight {
@@ -964,7 +1031,8 @@ fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
         if let Some(tried) = held.built {
             return tried;
         }
-        let made = Remover::built(gpu, held.unpacked.take()?)
+        let cells = Cells::of(gpu.describing().features());
+        let made = Remover::built(gpu, held.unpacked.take()?, cells)
             .map_err(|why| {
                 crate::warn(&format!(
                     "rawshim: the reflection remover did not build: {why}"
@@ -991,14 +1059,12 @@ type Free = Rc<RefCell<Vec<Buffer>>>;
 /// A device buffer one run hands out, back to the run's free list once nothing reads it.
 struct Slot {
     buffer: Buffer,
-    free: Option<Free>,
+    free: Free,
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        if let Some(free) = &self.free {
-            free.borrow_mut().push(self.buffer.clone());
-        }
+        self.free.borrow_mut().push(self.buffer.clone());
     }
 }
 
@@ -1037,9 +1103,20 @@ impl Planes {
 struct Op {
     kernel: &'static str,
     params: Params,
-    /// `src`, `weights`, `dst`, `src2`.
-    bound: [Buffer; 4],
+    /// `src`, `weights`, `dst`, `src2`, `wide_src`, `wide_dst`.
+    bound: [Buffer; 6],
     groups: (u32, u32),
+}
+
+/// Every binding of a dispatch, `Run::idle`'s placeholders where it uses none.
+#[derive(Clone, Copy)]
+struct Bound<'b> {
+    src: &'b Buffer,
+    weights: &'b Buffer,
+    dst: &'b Buffer,
+    src2: &'b Buffer,
+    wide_src: &'b Buffer,
+    wide_dst: &'b Buffer,
 }
 
 /// What a dispatch reads and writes.
@@ -1207,7 +1284,7 @@ impl<'a> Run<'a> {
         let tokens = 1 + rows * columns;
         let positions = self.gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("dereflect positions"),
-            contents: bytemuck::cast_slice(&remover.positions(rows, columns)),
+            contents: &remover.cells.encoded(&remover.positions(rows, columns)),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let mut x = self.tensor(DINO_WIDTH, 1, tokens);
@@ -1350,7 +1427,9 @@ impl<'a> Run<'a> {
         let n = ll.plane();
         let chunks = n.div_ceil(SCAN_CHUNK);
         let scanners = 4 * inner;
-        let ys = self.tensor_of(
+        // `float` in any cells from the scan to `out_norm`: a state sums thousands of steps, and
+        // `y` reaches millions on real frames, past `half`'s 65504.
+        let ys = self.wide(
             4 * inner * n + chunks * scanners * 2 * STATE,
             4 * inner,
             ll.h,
@@ -1373,37 +1452,75 @@ impl<'a> Run<'a> {
             extra3: inner as u32,
             ..Default::default()
         };
-        let bind = || Bind {
-            src: Some(&ll),
-            src2: Some(x_dbl.buffer()),
-            weights: Set::Net,
-            dst: &ys,
+        let scanned = Bound {
+            src: ll.buffer(),
+            src2: x_dbl.buffer(),
+            wide_dst: ys.buffer(),
+            ..self.idle()
         };
-        self.threads("scan_ends", scan, bind(), scanners * chunks);
-        self.threads("scan_carry", scan, bind(), scanners);
-        self.threads("scan_out", scan, bind(), scanners * chunks);
-        drop(x_dbl);
-        self.threads(
+        self.threads_bound("scan_ends", scan, scanned, scanners * chunks);
+        self.threads_bound("scan_carry", scan, scanned, scanners);
+        self.threads_bound("scan_out", scan, scanned, scanners * chunks);
+        let summed = self.wide(inner * n, inner, ll.h, ll.w);
+        drop((x_dbl, ll));
+        self.threads_bound(
             "sum4",
             Params {
                 src_at: ys.at as u32,
-                dst_at: ll.at as u32,
+                dst_at: summed.at as u32,
                 ..Default::default()
             },
-            Bind {
-                src: Some(&ys),
-                src2: None,
-                weights: Set::Net,
-                dst: &ll,
+            Bound {
+                wide_src: ys.buffer(),
+                wide_dst: summed.buffer(),
+                ..self.idle()
             },
-            ll.len(),
+            summed.len(),
         );
         drop(ys);
-        drop(ll);
-
-        let y = self.idwt(&bands, inner);
-        drop(bands);
-        let y = self.layernorm(&y, &format!("{sa}.out_norm"), LIGHTRR_EPS);
+        let inverse = self.wide(inner * h * w, inner, h, w);
+        self.threads_bound(
+            "idwt",
+            Params {
+                width: summed.w as u32,
+                height: summed.h as u32,
+                out_channels: inner as u32,
+                flags: WIDE,
+                src_at: bands.at as u32,
+                src2_at: summed.at as u32,
+                dst_at: inverse.at as u32,
+                ..Default::default()
+            },
+            Bound {
+                src: bands.buffer(),
+                wide_src: summed.buffer(),
+                wide_dst: inverse.buffer(),
+                ..self.idle()
+            },
+            summed.len(),
+        );
+        drop((bands, summed));
+        let y = self.tensor(inner, h, w);
+        self.threads_bound(
+            "layernorm",
+            Params {
+                in_channels: inner as u32,
+                flags: WIDE,
+                src_at: inverse.at as u32,
+                dst_at: y.at as u32,
+                weight_at: remover.weight(&format!("{sa}.out_norm.weight")).at,
+                bias_at: remover.weight(&format!("{sa}.out_norm.bias")).at,
+                eps: LIGHTRR_EPS,
+                ..Default::default()
+            },
+            Bound {
+                dst: y.buffer(),
+                wide_src: inverse.buffer(),
+                ..self.idle()
+            },
+            inverse.plane(),
+        );
+        drop(inverse);
         let gated = self.tensor(inner, h, w);
         self.threads(
             "gate",
@@ -1821,16 +1938,19 @@ impl<'a> Run<'a> {
     }
 
     fn tensor(&self, c: usize, h: usize, w: usize) -> Planes {
-        self.tensor_of(c * h * w, c, h, w)
+        self.planes(c * h * w * self.remover.cells.bytes(), c, h, w)
     }
 
-    /// A tensor of `c` planes in a buffer with room for `floats`.
-    fn tensor_of(&self, floats: usize, c: usize, h: usize, w: usize) -> Planes {
-        let size = (floats * 4).max(16) as u64;
+    fn wide(&self, floats: usize, c: usize, h: usize, w: usize) -> Planes {
+        self.planes(floats * 4, c, h, w)
+    }
+
+    fn planes(&self, bytes: usize, c: usize, h: usize, w: usize) -> Planes {
         debug_assert!(
-            floats <= LARGEST_TENSOR,
-            "{floats} floats, past LARGEST_TENSOR"
+            bytes <= LARGEST_TENSOR * 4,
+            "{bytes} bytes, past LARGEST_TENSOR"
         );
+        let size = bytes.next_multiple_of(4).max(16) as u64;
         let mut free = self.free.borrow_mut();
         let fit = free
             .iter()
@@ -1850,7 +1970,7 @@ impl<'a> Run<'a> {
         Planes {
             slot: Rc::new(Slot {
                 buffer,
-                free: Some(self.free.clone()),
+                free: self.free.clone(),
             }),
             at: 0,
             c,
@@ -1860,38 +1980,105 @@ impl<'a> Run<'a> {
     }
 
     fn threads(&self, kernel: &'static str, params: Params, bind: Bind<'_>, threads: usize) {
+        self.threads_bound(kernel, params, self.bound(bind), threads);
+    }
+
+    fn threads_bound(
+        &self,
+        kernel: &'static str,
+        params: Params,
+        bound: Bound<'_>,
+        threads: usize,
+    ) {
         assert!(threads > 0, "{kernel} has no work");
         let groups = threads.div_ceil(THREADS);
-        let wide = groups.min(65535);
-        self.groups(
+        let across = groups.min(65535);
+        self.push(
             kernel,
             Params {
-                span: (wide * THREADS) as u32,
+                span: (across * THREADS) as u32,
                 count: threads as u32,
                 ..params
             },
-            bind,
-            (wide as u32, groups.div_ceil(wide) as u32),
+            bound,
+            (across as u32, groups.div_ceil(across) as u32),
         );
     }
 
     fn groups(&self, kernel: &'static str, params: Params, bind: Bind<'_>, groups: (u32, u32)) {
+        self.push(kernel, params, self.bound(bind), groups);
+    }
+
+    fn bound<'b>(&'b self, bind: Bind<'b>) -> Bound<'b> {
         let remover = self.remover;
-        let weights = match bind.weights {
-            Set::Net => &remover.net,
-            Set::Dino => &remover.dino,
-        };
+        Bound {
+            src: bind.src.map_or(&remover.empty, Planes::buffer),
+            weights: match bind.weights {
+                Set::Net => &remover.net,
+                Set::Dino => &remover.dino,
+            },
+            dst: bind.dst.buffer(),
+            src2: bind.src2.unwrap_or(&remover.empty),
+            ..self.idle()
+        }
+    }
+
+    /// Placeholders in every binding, each read one `empty` and each written one `sink`.
+    fn idle(&self) -> Bound<'_> {
+        let remover = self.remover;
+        Bound {
+            src: &remover.empty,
+            weights: &remover.net,
+            dst: &remover.sink,
+            src2: &remover.empty,
+            wide_src: &remover.empty,
+            wide_dst: &remover.sink,
+        }
+    }
+
+    fn push(&self, kernel: &'static str, params: Params, bound: Bound<'_>, groups: (u32, u32)) {
+        let Bound {
+            src,
+            weights,
+            dst,
+            src2,
+            wide_src,
+            wide_dst,
+        } = bound;
         self.ops.borrow_mut().push(Op {
             kernel,
             params,
-            bound: [
-                bind.src.map_or(&remover.empty, Planes::buffer).clone(),
-                weights.clone(),
-                bind.dst.buffer().clone(),
-                bind.src2.unwrap_or(&remover.empty).clone(),
-            ],
+            bound: [src, weights, dst, src2, wide_src, wide_dst].map(Buffer::clone),
             groups,
         });
+    }
+
+    /// The frame's `float` planes in `wide` into this run's cells, as bfloat16 (`admit`).
+    fn admit(&self, wide: &Buffer, into: &Planes) {
+        let params = Params {
+            dst_at: into.at as u32,
+            ..Default::default()
+        };
+        let bound = Bound {
+            dst: into.buffer(),
+            wide_src: wide,
+            ..self.idle()
+        };
+        self.threads_bound("admit", params, bound, into.len());
+    }
+
+    /// `from` out to `float` planes in `wide`.
+    fn widen(&self, from: &Planes, wide: &Buffer) {
+        let params = Params {
+            src_at: from.at as u32,
+            ..Default::default()
+        };
+        let bound = Bound {
+            src: from.buffer(),
+            wide_dst: wide,
+            ..self.idle()
+        };
+        self.threads_bound("widen", params, bound, from.len());
     }
 
     /// Every op recorded since the last, in one compute pass of one submission.
@@ -1930,6 +2117,8 @@ impl<'a> Run<'a> {
                         entry(1, &op.bound[1]),
                         entry(2, &op.bound[2]),
                         entry(3, &op.bound[3]),
+                        entry(4, &op.bound[4]),
+                        entry(5, &op.bound[5]),
                         wgpu::BindGroupEntry {
                             binding: 20,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {

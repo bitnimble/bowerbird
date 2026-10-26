@@ -9,9 +9,12 @@
 //! `net` reads planar light coded as the network takes it then the brush's planes, sides multiples
 //! of 16, and writes the coded reflection it predicts. `frame` reads a planar linear frame and the
 //! document's strokes, and writes the reflection the stage takes out of it, linear, at full size.
+//! `DEREFLECT_CELLS=half` holds the network in `half` cells (`shader-f16`).
 
-use rawshim::dereflect::{HINTS, MULTIPLE, Remover, Stroke};
+use rawshim::dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
 use rawshim::gpu::{Buffer, Gpu};
+
+const TIMED_RUNS: usize = 5;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,16 +46,28 @@ fn net(args: &[String]) {
         contents: &bytes,
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let started = std::time::Instant::now();
-    let coded = remover.predict(gpu, &given, w, h);
-    let predicted = read(gpu, &coded, 3 * w * h * 4);
-    eprintln!("{w}x{h} in {:?}", started.elapsed());
+    let mut times = Vec::new();
+    let mut predicted = Vec::new();
+    for _ in 0..TIMED_RUNS + 1 {
+        let started = std::time::Instant::now();
+        let coded = remover.predict(gpu, &given, w, h);
+        predicted = read(gpu, &coded, 3 * w * h * 4);
+        times.push(started.elapsed());
+    }
+    let first = times.remove(0);
+    times.sort();
+    eprintln!(
+        "{w}x{h}: first {first:?}, median of {TIMED_RUNS} after {:?}",
+        times[TIMED_RUNS / 2]
+    );
     std::fs::write(out, predicted).expect("wrote the reflection");
 }
 
 fn frame(args: &[String]) {
     let [bundle, frame, width, height, strokes, out] = args else {
-        panic!("dereflect frame <bundle-dir> <frame.f32> <width> <height> <strokes.json> <out.f32>");
+        panic!(
+            "dereflect frame <bundle-dir> <frame.f32> <width> <height> <strokes.json> <out.f32>"
+        );
     };
     let (w, h) = size(width, height);
     let planar: Vec<f32> = std::fs::read(frame)
@@ -103,7 +118,13 @@ fn opened(bundle: &str) -> (&'static Gpu, Remover) {
     };
     let manifest = String::from_utf8(read("weights.json")).expect("weights.json is text");
     let gpu = rawshim::gpu::device().expect("an adapter");
-    let remover = Remover::new(gpu, &manifest, &read("weights.bin")).expect("the bundle loads");
+    let cells = match std::env::var("DEREFLECT_CELLS").as_deref() {
+        Ok("half") => Cells::Half,
+        Ok("float") | Err(_) => Cells::Float,
+        Ok(other) => panic!("DEREFLECT_CELLS is half or float, not {other}"),
+    };
+    let remover =
+        Remover::new(gpu, &manifest, &read("weights.bin"), cells).expect("the bundle loads");
     (gpu, remover)
 }
 

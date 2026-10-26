@@ -16,14 +16,19 @@ def export(net: torch.nn.Module, plan: dict[str, object], out: Path) -> None:
     export_state(net.state_dict(), plan, out)
 
 
-def export_state(state: dict[str, torch.Tensor], plan: dict[str, object], out: Path) -> None:
+STORED = {"f32": "<f4", "f16": "<f2"}
+
+
+def export_state(state: dict[str, torch.Tensor], plan: dict[str, object], out: Path, stored: str = "f32") -> None:
     tensors, blobs, offset = [], [], 0
     for name, tensor in state.items():
-        values = tensor.detach().float().cpu().numpy().astype("<f4")
+        values = tensor.detach().float().cpu().numpy().astype(STORED[stored])
+        if not np.isfinite(values).all():
+            raise SystemExit(f"{name} does not fit {stored}")
         tensors.append({"name": name, "shape": list(values.shape), "offset": offset})
         blobs.append(values.ravel())
         offset += values.size
-    manifest = {**plan, "floats": offset, "tensors": tensors}
+    manifest = {**plan, **({"stored": stored} if stored != "f32" else {}), "floats": offset, "tensors": tensors}
     write_atomic(out / "weights.bin", lambda f: f.write(np.concatenate(blobs).tobytes()))
     write_atomic(out / "weights.json", lambda f: f.write((json.dumps(manifest, indent=2) + "\n").encode()))
 
@@ -40,7 +45,8 @@ def load_exported(folder: Path) -> Exported:
     """What `export` wrote to `folder`, ready for `load_state_dict`."""
     plan = json.loads((folder / "weights.json").read_text())
     blob = (folder / "weights.bin").read_bytes()
-    floats = np.frombuffer(blob, "<f4").copy()
+    # Popped, since the state is widened here: exporting it again writes what that export says.
+    floats = np.frombuffer(blob, STORED[plan.pop("stored", "f32")]).astype(np.float32)
     if floats.size != plan["floats"]:
         raise SystemExit(f"{folder} holds {floats.size} floats where its manifest has {plan['floats']}")
     state = {

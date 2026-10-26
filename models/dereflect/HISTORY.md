@@ -133,6 +133,22 @@ Every step is a fine-tune of the one before.
 - Sharp dashboard reflections in dashcam video (out of scope for the still model).
 - A small blue lean on grey veils, which frame is affected being learned per lineage.
 
+## Precision (26 October 2026)
+
+Every run trained under bf16 autocast, and every preview judged by eye ran under it too. The
+first device port computed in full precision and removed far more on the zoo-glass photos,
+blurred foreground people included: 19.6 dB from the bf16 output on the worst photo. Running bf16
+inside one component at a time found it all in the tokenizers' input. Autocast rounds the picture
+to bf16 before the first convolution, so the network only ever saw 8 significant bits; given a
+continuous picture it behaves differently. `LightRR.forward` now rounds its input to bf16 in every
+precision, and the device does the same in `admit`. The next model should either keep that
+rounding or train its input path in full precision.
+
+The fp16 port found another limit. The scan's output reaches millions before
+`out_norm` brings it back to unit scale, past fp16's 65504, so the scan, `sum4`, `idwt` and the
+`out_norm` input stay fp32 on the device whatever the cells. Plain fp16 autocast in torch gives NaN
+on every photo for the same reason.
+
 ## Ideas not yet tried
 
 - EXIF conditioning: scene radiance and aperture as network inputs.

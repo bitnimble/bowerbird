@@ -395,7 +395,7 @@ files at a commit, and a commit is one update for every model the app uses. Each
 files with `ModelsService`, with how the renderer takes them and what renders again when they
 change: the upscaler and the reflection remover (§10.9.4). A build carries the models
 `bundled_models.json` pins, so the "Best" denoiser works offline and on first launch; the
-reflection remover's 154 MB is in no build, so it is present only once downloaded, and the page
+reflection remover's 77 MB is in no build, so it is present only once downloaded, and the page
 reads `current.files` to know. `ModelsService` checks `main`
 beside the app's own check (§23.5, same ten-minute cache, same quiet failure) and offers a commit
 that is newer than the models in use and changed one of their files. A commit that only adds a

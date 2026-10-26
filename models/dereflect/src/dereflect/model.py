@@ -245,6 +245,9 @@ class LightRR(nn.Module):
         nn.init.constant_(self.locate.bias, OPEN_GATE)
 
     def forward(self, given: torch.Tensor) -> torch.Tensor:
+        # Trained under bf16 autocast, which rounds this; given full precision, the network takes
+        # blurred foreground out as reflection.
+        given = given.to(torch.bfloat16).to(given.dtype)
         image, hints = given[:, :3], given[:, 3:]
         x = self.img_tokenizer(image)
         if hints.shape[1]:

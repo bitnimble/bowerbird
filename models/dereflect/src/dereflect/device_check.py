@@ -1,8 +1,8 @@
 """The device's reflection remover (`native/rawshim/src/dereflect.rs`, `slang/dereflect.slang`,
 `slang/dereflect_frame.slang`) held against torch on one cached frame, brushed: the network alone,
-then the whole stage over a frame twice the network's size.
+then the whole stage over a frame twice the network's size, in `float` and `half` cells.
 
-    uv run python -m dereflect.device_check <record stem> <bundle dir> [--cache dir]
+    uv run python -m dereflect.device_check <record stem> <bundle dir> [--cache dir] [--cells float half]
 
 The bundle is what `dereflect.bundle` writes.
 """
@@ -43,33 +43,41 @@ def main() -> None:
     parser.add_argument("stem", help="a record under the frame cache")
     parser.add_argument("weights", type=Path)
     parser.add_argument("--cache", type=Path, default=DEFAULT_FRAMES)
+    parser.add_argument(
+        "--cells", nargs="+", choices=["float", "half"], default=["float", "half"], help="half needs shader-f16"
+    )
     args = parser.parse_args()
     record_path = args.cache / f"{args.stem}.json"
     record = json.loads(record_path.read_text())
     frame = torch.from_numpy(frame_of(record_path, record).astype(np.float32))
     bundle = args.weights.resolve()
     net = load(bundle).cuda().eval()
-    failed = [name for name, check in (("network", network), ("stage", stage)) if not check(net, frame, record, bundle)]
+    failed = [
+        f"{name} in {cells}"
+        for cells in args.cells
+        for name, check in (("network", network), ("stage", stage))
+        if not check(net, frame, record, bundle, cells)
+    ]
     if failed:
         raise SystemExit(f"the device disagrees with torch: {', '.join(failed)}")
 
 
-def network(net: LightRR, frame: torch.Tensor, record: dict, bundle: Path) -> bool:
+def network(net: LightRR, frame: torch.Tensor, record: dict, bundle: Path, cells: str) -> bool:
     height, width = (side // MULTIPLE * MULTIPLE for side in frame.shape[1:])
     coded = torch.cat([stabilise(frame[:, :height, :width] / record["white"]), brushed(height, width)])
     with torch.no_grad():
         reference = net(coded[None].cuda())[0].cpu()
-    device = run("net", bundle, coded, width, height, reference.shape)
+    device = run("net", bundle, cells, coded, width, height, reference.shape)
     error = device - reference
     agreement = psnr(error.pow(2).mean())
     print(
-        f"network, {width}x{height}: max |error| {float(error.abs().max()):.2e} of a reflection up to"
+        f"network in {cells}, {width}x{height}: max |error| {float(error.abs().max()):.2e} of a reflection up to"
         f" {float(reference.abs().max()):.3f}, PSNR {agreement:.1f} dB"
     )
     return agreement >= AGREEMENT_DB
 
 
-def stage(net: LightRR, frame: torch.Tensor, record: dict, bundle: Path) -> bool:
+def stage(net: LightRR, frame: torch.Tensor, record: dict, bundle: Path, cells: str) -> bool:
     """`remove.py`'s stage, the network in full precision, over the frame enlarged twice so the
     device shrinks it and enlarges the reflection back. Each pixel repeated, so the shrink gives
     the frame back: a blurred frame reads as a reflection everywhere, where the network is unstable."""
@@ -89,11 +97,11 @@ def stage(net: LightRR, frame: torch.Tensor, record: dict, bundle: Path) -> bool
     with tempfile.TemporaryDirectory() as scratch:
         strokes = Path(scratch) / "strokes.json"
         strokes.write_text(json.dumps(STROKES))
-        device = run("frame", bundle, full, width, height, reference.shape, extra=[str(strokes)])
+        device = run("frame", bundle, cells, full, width, height, reference.shape, extra=[str(strokes)])
     error = (device - reference) / light
     agreement = psnr(error.pow(2).mean())
     print(
-        f"stage, {width}x{height}: max |error| {float(error.abs().max()):.2e} of white, a reflection up to"
+        f"stage in {cells}, {width}x{height}: max |error| {float(error.abs().max()):.2e} of white, a reflection up to"
         f" {float((reference / light).max()):.3f}, PSNR {agreement:.1f} dB"
     )
     return agreement >= STAGE_AGREEMENT_DB
@@ -120,14 +128,16 @@ def painted(strokes: list[dict], plane: tuple[int, int], columns: int, long: int
     return hints
 
 
-def run(mode: str, bundle: Path, given: torch.Tensor, width: int, height: int, shape, extra: list[str] = []) -> torch.Tensor:
+def run(
+    mode: str, bundle: Path, cells: str, given: torch.Tensor, width: int, height: int, shape, extra: list[str] = []
+) -> torch.Tensor:
     # The device's own allocations come from the same card.
     torch.cuda.empty_cache()
     with tempfile.TemporaryDirectory() as scratch:
         source, answer = Path(scratch) / "in.f32", Path(scratch) / "out.f32"
         source.write_bytes(given.contiguous().numpy().astype("<f4").tobytes())
         command = [str(EXAMPLE), mode, str(bundle), str(source), str(width), str(height), *extra, str(answer)]
-        subprocess.run(command, check=True, env=example_environment())
+        subprocess.run(command, check=True, env=example_environment() | {"DEREFLECT_CELLS": cells})
         return torch.from_numpy(np.fromfile(answer, "<f4").reshape(shape))
 
 
