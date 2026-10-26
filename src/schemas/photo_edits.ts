@@ -139,7 +139,6 @@ export const ReflectionStrokeSchema: z.ZodType<ReflectionStroke> = z.object({
   radius: z.number().int().min(1).max(STORED_LONG),
   points: z.array(StoredPointSchema).min(1).max(MOST_STROKE_POINTS),
 });
-export type { ReflectionStroke };
 
 export const COLOUR_NODES_MAX = 32;
 const HueSchema = z.number().min(0).max(360);

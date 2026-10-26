@@ -385,18 +385,10 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
     (!next.dust.enabled ||
       (at.dust.sensitivity === next.dust.sensitivity &&
         at.dust.intensity === next.dust.intensity)) &&
-    sameReflectionInference(at, next) &&
-    (!next.reflection.enabled || at.reflection.strength === next.reflection.strength)
-  );
-}
-
-/** Whether the reflection network would see the same input: its strength only blends its answer. */
-export function sameReflectionInference(at: LocalPrepare | null, next: LocalPrepare): boolean {
-  return (
-    at != null &&
     at.reflection.enabled === next.reflection.enabled &&
     (!next.reflection.enabled ||
-      JSON.stringify(at.reflection.strokes) === JSON.stringify(next.reflection.strokes))
+      (at.reflection.strength === next.reflection.strength &&
+        JSON.stringify(at.reflection.strokes) === JSON.stringify(next.reflection.strokes)))
   );
 }
 

@@ -22,9 +22,6 @@ WHITE_QUANTILE = 0.99
 WINDOW = 256
 SHARP_QUANTILE = 0.98
 SELECTION = f"library decode, edge {EDGE}, white {WHITE_QUANTILE}, sharpness {SHARP_QUANTILE} of {WINDOW}"
-VIVID_QUANTILE = 0.99
-VIVID_POOL = 8
-VIVID_MEASURE = f"{SELECTION}; spread quantile {VIVID_QUANTILE} over {VIVID_POOL} pixels"
 
 
 def prepare(raws: list[Path], cache: Path, workers: int) -> None:
@@ -33,26 +30,10 @@ def prepare(raws: list[Path], cache: Path, workers: int) -> None:
     pending = [(p, cache) for p in present if stale(cache / f"{key(p)}.json", SELECTION)]
     print(f"frames: {len(raws)} RAW files, {len(raws) - len(present)} missing, {len(pending)} to cache", flush=True)
     each_with_pmrid(prepare_one, pending, workers, cache / ".scratch", "frames")
-    unexposed = [(p, cache) for p in present if lacks_exposure(cache / f"{key(p)}.json")]
-    each_with_pmrid(expose_one, unexposed, workers, cache / ".scratch", "exposures")
 
 
 def stale(record_path: Path, selection: str) -> bool:
     return not record_path.exists() or json.loads(record_path.read_text()).get("selection") != selection
-
-
-def lacks_exposure(record_path: Path) -> bool:
-    record = json.loads(record_path.read_text()) if record_path.exists() else {}
-    return "white" in record and "exposure" not in record
-
-
-def expose_one(job: tuple[Path, Path]) -> str:
-    path, cache = job
-    record_path = cache / f"{key(path)}.json"
-    record = json.loads(record_path.read_text())
-    record["exposure"] = pmrid().header(path)
-    write_atomic(record_path, lambda f: f.write(json.dumps(record).encode()))
-    return "known" if radiance(record) is not None else "unknown"
 
 
 def radiance(record: dict) -> float | None:
@@ -141,28 +122,6 @@ def records(cache: Path, raws: list[Path], validation: bool) -> list[tuple[Path,
         if not stale(record_path, SELECTION) and "skipped" not in record and held_out(record["source"]) == validation:
             found.append((record_path, record))
     return found
-
-
-def colourfulness(items: list[tuple[Path, dict]]) -> list[float]:
-    """Each cached frame's `VIVID_QUANTILE` of the spread between its brightest and darkest channel, in
-    light normalised to its white and averaged over `VIVID_POOL` pixels square: high where something
-    bright is strongly coloured. Kept beside the frames once measured."""
-    if not items:
-        return []
-    sidecar = items[0][0].parent / "colourfulness.json"
-    saved = json.loads(sidecar.read_text()) if sidecar.exists() else {}
-    known = saved.get("scores", {}) if saved.get("measure") == VIVID_MEASURE else {}
-    missing = [(path, record) for path, record in items if path.stem not in known]
-    for done, (path, record) in enumerate(missing, 1):
-        light = torch.from_numpy(frame_of(path, record).astype(np.float32))
-        # Averaged first: a dark frame's chroma noise, scaled up to its white, would outscore real colour.
-        rgb = F.avg_pool2d(light[None] / record["white"], VIVID_POOL)[0]
-        known[path.stem] = float((rgb.amax(0) - rgb.amin(0)).flatten().quantile(VIVID_QUANTILE))
-        if done % 1000 == 0 or done == len(missing):
-            print(f"colourfulness: {done}/{len(missing)}", flush=True)
-            saved = {"measure": VIVID_MEASURE, "scores": known}
-            write_atomic(sidecar, lambda f: f.write(json.dumps(saved).encode()))
-    return [known[path.stem] for path, _ in items]
 
 
 def frame_of(record_path: Path, record: dict) -> np.ndarray:

@@ -1,6 +1,7 @@
 // The reflection brush's actions, against a store and a module that only record what they were told.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { EditState, ReflectionStroke } from '../../../../../../src/schemas/photo_edits';
+import type { EditState } from '../../../../../../src/schemas/photo_edits';
+import type { ReflectionStroke } from '../../../../../../src/schemas/stored_grid';
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { prepareOf } from '../../local_decode/open_photo';
 import { openEditor, type Editor } from '../../stage/tests/raw_edit_harness';

@@ -74,10 +74,10 @@ class Pmrid:
             env=example_environment(),
         )
 
-    def open(self, path: Path, noisy: bool = False, dusty: bool = False) -> Opened:
+    def open(self, path: Path, noisy: bool = False) -> Opened:
         """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer. A `noisy`
-        mosaic skips the denoise, a `dusty` one the dust removal."""
-        reply = self.ask({"open": str(path), "out": str(self.exchange), "noisy": noisy, "dusty": dusty})
+        mosaic skips the denoise."""
+        reply = self.ask({"open": str(path), "out": str(self.exchange), "noisy": noisy})
         mosaic = take(self.exchange, reply["height"], reply["width"])
         red_y, red_x = divmod(reply["cfa"].index(0), 2)
         height, width = ((n - o) // 2 * 2 for n, o in zip(mosaic.shape, (red_y, red_x)))
@@ -106,20 +106,18 @@ class Pmrid:
         taken: np.ndarray | None = None,
         gains: list[float] | None = None,
         alone: bool = False,
-        unedited_levels: bool = False,
     ) -> np.ndarray:
         """The photo as the library renders it unedited, `edge` on its long side, as (N, H, W, 3) 16-bit
         PQ Rec.2020 codes if `pq`, else 8-bit sRGB: once as it is, or with `taken`, (H, W, 3) light in
         `decode(path, floor)`'s units, once per gain, that much taken out of it, never below black, or
-        with `alone` graded by itself, every image under the photo's own grade. `unedited_levels` keeps
-        the unedited photo's levels, so light added to it shows without the rest of the photo moving."""
+        with `alone` graded by itself, every image under the photo's own grade."""
         request = {"grade": str(path), "floor": floor, "out": str(self.exchange), "output": "pq" if pq else "srgb"}
         if edge is not None:
             request["edge"] = edge
         given = self.exchange.with_suffix(".taken")
         if taken is not None:
             np.ascontiguousarray(taken, "<f4").tofile(given)
-            request |= {"taken": str(given), "gains": gains or [1.0], "alone": alone, "unedited_levels": unedited_levels}
+            request |= {"taken": str(given), "gains": gains or [1.0], "alone": alone}
         reply = self.ask(request)
         given.unlink(missing_ok=True)
         codes = np.fromfile(self.exchange, "<u2").reshape(reply["count"], reply["height"], reply["width"], 3)

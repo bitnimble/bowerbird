@@ -6,9 +6,9 @@
 //! little-endian `f32`, row-major, since a 61MP frame is a quarter of a gigabyte.
 //!
 //! ```text
-//! {"open": "<raw>", "out": "<file>", "noisy": bool?, "dusty": bool?}
-//!   writes the picture area, conditioned and, unless `dusty`, dust-removed and, unless `noisy`,
-//!   denoised, cropped to even sides
+//! {"open": "<raw>", "out": "<file>", "noisy": bool?}
+//!   writes the picture area, conditioned, dust-removed and, unless `noisy`, denoised, cropped to
+//!   even sides
 //!   -> {"width": w, "height": h, "cfa": [4 colours from its top-left], "gains": [r, g, b], "fit": NoiseFit|null}
 //! {"decode": "<raw>", "out": "<file>", "floor": long edge}
 //!   decodes the RAW as the library does an unedited photo for a rendition `floor` on its long edge:
@@ -72,8 +72,6 @@ enum Request {
         out: String,
         #[serde(default)]
         noisy: bool,
-        #[serde(default)]
-        dusty: bool,
     },
     Denoise(Denoise),
     Sharpen(Sharpen),
@@ -113,9 +111,6 @@ struct Grade {
     gains: Option<Vec<f32>>,
     #[serde(default)]
     alone: bool,
-    /// Grade under the unedited photo's levels rather than the edited one's.
-    #[serde(default)]
-    unedited_levels: bool,
 }
 
 #[derive(serde::Deserialize, Clone, Copy)]
@@ -207,13 +202,8 @@ fn main() {
     for line in std::io::stdin().lock().lines() {
         let line = line.expect("stdin");
         let reply = match serde_json::from_str::<Request>(&line) {
-            Ok(Request::Open {
-                open,
-                out,
-                noisy,
-                dusty,
-            }) => catch_unwind(AssertUnwindSafe(|| {
-                opened(gpu, kernels, network, &open, &out, noisy, dusty)
+            Ok(Request::Open { open, out, noisy }) => catch_unwind(AssertUnwindSafe(|| {
+                opened(gpu, kernels, network, &open, &out, noisy)
             }))
             .unwrap_or_else(|_| Err(Failed::Error(panicked(&format!("opening {open}"))))),
             Ok(Request::Denoise(request)) => {
@@ -293,7 +283,6 @@ fn opened(
     path: &str,
     out: &str,
     noisy: bool,
-    dusty: bool,
 ) -> Result<serde_json::Value, Failed> {
     let bytes = std::fs::read(path)
         .map_err(|why| Failed::Error(format!("could not read {path}: {why}")))?;
@@ -321,10 +310,8 @@ fn opened(
             "{path}'s picture area falls outside its mosaic"
         )));
     }
-    if !dusty {
-        let dust = rawshim::dust::Settings::default().wanted(None);
-        pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
-    }
+    let dust = rawshim::dust::Settings::default().wanted(None);
+    pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
     let usable = fit.usable();
     if usable && !noisy {
@@ -421,15 +408,17 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         Coding::Pq => rawshim::gpu::Output::Pq,
         Coding::Srgb => rawshim::gpu::Output::Srgb,
     };
-    let shipped = support::Open::shipped(&request.grade, request.floor);
     let unopened = || Failed::Unreadable(format!("{} did not open", request.grade));
-    let unedited = match taken {
-        Some(_) => Some(shipped.run().ok_or_else(unopened)?.measured),
+    let matched = match taken {
+        Some(_) => {
+            support::Open::shipped(&request.grade, request.floor)
+                .run()
+                .ok_or_else(unopened)?
+                .measured
+                .matched
+        }
         None => None,
     };
-    let matched = unedited
-        .as_ref()
-        .and_then(|measured| measured.matched.clone());
     let mut bytes = Vec::new();
     let (mut width, mut height) = (0, 0);
     for &gain in &gains {
@@ -458,9 +447,6 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
                 request.taken.as_deref().unwrap_or_default(),
                 taken.as_ref().map_or(0, Vec::len)
             )));
-        }
-        if let (Some(unedited), true) = (&unedited, request.unedited_levels) {
-            opened.measured.levels = unedited.levels.clone();
         }
         if let (Some(taken), true) = (&taken, request.alone) {
             // In place of the opened photo, under the grade the photo measured.

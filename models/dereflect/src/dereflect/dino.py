@@ -3,8 +3,6 @@ patch of a picture shows. The reflection remover reads it, frozen, to know what 
 which is what tells a reflection from the scene once neither is blurred. Parameter names are the
 released checkpoints', which Meta publishes under Apache 2.0."""
 
-import copy
-
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -12,18 +10,14 @@ from torch import nn
 from training.crops import DEFAULT_CACHE
 from training.files import fetched
 
-BACKBONES = {"vits14": (384, 12, 6), "vitb14": (768, 12, 12), "vitl14": (1024, 24, 16)}
-"""Width, depth and heads of each released size; any of them can describe a picture for the remover."""
+BACKBONES = {"vits14": (384, 12, 6)}
+"""Width, depth and heads of each released size the remover reads."""
 PATCH = 14
 TRAINED_GRID = 37
 """Patches a side of the positions were learned for: 518 pixels."""
 POSITION_OFFSET = 0.1
 SOURCE = "https://dl.fbaipublicfiles.com/dinov2/dinov2_{name}/dinov2_{name}_pretrain.pth"
-HASHES = {
-    "vits14": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
-    "vitb14": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
-    "vitl14": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428",
-}
+HASHES = {"vits14": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9"}
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
 
@@ -99,18 +93,15 @@ class Dino(nn.Module):
     def forward(self, coded: torch.Tensor, rows: int, columns: int) -> torch.Tensor:
         """(B, 3, H, W) light coded by `stabilise`, to (B, width, `rows`, `columns`): the description
         of each patch, the picture resized to fit that grid exactly."""
-        return grid(self.norm(self.trunk(coded, rows, columns, len(self.blocks))), rows, columns)
-
-    def trunk(self, coded: torch.Tensor, rows: int, columns: int, depth: int) -> torch.Tensor:
-        """`forward`'s tokens after its first `depth` blocks, (B, 1 + rows * columns, width)."""
         given = F.interpolate(coded, size=(rows * PATCH, columns * PATCH), mode="bilinear", antialias=True)
         mean, std = (torch.tensor(v, device=coded.device, dtype=coded.dtype)[:, None, None] for v in (MEAN, STD))
         # Coded light is near enough sRGB's curve for the features, which were trained on sRGB.
         x = self.patch_embed((given.clamp(0, 1) - mean) / std)
         x = torch.cat([self.cls_token.expand(x.shape[0], -1, -1), x], 1) + self.positions(rows, columns)
-        for block in self.blocks[:depth]:
+        for block in self.blocks:
             x = block(x)
-        return x
+        x = self.norm(x)
+        return x[:, 1:].transpose(1, 2).reshape(x.shape[0], self.width, rows, columns)
 
     def positions(self, rows: int, columns: int) -> torch.Tensor:
         """As Meta's `interpolate_pos_encoding`, its scale offset included, which the features were
@@ -121,26 +112,6 @@ class Dino(nn.Module):
         scale = ((rows + POSITION_OFFSET) / TRAINED_GRID, (columns + POSITION_OFFSET) / TRAINED_GRID)
         grid = F.interpolate(learned, scale_factor=scale, mode="bicubic")
         return torch.cat([self.pos_embed[:, :1], grid.flatten(2).transpose(1, 2)], 1)
-
-
-class Tail(nn.Module):
-    """A copy of `net`'s last `depth` blocks and its norm, to train while the rest stays frozen."""
-
-    def __init__(self, net: Dino, depth: int) -> None:
-        super().__init__()
-        self.depth = depth
-        self.blocks = copy.deepcopy(net.blocks[len(net.blocks) - depth :]).requires_grad_(True)
-        self.norm = copy.deepcopy(net.norm).requires_grad_(True)
-
-    def forward(self, tokens: torch.Tensor, rows: int, columns: int) -> torch.Tensor:
-        for block in self.blocks:
-            tokens = block(tokens)
-        return grid(self.norm(tokens), rows, columns)
-
-
-def grid(tokens: torch.Tensor, rows: int, columns: int) -> torch.Tensor:
-    """Normed tokens, (B, 1 + rows * columns, width), to the patches' (B, width, rows, columns)."""
-    return tokens[:, 1:].transpose(1, 2).reshape(tokens.shape[0], tokens.shape[2], rows, columns)
 
 
 def load(name: str) -> Dino:

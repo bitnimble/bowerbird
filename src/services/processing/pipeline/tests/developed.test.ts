@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { IDENTITY_TONE_CURVE, type ReflectionStroke } from '../../../../schemas/photo_edits';
+import { IDENTITY_TONE_CURVE } from '../../../../schemas/photo_edits';
+import type { ReflectionStroke } from '../../../../schemas/stored_grid';
 import { developed } from '../developed';
 
 describe('developed', () => {

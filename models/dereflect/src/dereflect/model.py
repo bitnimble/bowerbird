@@ -5,9 +5,8 @@ names are LightRR's, which `native/rawshim/examples/dereflect.rs` reads.
 Departures: the scan is `scan.selective_scan`, the last layer predicts the reflection, coded
 as its input is, rather than adding a correction to the input, the two coarsest levels hold more
 blocks, where the network sees the most of the picture at once, a frozen DINOv2 can tell the
-coarsest level what the picture shows, through an adapter of its own, a gate scales the reflection
-by where the network locates one, and the network can run twice, the second time on what the
-first left."""
+coarsest level what the picture shows, through an adapter of its own, and a gate scales the
+reflection by where the network locates one."""
 
 import math
 from collections.abc import Callable
@@ -21,7 +20,7 @@ from torch.utils.checkpoint import checkpoint
 from dereflect import dino
 from dereflect.scan import DIRECTIONS, STATE, selective_scan
 from training.export import load_exported
-from training.mosaic import STABILISER_FLOOR, stabilise, unstabilise
+from training.mosaic import STABILISER_FLOOR, unstabilise
 
 DIMS = [32, 64, 128, 256]
 BLOCKS = [2, 3, 6, 10]
@@ -36,7 +35,7 @@ MULTIPLE = 16
 HINTS = 2
 """Brush channels after the image's three: where the user marked reflection, and where they marked none."""
 OPEN_GATE = 5.0
-"""The location gate's starting logit: `look` divides out `OPEN_SHARE`, so a gate at it passes
+"""The location gate's starting logit: `forward` divides out `OPEN_SHARE`, so a gate at it passes
 everything, as `load` sets one for weights without it."""
 OPEN_SHARE = 1 / (1 + math.exp(-OPEN_GATE))
 
@@ -219,24 +218,16 @@ class Shared:
 class LightRR(nn.Module):
     """(B, 3, H, W) coded light to the reflection in it, coded the same; H and W multiples of
     `MULTIPLE`. Starts predicting no reflection. Reads DINOv2's `backbone`, one of `dino.BACKBONES`,
-    when given one; its weights stay out of the network's, and any size can replace another once an
-    adapter is trained for it. With `passes` 2 it looks again at what its first look left, and takes
-    out what it finds there too; `once` makes it look once whatever `passes` says, as training does.
-    `locating` adds a fourth channel: the logit of where the last look saw reflection, which gates
-    what it takes out. The backbone's last `retuned` blocks train with the network. An input may carry
-    `HINTS` more channels, 0 to 1, after its three; they start changing nothing."""
+    when given one; its weights stay out of the network's. `locating` adds a fourth channel: the logit
+    of where it saw reflection, which gates what it takes out. An input may carry `HINTS` more
+    channels, 0 to 1, after its three; they start changing nothing."""
 
-    def __init__(
-        self, blocks: list[int] = BLOCKS, backbone: str | None = None, passes: int = 1, retuned: int = 0
-    ) -> None:
+    def __init__(self, blocks: list[int] = BLOCKS, backbone: str | None = None) -> None:
         super().__init__()
-        self.passes = passes
-        self.once = False
         self.locating = False
         self.backbone = backbone
         self.described = Shared(dino.load(backbone)) if backbone else None
         self.semantics = Adapter(dino.BACKBONES[backbone][0]) if backbone else None
-        self.retuned = dino.Tail(self.described.net, retuned) if self.described is not None and retuned else None
         self.img_tokenizer = nn.Conv2d(3, DIMS[0], 3, padding=1, bias=False)
         self.hint_tokenizer = nn.Conv2d(HINTS, DIMS[0], 3, padding=1, bias=False)
         nn.init.zeros_(self.hint_tokenizer.weight)
@@ -253,16 +244,7 @@ class LightRR(nn.Module):
         nn.init.zeros_(self.locate.weight)
         nn.init.constant_(self.locate.bias, OPEN_GATE)
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        if self.passes == 1 or self.once:
-            return self.look(image)
-        hints = image[:, 3:]
-        mixed = unstabilise(image[:, :3])
-        left = removing(mixed, self.look(image)[:, :3])
-        second = self.look(torch.cat([stabilise(left), hints], 1))
-        return torch.cat([taken(mixed, left, second[:, :3]), second[:, 3:]], 1)
-
-    def look(self, given: torch.Tensor) -> torch.Tensor:
+    def forward(self, given: torch.Tensor) -> torch.Tensor:
         image, hints = given[:, :3], given[:, 3:]
         x = self.img_tokenizer(image)
         if hints.shape[1]:
@@ -291,14 +273,8 @@ class LightRR(nn.Module):
         """The backbone's description of `image`, a patch per two of the coarsest level's pixels,
         spread over `size`."""
         assert self.described is not None
-        net, rows, columns = self.described.net, math.ceil(size[0] / 2), math.ceil(size[1] / 2)
-        if self.retuned is None:
-            with torch.no_grad():
-                patches = net(image, rows, columns)
-        else:
-            with torch.no_grad():
-                tokens = net.trunk(image, rows, columns, len(net.blocks) - self.retuned.depth)
-            patches = self.retuned(tokens, rows, columns)
+        with torch.no_grad():
+            patches = self.described.net(image, math.ceil(size[0] / 2), math.ceil(size[1] / 2))
         return F.interpolate(patches, size=size, mode="bilinear", align_corners=False)
 
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> "LightRR":
@@ -313,39 +289,28 @@ def removing(mixed: torch.Tensor, coded: torch.Tensor) -> torch.Tensor:
     return mixed - torch.minimum(unstabilise(coded).clamp(min=0), mixed)
 
 
-def taken(mixed: torch.Tensor, left: torch.Tensor, coded: torch.Tensor) -> torch.Tensor:
-    """All a second look takes out of linear `mixed`, coded: the first's, which left `left`, and the
-    second's `coded` reflection of what was left."""
-    return stabilise(mixed - removing(left, coded))
-
-
-def load(
-    weights: Path, blocks: list[int] | None = None, backbone: str | None = None, retuned: int | None = None
-) -> LightRR:
+def load(weights: Path, blocks: list[int] | None = None, backbone: str | None = None) -> LightRR:
     """The exported weights in the folder `weights`; given `blocks`, deepened to them by blocks that
     pass their input through unchanged, so the network computes what it did. Given a `backbone` other
-    than the one saved, the saved adapter goes and a new one starts adding nothing. Given `retuned`,
-    that many of the backbone's last blocks train, starting from the saved ones or the released."""
+    than the one saved, the saved adapter goes and a new one starts adding nothing."""
     exported = load_exported(weights)
     if exported.plan.get("predicts") != "reflection" or exported.plan.get("coding_floor") != STABILISER_FLOOR:
         raise SystemExit(f"{weights} predicts {exported.plan.get('predicts')} under another coding")
+    if exported.plan.get("passes", 1) != 1:
+        raise SystemExit(f"{weights} looks {exported.plan['passes']} times, where this network looks once")
     saved = exported.plan.get("blocks", BLOCKS)
     if blocks is not None and any(want < have for want, have in zip(blocks, saved)):
         raise SystemExit(f"{weights} has blocks {saved}, more than {blocks} somewhere")
     reading = backbone or exported.plan.get("semantics")
-    saved_retuned = exported.plan.get("retuned", 0)
-    depth = saved_retuned if retuned is None else retuned
-    net = LightRR(saved if blocks is None else blocks, reading, exported.plan.get("passes", 1), depth)
+    net = LightRR(saved if blocks is None else blocks, reading)
     state = exported.state
     if reading != exported.plan.get("semantics"):
-        state = {name: value for name, value in state.items() if not name.startswith(("semantics.", "retuned."))}
-    elif depth != saved_retuned:
-        state = {name: value for name, value in state.items() if not name.startswith("retuned.")}
+        state = {name: value for name, value in state.items() if not name.startswith("semantics.")}
     added = net.load_state_dict(state, strict=False).missing_keys
     lacking = [
         name
         for name in added
-        if ".blocks." not in name and not name.startswith(("semantics.", "locate.", "retuned.", "hint_tokenizer."))
+        if ".blocks." not in name and not name.startswith(("semantics.", "locate.", "hint_tokenizer."))
     ]
     if lacking:
         raise SystemExit(f"{weights} lacks {lacking}")

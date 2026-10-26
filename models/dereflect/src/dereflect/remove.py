@@ -9,7 +9,7 @@ flip between. Each is graded as the library renders the photo unedited, all thre
 own grade: HDR as 16-bit PQ, with an SDR copy beside it as `-sdr`.
 
     uv run python -m dereflect.remove <raw>... --weights <folder> [--out runs/removed]
-        [--crop x,y,side ...] [--crops 3] [--full] [--warmth 0.1] [--strength 1.5]
+        [--crop x,y,side ...] [--crops 3] [--full] [--strength 1.5]
 """
 
 import argparse
@@ -30,7 +30,6 @@ from training.preview import GAP, REC2020_TO_SRGB, write_png, write_pq_png
 FULL_RESOLUTION = 1 << 20
 OVERVIEW = 1200
 CROP_SIDE = 420
-LUMA2020 = torch.tensor([0.2627, 0.6780, 0.0593])
 
 
 def main() -> None:
@@ -41,12 +40,6 @@ def main() -> None:
     parser.add_argument("--crop", action="append", default=[], help="x,y,side of a 1:1 crop, in full-resolution pixels")
     parser.add_argument("--crops", type=int, default=3, help="1:1 crops where the most light came out")
     parser.add_argument("--full", action="store_true", help="also write the photograph and the result at full resolution")
-    parser.add_argument(
-        "--warmth",
-        type=float,
-        default=0.0,
-        help="turn the reflection towards red (above 0) or blue (below) before it comes out, at the same luma",
-    )
     parser.add_argument("--strength", type=float, default=1.0, help="share of the reflection taken out, past 1 for more")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -68,7 +61,7 @@ def main() -> None:
             continue
         photo = (decoded / light).cuda()
         started = time.perf_counter()
-        reflection = warmed(predicted(net, (looked / light).cuda()), args.warmth) * args.strength
+        reflection = predicted(net, (looked / light).cuda()) * args.strength
         torch.cuda.synchronize()
         looking = time.perf_counter() - started
         reflection = scaled_up(reflection, photo.shape[1:])
@@ -92,13 +85,6 @@ def predicted(net: torch.nn.Module, image: torch.Tensor) -> torch.Tensor:
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         coded = net(stabilise(padded)).float()[:, :3, :height, :width]
     return unstabilise(coded).clamp(min=0)
-
-
-def warmed(reflection: torch.Tensor, warmth: float) -> torch.Tensor:
-    """(B, 3, H, W) Rec.2020 light with red gained by 1 + `warmth` and blue by 1 - `warmth`, at the same luma."""
-    gains = torch.tensor([1 + warmth, 1.0, 1 - warmth], device=reflection.device)
-    gains = gains / (LUMA2020.to(reflection.device) @ gains)
-    return (reflection * gains[None, :, None, None]).clamp(min=0)
 
 
 def scaled_up(reflection: torch.Tensor, size: torch.Size) -> torch.Tensor:

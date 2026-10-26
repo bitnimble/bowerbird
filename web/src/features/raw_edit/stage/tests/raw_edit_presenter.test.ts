@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { autorun, runInAction } from 'mobx';
 import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
-import { prepareOf, sameDevelop, sameReflectionInference } from '../../local_decode/open_photo';
+import { prepareOf, sameDevelop } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
 import type { KeystoneStore } from '../../keystone/keystone_store';
@@ -427,7 +427,7 @@ describe('a slider reaching the picture', () => {
     expect(asked().at(-1)?.reflection.strength).toBe(1.5);
   });
 
-  test('tells a reflection strength apart from what the network sees', () => {
+  test('re-prepares for a reflection strength or stroke only while removal is on', () => {
     const at = prepareOf(
       { ...neutralEdits(), reflectionRemoval: true, reflectionStrength: 100 },
       'galosh',
@@ -442,9 +442,7 @@ describe('a slider reaching the picture', () => {
     const stroked = { ...at, reflection: { ...at.reflection, strokes: [stroke] } };
     const off = { ...at, reflection: { enabled: false, strength: 1, strokes: [] } };
 
-    expect(sameReflectionInference(at, stronger)).toBe(true);
     expect(sameDevelop(at, stronger)).toBe(false);
-    expect(sameReflectionInference(at, stroked)).toBe(false);
     expect(sameDevelop(at, stroked)).toBe(false);
     // Off, neither the strength nor the strokes can move a pixel.
     expect(

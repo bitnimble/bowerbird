@@ -17,7 +17,7 @@ from torch.utils.data import ConcatDataset, Dataset, Subset
 
 from dereflect import dino, frames, vgg
 from dereflect.composites import CROP, Composite, Pairs, Pending, blurred, finished, started
-from dereflect.model import BLOCKS, DIMS, HEADS, HINTS, MULTIPLE, LightRR, Stage, load, removing, taken
+from dereflect.model import BLOCKS, DIMS, HEADS, HINTS, MULTIPLE, LightRR, Stage, load, removing
 from dereflect.real import RealPairs
 from training.crops import sources
 from training.metrics import edge_loss, psnr, ssim_map
@@ -36,7 +36,7 @@ STRUCTURE_WINDOW = 7
 PRESENCE_SCALE = 0.05
 """Coded reflection at which the location loss calls a pixel wholly reflection; fainter is partly."""
 DETAIL_WINDOW = 7
-"""Pixels of the box blur fine detail is measured against: a vent's fins and a sharp reflection's edges."""
+"""Pixels of the box blur fine detail is measured against: a sharp reflection's edges."""
 DETAIL_FULL = 0.05
 PERCEIVED = 256
 REAL_WORKERS = 2
@@ -68,12 +68,6 @@ def main() -> None:
     )
     parser.add_argument("--linear", type=float, default=0.0, help="weight of the reflection's L1 in linear light")
     parser.add_argument(
-        "--broad",
-        type=float,
-        default=0.0,
-        help=f"weight of the squared error of the reflection's light over {BROAD_CELLS}x{BROAD_CELLS} cells",
-    )
-    parser.add_argument(
         "--colour",
         type=float,
         default=0.0,
@@ -84,7 +78,7 @@ def main() -> None:
         "--broad-colours", action="store_true", help="tint every veil, near reflection and glare to a uniformly drawn hue"
     )
     parser.add_argument(
-        "--broad-levels", action="store_true", help="give every veil, near reflection and glare a zoo veil's light"
+        "--broad-levels", action="store_true", help="give every veil, near reflection and glare a milky veil's light"
     )
     parser.add_argument(
         "--near-subjects",
@@ -104,9 +98,6 @@ def main() -> None:
         "--vents", type=float, default=0.0, help="share of far veils and whole glares gaining a dashboard vent along the bottom"
     )
     parser.add_argument(
-        "--fin-weight", type=float, default=0.0, help="extra weight of the scene and reflection losses on a vent's fins"
-    )
-    parser.add_argument(
         "--detail-weight",
         type=float,
         default=0.0,
@@ -122,9 +113,6 @@ def main() -> None:
         "--exclusion", type=float, default=0.0, help="weight of the loss on edges the scene and reflection share"
     )
     parser.add_argument(
-        "--vivid", type=float, default=0.0, help="share of reflections drawn from the most colourful frames"
-    )
-    parser.add_argument(
         "--subjects", type=float, default=0.0, help="share of reflections that are whole frames with a subject in focus"
     )
     parser.add_argument(
@@ -134,10 +122,6 @@ def main() -> None:
         "--structure", type=float, default=0.0, help="weight of the coded scene's structural dissimilarity, 1 - SSIM"
     )
     parser.add_argument("--perceptual", type=float, default=0.0, help="weight of VGG19's loss on the scene")
-    parser.add_argument("--passes", type=int, choices=(1, 2), default=1, help="looks the network takes")
-    parser.add_argument(
-        "--second-share", type=float, default=0.5, help="of steps with --passes 2, the share training the second"
-    )
     parser.add_argument("--locating", type=float, default=0.0, help="weight of the loss on where reflection is")
     parser.add_argument(
         "--hints", type=float, default=0.0, help="share of samples given brush strokes drawn from their true reflection"
@@ -159,27 +143,20 @@ def main() -> None:
     parser.add_argument(
         "--semantics", choices=sorted(dino.BACKBONES), help="DINOv2 backbone to read, instead of the one --start reads"
     )
-    parser.add_argument("--retune", type=int, default=0, help="the backbone's last blocks to train with the network")
-    parser.add_argument("--retune-lr", type=float, default=0.1, help="of --lr, the retuned blocks' learning rate")
-    parser.add_argument(
-        "--adapter-only", action="store_true", help="train only the backbone's adapter, the rest frozen as --start has it"
-    )
     parser.set_defaults(cache=frames.DEFAULT_FRAMES, batch=4, steps=200_000, lr=2e-4, workers=4, prepare_workers=5)
     args = parser.parse_args()
     for side in (args.crop, args.validation_crop):
         if side % MULTIPLE:
             raise SystemExit(f"crop side {side} isn't a multiple of {MULTIPLE}")
-    if args.adapter_only and not args.start:
-        raise SystemExit("--adapter-only needs --start to supply the rest of the network")
     args.out.mkdir(parents=True, exist_ok=True)
     say = logger(args.out / "train.log")
     stop_on_signals()
 
     raws = sources(args.data)
     frames.prepare(raws, args.cache, args.prepare_workers)
-    train_set = Pairs(args.cache, raws, False, args.colourful, args.vivid, args.crop, args.subjects, args.near_subjects)
+    train_set = Pairs(args.cache, raws, False, args.colourful, args.crop, args.subjects, args.near_subjects)
     validation_set = Pairs(
-        args.cache, raws, True, args.colourful, args.vivid, args.validation_crop, args.subjects, args.near_subjects
+        args.cache, raws, True, args.colourful, args.validation_crop, args.subjects, args.near_subjects
     )
     if len(train_set) < args.batch:
         raise SystemExit(f"{len(train_set)} sharp scenes under {args.cache}, fewer than a batch")
@@ -220,26 +197,18 @@ def main() -> None:
         kept: torch.Tensor,
         layer: torch.Tensor,
         twin: torch.Tensor,
-        fins: torch.Tensor,
         detail: torch.Tensor,
         hints: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        # Set here, not at setup: `train` copies `net` into the average first, which must keep looking
-        # `passes` times and return 3 channels for validation and export.
-        net.once, net.locating = True, bool(args.locating)
-        second = args.passes == 2 and float(torch.rand(())) < args.second_share
-        looked = removing(mixed, glance(mixed, hints)) if second else mixed
-        other = None
-        if twin.numel():
-            other = removing(twin, glance(twin))
-            if second:
-                other = removing(other, glance(other))
+        # Set here, not at setup: `train` copies `net` into the average first, which must return 3 channels
+        # for validation.
+        net.locating = bool(args.locating)
+        other = removing(twin, glance(twin)) if twin.numel() else None
         judged = torch.where(kept, 1.0, args.clipped)
-        out = forward(given(looked, hints))
-        removed = removing(looked, out[:, :3])
-        coded = out[:, :3] if looked is mixed else taken(mixed, looked, out[:, :3])
-        left = layer if looked is mixed else (looked - clean).clamp(min=0)
-        weighed = judged * (1 + args.fin_weight * fins + args.detail_weight * detail)
+        out = forward(given(mixed, hints))
+        coded = out[:, :3]
+        removed = removing(mixed, coded)
+        weighed = judged * (1 + args.detail_weight * detail)
         terms = {
             "scene": weighted_mean((stabilise(removed) - stabilise(clean)).abs(), weighed),
             "reflection": weighted_mean((coded - stabilise(layer)).abs(), weighed),
@@ -248,11 +217,9 @@ def main() -> None:
             terms["edges"] = edge_loss(stabilise(torch.where(judged > 0, removed, clean)), stabilise(clean))
         if args.overshoot:
             # `removing` clamps an excess to black, so the scene and edge losses get no gradient there.
-            terms["overshoot"] = weighted_mean((out[:, :3] - stabilise(looked)).clamp(min=0), judged)
+            terms["overshoot"] = weighted_mean((coded - stabilise(mixed)).clamp(min=0), judged)
         if args.linear:
             terms["linear"] = weighted_mean((unstabilise(coded) - layer).abs(), judged)
-        if args.broad:
-            terms["broad"] = broad_error(unstabilise(coded), layer, judged, mixed)
         if args.colour:
             terms["colour"] = colour_error(unstabilise(coded), layer, judged, mixed)
         if args.gain:
@@ -273,7 +240,7 @@ def main() -> None:
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
                 terms["perceptual"] = perceptual(removed[seen], clean[seen]).float()
         if args.locating:
-            there = (stabilise(left).mean(1, keepdim=True) / PRESENCE_SCALE).clamp(0, 1)
+            there = (stabilise(layer).mean(1, keepdim=True) / PRESENCE_SCALE).clamp(0, 1)
             missed = F.binary_cross_entropy_with_logits(out[:, 3:], there, reduction="none")
             terms["locating"] = weighted_mean(missed, judged)
         if args.invariance:
@@ -289,7 +256,6 @@ def main() -> None:
             "edges": args.edges,
             "overshoot": args.overshoot,
             "linear": args.linear,
-            "broad": args.broad,
             "colour": args.colour,
             "gain": args.gain,
             "faint": args.faint,
@@ -313,29 +279,17 @@ def main() -> None:
             say(f"step {step} real pairs: PSNR {removed:.3f} dB, left alone {left:.3f} dB")
         preview(forward, validation, device, args.out / "preview.png")
 
-    if args.start:
-        net = load(args.start, BLOCKS, args.semantics, args.retune)
-    else:
-        net = LightRR(BLOCKS, args.semantics, retuned=args.retune)
-    if args.retune and net.retuned is None:
-        raise SystemExit("--retune needs a backbone, from --semantics or --start")
-    net.passes = args.passes
+    net = load(args.start, BLOCKS, args.semantics) if args.start else LightRR(BLOCKS, args.semantics)
     for stage in net.modules():
         if isinstance(stage, Stage):
             stage.checkpointed = args.checkpoint
-    if args.adapter_only:
-        if net.semantics is None:
-            raise SystemExit("--adapter-only needs a backbone to adapt, from --semantics or --start")
-        net.requires_grad_(False)
-        net.semantics.requires_grad_(True)
     plan = {
         "architecture": "lightrr",
         "dims": DIMS,
         "blocks": BLOCKS,
         "heads": HEADS,
         "semantics": net.backbone,
-        "retuned": args.retune,
-        "passes": args.passes,
+        "passes": 1,
         "hints": HINTS,
         "predicts": "reflection",
         "coding_floor": STABILISER_FLOOR,
@@ -343,10 +297,9 @@ def main() -> None:
         "edge": frames.EDGE,
     }
     tuned = (
-        "steps", "batch", "lr", "lr_floor", "reflection_loss", "edges", "overshoot", "linear", "broad", "colour", "colourful",
-        "broad_colours", "broad_levels", "near_subjects", "scene_casts", "faint_broads", "green_broads", "vents", "fin_weight", "detail_weight", "gain", "faint", "exclusion", "vivid",
-        "clipped", "structure", "perceptual", "passes", "second_share", "locating", "hints", "invariance", "real_share",
-        "crop", "adapter_only", "subjects", "retune", "retune_lr",
+        "steps", "batch", "lr", "lr_floor", "reflection_loss", "edges", "overshoot", "linear", "colour", "colourful",
+        "broad_colours", "broad_levels", "near_subjects", "scene_casts", "faint_broads", "green_broads", "vents", "detail_weight", "gain", "faint", "exclusion",
+        "clipped", "structure", "perceptual", "locating", "hints", "invariance", "real_share", "crop", "subjects",
     )  # fmt: skip
     settings: dict[str, object] = {name: getattr(args, name) for name in tuned}
     settings["start"] = args.start and str(args.start)
@@ -361,7 +314,6 @@ def main() -> None:
         keep_every=args.keep_every,
         lr=args.lr,
         lr_floor=args.lr_floor,
-        lr_scales={"retuned.": args.retune_lr},
         bf16=bf16,
         settings=settings,
         plan=plan,
@@ -384,8 +336,6 @@ class Prepared(NamedTuple):
     difference clipping made."""
     twin: torch.Tensor
     """The photograph through the same glass with the reflection mirrored, or empty."""
-    fins: torch.Tensor
-    """(B, 1, H, W) where a dashboard vent's fins are, 0 to 1; 0 for real pairs."""
     detail: torch.Tensor
     """(B, 1, H, W) `detail_map` of a composite's reflection; 0 for real pairs, whose layer holds misalignment."""
     hints: torch.Tensor
@@ -431,12 +381,12 @@ def prepared(
             spread = torch.full((mixed.shape[0],), REAL_LAYER_BLUR, device=device)
             none = torch.zeros_like(kept, dtype=mixed.dtype)
             layer = blurred((mixed - clean).clamp(min=0), spread)
-            return Prepared(mixed, clean, kept, layer, nothing, none, none, brushed(layer, mixed, args.hints))
+            return Prepared(mixed, clean, kept, layer, nothing, none, brushed(layer, mixed, args.hints))
         made = finished(begun)
         mirrored = finished(twin, made.scale).mixed if twin is not None else nothing
         layer = made.mixed - made.clean
         return Prepared(
-            made.mixed, made.clean, made.kept, layer, mirrored, made.fins, detail_map(made.layer, made.mixed),
+            made.mixed, made.clean, made.kept, layer, mirrored, detail_map(made.layer, made.mixed),
             brushed(made.layer, made.mixed, args.hints),
         )  # fmt: skip
 
@@ -473,18 +423,6 @@ def weighted_mean(values: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     return (values * weight).sum() / (weight.sum() * values.shape[1]).clamp(min=1)
 
 
-def broad_error(predicted: torch.Tensor, true: torch.Tensor, weight: torch.Tensor, photo: torch.Tensor) -> torch.Tensor:
-    """Squared error of (B, 3, H, W) reflection light averaged over `BROAD_CELLS` cells a side, weighted by
-    (B, 1, H, W) `weight`, in units of each photograph's mean light."""
-    weight = weight.to(predicted.dtype)
-    cover = F.adaptive_avg_pool2d(weight, BROAD_CELLS).clamp(min=1e-6)
-    cells = [F.adaptive_avg_pool2d(light * weight, BROAD_CELLS) / cover for light in (predicted, true)]
-    # Squared, not absolute: on a flat veil the network can't pin down, L1 settles on the median of what
-    # it could be, which the many photos with none drag toward nothing; L2 settles on its expected amount.
-    scale = photo.mean((1, 2, 3), keepdim=True).detach().clamp(min=1e-3)
-    return (((cells[0] - cells[1]) / scale) ** 2).mean()
-
-
 def colour_error(predicted: torch.Tensor, true: torch.Tensor, weight: torch.Tensor, photo: torch.Tensor) -> torch.Tensor:
     """The (B, 3, H, W) predicted reflection's light off the true reflection's chromaticity, at its own
     amount, averaged over `BROAD_CELLS` cells a side and weighted by (B, 1, H, W) `weight`, as a share of the
@@ -495,7 +433,7 @@ def colour_error(predicted: torch.Tensor, true: torch.Tensor, weight: torch.Tens
     sums = [cell.sum(1, keepdim=True) for cell in cells]
     hue = (cells[1] / sums[1].clamp(min=1e-6)).detach()
     # Never divided by the prediction: a near-empty one's chromaticity has gradients of 1 over its own light,
-    # which pinned a run at removing nothing for its first 20k steps.
+    # which holds the network at removing nothing.
     off = (cells[0] - hue * sums[0]).abs().sum(1, keepdim=True)
     present = (sums[1] > PRESENT_SHARE * sums[2]).to(predicted.dtype).detach()
     return (off * present).sum() / (sums[2] * present).sum().clamp(min=1e-6)
@@ -626,7 +564,7 @@ def held_out(pairs: Pairs, device: torch.device, broad: dict[str, bool | float])
     in_first = set(first)
     rest = [i for i in np.linspace(0, count - 1, min(VALIDATION_PAIRS, count)).astype(int).tolist() if i not in in_first]
     groups = [composited(pairs, chosen, seed, device, broad) for seed, chosen in enumerate((first, rest)) if chosen]
-    mixed, scene, clean, layer, kept, scene_blur, reflection_blur, veiled, glared, _, _ = (
+    mixed, scene, clean, layer, kept, scene_blur, reflection_blur, veiled, glared, _ = (
         torch.cat(parts) for parts in zip(*groups)
     )
     del groups

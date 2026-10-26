@@ -267,7 +267,7 @@ void gate(uint3 id : SV_DispatchThreadID)
     dst[pc.dst_at + e] = src[pc.src_at + e] * silu(src2[pc.src2_at + e]);
 }
 
-/// `x * scale[c] + y`, with `width` the plane size; `scale` all ones where `weight_at` is unset.
+/// `x * scale[c] + y`, with `width` the plane size.
 [shader("compute")]
 [numthreads(THREADS, 1, 1)]
 void scale_add(uint3 id : SV_DispatchThreadID)
@@ -275,8 +275,7 @@ void scale_add(uint3 id : SV_DispatchThreadID)
     let e = index(id);
     if (e >= pc.count) { return; }
     let c = e / pc.width;
-    let scale = pc.weight_at != 0xffffffff ? weights[pc.weight_at + c] : 1.0;
-    dst[pc.dst_at + e] = src[pc.src_at + e] * scale + src2[pc.src2_at + e];
+    dst[pc.dst_at + e] = src[pc.src_at + e] * weights[pc.weight_at + c] + src2[pc.src2_at + e];
 }
 
 /// `x + y * gamma[c]` in place over `x`, DINOv2's LayerScale residual; `width` the plane size.

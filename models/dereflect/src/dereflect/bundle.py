@@ -20,8 +20,6 @@ def main() -> None:
     backbone = exported.plan.get("semantics")
     if backbone is None:
         raise SystemExit(f"{args.weights} reads no backbone")
-    if exported.plan.get("retuned", 0):
-        raise SystemExit(f"{args.weights} retunes the backbone, which the app does not run")
     described = {
         f"dino.{name}": value for name, value in dino.load(backbone).state_dict().items() if name != "mask_token"
     }

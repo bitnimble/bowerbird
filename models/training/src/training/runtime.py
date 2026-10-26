@@ -22,6 +22,9 @@ AVERAGE_DECAY = 0.999
 LOG_EVERY = 100
 VALIDATION_EVERY = 2000
 VALIDATION_CHUNK = 4
+LR_FLOOR = 0.05
+UNRECORDED: dict[str, object] = {"lr_floor": LR_FLOOR}
+"""Settings runs had fixed before they were recorded, at the value they had."""
 
 Forward = Callable[[torch.Tensor], torch.Tensor]
 """The compiled network under autocast, returning f32."""
@@ -48,10 +51,10 @@ def arguments(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=Path("runs/default"))
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--steps", type=int, default=300_000)
-    parser.add_argument("--keep-every", type=int, default=10_000, help="steps between kept copies of the weights, 0 for none")
+    parser.add_argument("--keep-every", type=int, default=0, help="steps between kept copies of the weights, 0 for none")
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--lr-floor", type=float, default=0.05, help="share of --lr the schedule ends at")
+    parser.add_argument("--lr-floor", type=float, default=LR_FLOOR, help="share of --lr the schedule ends at")
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--prepare-workers", type=int, default=3, help="each holds a PMRID server")
     return parser
@@ -122,18 +125,16 @@ def train(
     plan: dict[str, object],
     out: Path,
     say: Callable[[str], None],
-    lr_scales: dict[str, float] | None = None,
 ) -> None:
     """Trains `net`, on the GPU, for `steps`, resuming from `out` and exporting `plan` and the
     weights' moving average there at each validation and on a stopping signal, and a copy of it under
     `kept/step-N` every `keep_every` steps. `objective` gives the
     loss to step on and the terms to log, from the tensors of a batch; `validate` sees the average.
-    Parameters named under a prefix in `lr_scales` learn at that share of `lr`.
     `settings` must be the same to resume."""
     device = next(net.parameters()).device
     model = torch.compile(net, mode="reduce-overhead")
     average = copy.deepcopy(net).requires_grad_(False)
-    optimiser = torch.optim.Adam(groups(net, lr, lr_scales or {}), lr=lr, betas=(0.9, 0.99), fused=True)
+    optimiser = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.99), fused=True)
     schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, warmup_cosine(steps, floor=lr_floor))
     resume = out / "resume.pt"
     step = load_resume(resume, net, average, optimiser, schedule, settings)
@@ -196,18 +197,6 @@ def train(
                 break
 
 
-def groups(net: torch.nn.Module, lr: float, scales: dict[str, float]) -> list[dict]:
-    """`net`'s trainable parameters, one group per `scales` prefix that names any and one for the rest."""
-    named = [(name, p) for name, p in net.named_parameters() if p.requires_grad]
-    found = []
-    for prefix, scale in scales.items():
-        chosen = [p for name, p in named if name.startswith(prefix)]
-        if chosen:
-            found.append({"params": chosen, "lr": lr * scale})
-        named = [(name, p) for name, p in named if not name.startswith(prefix)]
-    return [{"params": [p for _, p in named], "lr": lr}, *found]
-
-
 @torch.no_grad()
 def predictions(forward: Forward, given: torch.Tensor, wanted: torch.Tensor) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """`forward` over a validation set in chunks, each with its targets."""
@@ -216,7 +205,7 @@ def predictions(forward: Forward, given: torch.Tensor, wanted: torch.Tensor) -> 
         yield forward(given_chunk), wanted_chunk
 
 
-def warmup_cosine(steps: int, warmup: int = 1000, floor: float = 0.05) -> Callable[[int], float]:
+def warmup_cosine(steps: int, warmup: int = 1000, floor: float = LR_FLOOR) -> Callable[[int], float]:
     def share(step: int) -> float:
         if step < warmup:
             return (step + 1) / warmup
@@ -270,14 +259,20 @@ def load_resume(
 ) -> int:
     """The step `path` was saved at, with everything restored; 0 when there is nothing to resume.
     Refuses `settings` other than those it was saved with, which resuming would silently mix. A setting
-    newer than the save matches only while it's off, as the run had it."""
+    newer than the save matches only at what runs did before it existed: off, or `UNRECORDED`'s value."""
     if not path.exists():
         return 0
     state = torch.load(path, map_location="cuda")
     saved = state["settings"]
-    changed = sorted(
-        name for name in settings if (saved[name] != settings[name] if name in saved else bool(settings[name]))
-    )
+
+    def unchanged(name: str) -> bool:
+        if name in saved:
+            return saved[name] == settings[name]
+        if name in UNRECORDED:
+            return settings[name] == UNRECORDED[name]
+        return not settings[name]
+
+    changed = sorted(name for name in settings if not unchanged(name))
     if changed:
         raise SystemExit(f"{path} was saved with " + ", ".join(f"{name} {saved.get(name)}" for name in changed))
     net.load_state_dict(state["net"])

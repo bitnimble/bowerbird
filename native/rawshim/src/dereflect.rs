@@ -425,7 +425,7 @@ impl Remover {
 }
 
 /// The removal as an edit document asks for it, `strength` a gain on the reflection from 0 to 2.
-#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[derive(Clone, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub enabled: bool,
@@ -959,7 +959,7 @@ pub fn ready(gpu: &'static Gpu) -> bool {
 
 /// The network, built on the first frame that asks for it and kept until a model replaces it.
 /// `None` until the app has handed one over.
-pub fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
+fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
     with_model(|held| {
         if let Some(tried) = held.built {
             return tried;

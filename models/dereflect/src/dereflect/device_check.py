@@ -135,7 +135,10 @@ def brushed(height: int, width: int) -> torch.Tensor:
     """The brush's `HINTS` planes: a soft disc marking reflection left of centre, one marking none
     right of it."""
     ys, xs = torch.meshgrid(torch.arange(height) / height, torch.arange(width) / width, indexing="ij")
-    disc = lambda x: (1 - ((xs - x).square() + (ys - 0.5).square()).sqrt() / 0.15).clamp(0, 1)
+
+    def disc(x: float) -> torch.Tensor:
+        return (1 - ((xs - x).square() + (ys - 0.5).square()).sqrt() / 0.15).clamp(0, 1)
+
     return torch.stack([disc(0.3), disc(0.7)])
 
 

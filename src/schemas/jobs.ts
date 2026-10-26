@@ -147,7 +147,7 @@ export const DustSettingsSchema = z.object({
   intensity: z.number(),
 }) satisfies z.ZodType<DustSettings>;
 
-export const ReflectionSettingsSchema = z.object({
+const ReflectionSettingsSchema = z.object({
   enabled: z.boolean(),
   strength: z.number(),
   strokes: z.array(ReflectionStrokeSchema),

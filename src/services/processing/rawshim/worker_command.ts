@@ -96,7 +96,6 @@ export function toCompositeCommand(job: CompositeJob): Job {
     highlightRecovery: job.highlightRecovery,
     dust: job.dust,
     repairs: job.repairs,
-    reflection: job.reflection,
     sharpen: job.sharpen,
     defringe: job.defringe,
     exposure: job.exposure,

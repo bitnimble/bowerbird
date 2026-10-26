@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from dereflect.frames import EDGE, WINDOW, centred, colourfulness, frame_of, radiance, records, sharpness, white
+from dereflect.frames import EDGE, WINDOW, centred, frame_of, radiance, records, sharpness, white
 from dereflect.faces import faces as face_boxes
 from dereflect.subjects import scores as subject_scores
 from training.pmrid import pmrid
@@ -93,7 +93,7 @@ NEAR_SUBJECT_SHARE = 0.85
 """With `near_subjects`, of reflections of a face, those of its person standing at the glass."""
 NEAR_SUBJECT_SPREAD = (3.0, 12.0)
 """With `near_subjects`, a near face's lens disc's standard deviation in crop pixels, log-uniformly, centred
-on 6: chosen by eye against the zoo figures, which keep a silhouette."""
+on 6: chosen by eye so a figure keeps its silhouette."""
 FACE_LEAST = 0.04
 """Of the frame's height, the smallest face `faces` reflects: smaller ones magnify into mush."""
 FACE_CONFIDENCE = 0.6
@@ -133,8 +133,6 @@ SHADE_EDGE = (1.0, 6.0)
 """As `DEPTH_EDGE`, for a patchy shade's edges, which are as far out of focus as a cut's."""
 PATCHY_SHARE = 0.2
 """Reflections over only part of the frame, where something near the glass shades it."""
-VIVID_TOP = 0.1
-"""Share of frames, by `colourfulness`, that `vivid` draws reflections from."""
 SUBJECT_TOP = 0.15
 """Share of frames, by `subjects.scores`, that `subjects` draws reflections from."""
 ADAPTED = (0.0, 1.0)
@@ -143,14 +141,14 @@ COLOUR_SPREAD = 1.2
 """Most a reflection's mean colour's channels spread, over their mean: past the real pairs' 97th percentile."""
 BROAD_SPREAD = (0.2, 0.9)
 """With `broad_colours`, a veil's, near reflection's or glare's mean colour's spread, log-uniformly: past
-0.9 an even glare reads as a coloured filter; the zoo veils run 0.17 to 0.81."""
+0.9 an even glare reads as a coloured filter; real veils run 0.17 to 0.81."""
 BROAD_FAINT = (0.0, 0.2)
 """A faint broad layer's mean colour's spread, uniformly, from grey up to where `BROAD_SPREAD` starts."""
 GREEN_HUES = (75.0, 165.0)
 """Degrees from red towards green, yellow-green to green-cyan, that a green broad layer's hue is drawn from."""
 BROAD_LEVEL = (0.03, 0.2)
 """With `broad_levels`, a veil's, near reflection's or glare's mean light over the scene's white,
-log-uniformly: the zoo veils the remover is for lift a frame 0.07 to 0.17."""
+log-uniformly: the milky veils the remover is for lift a frame 0.07 to 0.17."""
 BROAD_MOST_SHARE = 0.6
 """Most of the photograph's light a `broad_levels` layer takes, near the real pairs' 97th percentile: a night
 scene's white is its lamps, so a level of it alone buries everything else."""
@@ -216,38 +214,6 @@ VENT_FIN_TOP_LIGHT = (0.8, 1.6)
 """Those tops' light over the glow, log-uniformly: out of the opening's shade, they catch the sun."""
 VENT_SOFTNESS = (1.0, 8.0)
 """The dashboard's blur's standard deviation in frame pixels at the frame's bottom, log-uniformly."""
-DASH_OBJECTS = False
-"""Whether `dashboard` draws panels, paper and stickers and only a `VENT_GRILLE_SHARE` of dashboards keep their
-grille. Its clipped white paper teaches erasing white objects that are in the scene."""
-VENT_GRILLE_SHARE = 0.6
-DASH_PANELS = 4
-"""Most moulded panels on a dashboard, each there at `DASH_PANEL_SHARE`: an instrument hood, a speaker's cover."""
-DASH_PANEL_SHARE = 0.5
-DASH_PANEL_HALF = ((0.05, 0.6), (0.03, 0.3))
-"""A panel's half width and half depth in the glass's rise, log-uniformly, as every size on the dashboard."""
-DASH_PANEL_ALBEDO = (0.3, 2.0)
-"""A panel's light over the bare dashboard's, log-uniformly."""
-DASH_OUTLINE_SHARE = 0.4
-"""Of panels, those shown as a raised rim only, a band `DASH_OUTLINE_WIDTH` wide in the glass's rise."""
-DASH_OUTLINE_WIDTH = (0.005, 0.03)
-DASH_PAPERS = 2
-"""Most sheets of paper lying on the dashboard, each there at `DASH_PAPER_SHARE`."""
-DASH_PAPER_SHARE = 0.4
-DASH_PAPER_HALF = ((0.04, 0.25), (0.03, 0.2))
-DASH_PAPER_ALBEDO = (2.0, 10.0)
-"""A sheet's light over the bare dashboard's: white paper on a grey or black top."""
-DASH_PAPER_LINES = (0.004, 0.02)
-"""Spacing in the glass's rise of a sheet's printed lines, log-uniformly."""
-DASH_STICKERS = 2
-DASH_STICKER_SHARE = 0.3
-DASH_STICKER_HALF = (0.01, 0.06)
-DASH_STICKER_SPREAD = (0.3, 0.9)
-"""A sticker's colour's spread over its mean, as `tinted` draws it."""
-DASH_EDGE = 300.0
-"""Steepness of a shape's edges, per rise: about a pixel at the frame's bottom."""
-DASH_MOST = 4.0
-"""The dashboard's light's ceiling, of the scene's white: a sunlit sheet at grazing incidence, which the sensor
-clips flat as a dashcam does."""
 VENT_ROLL = (-6.0, 6.0)
 """Degrees the camera is rolled against the dashboard, tilting all of it in the frame."""
 VENT_BOW = (-0.05, 0.05)
@@ -259,8 +225,6 @@ VENT_FRAME_ASPECT = 1.5
 VENT_LEVEL = (0.05, 0.4)
 """The dashboard's brightest glow over the scene's white, log-uniformly; lit fins rise past it."""
 VENT_TINT = 0.15
-VENT_FIN_REACH = 31
-"""Crop pixels of the horizontal blur `finned` measures fins against: wider than a fin, narrower than the glow."""
 CLIP_TOLERANCE = 0.99
 """Of a scene's clipping level: frames are float16, so a clipped plateau lands either side of it."""
 
@@ -281,7 +245,6 @@ class Pairs(Dataset):
         raws: list[Path],
         validation: bool,
         colourful: float = 0.0,
-        vivid: float = 0.0,
         crop: int = CROP,
         subjects: float = 0.0,
         faces: bool = False,
@@ -289,7 +252,6 @@ class Pairs(Dataset):
         """With `faces`, `subjects` reflections are frames with a face `dereflect.faces` found, framed on it."""
         self.validation = validation
         self.colourful = colourful
-        self.vivid = vivid
         self.subjects = subjects
         self.crop = crop
         self.items = [
@@ -299,11 +261,6 @@ class Pairs(Dataset):
         ]
         self.radiances = [radiance(record) for _, record in self.items]
         self.scenes = [i for i, (_, record) in enumerate(self.items) if record["sharpest"] >= SHARP_FLOOR]
-        self.vivid_items: list[int] = []
-        if vivid:
-            scores = colourfulness(self.items)
-            ranked = sorted(range(len(self.items)), key=scores.__getitem__, reverse=True)
-            self.vivid_items = ranked[: max(1, round(len(ranked) * VIVID_TOP))]
         self.subject_items: list[int] = []
         self.faces: dict[int, list[list[float]]] = {}
         if subjects and faces:
@@ -367,10 +324,7 @@ class Pairs(Dataset):
         )
 
     def reflected(self, scene_index: int, rng: random.Random) -> int:
-        """Any frame but the scene's, or a vivid one for a `vivid` share."""
-        chosen = rng.choice(self.vivid_items) if self.vivid and rng.random() < self.vivid else scene_index
-        if chosen != scene_index:
-            return chosen
+        """Any frame but the scene's."""
         other = rng.randrange(len(self.items) - 1)
         return other + (other >= scene_index)
 
@@ -506,8 +460,6 @@ class Composite(NamedTuple):
     scale: torch.Tensor
     """(B, 1, 1, 1) what every layer was multiplied by to bring the photograph's own white to its drawn
     exposure."""
-    fins: torch.Tensor
-    """(B, 1, H, W) where a dashboard vent's fins are, as `finned` marks them; 0 without one."""
 
 
 class Pending(NamedTuple):
@@ -526,22 +478,6 @@ class Pending(NamedTuple):
     """(B, 1, 1, 1) what the scene and its reflection were multiplied by before the sensor recorded them."""
     developing: Future
     """Of each (B, H, W, 3) develop: the photograph's, and the scene's or None."""
-    fins: torch.Tensor
-
-
-def composite(
-    scene: torch.Tensor,
-    reflected: torch.Tensor,
-    ceilings: torch.Tensor,
-    matrices: torch.Tensor,
-    levels: torch.Tensor,
-    reflectances: torch.Tensor,
-    subjects: torch.Tensor | None = None,
-) -> Composite:
-    """The photograph through glass of each (B, 3, H, W) `scene` with `reflected` in it, recorded by the
-    camera `Pairs` describes, the glass reflecting more towards whichever edge of the frame looks at it
-    more obliquely. The draws come from the CPU's global RNG, so seeding it repeats them."""
-    return finished(started(scene, reflected, ceilings, matrices, levels, reflectances, subjects))
 
 
 def started(
@@ -563,7 +499,10 @@ def started(
     green_broads: float = 0.0,
     vent_share: float = 0.0,
 ) -> Pending:
-    """`composite` up to the develops, which run on `developer` when given. Without `cleaned`, the
+    """The photograph through glass of each (B, 3, H, W) `scene` with `reflected` in it, recorded by the
+    camera `Pairs` describes, the glass reflecting more towards whichever edge of the frame looks at it
+    more obliquely, up to the develops, which run on `developer` when given; `finished` waits for them.
+    The draws come from the CPU's global RNG, so seeding it repeats them. Without `cleaned`, the
     scene goes undeveloped and `clean` holds it as light. `metered` replaces the camera's own metering,
     so a twin of the same glass can be exposed as the photograph it mirrors. `broad_colours` tints every
     veil, near reflection and glare to a uniformly drawn hue at a `BROAD_SPREAD`; `broad_levels` gives each
@@ -699,12 +638,9 @@ def started(
         levelled = torch.minimum(drawn(*BROAD_LEVEL, logarithmic=True), most) / layer.mean((1, 2, 3)).clamp(min=1e-9)
         gain = torch.where((veils | glares).to(device), levelled, gain)
     layer = layer * gain[:, None, None, None]
-    fins = torch.zeros(batch, 1, height, width, device=device)
     if vent_share:
         venting = (((torch.rand(batch) < vent_share) & (distant | glares & ~over)).to(device) & present).float()
-        vent = vents(batch, height, width, device) * venting[:, None, None, None]
-        layer = layer + vent
-        fins = finned(vent)
+        layer = layer + vents(batch, height, width, device) * venting[:, None, None, None]
 
     if metered is None:
         metered = (meterings / white(scene).clamp(min=1e-6))[:, None, None, None]
@@ -720,18 +656,7 @@ def started(
     else:
         developing = Future()
         developing.set_result(develop())
-    return Pending(
-        scene, layer, kept, scene_blur, reflection_blur, veiled, glared, levels, exposures, metered, developing, fins
-    )
-
-
-def finned(vent: torch.Tensor) -> torch.Tensor:
-    """(B, 1, H, W) where a (B, 3, H, W) vent's fins and openings are, 0 to 1 of each image's sharpest: the light's
-    departure from its own horizontal blur, which leaves the smooth glow out."""
-    light = vent.mean(1, keepdim=True)
-    reach = VENT_FIN_REACH // 2
-    detail = (light - F.avg_pool2d(light, (1, VENT_FIN_REACH), 1, (0, reach), count_include_pad=False)).abs()
-    return detail / detail.amax((1, 2, 3), keepdim=True).clamp(min=1e-9)
+    return Pending(scene, layer, kept, scene_blur, reflection_blur, veiled, glared, levels, exposures, metered, developing)
 
 
 def finished(pending: Pending, scale: torch.Tensor | None = None) -> Composite:
@@ -755,7 +680,6 @@ def finished(pending: Pending, scale: torch.Tensor | None = None) -> Composite:
         pending.veiled,
         pending.glared,
         scale,
-        pending.fins,
     )
 
 
@@ -927,8 +851,7 @@ def vents(batch: int, height: int, width: int, device: torch.device) -> torch.Te
     `DASHBOARD_CURL` and ends `DASHBOARD_DEPTH` back: turned away from the windscreen, each point takes the light
     by the cosine of its angle to it, 1 - cos(window - tilt) of the sky, sin(elevation - tilt) of the sun, so
     the glow falls off towards the dashboard's back. A vent's grille sits there: a dark opening crossed by lit fins
-    running fore and aft; with `DASH_OBJECTS`, `dashboard` draws panels, paper and stickers over it all. The
-    glass's foot is `CAMERA_DISTANCE` from the camera; the glass at height h is h / tan(rake) nearer and the dashboard r beyond it, so the reflection comes
+    running fore and aft. The glass's foot is `CAMERA_DISTANCE` from the camera; the glass at height h is h / tan(rake) nearer and the dashboard r beyond it, so the reflection comes
     nearer with height for any rake under 45 degrees: the fins converge downwards on a point far below the frame,
     widening and blurring with height, the camera focused far past them. Light itself doesn't fall with distance: a
     lit surface's radiance is the same from any range."""
@@ -992,8 +915,6 @@ def vents(batch: int, height: int, width: int, device: torch.device) -> torch.Te
         * torch.sigmoid((row - within) * VENT_ROW_EDGE)
     )
     columns = torch.sigmoid((drawn(*VENT_WIDTH) / 2 - (across - centre).abs()) * EDGE / 2)
-    if DASH_OBJECTS:
-        columns = columns * (torch.rand(batch, 1, 1) < VENT_GRILLE_SHARE).to(device)
     grille = on_grille * columns
     opening = drawn(*VENT_HOLE_LIGHT) * (torch.rand(batch, 1, 1) >= VENT_BLACK_SHARE).to(device)
     fin_light = drawn(*VENT_FIN_LIGHT, logarithmic=True)
@@ -1009,10 +930,6 @@ def vents(batch: int, height: int, width: int, device: torch.device) -> torch.Te
     above = ((1 - (back - far) / overhang.clamp(min=1e-6)).clamp(0, 1) * torch.sigmoid((back - far) * VENT_ROW_EDGE)) * columns
     light = glow * (1 - grille + grille * (opening + (lit - opening) * fins) + above * (tops - 1) * fins)
     light = light.clamp(min=0)[:, None].expand(batch, 3, height, width)
-    if DASH_OBJECTS:
-        # A frame's width spans `VENT_FRAME_ASPECT` times the rise its height does, at the glass.
-        wide = VENT_FRAME_ASPECT * span
-        light = dashboard(light, glow[:, None], across * wide, wide, back, depth)
 
     softness = drawn(*VENT_SOFTNESS, logarithmic=True)
     light = light.contiguous()
@@ -1020,76 +937,7 @@ def vents(batch: int, height: int, width: int, device: torch.device) -> torch.Te
     mix = ((scale - end) / (1 - end).clamp(min=1e-6)).clamp(0, 1)[:, None]
     light = soft * (1 - mix) + sharp * mix
     tint = 1 + (torch.rand(batch, 3, 1, 1).to(device) - 0.5) * VENT_TINT
-    lit = light * tint * drawn(*VENT_LEVEL, logarithmic=True)[:, None]
-    return DASH_MOST * torch.tanh(lit / DASH_MOST) if DASH_OBJECTS else lit
-
-
-def dashboard(
-    light: torch.Tensor,
-    glow: torch.Tensor,
-    across: torch.Tensor,
-    wide: torch.Tensor,
-    back: torch.Tensor,
-    depth: torch.Tensor,
-) -> torch.Tensor:
-    """(B, 3, H, W) dashboard `light` with what lies on the dashboard drawn over it, each lit as the (B, 1, H, W)
-    `glow` lights the top there: up to `DASH_PANELS` moulded panels, filled or a rim, changing the top's own
-    light; up to `DASH_PAPERS` sheets of paper, some printed with lines; up to `DASH_STICKERS` coloured stickers.
-    (B, H, W) `across` and `back` are the dashboard's own coordinates, both in the glass's rise; shapes
-    lie within the (B, 1, 1) `wide` the frame spans and short of the (B, 1, 1) `depth` the top reaches back to."""
-    batch, _, height, width = light.shape
-    device = light.device
-    u, v = across[:, None], back[:, None]
-
-    def drawn(low: float, high: float, count: int, logarithmic: bool = False) -> torch.Tensor:
-        if logarithmic:
-            low, high = math.log(low), math.log(high)
-        # The CPU's generator, which a twin replays, as `vents`' draws.
-        values = low + (high - low) * torch.rand(batch, count, 1, 1)
-        return (values.exp() if logarithmic else values).to(device)
-
-    def there(count: int, share: float) -> torch.Tensor:
-        return (torch.rand(batch, count, 1, 1) < share).to(device)
-
-    def placed(count: int, half: tuple[tuple[float, float], tuple[float, float]], turning: float) -> torch.Tensor:
-        """(B, count, H, W) signed distance in the glass's rise from each of `count` rounded boxes, negative inside."""
-        half_u = drawn(*half[0], count, logarithmic=True)
-        half_v = drawn(*half[1], count, logarithmic=True)
-        radius = torch.minimum(half_u, half_v) * drawn(0, 1, count)
-        angle = drawn(-turning, turning, count)
-        du = u - drawn(-0.5, 0.5, count) * wide[:, None]
-        dv = v - drawn(0, 1, count) * depth[:, None]
-        du, dv = du * angle.cos() + dv * angle.sin(), dv * angle.cos() - du * angle.sin()
-        qu, qv = du.abs() - half_u + radius, dv.abs() - half_v + radius
-        return torch.hypot(qu.clamp(min=0), qv.clamp(min=0)) + torch.maximum(qu, qv).clamp(max=0) - radius
-
-    panels = placed(DASH_PANELS, DASH_PANEL_HALF, 0.0)
-    rim = drawn(*DASH_OUTLINE_WIDTH, DASH_PANELS) / 2
-    shape = torch.where(there(DASH_PANELS, DASH_OUTLINE_SHARE), panels.abs() - rim, panels)
-    covered = torch.sigmoid(-shape * DASH_EDGE) * there(DASH_PANELS, DASH_PANEL_SHARE)
-    albedo = drawn(*DASH_PANEL_ALBEDO, DASH_PANELS, logarithmic=True)
-    for each in range(DASH_PANELS):
-        light = light * (1 + (albedo[:, each : each + 1] - 1) * covered[:, each : each + 1])
-
-    sheets = placed(DASH_PAPERS, DASH_PAPER_HALF, math.pi / 4)
-    lines = torch.remainder(v / drawn(*DASH_PAPER_LINES, DASH_PAPERS, logarithmic=True), 1)
-    printed = 1 - 0.6 * there(DASH_PAPERS, 0.6) * torch.sigmoid((0.25 - lines) * 8)
-    papers = drawn(*DASH_PAPER_ALBEDO, DASH_PAPERS, logarithmic=True) * printed
-    on_sheet = torch.sigmoid(-sheets * DASH_EDGE) * there(DASH_PAPERS, DASH_PAPER_SHARE)
-    for each in range(DASH_PAPERS):
-        mask = on_sheet[:, each : each + 1]
-        light = light * (1 - mask) + glow * papers[:, each : each + 1] * mask
-
-    stickers = placed(DASH_STICKERS, (DASH_STICKER_HALF, DASH_STICKER_HALF), math.pi)
-    on_sticker = torch.sigmoid(-stickers * DASH_EDGE) * there(DASH_STICKERS, DASH_STICKER_SHARE)
-    hue, spread = drawn(0, 2 * math.pi, DASH_STICKERS), drawn(*DASH_STICKER_SPREAD, DASH_STICKERS)
-    thirds = torch.tensor([0.0, -2 * math.pi / 3, 2 * math.pi / 3], device=device)[None, None, :]
-    colours = (1 + spread[..., 0] * (hue[..., 0] - thirds).cos()).clamp(min=0)
-    colours = colours / colours.mean(-1, keepdim=True) * drawn(1.0, 3.0, DASH_STICKERS)[..., 0]
-    for each in range(DASH_STICKERS):
-        mask = on_sticker[:, each : each + 1]
-        light = light * (1 - mask) + glow * colours[:, each, :, None, None] * mask
-    return light
+    return light * tint * drawn(*VENT_LEVEL, logarithmic=True)[:, None]
 
 
 def blurred(rgb: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:

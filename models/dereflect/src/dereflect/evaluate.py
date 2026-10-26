@@ -1,4 +1,4 @@
-"""Exported weights scored on the held-out pairs as training validates them.
+"""Exported weights scored on the held-out pairs as training validates them, composited with `started`'s defaults.
 
     uv run python -m dereflect.evaluate <data> <weights dir>... [--cache dir]
 """
@@ -29,7 +29,7 @@ def main() -> None:
         raise SystemExit(f"{len(pairs)} held-out pairs of {args.data} under {args.cache}, fewer than 2")
     device, bf16 = cuda()
     serve(args.cache / ".scratch")
-    validation = held_out(pairs, device)
+    validation = held_out(pairs, device, {})
     for weights in args.weights:
         net = load(weights).to(device, memory_format=torch.channels_last).eval()
         print(f"{weights}: {measure(forwarding(net, bf16), validation, device)}", flush=True)
