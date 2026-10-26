@@ -120,6 +120,7 @@ impl<'a> Open<'a> {
             noise: frame.noise,
             matrix: frame.matrix,
             as_shot: frame.as_shot,
+            neutral_ceiling: frame.neutral_ceiling,
         };
         let measured = pollster::block_on(rawshim::open::measure(frame.resident()?, &opening))
             .inspect_err(|why| eprintln!("{}: {why}", self.path))

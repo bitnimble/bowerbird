@@ -58,6 +58,7 @@ use std::os::raw::c_char;
 #[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
+mod acr3;
 mod align;
 /// The headroom behind Apple's own gain map, which the two maker note tags state between them.
 pub mod apple_gain;
@@ -139,6 +140,7 @@ pub mod decode_rawler;
 pub mod decode_rendered;
 pub mod demosaic;
 pub mod dereflect;
+mod dng_rendering;
 /// Sensor particles found on the mosaic, and their shadows divided back out of it.
 pub mod dust;
 /// The search half of that, dispatched on the device the mosaic is already on.

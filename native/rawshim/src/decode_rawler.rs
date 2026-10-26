@@ -799,6 +799,7 @@ async fn region_mosaic(
 
     let cfa = cfa_of(image)?;
     let gpu = crate::gpu::device();
+    let maps = gain_maps(decoder.as_ref());
     let field_mosaic = condition(
         gpu,
         &lift(field_left, field_top, field_w, field_h),
@@ -806,6 +807,7 @@ async fn region_mosaic(
         field_h,
         image,
         &cfa,
+        &shading(&maps, &shape, (field_left, field_top)),
     )?;
     let highlight = match demosaiced {
         Demosaiced::ByTheReference => None,
@@ -1352,19 +1354,24 @@ fn plane_curves(
     width: usize,
     height: usize,
 ) -> Result<[Vec<f64>; 3], String> {
-    let list = decoder
+    match opcode_list(decoder) {
+        Some(bytes) => opcode_curves(&bytes, width, height),
+        None => Ok(identity_curves()),
+    }
+}
+
+/// The DNG's OpcodeList2, which the specification applies to the raw samples once they are linear.
+fn opcode_list(decoder: &dyn rawler::decoders::Decoder) -> Option<Vec<u8>> {
+    let entry = decoder
         .ifd(rawler::decoders::WellKnownIFD::Raw)
         .ok()
-        .flatten()
-        .and_then(|ifd| {
-            ifd.get_entry(rawler::tags::DngTag::OpcodeList2)
-                .map(|entry| entry.value.clone())
-        });
-    match list {
-        Some(rawler::formats::tiff::Value::Undefined(bytes)) => {
-            opcode_curves(&bytes, width, height)
-        }
-        _ => Ok(identity_curves()),
+        .flatten()?
+        .get_entry(rawler::tags::DngTag::OpcodeList2)?
+        .value
+        .clone();
+    match entry {
+        rawler::formats::tiff::Value::Undefined(bytes) => Some(bytes),
+        _ => None,
     }
 }
 
@@ -1372,44 +1379,78 @@ fn identity_curves() -> [Vec<f64>; 3] {
     std::array::from_fn(|_| vec![0.0, 1.0])
 }
 
-/// [`plane_curves`] off the opcode list's own bytes, which DNG writes big-endian whatever the file's
-/// byte order.
-fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>; 3], String> {
-    const MAP_POLYNOMIAL: u32 = 8;
-    const OPTIONAL: u32 = 1;
-    let mut curves = identity_curves();
-    let truncated = || "this DNG's OpcodeList2 is truncated".to_string();
-    let word = |at: usize| -> Result<u32, String> {
-        Ok(u32::from_be_bytes(
-            bytes
-                .get(at..at + 4)
-                .ok_or_else(truncated)?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let float = |at: usize| -> Result<f64, String> {
-        Ok(f64::from_be_bytes(
-            bytes
-                .get(at..at + 8)
-                .ok_or_else(truncated)?
-                .try_into()
-                .unwrap(),
-        ))
-    };
+const MAP_POLYNOMIAL: u32 = 8;
+const GAIN_MAP: u32 = 9;
+
+/// One entry of an opcode list.
+struct Opcode<'a> {
+    id: u32,
+    optional: bool,
+    body: Body<'a>,
+}
+
+/// An opcode's parameters, which DNG writes big-endian whatever the file's byte order.
+#[derive(Clone, Copy)]
+struct Body<'a>(&'a [u8]);
+
+impl Body<'_> {
+    fn word(self, at: usize) -> Result<u32, String> {
+        Ok(u32::from_be_bytes(self.bytes(at)?))
+    }
+
+    fn single(self, at: usize) -> Result<f32, String> {
+        Ok(f32::from_be_bytes(self.bytes(at)?))
+    }
+
+    fn double(self, at: usize) -> Result<f64, String> {
+        Ok(f64::from_be_bytes(self.bytes(at)?))
+    }
+
+    fn bytes<const N: usize>(self, at: usize) -> Result<[u8; N], String> {
+        self.0
+            .get(at..at.saturating_add(N))
+            .map(|bytes| bytes.try_into().unwrap())
+            .ok_or_else(truncated)
+    }
+}
+
+fn truncated() -> String {
+    "this DNG's OpcodeList2 is truncated".to_string()
+}
+
+fn opcodes(bytes: &[u8]) -> Result<Vec<Opcode<'_>>, String> {
+    let list = Body(bytes);
     let mut at = 4;
-    for _ in 0..word(0)? {
-        let (id, flags, size) = (word(at)?, word(at + 8)?, word(at + 12)? as usize);
-        let body = at + 16;
-        at = body.saturating_add(size);
+    (0..list.word(0)?)
+        .map(|_| {
+            let (id, flags, size) = (
+                list.word(at)?,
+                list.word(at.saturating_add(8))?,
+                list.word(at.saturating_add(12))?,
+            );
+            let body = at.saturating_add(16);
+            at = body.saturating_add(size as usize);
+            Ok(Opcode {
+                id,
+                optional: flags & 1 == 1,
+                body: Body(bytes.get(body..at).ok_or_else(truncated)?),
+            })
+        })
+        .collect()
+}
+
+/// [`plane_curves`] off the opcode list's own bytes.
+fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>; 3], String> {
+    let mut curves = identity_curves();
+    for Opcode { id, optional, body } in opcodes(bytes)? {
         if id != MAP_POLYNOMIAL {
-            match flags & OPTIONAL {
-                0 => {
+            match optional {
+                false => {
                     return Err(format!(
                         "this DNG asks for opcode {id}, which this build does not apply"
                     ));
                 }
-                _ => continue,
+                true => continue,
             }
         }
         let [
@@ -1422,7 +1463,7 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
             row_pitch,
             column_pitch,
             degree,
-        ] = std::array::from_fn(|k| word(body + k * 4));
+        ] = std::array::from_fn(|k| body.word(k * 4));
         let whole = top? == 0
             && left? == 0
             && bottom? as usize >= height
@@ -1433,7 +1474,7 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
             return Err("this DNG maps only part of its picture through a polynomial".into());
         }
         let coefficients = (0..=degree? as usize)
-            .map(|k| float(body + 36 + k * 8))
+            .map(|k| body.double(36 + k * 8))
             .collect::<Result<Vec<_>, _>>()?;
         let plane = plane? as usize;
         for curve in curves.iter_mut().skip(plane).take(planes? as usize) {
@@ -1441,6 +1482,99 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
         }
     }
     Ok(curves)
+}
+
+/// The lens shading in a mosaic DNG's OpcodeList2: a gain map per CFA position.
+fn gain_maps(decoder: &dyn rawler::decoders::Decoder) -> Vec<crate::condition::GainMap> {
+    let Some(bytes) = opcode_list(decoder) else {
+        return Vec::new();
+    };
+    match opcodes(&bytes) {
+        Ok(list) => list
+            .into_iter()
+            .filter(|opcode| opcode.id == GAIN_MAP)
+            .filter_map(|opcode| {
+                gain_map(opcode.body)
+                    .inspect_err(|why| {
+                        crate::warn(&format!("rawshim: {why}, so that map is not applied"))
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .collect(),
+        Err(why) => {
+            crate::warn(&format!(
+                "rawshim: {why}, so its lens shading is not applied"
+            ));
+            Vec::new()
+        }
+    }
+}
+
+/// One GainMap's gains for a mosaic's single plane, or None where it covers no plane 0.
+fn gain_map(body: Body<'_>) -> Result<Option<crate::condition::GainMap>, String> {
+    let [
+        top,
+        left,
+        bottom,
+        right,
+        plane,
+        _planes,
+        row_pitch,
+        column_pitch,
+        down,
+        across,
+    ] = std::array::from_fn(|k| body.word(k * 4));
+    let [spacing_v, spacing_h, origin_v, origin_h] =
+        std::array::from_fn(|k| body.double(40 + k * 8));
+    let (down, across, map_planes) = (down?, across?, body.word(72)?);
+    let (row_pitch, column_pitch) = (row_pitch?, column_pitch?);
+    if plane? != 0
+        || down == 0
+        || across == 0
+        || map_planes == 0
+        || row_pitch == 0
+        || column_pitch == 0
+    {
+        return Ok(None);
+    }
+    // A lone point's spacing is free in DNG, and a zero there is 0/0 in `grid_at`.
+    let spacing = |spacing: f64, points: u32| match points {
+        1 => Ok(1.0),
+        _ if spacing > 0.0 => Ok(spacing as f32),
+        _ => Err("a GainMap's points are not spaced apart".to_string()),
+    };
+    let gains = (0..down as usize * across as usize)
+        .map(|point| body.single(76 + point * map_planes as usize * 4))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(crate::condition::GainMap {
+        area: [top?, left?, bottom?, right?],
+        pitch: [row_pitch, column_pitch],
+        points: [down, across],
+        spacing: [spacing(spacing_v?, down)?, spacing(spacing_h?, across)?],
+        origin: [origin_v? as f32, origin_h? as f32],
+        gains,
+    }))
+}
+
+/// [`gain_maps`] over a run of samples whose first sits at `at` on the sensor.
+///
+/// The maps describe the active area, as DNG's raw processing stages do.
+fn shading<'a>(
+    maps: &'a [crate::condition::GainMap],
+    image: &rawler::RawImage,
+    at: (usize, usize),
+) -> crate::condition::Shading<'a> {
+    let (left, top, width, height) = image
+        .active_area
+        .map_or((0, 0, image.width, image.height), |area| {
+            (area.p.x, area.p.y, area.d.w, area.d.h)
+        });
+    crate::condition::Shading {
+        maps,
+        origin: (at.0 as i32 - left as i32, at.1 as i32 - top as i32),
+        image: (width.max(1), height.max(1)),
+    }
 }
 
 /// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
@@ -1464,7 +1598,16 @@ async fn hold(
     }
 
     let gpu = crate::gpu::device();
-    let mosaic = condition(gpu, &samples[..width * height], width, height, &image, &cfa)?;
+    let maps = gain_maps(decoder);
+    let mosaic = condition(
+        gpu,
+        &samples[..width * height],
+        width,
+        height,
+        &image,
+        &cfa,
+        &shading(&maps, &image, (0, 0)),
+    )?;
 
     lap("condition");
 
@@ -2812,6 +2955,7 @@ fn condition(
     height: usize,
     image: &rawler::RawImage,
     cfa: &crate::cfa::Cfa,
+    shading: &crate::condition::Shading<'_>,
 ) -> Option<crate::condition::Mosaic> {
     let levels = Levels {
         black: per_position_black(image, cfa),
@@ -2827,6 +2971,7 @@ fn condition(
         width,
         height,
         &curve,
+        shading,
     )
 }
 
@@ -3302,6 +3447,198 @@ mod tests {
         assert!(super::opcode_curves(&truncated[..truncated.len() - 1], 30, 20).is_err());
     }
 
+    fn gain_map_opcode(
+        plane: u32,
+        area: [u32; 4],
+        pitch: [u32; 2],
+        points: [u32; 2],
+        placement: [f64; 4],
+        planes: u32,
+        gains: &[f32],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        for word in [
+            area[0], area[1], area[2], area[3], plane, 1, pitch[0], pitch[1],
+        ]
+        .into_iter()
+        .chain(points)
+        {
+            body.extend_from_slice(&word.to_be_bytes());
+        }
+        for value in placement {
+            body.extend_from_slice(&value.to_be_bytes());
+        }
+        body.extend_from_slice(&planes.to_be_bytes());
+        for gain in gains {
+            body.extend_from_slice(&gain.to_be_bytes());
+        }
+        opcode(super::GAIN_MAP, 1, &body)
+    }
+
+    /// A map carrying several planes hands a mosaic its first, each axis keeps its own fields, and
+    /// a polynomial beside it is no gain.
+    #[test]
+    fn a_gain_map_is_read_as_plane_zero() {
+        let bytes = list(&[
+            map_polynomial(0, [0, 0, 20, 30], &[0.0, 1.0]),
+            gain_map_opcode(
+                0,
+                [1, 0, 20, 30],
+                [2, 4],
+                [2, 3],
+                [1.0, 0.5, 0.125, 0.25],
+                2,
+                &[1.0, 9.0, 2.0, 9.0, 3.0, 9.0, 4.0, 9.0, 5.0, 9.0, 6.0, 9.0],
+            ),
+        ]);
+        let maps: Vec<_> = super::opcodes(&bytes)
+            .expect("the list is read")
+            .into_iter()
+            .filter(|opcode| opcode.id == super::GAIN_MAP)
+            .map(|opcode| super::gain_map(opcode.body).expect("the map is read"))
+            .collect();
+        assert_eq!(
+            maps,
+            vec![Some(crate::condition::GainMap {
+                area: [1, 0, 20, 30],
+                pitch: [2, 4],
+                points: [2, 3],
+                spacing: [1.0, 0.5],
+                origin: [0.125, 0.25],
+                gains: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            })]
+        );
+    }
+
+    /// A map of another plane is none of a mosaic's, and points that are not spaced apart are no map.
+    #[test]
+    fn a_gain_map_a_mosaic_cannot_use_is_passed_over() {
+        let read = |opcode: Vec<u8>| {
+            let bytes = list(&[opcode]);
+            let opcodes = super::opcodes(&bytes).expect("the list is read");
+            super::gain_map(opcodes[0].body)
+        };
+        let other_plane = gain_map_opcode(1, [0, 0, 20, 30], [1, 1], [1, 1], [1.0; 4], 1, &[2.0]);
+        assert_eq!(read(other_plane), Ok(None));
+        let unspaced = gain_map_opcode(
+            0,
+            [0, 0, 20, 30],
+            [1, 1],
+            [2, 1],
+            [0.0, 1.0, 0.0, 0.0],
+            1,
+            &[1.0, 2.0],
+        );
+        assert!(read(unspaced).is_err());
+    }
+
+    /// The shading lands where dng_sdk's interpolator puts it on a grid of different extents down
+    /// and across, on only the photosites its pitch names counted from the image rather than the
+    /// run, nowhere in a masked border the run starts in, and never past the channel's ceiling.
+    #[test]
+    fn the_kernel_shades_each_photosite_by_its_gain_map() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let levels = super::Levels {
+            black: vec![0.0; 4],
+            white: 1000.0,
+            gains: [0.5, 1.0, 0.25, 1.0],
+        };
+        let curve = super::curve(&cfa, &levels);
+        let maps = [
+            crate::condition::GainMap {
+                area: [0, 0, 40, 60],
+                pitch: [1, 1],
+                points: [3, 4],
+                spacing: [0.4, 0.25],
+                origin: [0.1, 0.05],
+                gains: (0..12).map(|at| 1.0 + 0.25 * at as f32).collect(),
+            },
+            crate::condition::GainMap {
+                area: [1, 1, 40, 60],
+                pitch: [2, 4],
+                points: [1, 1],
+                spacing: [1.0, 1.0],
+                origin: [0.0, 0.0],
+                gains: vec![1.5],
+            },
+        ];
+        let (image_w, image_h) = (60i32, 40i32);
+        let gain_at = |map: &crate::condition::GainMap, row: i32, col: i32| -> f32 {
+            let [top, left, bottom, right] = map.area.map(|edge| edge as i32);
+            let [row_pitch, column_pitch] = map.pitch.map(|pitch| pitch as i32);
+            if row < top || row >= bottom || col < left || col >= right {
+                return 1.0;
+            }
+            if (row - top) % row_pitch != 0 || (col - left) % column_pitch != 0 {
+                return 1.0;
+            }
+            let grid = |place: i32, extent: i32, axis: usize| {
+                (((place as f32 + 0.5) / extent as f32 - map.origin[axis]) / map.spacing[axis])
+                    .clamp(0.0, (map.points[axis] - 1) as f32)
+            };
+            let (v, h) = (grid(row, image_h, 0), grid(col, image_w, 1));
+            let (down, across) = (map.points[0] as usize, map.points[1] as usize);
+            let (v0, h0) = (v as usize, h as usize);
+            let (v1, h1) = ((v0 + 1).min(down - 1), (h0 + 1).min(across - 1));
+            let at = |v: usize, h: usize| map.gains[v * across + h];
+            let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+            let (fv, fh) = (v - v0 as f32, h - h0 as f32);
+            lerp(
+                lerp(at(v0, h0), at(v0, h1), fh),
+                lerp(at(v1, h0), at(v1, h1), fh),
+                fv,
+            )
+        };
+
+        for (left, top) in [(6i32, 4i32), (-2, -2)] {
+            let (width, height) = (21usize, 17usize);
+            let samples: Vec<u16> = (0..width * height)
+                .map(|at| {
+                    if at % 7 == 0 {
+                        900
+                    } else {
+                        100 + (at % 13) as u16
+                    }
+                })
+                .collect();
+            let shading = crate::condition::Shading {
+                maps: &maps,
+                origin: (left, top),
+                image: (image_w as usize, image_h as usize),
+            };
+            let mine = pollster::block_on(
+                crate::condition::normalise(
+                    gpu,
+                    crate::condition::device(gpu),
+                    &samples,
+                    width,
+                    height,
+                    &curve,
+                    &shading,
+                )
+                .expect("the kernel runs")
+                .read(gpu),
+            )
+            .expect("the mosaic reads back");
+
+            for (at, sample) in samples.iter().enumerate() {
+                let (row, col) = (top + (at / width) as i32, left + (at % width) as i32);
+                let gain = gain_at(&maps[0], row, col) * gain_at(&maps[1], row, col);
+                let position = (at / width % 2) * 2 + at % width % 2;
+                let ceiling = levels.gains[usize::from(cfa.colour_of_slot(position))];
+                let theirs = (f32::from(*sample) / 1000.0 * ceiling * gain).min(ceiling);
+                assert!(
+                    (mine[at] - theirs).abs() <= theirs * 1e-5,
+                    "at row {row} column {col}: {} against {theirs}",
+                    mine[at]
+                );
+            }
+        }
+    }
+
     /// A little-endian DNG of one row of floating-point RGB pixels with no WhiteLevel, which is
     /// what a Lightroom HDR merge stores, down to the tags rawler needs to read one.
     fn float_dng(pixels: &[[f32; 3]]) -> Vec<u8> {
@@ -3714,9 +4051,17 @@ mod tests {
                 })
                 .collect();
             let mine = pollster::block_on(
-                crate::condition::normalise(gpu, kernels, &samples, width, height, &curve)
-                    .expect("the kernel runs")
-                    .read(gpu),
+                crate::condition::normalise(
+                    gpu,
+                    kernels,
+                    &samples,
+                    width,
+                    height,
+                    &curve,
+                    &crate::condition::Shading::NONE,
+                )
+                .expect("the kernel runs")
+                .read(gpu),
             )
             .expect("the mosaic reads back");
 

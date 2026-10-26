@@ -32,7 +32,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 25;
+const VERSION: u8 = 26;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -558,6 +558,7 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
             put_f32(out, illuminant.tint);
         }
     }
+    out.push(u8::from(colour.stated));
 
     match &colour.chroma {
         None => out.push(0),
@@ -643,6 +644,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
             tint: at.f32()?,
         }),
     };
+    let stated = at.u8()? == 1;
 
     let (chroma, neighbourhood) = match at.u8()? {
         0 => (None, crate::hdr_fit::NeighbourhoodThumb::none()),
@@ -701,6 +703,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         illuminant,
         chroma,
         neighbourhood,
+        stated,
     }))
 }
 
@@ -1018,6 +1021,7 @@ pub(crate) mod tests {
                     temperature: 5320.0,
                     tint: -4.0,
                 }),
+                stated: false,
                 // At storage precision, as every map a fit hands out is.
                 chroma: Some(
                     ChromaMap::new(

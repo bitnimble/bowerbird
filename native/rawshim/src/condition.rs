@@ -70,6 +70,8 @@ impl Condition {
                 storage(1, true),
                 storage(2, true),
                 storage(3, false),
+                storage(7, true),
+                storage(8, true),
             ],
         });
         let rect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -343,6 +345,41 @@ impl Curve {
     }
 }
 
+/// One DNG GainMap opcode's plane 0: a grid of gains over every `pitch`th photosite of `area`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GainMap {
+    /// Top, left, bottom, right, in the image the opcode list describes.
+    pub area: [u32; 4],
+    /// Rows, then columns.
+    pub pitch: [u32; 2],
+    /// Grid points down, then across.
+    pub points: [u32; 2],
+    /// Between grid points, as fractions of the image's height and width.
+    pub spacing: [f32; 2],
+    /// Of the first grid point, as fractions of the image's height and width.
+    pub origin: [f32; 2],
+    /// Row-major over `points`.
+    pub gains: Vec<f32>,
+}
+
+/// The gain maps over a run of samples, and where that run sits in the image they describe.
+pub struct Shading<'a> {
+    pub maps: &'a [GainMap],
+    /// The run's first sample, in the maps' image; negative where it starts in a masked border.
+    pub origin: (i32, i32),
+    /// Width, then height, of the image the maps' fractions are of.
+    pub image: (usize, usize),
+}
+
+#[cfg(test)]
+impl Shading<'_> {
+    pub const NONE: Shading<'static> = Shading {
+        maps: &[],
+        origin: (0, 0),
+        image: (1, 1),
+    };
+}
+
 /// The mosaic, from the samples and `decode_rawler::curve`'s answer for every level.
 ///
 /// None where the frame is empty, the samples are short of it, or the curve is not the whole
@@ -354,6 +391,7 @@ pub fn normalise(
     width: usize,
     height: usize,
     curve: &Curve,
+    shading: &Shading<'_>,
 ) -> Option<Mosaic> {
     let count = width.checked_mul(height)?;
     if count == 0 || samples.len() < count || !curve.whole() {
@@ -363,11 +401,12 @@ pub fn normalise(
     // caller was handed, so it is allocated outside the recording.
     let mut recording = gpu.record();
     let words = upload(&mut recording, &samples[..count]);
-    let levels = float_storage(&mut recording, &curve.values);
+    let levels = float_storage(&mut recording, "condition curve", &curve.values);
+    let (maps, gains) = shading_storage(&mut recording, shading.maps);
     let mosaic = Mosaic::plane(gpu, width, height);
 
     let (period_w, period_h) = curve.period;
-    let mut params: Vec<u8> = Vec::with_capacity(16 + crate::cfa::MAX_SLOTS * 16);
+    let mut params: Vec<u8> = Vec::with_capacity(48 + crate::cfa::MAX_SLOTS * 16);
     for word in [width as u32, count as u32, period_w as u32, period_h as u32] {
         params.extend_from_slice(&word.to_le_bytes());
     }
@@ -377,6 +416,17 @@ pub fn normalise(
         let value = curve.slot_of.get(slot).copied().unwrap_or(0);
         params.extend_from_slice(&value.to_le_bytes());
         params.extend_from_slice(&[0u8; 12]);
+    }
+    for word in [
+        shading.origin.0,
+        shading.origin.1,
+        shading.image.0 as i32,
+        shading.image.1 as i32,
+    ] {
+        params.extend_from_slice(&word.to_le_bytes());
+    }
+    for word in [shading.maps.len() as u32, 0, 0, 0] {
+        params.extend_from_slice(&word.to_le_bytes());
     }
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("condition params"),
@@ -404,6 +454,14 @@ pub fn normalise(
                 binding: 3,
                 resource: mosaic.buffer.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: maps.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: gains.as_entire_binding(),
+            },
         ],
     });
 
@@ -419,18 +477,57 @@ pub fn normalise(
     // Every handle on the samples and the curve, then the poll that retires them. The recording
     // alone is not enough - these are named locals, so its copy is not the last one - and without
     // both the samples sit resident through the denoise that follows.
-    drop((words, levels, uniform, recording));
+    drop((words, levels, maps, gains, uniform, recording));
     gpu.nudge();
     Some(mosaic)
 }
 
-fn float_storage(recording: &mut crate::gpu::Recording<'_>, values: &[f32]) -> crate::gpu::Buffer {
+/// `condition.slang`'s `GainMap` array and the gains it indexes into. Neither is ever empty, since
+/// a storage binding cannot be.
+fn shading_storage(
+    recording: &mut crate::gpu::Recording<'_>,
+    maps: &[GainMap],
+) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
+    let mut described: Vec<u8> = Vec::with_capacity(maps.len().max(1) * 64);
+    let mut gains: Vec<f32> = Vec::new();
+    for map in maps {
+        for word in map.area.iter().chain(&map.pitch).chain(&map.points) {
+            described.extend_from_slice(&word.to_le_bytes());
+        }
+        for value in map.spacing.iter().chain(&map.origin) {
+            described.extend_from_slice(&value.to_le_bytes());
+        }
+        for word in [gains.len() as u32, 0, 0, 0] {
+            described.extend_from_slice(&word.to_le_bytes());
+        }
+        gains.extend_from_slice(&map.gains);
+    }
+    described.resize(described.len().max(64), 0);
+    if gains.is_empty() {
+        gains.push(1.0);
+    }
+    let described = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("condition gain maps"),
+        contents: &described,
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    (
+        described,
+        float_storage(recording, "condition gains", &gains),
+    )
+}
+
+fn float_storage(
+    recording: &mut crate::gpu::Recording<'_>,
+    label: &str,
+    values: &[f32],
+) -> crate::gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len() * 4);
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("condition curve"),
+        label: Some(label),
         contents: &bytes,
         usage: wgpu::BufferUsages::STORAGE,
     })

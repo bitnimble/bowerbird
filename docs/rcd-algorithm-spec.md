@@ -610,6 +610,9 @@ These are this repository's answers, recorded here so the shader and its caller 
   because that is where the photosite's own information stops, and the gains are scaled so the
   largest is one so that `M` still lands in the unit interval §2.2 asks for. A channel's ceiling is
   then its own gain, and a pixel sitting on all three is what `assemble.slang` renders neutral.
+  A DNG's OpcodeList2 GainMaps (Android's lens shading, up to two stops at the corners) multiply
+  `M` in the same pass, interpolated as dng_sdk's `dng_gain_map_interpolator` does and held at the
+  channel's ceiling as dng_sdk holds a gained sample at white.
 - **No clamp at zero on samples: not §2.2's on the input, not §8's on the output, not §13.4's
   between stages.** Read noise straddles the black level, and a floor keeps the upper half of it,
   lifting every dark channel by a share of its own noise - which the white balance multiplies

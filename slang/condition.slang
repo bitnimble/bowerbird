@@ -38,12 +38,64 @@ struct Params {
     /// One per sixteen bytes, because a uniform array strides its elements to sixteen whatever they
     /// are. 576 bytes against a 64KB binding, and no dynamic index into a vector's components.
     uint slot_of[MAX_SLOTS];
+    /// The first sample's column and row in the gain maps' image, then that image's width and height.
+    int4 frame;
+    /// How many gain maps there are, in `x`.
+    uint4 shading;
+};
+
+/// `condition::GainMap`, as `condition::shading_storage` lays it out.
+struct GainMap {
+    /// Top, left, bottom, right.
+    int4 area;
+    /// Row pitch, column pitch, points down, points across.
+    uint4 grid;
+    /// Spacing down and across, then origin down and across, as fractions of the image.
+    float4 placement;
+    /// The map's first gain, in `x`.
+    uint4 storage;
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> words;
 [vk::binding(2, 0)] StructuredBuffer<float> curve;
 [vk::binding(3, 0)] RWStructuredBuffer<float> mosaic;
+[vk::binding(7, 0)] StructuredBuffer<GainMap> gain_maps;
+[vk::binding(8, 0)] StructuredBuffer<float> gains;
+
+/// One grid coordinate of dng_sdk's `dng_gain_map_interpolator`: the photosite's centre, held at
+/// the grid's first and last points beyond them.
+float grid_at(int place, int extent, float origin, float spacing, uint points)
+{
+    let at = ((float(place) + 0.5) / float(extent) - origin) / spacing;
+    return clamp(at, 0.0, float(points - 1));
+}
+
+float shading_at(int row, int col)
+{
+    var gain = 1.0;
+    for (uint m = 0; m < params.shading.x; m++) {
+        let map = gain_maps[m];
+        if (row < map.area.x || row >= map.area.z || col < map.area.y || col >= map.area.w) {
+            continue;
+        }
+        if (uint(row - map.area.x) % map.grid.x != 0 || uint(col - map.area.y) % map.grid.y != 0) {
+            continue;
+        }
+        let v = grid_at(row, params.frame.w, map.placement.z, map.placement.x, map.grid.z);
+        let h = grid_at(col, params.frame.z, map.placement.w, map.placement.y, map.grid.w);
+        let v0 = uint(v);
+        let h0 = uint(h);
+        let v1 = min(v0 + 1, map.grid.z - 1);
+        let h1 = min(h0 + 1, map.grid.w - 1);
+        let first = map.storage.x;
+        let across = map.grid.w;
+        let top = lerp(gains[first + v0 * across + h0], gains[first + v0 * across + h1], h - float(h0));
+        let bottom = lerp(gains[first + v1 * across + h0], gains[first + v1 * across + h1], h - float(h0));
+        gain *= lerp(top, bottom, v - float(v0));
+    }
+    return gain;
+}
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -57,8 +109,12 @@ void condition(uint3 id : SV_DispatchThreadID)
     let row = at / params.width;
     let col = at - row * params.width;
     let position = (row % params.period_h) * params.period_w + col % params.period_w;
+    let slot = params.slot_of[position] << 16;
 
-    mosaic[at] = curve[(params.slot_of[position] << 16) | raw];
+    // Held at the ceiling, as dng_sdk holds a gained sample at white: `assemble.slang` reads fill
+    // as a fraction of it.
+    let shading = shading_at(int(row) + params.frame.y, int(col) + params.frame.x);
+    mosaic[at] = min(curve[slot | raw] * shading, curve[slot | 0xFFFF]);
 }
 
 // A rectangle of one mosaic into another, which is how a tile is cut and put back without the frame

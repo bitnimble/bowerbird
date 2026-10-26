@@ -821,6 +821,7 @@ fn shared_lenses(
             crate::photo_analysis::decode(bytes)?
                 .from_raw
                 .matched
+                .filter(|m| !m.colour.as_ref().is_some_and(|colour| colour.stated))
                 .map(|m| m.lens)
         })
         .collect();
@@ -1014,6 +1015,31 @@ pub(crate) mod tests {
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(lenses.iter().all(|lens| lens.distortion.is_none()));
+    }
+
+    /// A DNG drawn by its own rendering had nothing to fit its lens against, so its identity lens
+    /// is nobody's measurement.
+    #[test]
+    fn a_stated_rendering_measured_no_lens() {
+        let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
+        analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
+            lens: crate::fit::Lens::none(),
+            colour: Some(crate::hdr_fit::HdrColour {
+                stated: true,
+                ..crate::hdr_fit::HdrColour::identity()
+            }),
+        });
+        let stored = crate::photo_analysis::encode(&analysis);
+
+        let mut warnings = Vec::new();
+        let mut lensless = Vec::new();
+        let paths: Vec<String> = ["a"].iter().map(|s| (*s).to_string()).collect();
+        let mut sources = offered(&paths);
+        sources[0].analysis = Some(&stored);
+
+        shared_lenses(&sources, &mut warnings, &mut lensless);
+
+        assert_eq!(lensless, vec![0]);
     }
 
     /// A window straddling the seam of a two-frame panorama comes back as a tile: the composite is
