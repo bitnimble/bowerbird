@@ -2,7 +2,6 @@
 // the 2x2 box of those sites beside it.
 import pyramid;
 import prelude;
-import "../light.slang";
 import "../times.slang";
 
 /// The stabilised mosaic, or with `FROM_RAW` the conditioned one, stabilised here.
@@ -20,13 +19,20 @@ const int FROM_RAW = 0;
 
 float stabilised(int x, int y)
 {
-    let value = mosaic[min(y, pc.height - 1) * pc.width + min(x, pc.width - 1)];
+    let cx = min(x, pc.width - 1);
+    let cy = min(y, pc.height - 1);
+    let value = mosaic[cy * pc.width + cx];
     if (FROM_RAW == 0) { return value; }
-    Gain sample;
-    sample.g = value;
-    let slot = (y & 1) | ((x & 1) << 1);
-    return gat_forward(sample, params[P_ALPHA], params[P_SIGMA_SQ]) / params[P_UNIFIED_SIGMA]
-        - params[P_DARK_REF0 + slot];
+    Pattern pattern = {
+        times(pc.across, pc.side), times(pc.down, pc.side), pc.packed0, pc.packed1, pc.packed2
+    };
+    let slot = (cy & 1) | ((cx & 1) << 1);
+    return gat_stabilised(
+        value * to_green(pattern, pc.red_to_green, pc.blue_to_green, cy, cx),
+        params[P_ALPHA],
+        params[P_SIGMA_SQ],
+        params[P_UNIFIED_SIGMA],
+        params[P_DARK_REF0 + slot]);
 }
 
 void site_at<let SIDE : int>(int x, int y, out float site[MAX_PLANES])

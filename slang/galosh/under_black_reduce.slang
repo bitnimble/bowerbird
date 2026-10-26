@@ -16,6 +16,8 @@ struct Push {
     uint packed0;
     uint packed1;
     uint packed2;
+    float red_to_green;
+    float blue_to_green;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -58,7 +60,8 @@ void under_black_reduce(
             let x = at - y * pc.width;
             let level = black_level_of(cfa_colour(pat, y, x), y);
             let next = x + pc.period_w < pc.width ? at + pc.period_w : at - pc.period_w;
-            under_black_take(mine[level], -value, raw[next] < 0.0);
+            let depth = -value * to_green(pat, pc.red_to_green, pc.blue_to_green, y, x);
+            under_black_take(mine[level], depth, raw[next] < 0.0);
         }
     }
 

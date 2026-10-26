@@ -5,15 +5,16 @@
 //! ```
 //!
 //! A window of a clean frame is darkened to the noisy frame's median level and given the noise
-//! the noisy frame's own fit describes, so the truth behind the noise is known. Each denoiser
-//! (`galosh`, or `noisy` for none) then filters it at the amounts the fit suggests, and the error
-//! against the truth is reported in units of the noise's own deviation there: 1 is the noise
-//! untouched, 0 the truth.
+//! the noisy frame's own fit describes, scaled on each colour by the clean frame's conditioning
+//! gain over green's, so the truth behind the noise is known. Each denoiser (`galosh`, or `noisy`
+//! for none) then filters it at the amounts the fit suggests, and the error against the truth is
+//! reported in units of the noise's own deviation there: 1 is the noise untouched, 0 the truth.
 //!
 //! Split by how much detail the truth has around each site, because one number cannot tell noise
 //! left behind from detail taken away: on flat ground every bit of error is noise, on texture it is
 //! mostly blur. The flat ground's error correlation at a few site lags says whether what is left is
-//! grain or strokes. Each result is also written demosaiced as `<denoiser>.png`, beside `truth.png`.
+//! grain or strokes, and its mean per colour whether a colour's level moved. Each result is also
+//! written demosaiced as `<denoiser>.png`, beside `truth.png`.
 
 use rawshim::galosh::{Amounts, Detail};
 
@@ -50,6 +51,7 @@ fn main() {
 
     let clean = held(&clean_path);
     let cfa = clean.cfa();
+    let gains = clean.ceilings();
     let whole = pollster::block_on(clean.device_mosaic().read(gpu)).expect("reads back");
     let stride = clean.device_mosaic().width;
     assert!(
@@ -68,6 +70,7 @@ fn main() {
         kernels,
         noisy_frame.device_mosaic(),
         &noisy_frame.cfa(),
+        noisy_frame.ceilings(),
     ))
     .model();
     let night_samples =
@@ -76,11 +79,20 @@ fn main() {
     for value in &mut truth {
         *value *= dim;
     }
-    let deviation = |level: f32| (night.alpha * level.max(0.0) + night.sigma_sq).sqrt();
+    // The fit states green's noise; a colour conditioned at more gain carries that much more.
+    let over_green = |at: usize| {
+        let colour = usize::from(cfa.colour_at(at / side, at % side)).min(2);
+        gains[colour] / gains[1]
+    };
+    let deviation = |at: usize, level: f32| {
+        let gain = over_green(at);
+        gain * (night.alpha * (level / gain).max(0.0) + night.sigma_sq).sqrt()
+    };
     let mut state = 0x2545_f491_4f6c_dd1du64;
     let noisy: Vec<f32> = truth
         .iter()
-        .map(|&level| level + deviation(level) * gaussian(&mut state) as f32)
+        .enumerate()
+        .map(|(at, &level)| level + deviation(at, level) * gaussian(&mut state) as f32)
         .collect();
     eprintln!(
         "night alpha {:.3e} sigma_sq {:.3e}; truth dimmed {dim:.4}x to median {:.4}",
@@ -89,7 +101,8 @@ fn main() {
         median(&truth)
     );
 
-    let classes = classify(&truth, side, &deviation);
+    let green_deviation = |level: f32| (night.alpha * level.max(0.0) + night.sigma_sq).sqrt();
+    let classes = classify(&truth, side, &green_deviation);
     let counts = [0, 1, 2].map(|class| classes.iter().filter(|&&c| c == class).count());
     eprintln!(
         "sites: {} flat, {} between, {} textured",
@@ -97,7 +110,7 @@ fn main() {
     );
 
     let window = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &window, &cfa));
+    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &window, &cfa, gains));
     assert!(
         fit.usable(),
         "the window is too small or too flat to fit: {fit:?}"
@@ -106,8 +119,19 @@ fn main() {
     write_png(gpu, &cfa, &truth, side, lift, &format!("{out}/truth.png"));
 
     println!(
-        "{:>9}  {:>7} {:>7} {:>7} {:>7}   {:>6} {:>6}   {:>6} {:>6}   flat-error correlation at site lags 1 2 4 8",
-        "denoiser", "all", "flat", "between", "texture", "fine", "coarse", "c fine", "c crse"
+        "{:>9}  {:>7} {:>7} {:>7} {:>7}   {:>6} {:>6}   {:>6} {:>6}   {:>6} {:>6} {:>6}   flat-error correlation at site lags 1 2 4 8",
+        "denoiser",
+        "all",
+        "flat",
+        "between",
+        "texture",
+        "fine",
+        "coarse",
+        "c fine",
+        "c crse",
+        "bias r",
+        "g",
+        "b"
     );
     for name in &denoisers {
         let filtered = match name.as_str() {
@@ -117,7 +141,7 @@ fn main() {
                 let amounts: Amounts = Detail::AUTO.amounts(Some(fit));
                 let mosaic = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
                 pollster::block_on(rawshim::galosh::denoise_with(
-                    gpu, kernels, &mosaic, &cfa, amounts, fit,
+                    gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
                 ));
                 pollster::block_on(mosaic.read(gpu)).expect("reads back")
             }
@@ -125,8 +149,19 @@ fn main() {
         let error: Vec<f64> = filtered
             .iter()
             .zip(&truth)
-            .map(|(&got, &want)| f64::from(got - want) / f64::from(deviation(want)))
+            .enumerate()
+            .map(|(at, (&got, &want))| f64::from(got - want) / f64::from(deviation(at, want)))
             .collect();
+        let mut bias = [(0f64, 0usize); 3];
+        for (at, e) in error.iter().enumerate() {
+            let (x, y) = (at % side, at / side);
+            if classes[(y / 2) * (side / 2) + x / 2] == 0 {
+                let colour = usize::from(cfa.colour_at(y, x)).min(2);
+                bias[colour].0 += e;
+                bias[colour].1 += 1;
+            }
+        }
+        let bias = bias.map(|(sum, n)| sum / n.max(1) as f64);
         let rms = |class: Option<u8>| {
             let (mut sum, mut n) = (0f64, 0usize);
             for (at, e) in error.iter().enumerate() {
@@ -158,13 +193,16 @@ fn main() {
             (f + df * df / 3.0, c + dc * dc / 3.0)
         });
         println!(
-            "{name:>9}  {:>7.3} {:>7.3} {:>7.3} {:>7.3}   {fine:>6.3} {coarse:>6.3}   {:>6.3} {:>6.3}   {:+.3} {:+.3} {:+.3} {:+.3}",
+            "{name:>9}  {:>7.3} {:>7.3} {:>7.3} {:>7.3}   {fine:>6.3} {coarse:>6.3}   {:>6.3} {:>6.3}   {:>+6.3} {:>+6.3} {:>+6.3}   {:+.3} {:+.3} {:+.3} {:+.3}",
             rms(None),
             rms(Some(0)),
             rms(Some(1)),
             rms(Some(2)),
             colour_fine.sqrt(),
             colour_coarse.sqrt(),
+            bias[0],
+            bias[1],
+            bias[2],
             lags[0],
             lags[1],
             lags[2],

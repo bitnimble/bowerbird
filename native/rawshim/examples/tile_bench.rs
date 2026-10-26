@@ -3,6 +3,8 @@
 //! The loupe wants a rendition-quality crop per pointer move. Denoising the whole frame for one
 //! is seconds; the question this answers is whether denoising just the tile is milliseconds.
 
+use rawshim::galosh::UNGAINED;
+
 fn main() {
     let gpu = rawshim::gpu::device().expect("an adapter");
     let galosh = rawshim::galosh::device(gpu).expect("the denoise");
@@ -28,7 +30,7 @@ fn main() {
 
         let started = std::time::Instant::now();
         pollster::block_on(rawshim::galosh::denoise(
-            gpu, galosh, &mosaic, &cfa, amounts,
+            gpu, galosh, &mosaic, &cfa, UNGAINED, amounts,
         ));
         let first = started.elapsed();
 
@@ -38,7 +40,7 @@ fn main() {
         for _ in 0..3 {
             let round = std::time::Instant::now();
             pollster::block_on(rawshim::galosh::denoise(
-                gpu, galosh, &mosaic, &cfa, amounts,
+                gpu, galosh, &mosaic, &cfa, UNGAINED, amounts,
             ));
             best = best.min(round.elapsed());
         }

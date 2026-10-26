@@ -312,7 +312,13 @@ fn opened(
     }
     let dust = rawshim::dust::Settings::default().wanted(None);
     pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
+    let fit = pollster::block_on(rawshim::galosh::fit(
+        gpu,
+        kernels,
+        &mosaic,
+        &cfa,
+        held.ceilings(),
+    ));
     let usable = fit.usable();
     if usable && !noisy {
         filter(gpu, network, &mut mosaic, &cfa, held.ceilings(), fit);

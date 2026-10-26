@@ -1583,7 +1583,16 @@ impl Held {
         let gpu = crate::gpu::device()?;
         let kernels = crate::galosh::device(gpu)?;
         crate::galosh::filters(&self.sensor.cfa).then_some(())?;
-        Some(crate::galosh::fit(gpu, kernels, &self.mosaic, &self.sensor.cfa).await)
+        Some(
+            crate::galosh::fit(
+                gpu,
+                kernels,
+                &self.mosaic,
+                &self.sensor.cfa,
+                self.ceilings(),
+            )
+            .await,
+        )
     }
 
     pub fn width(&self) -> usize {
@@ -1624,7 +1633,7 @@ impl Held {
         self.sensor.crop
     }
 
-    /// The conditioning's gains by colour, R, G and B, which PMRID divides back out.
+    /// The conditioning's gains by colour, R, G and B, which both denoisers take.
     pub fn ceilings(&self) -> [f32; 3] {
         self.sensor.colour.ceiling
     }
@@ -1877,7 +1886,7 @@ impl Held {
                     crate::galosh::Fit::Given(fit) => Some(fit),
                     _ if only || detail.could_do_anything() => {
                         report(crate::open_stage::Stage::MeasuringNoise);
-                        Some(crate::galosh::fit(gpu, kernels, frame, &cfa).await)
+                        Some(crate::galosh::fit(gpu, kernels, frame, &cfa, colour.ceiling).await)
                     }
                     _ => None,
                 };
@@ -1921,6 +1930,7 @@ impl Held {
                                             kernels,
                                             frame,
                                             &cfa,
+                                            colour.ceiling,
                                             amounts,
                                             measured,
                                             crate::RENDITION_TILE_HALO,
@@ -2040,8 +2050,7 @@ fn spans_of(total: usize, tile: usize) -> impl Iterator<Item = (usize, usize)> {
 ///
 /// **Which filter is the document's, and the measurement is not.** Both denoisers are driven by the
 /// same fit - GALOSH filters on it, PMRID converts it into the anchor its weights were trained at -
-/// so the choice reaches only as far as the filtering itself. `gains` are the conditioning's own,
-/// which only PMRID needs.
+/// so the choice reaches only as far as the filtering itself. `gains` are the conditioning's own.
 async fn denoise_over(
     gpu: Option<&'static crate::gpu::Gpu>,
     mosaic: &mut crate::condition::Mosaic,
@@ -2085,7 +2094,7 @@ async fn denoise_over(
                 // filtering run it would be each tile's own statistics, which is the disagreement
                 // above at a smaller scale and against itself. An unset slider needs it ahead of
                 // the filtering for a second reason: it has no number until the frame is measured.
-                _ => Some(crate::galosh::fit(gpu, kernels, mosaic, cfa).await),
+                _ => Some(crate::galosh::fit(gpu, kernels, mosaic, cfa, gains).await),
             };
             let amounts = detail.amounts(measured);
             (noise, denoised) = match (measured, tiled) {
@@ -2122,17 +2131,18 @@ async fn denoise_over(
                     }
                 },
                 (Some(fit), true) => {
-                    denoise_in_tiles(gpu, kernels, mosaic, cfa, amounts, fit, halo).await;
+                    denoise_in_tiles(gpu, kernels, mosaic, cfa, gains, amounts, fit, halo).await;
                     (Some(fit), true)
                 }
                 (Some(fit), false) => (
                     Some(
-                        crate::galosh::denoise_with(gpu, kernels, mosaic, cfa, amounts, fit).await,
+                        crate::galosh::denoise_with(gpu, kernels, mosaic, cfa, gains, amounts, fit)
+                            .await,
                     ),
                     true,
                 ),
                 (None, _) => (
-                    Some(crate::galosh::denoise(gpu, kernels, mosaic, cfa, amounts).await),
+                    Some(crate::galosh::denoise(gpu, kernels, mosaic, cfa, gains, amounts).await),
                     true,
                 ),
             };
@@ -2177,6 +2187,7 @@ async fn denoise_in_tiles(
     kernels: &'static crate::galosh::Galosh,
     mosaic: &mut crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
+    gains: [f32; 3],
     amounts: crate::galosh::Amounts,
     fit: crate::galosh::NoiseFit,
     halo: usize,
@@ -2186,6 +2197,7 @@ async fn denoise_in_tiles(
         kernels,
         mosaic,
         cfa,
+        gains,
         amounts,
         fit,
         halo,

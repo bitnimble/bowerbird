@@ -1,4 +1,4 @@
-// One level of the pyramid shrunk, as a soft-thresholded pilot and then a Wiener pass whose gains
+// One level of the pyramid shrunk, as a block-thresholded pilot and then a Wiener pass whose gains
 // come off it: every 8x8 block at stride 4 through an orthonormal DCT, overlapped back under
 // `WINDOW`. Gains off the noisy coefficients themselves pass noise that clears the bar whole, as
 // isolated DCT ripples on flat ground.
@@ -25,6 +25,8 @@ static const float GUIDE_FLOOR = 8.0;
 /// block a coarse level wide always spans.
 static const float COARSE_REACH = 4.0;
 
+static const float NEIGHBOURHOOD_BAR = 5.0;
+
 /// A strength of zero has a flat block divide nothing by nothing.
 static const float TINY = 1e-20;
 
@@ -41,20 +43,34 @@ const int OWN_PILOT = 0;
 
 groupshared Atomic<int> sum[TILE * TILE];
 
-/// The pilot's bar, raised to the block's BayesShrink threshold: on a flat block that is past every
-/// coefficient, so a noise spike over the fixed bar is not drawn as a lone DCT stroke.
-float pilot_cut(float b[64], float noise)
+/// Block thresholding: each coefficient kept by how far its 3x3 frequency neighbourhood's mean
+/// power clears `NEIGHBOURHOOD_BAR` times `noise`.
+void pilot_of(inout float b[64], float noise)
 {
-    var power = 0.0;
+    float e[64];
     [ForceUnroll]
-    for (int i = 1; i < 64; i++) { power += b[i] * b[i]; }
-    let signal = max(power / 63.0 - noise, max(0.01 * noise, TINY));
-    return sqrt(max(PILOT_THRESHOLD * PILOT_THRESHOLD * noise, noise * noise / signal));
-}
-
-float pilot_of(float b, float cut)
-{
-    return sign(b) * max(abs(b) - cut, 0.0);
+    for (int i = 0; i < 64; i++) { e[i] = b[i] * b[i]; }
+    [ForceUnroll]
+    for (int i = 1; i < 64; i++) {
+        let u = i % 8;
+        let v = i / 8;
+        var total = 0.0;
+        var count = 0.0;
+        [ForceUnroll]
+        for (int dv = -1; dv <= 1; dv++) {
+            [ForceUnroll]
+            for (int du = -1; du <= 1; du++) {
+                let uu = u + du;
+                let vv = v + dv;
+                if (uu < 0 || uu > 7 || vv < 0 || vv > 7 || uu + vv == 0) { continue; }
+                total += e[vv * 8 + uu];
+                count += 1.0;
+            }
+        }
+        // Pooled: a lone noise coefficient over a bar of its own is drawn whole as its DCT basis,
+        // a checker at high frequency. An edge's power runs along its neighbours.
+        b[i] *= max(1.0 - NEIGHBOURHOOD_BAR * noise * count / max(total, TINY), 0.0);
+    }
 }
 
 /// How far colour plane `plane` moves per unit of luma when the block's light moves without
@@ -114,6 +130,8 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
     let bx = lane % BLOCK;
     let by = lane / BLOCK;
     let noise = (plane == 0 ? pc.luma_strength : pc.colour_strength) * pc.variance;
+    // Floored at the true noise: a weaker strength lowering the pilot's bar lets lone noise through.
+    let pilot_noise = max(noise, pc.variance);
     int rows[8];
     int columns[8];
     [ForceUnroll]
@@ -179,16 +197,12 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
     dct_forward(b);
     // The block's mean is the level below's to decide, so it passes untouched.
     if (PILOT != 0) {
-        let cut = pilot_cut(b, noise);
-        [ForceUnroll]
-        for (int i = 1; i < 64; i++) { b[i] = pilot_of(b[i], cut); }
+        pilot_of(b, pilot_noise);
     } else if (OWN_PILOT != 0) {
-        let cut = pilot_cut(b, noise);
+        float p[64] = b;
+        pilot_of(p, pilot_noise);
         [ForceUnroll]
-        for (int i = 1; i < 64; i++) {
-            let p = pilot_of(b[i], cut);
-            b[i] *= p * p / max(p * p + noise, TINY);
-        }
+        for (int i = 1; i < 64; i++) { b[i] *= p[i] * p[i] / max(p[i] * p[i] + noise, TINY); }
     } else {
         [ForceUnroll]
         for (int i = 1; i < 64; i++) { b[i] *= g[i]; }
@@ -225,7 +239,8 @@ void pyr_shrink(uint3 group : SV_GroupID, uint index : SV_GroupIndex)
         let y = y0 + k / TILE;
         if (x < 0 || y < 0 || x >= pc.w || y >= pc.h) { continue; }
         let at = at_plane(plane, x, y, pc.w, pc.h);
-        let value = float(sum[k].load()) / FIXED;
+        var value = float(sum[k].load()) / FIXED;
+        if (PILOT == 0) { value = lerp(value, noisy[at], pc.kept); }
         shrunk[at] = (pc.accumulate != 0 ? shrunk[at] : 0.0) + pc.share * value;
     }
 }

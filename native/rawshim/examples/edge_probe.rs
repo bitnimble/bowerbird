@@ -78,6 +78,7 @@ fn main() {
         galosh,
         &uploaded,
         &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+        rawshim::galosh::UNGAINED,
         Amounts::from_sliders(luminance, colour),
     ));
     eprintln!("fit: {fit:?}");

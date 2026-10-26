@@ -65,7 +65,8 @@ cleared. Technical lens data and fit unchanged.
 
 Approved crop only: upright 720×208 conditioned photosites covering red plate, blue rim and white
 plates; no metadata. Row-major little-endian f32, GBRG. `galosh.rs` supplies the noise fit and
-dark references in spatial slot order.
+dark references in spatial slot order. It carries no conditioning gains, so it is denoised with
+none.
 
 ## mosaics/sun-disc.f32
 

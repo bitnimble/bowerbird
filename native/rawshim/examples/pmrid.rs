@@ -49,12 +49,10 @@ fn main() {
     let mosaic = held.device_mosaic();
     let stride = mosaic.width;
     let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
-
     // The conditioning divided every photosite by the largest white balance coefficient and
     // multiplied it by its own, and the network wants what the sensor read.
-    let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-    let gains = rawshim::decode_rawler::channel_ceilings(&image);
+    let gains = held.ceilings();
+    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
     let model = fit.model();
     eprintln!(
         "fit alpha {:.3e} sigma_sq {:.3e}",
@@ -128,6 +126,7 @@ fn main() {
         kernels,
         &filtered,
         &cfa,
+        gains,
         Amounts::from_sliders(40.0, 40.0),
         fit,
     ));

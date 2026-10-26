@@ -48,7 +48,14 @@ fn main() {
         pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
     };
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &upload(&mosaic), &cfa));
+    let gains = rawshim::galosh::UNGAINED;
+    let fit = pollster::block_on(rawshim::galosh::fit(
+        gpu,
+        kernels,
+        &upload(&mosaic),
+        &cfa,
+        gains,
+    ));
     println!(
         "{}x{} ({:.1}MP), halo {}\n",
         width,
@@ -62,13 +69,13 @@ fn main() {
         let scratch = upload(&mosaic);
         let began = std::time::Instant::now();
         pollster::block_on(rawshim::galosh::denoise_with(
-            gpu, kernels, &scratch, &cfa, amounts, fit,
+            gpu, kernels, &scratch, &cfa, gains, amounts, fit,
         ));
         one = one.min(began.elapsed());
     }
     let whole = upload(&mosaic);
     pollster::block_on(rawshim::galosh::denoise_with(
-        gpu, kernels, &whole, &cfa, amounts, fit,
+        gpu, kernels, &whole, &cfa, gains, amounts, fit,
     ));
     let whole = read(&whole);
     // The median gap and not the largest: a run picks up occasional stalls that say more about
@@ -83,6 +90,7 @@ fn main() {
             kernels,
             &mut out,
             &cfa,
+            gains,
             amounts,
             fit,
             halo,

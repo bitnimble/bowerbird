@@ -8,6 +8,13 @@ import "../light.slang";
 struct Push {
     int width;
     int height;
+    int period_w;
+    int period_h;
+    uint packed0;
+    uint packed1;
+    uint packed2;
+    float red_to_green;
+    float blue_to_green;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -19,7 +26,8 @@ void gat_forward_full(uint3 id : SV_DispatchThreadID)
     let fy = int(id.y);
     if (fx >= pc.width || fy >= pc.height) { return; }
 
+    Pattern pat = { pc.period_w, pc.period_h, pc.packed0, pc.packed1, pc.packed2 };
     Gain sample;
-    sample.g = raw[fy * pc.width + fx];
+    sample.g = raw[fy * pc.width + fx] * to_green(pat, pc.red_to_green, pc.blue_to_green, fy, fx);
     in_gat_full[fy * pc.width + fx] = gat_forward(sample, params[P_ALPHA], params[P_SIGMA_SQ]);
 }

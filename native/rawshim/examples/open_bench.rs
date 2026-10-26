@@ -19,7 +19,7 @@
 
 mod support;
 
-use rawshim::galosh::Amounts;
+use rawshim::galosh::{Amounts, UNGAINED};
 
 fn main() {
     let files: Vec<String> = std::env::args().skip(1).collect();
@@ -211,22 +211,26 @@ fn mosaic_stages(width: usize, height: usize) {
 
     if let Some(kernels) = rawshim::galosh::device(gpu) {
         let amounts = Amounts::from_sliders(50.0, 50.0);
-        let fit = block(rawshim::galosh::fit(gpu, kernels, &uploaded, &cfa));
+        let fit = block(rawshim::galosh::fit(
+            gpu, kernels, &uploaded, &cfa, UNGAINED,
+        ));
         repeat("galosh fit only (the open's)", || {
-            block(rawshim::galosh::fit(gpu, kernels, &uploaded, &cfa));
+            block(rawshim::galosh::fit(
+                gpu, kernels, &uploaded, &cfa, UNGAINED,
+            ));
         });
         // Denoised over and over in place, which costs what a fresh frame does: GALOSH's
         // dispatch shape is fixed by the frame's size.
         let scratch = upload(gpu, &mosaic, width, height);
         repeat("galosh denoise, 50/50, given a fit", || {
             block(rawshim::galosh::denoise_with(
-                gpu, kernels, &scratch, &cfa, amounts, fit,
+                gpu, kernels, &scratch, &cfa, UNGAINED, amounts, fit,
             ));
         });
         drop(scratch);
         let whole = upload(gpu, &mosaic, width, height);
         block(rawshim::galosh::denoise_with(
-            gpu, kernels, &whole, &cfa, amounts, fit,
+            gpu, kernels, &whole, &cfa, UNGAINED, amounts, fit,
         ));
         let whole = read(gpu, &whole);
 
@@ -243,7 +247,7 @@ fn mosaic_stages(width: usize, height: usize) {
                 &format!("galosh over one {}x{} region", region.w, region.h),
                 || {
                     block(rawshim::galosh::denoise_with(
-                        gpu, kernels, &window, &cfa, amounts, fit,
+                        gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
                     ));
                 },
             );
@@ -253,7 +257,7 @@ fn mosaic_stages(width: usize, height: usize) {
             repeat(
                 &format!("  fit alone over {}x{}", region.w, region.h),
                 || {
-                    block(rawshim::galosh::fit(gpu, kernels, &window, &cfa));
+                    block(rawshim::galosh::fit(gpu, kernels, &window, &cfa, UNGAINED));
                 },
             );
         }
@@ -265,7 +269,7 @@ fn mosaic_stages(width: usize, height: usize) {
         let window = uploaded.window(gpu, region.left, region.top, region.w, region.h);
         repeat(&format!("galosh over one {vw}x{vh} stage"), || {
             block(rawshim::galosh::denoise_with(
-                gpu, kernels, &window, &cfa, amounts, fit,
+                gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
             ));
         });
 
@@ -275,11 +279,11 @@ fn mosaic_stages(width: usize, height: usize) {
         // preview, everywhere and not only at a seam.
         let measured = upload(gpu, &mosaic, width, height);
         let _ = block(rawshim::galosh::denoise(
-            gpu, kernels, &measured, &cfa, amounts,
+            gpu, kernels, &measured, &cfa, UNGAINED, amounts,
         ));
         let given = upload(gpu, &mosaic, width, height);
         block(rawshim::galosh::denoise_with(
-            gpu, kernels, &given, &cfa, amounts, fit,
+            gpu, kernels, &given, &cfa, UNGAINED, amounts, fit,
         ));
         let worst = read(gpu, &measured)
             .iter()
@@ -313,7 +317,7 @@ fn mosaic_stages(width: usize, height: usize) {
                         let window =
                             uploaded.window(gpu, region.left, region.top, region.w, region.h);
                         block(rawshim::galosh::denoise_with(
-                            gpu, kernels, &window, &cfa, amounts, fit,
+                            gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
                         ));
                     });
                 });
@@ -333,6 +337,7 @@ fn mosaic_stages(width: usize, height: usize) {
             kernels,
             &mut tiled,
             &cfa,
+            UNGAINED,
             amounts,
             fit,
             rawshim::RENDITION_TILE_HALO,
@@ -415,11 +420,13 @@ fn kernel_by_kernel(
         match fit {
             Some(fit) => {
                 block(rawshim::galosh::denoise_with(
-                    gpu, kernels, mosaic, cfa, amounts, fit,
+                    gpu, kernels, mosaic, cfa, UNGAINED, amounts, fit,
                 ));
             }
             None => {
-                block(rawshim::galosh::denoise(gpu, kernels, mosaic, cfa, amounts));
+                block(rawshim::galosh::denoise(
+                    gpu, kernels, mosaic, cfa, UNGAINED, amounts,
+                ));
             }
         }
         rawshim::galosh::dispatched()
@@ -431,11 +438,13 @@ fn kernel_by_kernel(
                 time(|| match fit {
                     Some(fit) => {
                         block(rawshim::galosh::denoise_with(
-                            gpu, kernels, mosaic, cfa, amounts, fit,
+                            gpu, kernels, mosaic, cfa, UNGAINED, amounts, fit,
                         ));
                     }
                     None => {
-                        block(rawshim::galosh::denoise(gpu, kernels, mosaic, cfa, amounts));
+                        block(rawshim::galosh::denoise(
+                            gpu, kernels, mosaic, cfa, UNGAINED, amounts,
+                        ));
                     }
                 })
             })

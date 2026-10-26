@@ -5,7 +5,8 @@
 //! ```
 //!
 //! Writes the window of the conditioned mosaic before and after the denoise, and their
-//! difference amplified, as PGMs, and the window before as little-endian f32 for a fixture.
+//! difference amplified, as PGMs, and the window before and after as little-endian f32.
+//! Unset sliders take the frame's automatic amounts.
 //! Prints the window's range and mean either side: a denoise that moves the mean has a bias.
 //! Coordinates are the sensor's own; the window origin must align to the CFA period.
 //! `sigma_sq` replaces the fit's read noise, for telling a wrong fit from a wrong filter.
@@ -39,8 +40,8 @@ fn main() {
         .map(|v| v.parse().expect("a number"))
         .collect();
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
-    let luminance: f64 = args.next().map_or(40.0, |v| v.parse().expect("a number"));
-    let colour: f64 = args.next().map_or(40.0, |v| v.parse().expect("a number"));
+    let luminance: Option<f64> = args.next().map(|v| v.parse().expect("a number"));
+    let colour: Option<f64> = args.next().map(|v| v.parse().expect("a number"));
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let bytes = std::fs::read(&path).expect("read the raw");
@@ -62,11 +63,19 @@ fn main() {
         cfa.aligned(x, y),
         "the window origin must align to the CFA period"
     );
-    let mut fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
+    let gains = held.ceilings();
+    let mut fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
     eprintln!("fit: {fit:?}");
     if let Some(sigma_sq) = args.next() {
         fit.sigma_sq = sigma_sq.parse().expect("a number");
     }
+    let detail = rawshim::galosh::Detail {
+        luminance,
+        colour,
+        ..rawshim::galosh::Detail::AUTO
+    };
+    let (luminance, colour) = detail.resolved(Some(fit));
+    eprintln!("luminance {luminance} colour {colour}");
 
     let noisy = pollster::block_on(mosaic.read(gpu)).expect("reads back");
     let filtered = mosaic.duplicate(gpu);
@@ -75,6 +84,7 @@ fn main() {
         kernels,
         &filtered,
         &cfa,
+        gains,
         Amounts::from_sliders(luminance, colour),
         fit,
     ));
@@ -84,6 +94,8 @@ fn main() {
     let after = window(&denoised, stride, x, y, w, h);
     let raw: Vec<u8> = before.iter().flat_map(|v| v.to_le_bytes()).collect();
     std::fs::write(format!("{out}/window.f32"), raw).expect("wrote");
+    let raw: Vec<u8> = after.iter().flat_map(|v| v.to_le_bytes()).collect();
+    std::fs::write(format!("{out}/after.f32"), raw).expect("wrote");
     eprintln!("cfa {:?}", cfa);
     let range = |values: &[f32]| {
         values

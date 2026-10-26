@@ -36,14 +36,15 @@ fn main() {
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, side, side);
     // The pattern `frame` lays down: red, green, green, blue by 2x2 parity.
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
+    let gains = rawshim::galosh::UNGAINED;
+    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa, gains));
     let amounts = Amounts::from_sliders(luma, colour);
     eprintln!(
         "sliders luma {luma} colour {colour} -> amounts {amounts:?}; fit {:?}",
         fit.model()
     );
     pollster::block_on(rawshim::galosh::denoise_with(
-        gpu, kernels, &mosaic, &cfa, amounts, fit,
+        gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
     ));
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
 

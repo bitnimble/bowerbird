@@ -43,6 +43,14 @@ public uint cfa_colour(Pattern p, int r, int c)
     return (packed >> ((slot - word * 12u) * 2u)) & 3u;
 }
 
+/// Green's conditioning gain over the photosite's own colour's: multiplied by it, a photosite has
+/// green's noise, which is the only noise the fit states and the GAT stabilises.
+public float to_green(Pattern p, float red, float blue, int r, int c)
+{
+    let colour = cfa_colour(p, r, c);
+    return colour == 0u ? red : (colour == 2u ? blue : 1.0);
+}
+
 // The block mean above which the envelope fit reads no variance.
 //
 // **Here rather than in `ne_finalize` alone, because two kernels depend on the same bound.** Every
@@ -81,6 +89,15 @@ public float gat_forward(Gain sample, float alpha, float sigma_sq)
     // Followed to its own zero the curve steepens to `1 / sigma`, and a fit that read no read
     // noise then throws a photosite under black seven orders out.
     return 2.0 * at_black / a + x_safe / at_black;
+}
+
+/// A green-referred photosite (conditioned value times `to_green`) stabilised and dark-subtracted,
+/// as the pyramid reads it.
+public float gat_stabilised(float green, float alpha, float sigma_sq, float unified_sigma, float dark)
+{
+    Gain sample;
+    sample.g = green;
+    return gat_forward(sample, alpha, sigma_sq) / unified_sigma - dark;
 }
 
 /// Workgroups the two dark-reference reducers are dispatched over, which they stride their

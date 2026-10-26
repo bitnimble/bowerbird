@@ -1,5 +1,6 @@
-// The sites fused with the level below them and taken back to photosites: the site transform
-// undone, the dark reference added back, and out of the GAT.
+// The sites fused with the level below them, given back the kept share of their luma noise, and
+// taken back to photosites: the site transform undone, the dark reference added back, and out of
+// the GAT.
 import prelude;
 import pyramid;
 import "../times.slang";
@@ -25,6 +26,29 @@ void restore<let SIDE : int>(int x, int y)
             + upsampled_difference(below, boxed, p, x, y, pc.w1, pc.h1);
     }
     let rows = transform_at(x, y, pc.across, pc.down);
+    Pattern pattern = {
+        times(pc.across, SIDE), times(pc.down, SIDE), pc.packed0, pc.packed1, pc.packed2
+    };
+    // Kept here rather than in the luma passes, whose output the colour passes fit as their guide:
+    // noise in it would come out as colour.
+    if (pc.luma_kept > 0.0) {
+        var noisy = 0.0;
+        [ForceUnroll]
+        for (int k = 0; k < SIDE * SIDE; k++) {
+            let px = min(times(x, SIDE) + k % SIDE, pc.width - 1);
+            let py = min(times(y, SIDE) + k / SIDE, pc.height - 1);
+            let slot = (py & 1) | ((px & 1) << 1);
+            let photosite = gat_stabilised(
+                out_raw[py * pc.width + px]
+                    * to_green(pattern, pc.red_to_green, pc.blue_to_green, py, px),
+                params[P_ALPHA],
+                params[P_SIGMA_SQ],
+                params[P_UNIFIED_SIGMA],
+                params[P_DARK_REF0 + slot]);
+            noisy += transform[rows + k] * photosite;
+        }
+        site[0] = lerp(site[0], noisy, pc.luma_kept);
+    }
     [ForceUnroll]
     for (int k = 0; k < SIDE * SIDE; k++) {
         let px = times(x, SIDE) + k % SIDE;
@@ -38,7 +62,9 @@ void restore<let SIDE : int>(int x, int y)
         // `dark_sub_full`'s slots: row parity in the low bit, column parity above it.
         let slot = (py & 1) | ((px & 1) << 1);
         let value = (coded + params[P_DARK_REF0 + slot]) * params[P_UNIFIED_SIGMA];
-        out_raw[py * pc.width + px] = min(gat_inv_lut(lut_d, lut_x, lut_params, value, uint(LUT_SIZE)), 1.0);
+        let level = gat_inv_lut(lut_d, lut_x, lut_params, value, uint(LUT_SIZE));
+        let ratio = to_green(pattern, pc.red_to_green, pc.blue_to_green, py, px);
+        out_raw[py * pc.width + px] = min(level / ratio, 1.0);
     }
 }
 

@@ -69,6 +69,7 @@ fn every_stage_hands_its_working_planes_back() {
                 kernels,
                 &mosaic,
                 &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+                rawshim::galosh::UNGAINED,
                 Amounts::from_sliders(50.0, 50.0),
             ));
         }),

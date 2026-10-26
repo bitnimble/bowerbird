@@ -32,9 +32,8 @@ fn main() {
             continue;
         }
         let mosaic = held.device_mosaic();
-        let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
-        let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-        let gains = rawshim::decode_rawler::channel_ceilings(&image);
+        let gains = held.ceilings();
+        let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
         let lift_at = |scale: f64| {
             let fit = NoiseFit {
                 alpha: (f64::from(fit.alpha) * scale) as f32,

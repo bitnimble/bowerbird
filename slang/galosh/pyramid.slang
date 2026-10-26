@@ -17,9 +17,6 @@ public static const int TILE = 28;
 public static const int BLOCK = 8;
 public static const int STRIDE = 4;
 
-/// In deviations of the level's noise, scaled by the strength.
-public static const float PILOT_THRESHOLD = 2.7;
-
 /// What every shrinkage pass reads. A level shrunk as several passes over offset block grids adds
 /// each pass's `share`.
 public struct Level {
@@ -36,10 +33,14 @@ public struct Level {
     public float luma_strength;
     public float colour_strength;
     public int accumulate;
+    /// Share of the noisy plane handed back; the same at every level.
+    public float kept;
 };
 
 /// What `pyr_pack` and `pyr_restore` read: the mosaic's extent, the first two levels', the site's
-/// side in photosites, and the sites one period spans across and down.
+/// side in photosites, the sites one period spans across and down, the period's colours as
+/// `prelude::Pattern` packs them, `prelude::to_green`'s red and blue, and the share of its luma
+/// noise a site keeps.
 public struct Sites {
     public int width;
     public int height;
@@ -50,6 +51,12 @@ public struct Sites {
     public int side;
     public int across;
     public int down;
+    public uint packed0;
+    public uint packed1;
+    public uint packed2;
+    public float red_to_green;
+    public float blue_to_green;
+    public float luma_kept;
 };
 
 /// Where the site at (x, y)'s transform starts in the table: one period's sites hold one each, a
