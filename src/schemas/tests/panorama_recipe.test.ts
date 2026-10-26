@@ -28,11 +28,22 @@ test('a recipe survives this schema with every field the other host wrote', () =
   expect(parsed).toEqual(written as typeof parsed);
 });
 
-// The one field with a default, so a recipe written before the align found a crop still parses -
-// and reads as the whole canvas, which is what such a recipe rendered as.
+// Fields with a default, so a recipe naming none still parses, and reads as it renders.
 test('a recipe from before the crop reads as the whole canvas', () => {
   const written = JSON.parse(readFileSync(SAMPLE, 'utf8')) as Record<string, unknown>;
   delete written.crop;
 
   expect(CompositionSchema.parse(written).crop).toEqual([0, 0, 1, 1]);
+});
+
+test('a lens with no axis is centred', () => {
+  const written = JSON.parse(readFileSync(SAMPLE, 'utf8')) as {
+    sources: { lens: Record<string, unknown> }[];
+  };
+  written.sources.forEach((source) => delete source.lens.axis);
+
+  const parsed = CompositionSchema.parse(written);
+  expect(parsed.sources.map((source) => source.lens.axis)).toEqual(
+    written.sources.map(() => [0, 0]),
+  );
 });

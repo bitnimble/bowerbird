@@ -3476,6 +3476,7 @@ mod hdr_grade {
             crop: 1.0,
             falloff: Some((0.25, 0.0)),
             tca: None,
+            axis: [0.0; 2],
         };
 
         let (width, height) = (frame.width, frame.height);
@@ -3567,6 +3568,7 @@ mod hdr_grade {
                 crop: 1.0,
                 falloff,
                 tca: None,
+                axis: [0.0; 2],
             };
             pollster::block_on(crate::hdr::fit_match(
                 adapter(),

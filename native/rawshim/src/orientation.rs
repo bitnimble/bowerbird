@@ -92,6 +92,21 @@ pub fn unoriented_rect(
     }
 }
 
+/// An offset from the stored picture's centre, as the offset from the upright picture's centre
+/// the turn carries it to.
+pub fn upright_offset([x, y]: [f64; 2], orientation: rawler::decoders::Orientation) -> [f64; 2] {
+    match orientation {
+        O::HorizontalFlip => [-x, y],
+        O::Rotate180 => [-x, -y],
+        O::VerticalFlip => [x, -y],
+        O::Transpose => [y, x],
+        O::Rotate90 => [-y, x],
+        O::Transverse => [-y, -x],
+        O::Rotate270 => [y, -x],
+        O::Normal | O::Unknown => [x, y],
+    }
+}
+
 /// Rewrites a frame upright on the host, returning it with whatever dimensions that left: the
 /// permutation the shaders' own writes are held against.
 #[cfg(test)]
@@ -191,6 +206,40 @@ mod tests {
                 turned[(oy * out_w + ox) * 3],
                 (back.top * width + back.left) as u16,
                 "{turn:?} disagrees with itself",
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_from_the_centre_turns_with_the_pixels() {
+        let (width, height) = (7usize, 4usize);
+        let (col, row) = (5usize, 0usize);
+        for code in 0..8u32 {
+            let stored: Vec<u16> = (0..width * height)
+                .flat_map(|at| [at as u16, 0, 0])
+                .collect();
+            let (turned, out_w, out_h) = orient_for_test(stored, width, height, code);
+            let turn = match code {
+                1 => O::HorizontalFlip,
+                2 => O::Rotate180,
+                3 => O::VerticalFlip,
+                4 => O::Transpose,
+                5 => O::Rotate90,
+                6 => O::Transverse,
+                7 => O::Rotate270,
+                _ => O::Normal,
+            };
+            let offset = [
+                col as f64 - (width - 1) as f64 / 2.0,
+                row as f64 - (height - 1) as f64 / 2.0,
+            ];
+            let [x, y] = upright_offset(offset, turn);
+            let to_col = (x + (out_w - 1) as f64 / 2.0) as usize;
+            let to_row = (y + (out_h - 1) as f64 / 2.0) as usize;
+            assert_eq!(
+                turned[(to_row * out_w + to_col) * 3],
+                (row * width + col) as u16,
+                "{turn:?}",
             );
         }
     }

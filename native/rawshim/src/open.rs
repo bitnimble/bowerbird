@@ -228,12 +228,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
 
     let matched = match matched {
         None if needs_fit && how.camera_match == CameraMatch::LensAndColour => {
-            stated_colour(&how.fitting, &levels, how.neutral_ceiling)
-                .await
-                .map(|colour| crate::hdr_fit::HdrMatch {
-                    lens: crate::fit::Lens::none(),
-                    colour: Some(colour),
-                })
+            stated_match(&how.fitting, &levels, how.neutral_ceiling).await
         }
         matched => matched,
     };
@@ -246,22 +241,21 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     })
 }
 
-/// A DNG's own rendering, for one with no camera JPEG to match.
-async fn stated_colour(
+/// A DNG's own rendering and lens correction, for one with no camera JPEG to match.
+async fn stated_match(
     fitting: &Fitting<'_>,
     levels: &crate::tone::Levels,
     neutral_ceiling: f32,
-) -> Option<crate::hdr_fit::HdrColour> {
-    let stated = match fitting {
+) -> Option<crate::hdr_fit::HdrMatch> {
+    let source = match fitting {
         Fitting::None => return None,
-        Fitting::Preview(bytes) => crate::dng_rendering::Stated::of_source(
-            &rawler::rawsource::RawSource::new_from_slice(bytes),
-        ),
+        Fitting::Preview(bytes) => rawler::rawsource::RawSource::new_from_slice(bytes),
         #[cfg(feature = "renditions")]
-        Fitting::Profiled(path) => crate::dng_rendering::Stated::of_source(
-            &rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?,
-        ),
-    }?;
+        Fitting::Profiled(path) => {
+            rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?
+        }
+    };
+    let stated = crate::dng_rendering::Stated::of_source(&source)?;
     // An editor stage too narrow to pair against the preview fits no match either, and a stored
     // stated colour would keep every later open from fitting the real one.
     let previewed = match fitting {
@@ -273,9 +267,13 @@ async fn stated_colour(
     if previewed {
         return None;
     }
-    stated
+    let colour = stated
         .colour(crate::gpu::device()?, levels, neutral_ceiling)
-        .await
+        .await?;
+    Some(crate::hdr_fit::HdrMatch {
+        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(crate::fit::Lens::none),
+        colour: Some(colour),
+    })
 }
 
 async fn complete_colour(

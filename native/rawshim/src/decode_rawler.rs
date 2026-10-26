@@ -1362,11 +1362,18 @@ fn plane_curves(
 
 /// The DNG's OpcodeList2, which the specification applies to the raw samples once they are linear.
 fn opcode_list(decoder: &dyn rawler::decoders::Decoder) -> Option<Vec<u8>> {
+    opcode_list_of(decoder, rawler::tags::DngTag::OpcodeList2)
+}
+
+fn opcode_list_of(
+    decoder: &dyn rawler::decoders::Decoder,
+    tag: rawler::tags::DngTag,
+) -> Option<Vec<u8>> {
     let entry = decoder
         .ifd(rawler::decoders::WellKnownIFD::Raw)
         .ok()
         .flatten()?
-        .get_entry(rawler::tags::DngTag::OpcodeList2)?
+        .get_entry(tag)?
         .value
         .clone();
     match entry {
@@ -1379,8 +1386,10 @@ fn identity_curves() -> [Vec<f64>; 3] {
     std::array::from_fn(|_| vec![0.0, 1.0])
 }
 
+const WARP_RECTILINEAR: u32 = 1;
 const MAP_POLYNOMIAL: u32 = 8;
 const GAIN_MAP: u32 = 9;
+const WARP_KNOTS: usize = 64;
 
 /// One entry of an opcode list.
 struct Opcode<'a> {
@@ -1415,7 +1424,7 @@ impl Body<'_> {
 }
 
 fn truncated() -> String {
-    "this DNG's OpcodeList2 is truncated".to_string()
+    "this DNG's opcode list is truncated".to_string()
 }
 
 fn opcodes(bytes: &[u8]) -> Result<Vec<Opcode<'_>>, String> {
@@ -1575,6 +1584,130 @@ fn shading<'a>(
         origin: (at.0 as i32 - left as i32, at.1 as i32 - top as i32),
         image: (width.max(1), height.max(1)),
     }
+}
+
+/// The lens correction a DNG's OpcodeList3 states, about its own optical centre.
+pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<crate::fit::Lens> {
+    use rawler::tags::{DngTag, TiffCommonTag};
+    let decoder = rawler::get_decoder(source).ok()?;
+    let bytes = opcode_list_of(decoder.as_ref(), DngTag::OpcodeList3)?;
+    let warp = opcodes(&bytes)
+        .inspect_err(|why| crate::warn(&format!("rawshim: {why}, so its lens is not corrected")))
+        .ok()?
+        .into_iter()
+        .find(|opcode| opcode.id == WARP_RECTILINEAR)?;
+
+    let raw = decoder
+        .ifd(rawler::decoders::WellKnownIFD::Raw)
+        .ok()
+        .flatten()?;
+    let at = |tag: u16, k: usize| raw.get_entry(tag).map(|entry| entry.force_usize(k) as f64);
+    let (width, height) = (
+        at(TiffCommonTag::ImageWidth.into(), 0)?,
+        at(TiffCommonTag::ImageLength.into(), 0)?,
+    );
+    let active = match [0, 1, 2, 3].map(|k| at(DngTag::ActiveArea.into(), k)) {
+        [Some(top), Some(left), Some(bottom), Some(right)] => {
+            [left, top, right - left, bottom - top]
+        }
+        _ => [0.0, 0.0, width, height],
+    };
+    // As `hold` crops: rawler's `crop_area`, DefaultCrop from the active area's corner.
+    let photo = match [0, 1].map(|k| {
+        Some((
+            at(DngTag::DefaultCropOrigin.into(), k)?,
+            at(DngTag::DefaultCropSize.into(), k)?,
+        ))
+    }) {
+        [Some((x, w)), Some((y, h))] => [
+            active[0] + x,
+            active[1] + y,
+            whole_sites(w as usize) as f64,
+            whole_sites(h as usize) as f64,
+        ],
+        _ => [0.0, 0.0, width, height],
+    };
+    let upright = upright_of(
+        decoder.as_ref(),
+        source,
+        &rawler::decoders::RawDecodeParams::default(),
+    );
+    warp_lens(warp.body, active, photo, upright)
+        .inspect_err(|why| crate::warn(&format!("rawshim: {why}, so its lens is not corrected")))
+        .ok()
+}
+
+/// A WarpRectilinear over the `active` area, as a lens of the `photo` cropped from it, both
+/// `[left, top, width, height]` on the sensor.
+fn warp_lens(
+    body: Body<'_>,
+    active: [f64; 4],
+    photo: [f64; 4],
+    upright: rawler::decoders::Orientation,
+) -> Result<crate::fit::Lens, String> {
+    let planes = body.word(0)? as usize;
+    if planes != 1 && planes != 3 {
+        return Err(format!("a WarpRectilinear over {planes} planes"));
+    }
+    let tangential = (0..planes * 2)
+        .map(|k| body.double(4 + ((k / 2) * 6 + 4 + k % 2) * 8))
+        .collect::<Result<Vec<_>, _>>()?;
+    if tangential.iter().any(|kt| *kt != 0.0) {
+        crate::warn(
+            "rawshim: this DNG's lens states a tangential distortion, which is not applied",
+        );
+    }
+    let radial = (0..planes)
+        .map(|plane| {
+            (0..4)
+                .map(|k| body.double(4 + (plane * 6 + k) * 8))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let centre = 4 + planes * 48;
+    let (cx, cy) = (body.double(centre)?, body.double(centre + 8)?);
+
+    let [left, top, width, height] = active;
+    let optical = [left + cx * width, top + cy * height];
+    let far = [left, left + width]
+        .into_iter()
+        .flat_map(|x| [top, top + height].map(|y| (x - optical[0]).hypot(y - optical[1])))
+        .fold(0.0, f64::max);
+    let [px, py, pw, ph] = photo;
+    let half = (pw / 2.0).hypot(ph / 2.0);
+    let axis = crate::orientation::upright_offset(
+        [
+            (optical[0] - (px + pw / 2.0)) / half,
+            (optical[1] - (py + ph / 2.0)) / half,
+        ],
+        upright,
+    );
+    let unit = half * crate::fit::reach(axis) / far;
+
+    let ratio = |c: usize, radius: f64| {
+        let k = &radial[if planes == 1 { 0 } else { c }];
+        let r2 = (radius * unit).powi(2);
+        k[0] + r2 * (k[1] + r2 * (k[2] + r2 * k[3]))
+    };
+    let radii = (0..WARP_KNOTS).map(|k| k as f64 / (WARP_KNOTS - 1) as f64);
+    let crop = ratio(1, 0.0);
+    let distortion = radii
+        .clone()
+        .map(|r| (ratio(1, r) / crop - 1.0) * crate::image::SPLINE_UNIT)
+        .collect();
+    let lateral = |c| {
+        radii
+            .clone()
+            .map(|r| (ratio(c, r) / ratio(1, r) - 1.0) * crate::image::SPLINE_UNIT)
+            .collect::<Vec<_>>()
+    };
+    Ok(crate::fit::Lens {
+        distortion: Some(distortion),
+        crop,
+        falloff: None,
+        tca: (planes == 3).then(|| [lateral(0), lateral(2)]),
+        axis,
+    })
 }
 
 /// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
@@ -3508,6 +3641,78 @@ mod tests {
                 gains: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
             })]
         );
+    }
+
+    /// Each channel of a WarpRectilinear, read through the lens it becomes, lands where the DNG
+    /// formula puts it: about an off-centre axis, on a photo cropped off-centre from the active
+    /// area, and turned upright.
+    #[test]
+    fn a_warp_rectilinear_reads_where_the_dng_formula_does() {
+        use rawler::decoders::Orientation;
+        let planes: [[f64; 6]; 3] = [
+            [1.002, -0.06, 0.03, -0.004, 0.0, 0.0],
+            [1.0, -0.068759, 0.034238, -0.0035033, 0.0, 0.0],
+            [0.998, -0.07, 0.035, -0.003, 0.0, 0.0],
+        ];
+        let (cx, cy) = (0.49364, 0.49457);
+        let mut body = 3u32.to_be_bytes().to_vec();
+        for value in planes.iter().flatten().chain(&[cx, cy]) {
+            body.extend_from_slice(&value.to_be_bytes());
+        }
+        let active = [8.0, 4.0, 4000.0, 3000.0];
+        let photo: [f64; 4] = [20.0, 10.0, 3960.0, 2980.0];
+
+        let optical = [active[0] + cx * active[2], active[1] + cy * active[3]];
+        let far = [active[0], active[0] + active[2]]
+            .into_iter()
+            .flat_map(|x| {
+                [active[1], active[1] + active[3]].map(|y| (x - optical[0]).hypot(y - optical[1]))
+            })
+            .fold(0.0, f64::max);
+        let dng = |c: usize, x: f64, y: f64| {
+            let (dx, dy) = (x - optical[0], y - optical[1]);
+            let r2 = (dx * dx + dy * dy) / (far * far);
+            let k = planes[c];
+            let ratio = k[0] + r2 * (k[1] + r2 * (k[2] + r2 * k[3]));
+            [optical[0] + dx * ratio, optical[1] + dy * ratio]
+        };
+
+        let half = (photo[2] / 2.0).hypot(photo[3] / 2.0);
+        let centre = [photo[0] + photo[2] / 2.0, photo[1] + photo[3] / 2.0];
+        for turn in [
+            Orientation::Normal,
+            Orientation::Rotate90,
+            Orientation::Transverse,
+        ] {
+            let upright = |[x, y]: [f64; 2]| {
+                crate::orientation::upright_offset(
+                    [(x - centre[0]) / half, (y - centre[1]) / half],
+                    turn,
+                )
+            };
+            let lens = super::warp_lens(super::Body(&body), active, photo, turn)
+                .expect("the warp is read");
+            let knots = lens.distortion.clone().expect("a curve");
+            let channels = lens.channels();
+            for at in [
+                [20.0, 10.0],
+                [3980.0, 2990.0],
+                [2000.0, 1500.0],
+                [300.0, 2900.0],
+            ] {
+                for (c, lateral) in channels.iter().enumerate() {
+                    let want = upright(dng(c, at[0], at[1]));
+                    let [ux, uy] = upright(at);
+                    let got = lens.read_from((ux, uy), |squared| {
+                        let r = squared.sqrt();
+                        crate::image::sample_radius(&knots, r, lens.crop) / r
+                            * (1.0 + crate::image::spline_at(lateral, r))
+                    });
+                    let apart = (got.0 - want[0]).hypot(got.1 - want[1]) * half;
+                    assert!(apart < 0.1, "{turn:?} channel {c} at {at:?}: {apart} px");
+                }
+            }
+        }
     }
 
     /// A map of another plane is none of a mosaic's, and points that are not spaced apart are no map.

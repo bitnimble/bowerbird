@@ -32,7 +32,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 26;
+const VERSION: u8 = 27;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -528,6 +528,7 @@ fn put_match(out: &mut Vec<u8>, matched: &HdrMatch) {
             put_option_f32s(out, Some(blue));
         }
     }
+    put_f32s(out, &lens.axis);
 }
 
 fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
@@ -601,12 +602,14 @@ fn take_match(at: &mut Reader<'_>) -> Option<HdrMatch> {
             Some([red, blue])
         }
     };
+    let axis = [at.f32()?, at.f32()?];
     Some(HdrMatch {
         lens: Lens {
             distortion,
             crop,
             falloff,
             tca,
+            axis,
         },
         colour,
     })
@@ -999,6 +1002,7 @@ pub(crate) mod tests {
                 crop: 1.0234,
                 falloff: Some((0.317, -0.0412)),
                 tca: Some([vec![1.0, 1.0004], vec![1.0, 0.9993]]),
+                axis: [0.015625, -0.0078125],
             },
             colour: Some(HdrColour {
                 curves: [curve(0.01), curve(0.02), curve(0.03)],
@@ -1161,6 +1165,7 @@ pub(crate) mod tests {
         assert!((is.lens.crop - was.lens.crop).abs() < 1e-6);
         assert!(is.lens.distortion.is_some());
         assert!((is.lens.falloff.unwrap().1 - was.lens.falloff.unwrap().1).abs() < 1e-6);
+        assert_eq!(is.lens.axis, was.lens.axis);
 
         // A fit hands out its map at storage precision, so it comes back to the bit.
         assert_eq!(is_colour.chroma, was_colour.chroma);

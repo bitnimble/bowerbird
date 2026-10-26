@@ -30,7 +30,7 @@ struct Params {
     /// Source pixels per output pixel, which the ratio multiplies into.
     float2 scale;
     float2 edge;
-    /// Where output pixel zero sits relative to the centre the lens is defined about.
+    /// Where output pixel zero sits relative to the photograph's centre.
     ///
     /// **This is the whole of what makes a window a window.** A frame's own gather has the picture's
     /// centre in the middle of its output grid, so this is minus half the grid; a loupe tile is a
@@ -38,10 +38,14 @@ struct Params {
     /// *photograph*. Everything below is then one arithmetic, and a tile is corrected at the radius
     /// the frame would have corrected it at rather than as though it were the whole picture.
     float2 bias;
-    /// `1 / half^2` of the grid the lens is defined over, since the table is indexed by r^2 and
-    /// never needs r.
+    /// `fit::Lens::axis` in output pixels: where the lens is radial about, relative to the centre.
+    float2 axis;
+    /// `1 / half^2` of the photograph, which the falloff is radial over.
     float inv_half2;
-    float pad;
+    /// `1 / reach^2` of `fit::Lens::reach` in output pixels: the table is indexed by r^2 about the
+    /// axis and never needs r.
+    float inv_reach2;
+    float2 pad2;
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
@@ -66,15 +70,17 @@ uint3 level_of(float3 value)
 
 /// Where one channel of one output position reads from, in the source buffer's pixels.
 ///
-/// `ox`/`oy` are offsets from the lens's centre in output pixels, as `gathered` builds them.
+/// `ox`/`oy` are offsets from the photograph's centre in output pixels, as `gathered` builds them.
 float2 source_of(float ox, float oy, uint c)
 {
-    let ratio = lens_ratio(ratios, (ox * ox + oy * oy) * params.inv_half2, c);
+    let dx = ox - params.axis.x;
+    let dy = oy - params.axis.y;
+    let ratio = lens_ratio(ratios, (dx * dx + dy * dy) * params.inv_reach2, c);
     // In the photograph first, and only then into this buffer. `Params::centre` says why the two
     // cannot be folded.
     return float2(
-        (params.centre.x + ox * ratio * params.scale.x) - params.origin.x,
-        (params.centre.y + oy * ratio * params.scale.y) - params.origin.y);
+        (params.centre.x + (params.axis.x + dx * ratio) * params.scale.x) - params.origin.x,
+        (params.centre.y + (params.axis.y + dy * ratio) * params.scale.y) - params.origin.y);
 }
 
 /// One output pixel, read from where the lens put it.
@@ -82,7 +88,7 @@ float3 gathered(uint pixel)
 {
     let x = pixel % params.size.x;
     let y = pixel / params.size.x;
-    // Where this pixel sits relative to the centre the lens is defined about, in output pixels,
+    // Where this pixel sits relative to the photograph's centre, in output pixels,
     // kept in pixels: dividing by `half` and multiplying it back by `half * scale` costs f32 an
     // error of a whole ulp at the frame's edge, which the taps below are steep enough to see.
     let ox = params.bias.x + float(x) + 0.5;

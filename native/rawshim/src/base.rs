@@ -1970,8 +1970,8 @@ pub struct Gather {
     scale: (f64, f64),
     /// Where output pixel zero sits relative to that centre.
     bias: (f64, f64),
-    /// `1 / half^2` of the grid the lens is defined over.
-    inv_half2: f64,
+    /// The photograph's half-diagonal squared, in output pixels.
+    half2: f64,
 }
 
 impl Gather {
@@ -1995,7 +1995,7 @@ impl Gather {
             origin: (0.0, 0.0),
             scale: (sw as f64 / ow as f64, sh as f64 / oh as f64),
             bias: (-(ow as f64) / 2.0, -(oh as f64) / 2.0),
-            inv_half2: 1.0 / half2,
+            half2,
         }
     }
 
@@ -2029,7 +2029,7 @@ impl Gather {
                 window_left as f64 - fw as f64 / 2.0,
                 window_top as f64 - fh as f64 / 2.0,
             ),
-            inv_half2: 1.0 / half2,
+            half2,
         }
     }
 }
@@ -2165,7 +2165,8 @@ fn warp_lens_into(
         mapped_at_creation: false,
     });
 
-    let mut params: Vec<u8> = Vec::with_capacity(64);
+    let half = gather.half2.sqrt();
+    let mut params: Vec<u8> = Vec::with_capacity(80);
     for word in [sw as u32, sh as u32, width as u32, height as u32] {
         params.extend_from_slice(&word.to_le_bytes());
     }
@@ -2180,7 +2181,11 @@ fn warp_lens_into(
         (sh - 1) as f32,
         gather.bias.0 as f32,
         gather.bias.1 as f32,
-        gather.inv_half2 as f32,
+        (lens.axis[0] * half) as f32,
+        (lens.axis[1] * half) as f32,
+        (1.0 / gather.half2) as f32,
+        (1.0 / (gather.half2 * lens.reach().powi(2))) as f32,
+        0.0,
         0.0,
     ] {
         params.extend_from_slice(&value.to_le_bytes());
@@ -3413,6 +3418,7 @@ mod tests {
             crop: 1.0,
             falloff: None,
             tca: None,
+            axis: [0.03, -0.02],
         }
     }
 
@@ -3457,14 +3463,15 @@ mod tests {
 
         let tables = super::ratio_tables(&lens);
         let last = tables.len() / 3 - 1;
-        let half2 = (w as f64 / 2.0).powi(2) + (h as f64 / 2.0).powi(2);
+        let half = (w as f64 / 2.0).hypot(h as f64 / 2.0);
         let source_x = |ox: f64, oy: f64| {
-            let r2 = (ox * ox + oy * oy) / half2;
-            let t = (r2 * last as f64).min(last as f64 - 1e-9);
-            let slot = (t as usize).min(last - 1);
-            let low = f64::from(tables[last + 1 + slot]);
-            let ratio = low + (f64::from(tables[last + 1 + slot + 1]) - low) * (t - slot as f64);
-            w as f64 / 2.0 - 0.5 + ox * ratio
+            let (sx, _) = lens.read_from((ox / half, oy / half), |r2| {
+                let t = (r2 * last as f64).min(last as f64 - 1e-9);
+                let slot = (t as usize).min(last - 1);
+                let low = f64::from(tables[last + 1 + slot]);
+                low + (f64::from(tables[last + 1 + slot + 1]) - low) * (t - slot as f64)
+            });
+            w as f64 / 2.0 - 0.5 + sx * half
         };
         for (x, y) in [(w / 2, h / 2), (4, 4), (w - 5, h / 2)] {
             let ox = x as f64 + 0.5 - w as f64 / 2.0;
@@ -3536,7 +3543,10 @@ mod tests {
                 },
                 sigma,
                 crate::image::SharpenNoise::NONE,
-                &bending(),
+                &crate::fit::Lens {
+                    axis: [0.0; 2],
+                    ..bending()
+                },
                 super::Defringe::Done((0.0, 0.0)),
                 None,
                 None,
@@ -4542,6 +4552,7 @@ mod tests {
             distortion: Some(knots),
             falloff: Some((0.25, 0.1)),
             tca: Some([vec![0.0, 24.0, 60.0], vec![0.0, -18.0, -44.0]]),
+            axis: [0.0125, -0.02],
         };
 
         let whole = warped(
@@ -4721,7 +4732,7 @@ mod tests {
         );
         let last = crate::image::RATIO_TABLE_LAST;
         let (full_w, full_h) = (width as f64, height as f64);
-        let half2 = (full_w / 2.0).powi(2) + (full_h / 2.0).powi(2);
+        let half = (full_w / 2.0).hypot(full_h / 2.0);
         let mut fused = vec![0u16; out.0 * out.1 * 3];
         for y in 0..out.1 {
             for x in 0..out.0 {
@@ -4732,15 +4743,17 @@ mod tests {
                     x as f64 + 0.5,
                     y as f64 + 0.5,
                 );
-                let (ox, oy) = (px - full_w / 2.0, py - full_h / 2.0);
-                let t = (ox * ox + oy * oy) / half2 * last as f64;
-                let slot = (t as usize).min(last - 1);
+                let at = ((px - full_w / 2.0) / half, (py - full_h / 2.0) / half);
                 for (c, table) in tables.iter().enumerate() {
-                    let ratio = table[slot] + (table[slot + 1] - table[slot]) * (t - slot as f64);
+                    let (sx, sy) = lens.read_from(at, |r2| {
+                        let t = r2 * last as f64;
+                        let slot = (t as usize).min(last - 1);
+                        table[slot] + (table[slot + 1] - table[slot]) * (t - slot as f64)
+                    });
                     // The photograph's centre half a pixel back, as `warp.slang`'s `Params::centre`
                     // has it: an integer is a pixel's centre.
-                    let sx = full_w / 2.0 - 0.5 + ox * ratio;
-                    let sy = full_h / 2.0 - 0.5 + oy * ratio;
+                    let sx = full_w / 2.0 - 0.5 + sx * half;
+                    let sy = full_h / 2.0 - 0.5 + sy * half;
                     fused[(y * out.0 + x) * 3 + c] =
                         crate::resident::bits_of_level(plane(sx, sy) as f32);
                 }
@@ -4833,6 +4846,7 @@ mod tests {
             distortion: Some(knots),
             falloff: Some((0.25, 0.1)),
             tca: Some([vec![0.0, 24.0, 60.0], vec![0.0, -18.0, -44.0]]),
+            axis: [0.0125, -0.02],
         };
 
         let staged = |lens: &crate::fit::Lens| {

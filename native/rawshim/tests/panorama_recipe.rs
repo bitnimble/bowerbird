@@ -38,6 +38,7 @@ fn sample() -> Composition {
             crop: 1.03,
             falloff: Some((0.21, -0.07)),
             tca: None,
+            axis: [0.015, -0.01],
         },
         gain,
         // Never serialised and never a panorama's: §3.7a is an assembly's per-piece correction, and

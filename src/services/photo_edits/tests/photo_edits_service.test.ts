@@ -80,7 +80,7 @@ function mergeComposite(
         size: [100, 100] as [number, number],
         rotation: [1, 0, 0, 0] as [number, number, number, number],
         focal: 100,
-        lens: { crop: 1 },
+        lens: { crop: 1, axis: [0, 0] as [number, number] },
         gain: 1,
       })),
       projection: 'cylindrical' as const,
