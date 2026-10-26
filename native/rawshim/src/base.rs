@@ -1540,13 +1540,16 @@ pub(crate) fn sharpen_into(
 
     // A pass each: every dispatch reads what the one before wrote, and on Metal a read within one
     // pass can land before the write (`galosh::run` measured it).
-    let encoder = recording.encoder();
     let mut run = |pipeline: &wgpu::ComputePipeline, count: usize| {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(count);
-        pass.dispatch_workgroups(x, y, 1);
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            let (x, y) = groups(count);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        // A submission each: Windows resets a device whose submission runs past 2s (TDR).
+        recording.submit();
     };
 
     run(&base.sharpen_luma, pixels);

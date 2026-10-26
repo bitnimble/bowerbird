@@ -159,8 +159,7 @@ fn the_page_imports_the_entry_points_this_declares() {
         [
             "pageDevice",
             "buildEveryPipeline",
-            "holdBuffers",
-            "releaseBuffers",
+            "recentSubmissions",
             "holdRaw",
             "heifView",
             "holdPlanes",
@@ -171,6 +170,7 @@ fn the_page_imports_the_entry_points_this_declares() {
             "holdPmridWeights",
             "holdUpscalerWeights",
             "holdUpscalerModel",
+            "holdDereflectModel",
             "holdPrintEnvironment",
             "picturePart",
             "pictureOfOutput",

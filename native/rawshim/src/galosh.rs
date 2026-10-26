@@ -1331,32 +1331,21 @@ async fn run(
         .filter(|&channel| cfa.colour_at(channel / pw, channel % pw) == 1)
         .fold(0u64, |mask, channel| mask | 1 << channel);
 
-    // Uncleared: every plane the output depends on is written whole before it is read.
-    macro_rules! scratch {
-        ($label:expr, $len:expr) => {
-            recording.scratch(&wgpu::BufferDescriptor {
-                label: Some($label),
-                size: (($len as usize).max(1) * 4) as u64,
-                usage: storage,
-                mapped_at_creation: false,
-            })
-        };
-    }
     let pyramid_noisy: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
-        .map(|level| scratch!("galosh pyramid noisy", levelled(level)))
+        .map(|level| plane!("galosh pyramid noisy", levelled(level)))
         .collect();
     let pyramid_shrunk: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
         .map(|level| {
             let len = if level == 0 { 0 } else { levelled(level) };
-            scratch!("galosh pyramid shrunk", len)
+            plane!("galosh pyramid shrunk", len)
         })
         .collect();
     // Each level's shrunk, boxed to the size of the level below it.
     let pyramid_boxed: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS - 1)
-        .map(|level| scratch!("galosh pyramid boxed", levelled(level + 1)))
+        .map(|level| plane!("galosh pyramid boxed", levelled(level + 1)))
         .collect();
     // One level's luma pilot at a time, so the largest level's luma plane serves them all.
-    let pyramid_pilot = scratch!("galosh pyramid pilot", levelled(0) / planes);
+    let pyramid_pilot = plane!("galosh pyramid pilot", levelled(0) / planes);
     let transform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("galosh site transform"),
         contents: &site_transform(cfa, side)

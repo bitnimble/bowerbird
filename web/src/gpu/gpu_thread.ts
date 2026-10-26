@@ -87,14 +87,9 @@ export class GpuThread {
     );
   }
 
-  /**
-   * Begins an edit visit, whose opens keep their stage under the key answered and whose prepares
-   * let their buffers go for the next to take, until {@link dropSurface}.
-   */
+  /** Begins an edit visit, whose opens keep their stage under the key answered until {@link dropSurface}. */
   keepSurface(): number {
-    const key = ++this.opened;
-    this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'keepSurface', key }));
-    return key;
+    return ++this.opened;
   }
 
   /** Ends an edit visit: its stage is freed, and so is any closed open's kept under it later. */

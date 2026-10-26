@@ -45,16 +45,10 @@ pub fn build_every_pipeline() {
     }
 }
 
-/// Keeps the buffers every prepare lets go for the next photo's to take, until [`release_buffers`].
-#[wasm_bindgen(js_name = holdBuffers)]
-pub fn hold_buffers() {
-    crate::gpu::hold_buffers();
-}
-
-/// Ends one [`hold_buffers`]; the last frees every buffer kept.
-#[wasm_bindgen(js_name = releaseBuffers)]
-pub fn release_buffers() {
-    crate::gpu::release_buffers();
+/// Where the device's last few submissions were made, oldest first.
+#[wasm_bindgen(js_name = recentSubmissions)]
+pub fn recent_submissions() -> Vec<String> {
+    crate::gpu::device().map_or_else(Vec::new, |gpu| gpu.queue.recent_submissions())
 }
 
 /// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.

@@ -156,9 +156,6 @@ fn every_stage_hands_its_working_planes_back() {
         let _ = uploaded.encode(&grade);
     });
 
-    // The editor holds let-go buffers for the whole visit, so a drag must also leave that pool where
-    // it found it.
-    rawshim::gpu::hold_buffers();
     let uploaded = gpu.upload(&frame, &grade, &peak);
     let mut dragged = grade.clone();
     let mut tick = 0.0;
@@ -179,15 +176,5 @@ fn every_stage_hands_its_working_planes_back() {
             let _ = uploaded.encode(&dragged);
         }
     };
-    drag();
-    let kept = rawshim::gpu::kept_bytes();
     gives_it_back("colour edit drag", &mut drag);
-    let kept_after = rawshim::gpu::kept_bytes();
-    rawshim::gpu::release_buffers();
-    assert_eq!(
-        kept_after,
-        kept,
-        "a drag grew the editor's kept buffers by {} bytes",
-        kept_after.saturating_sub(kept),
-    );
 }
