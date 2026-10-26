@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { Contrast, Eye, Grid3x3, Palette, Shapes, Sparkles, Sun } from 'lucide-react';
+import { Contrast, Eye, Grid3x3, Info, Palette, Shapes, Sparkles, Sun } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { CheckLabel } from '../../ui/check_label';
 import { focusRing } from '../../ui/focus_ring';
@@ -330,6 +330,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   colourWheel,
   print,
   presenter,
+  info,
   mobile = false,
   style,
 }: {
@@ -342,6 +343,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   colourWheel: ColourWheelStore;
   print: PrintStore;
   presenter: RawEditPresenter;
+  info?: React.ReactNode;
   mobile?: boolean;
   style?: stylex.StyleXStyles;
 }): JSX.Element {
@@ -557,6 +559,16 @@ export const RawEditPanel = observer(function RawEditPanel({
           ),
         ],
       },
+      ...(info == null
+        ? []
+        : [
+            {
+              id: 'info',
+              title: RawEditPanelStrings.groupInfo(),
+              icon: <Info size={ICON} />,
+              panels: [{ id: 'info', title: RawEditPanelStrings.groupInfo(), content: info }],
+            },
+          ]),
       ...(proof.length === 0
         ? []
         : // Keyed by the proof, so choosing another one selects its tab again.

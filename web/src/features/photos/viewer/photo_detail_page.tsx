@@ -370,7 +370,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // a phone's sheet.
   const expanded = !mobile && edge === 'beside';
   const sheetStrip = stripInSheet && stripOffered && stripOpen;
-  const panelsOffered = !mobile && (mode === 'view' || (editing && !mobilePreview));
+  const panelsOffered = !mobile && mode === 'view';
   const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
@@ -388,29 +388,30 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       )
     ) : editing ? (
       session != null && (
-        <>
-          <RawEditPanel
-            edit={session.edit}
-            stage={session.stage}
-            crop={session.crop}
-            keystone={session.keystone}
-            repair={session.repair}
-            reflection={session.reflection}
-            colourWheel={session.colourWheel}
-            print={session.print}
-            presenter={session.presenter}
-            mobile={mobile || touch}
-            style={styles.spanRow}
-          />
-          {/* Edits is stale until the editor closes; the stage is no stored rendition. */}
-          {panelsOffered && panelsOpen && (
-            <>
-              <DetailInfo photoId={photoId} style={panelStyle} />
-              <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-              <RawPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-            </>
-          )}
-        </>
+        <RawEditPanel
+          edit={session.edit}
+          stage={session.stage}
+          crop={session.crop}
+          keystone={session.keystone}
+          repair={session.repair}
+          reflection={session.reflection}
+          colourWheel={session.colourWheel}
+          print={session.print}
+          presenter={session.presenter}
+          info={
+            // No Edits or Rendition panels: Edits is stale until the editor closes, and the stage
+            // is no stored rendition.
+            mobile || touch ? null : (
+              <>
+                <DetailInfo photoId={photoId} style={panelStyle} />
+                <CameraPanel photoId={photoId} defaultOpen style={panelStyle} />
+                <RawPanel photoId={photoId} defaultOpen style={panelStyle} />
+              </>
+            )
+          }
+          mobile={mobile || touch}
+          style={styles.spanRow}
+        />
       )
     ) : (
       <>

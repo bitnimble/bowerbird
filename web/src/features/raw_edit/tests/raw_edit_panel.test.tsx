@@ -83,6 +83,7 @@ function open(
   softProof: StageStore['softProof'] = 'hdr',
   brushing = false,
   models: Models | null = HELD,
+  info: React.ReactNode = null,
 ): {
   calls: { name: string; value: unknown }[];
   stage: StageStore;
@@ -125,6 +126,7 @@ function open(
           colourWheel={new ColourWheelStore(edit)}
           print={print}
           presenter={presenter}
+          info={info}
         />
       </WithModels>
     </StoresProvider>,
@@ -227,6 +229,43 @@ describe('the edit panel', () => {
     );
     expect(screen.getByRole('tab', { name: 'Soft proof', selected: true })).not.toBeNull();
     expect(screen.getByRole('group', { name: 'Paper' })).not.toBeNull();
+    expect(screen.queryByRole('group', { name: 'Tone mapping' })).toBeNull();
+  });
+
+  test('offers no Info tab without info to show', () => {
+    open();
+    expect(screen.queryByRole('tab', { name: 'Info' })).toBeNull();
+  });
+
+  test('shows the info in its own tab, ahead of the soft proof', () => {
+    const { stage } = open(
+      {},
+      null,
+      false,
+      'live',
+      undefined,
+      true,
+      true,
+      'hdr',
+      false,
+      HELD,
+      <p>Camera details</p>,
+    );
+    act(() => runInAction(() => (stage.softProof = 'srgb')));
+    expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+      'Light',
+      'Colour',
+      'Effects',
+      'Detail',
+      'Retouch',
+      'Geometry',
+      'Info',
+      'Soft proof',
+    ]);
+    expect(screen.queryByText('Camera details')).toBeNull();
+
+    showTab('Info');
+    expect(screen.getByText('Camera details')).not.toBeNull();
     expect(screen.queryByRole('group', { name: 'Tone mapping' })).toBeNull();
   });
 

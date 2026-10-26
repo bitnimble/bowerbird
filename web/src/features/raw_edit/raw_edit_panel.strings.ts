@@ -90,6 +90,8 @@ export const RawEditPanelStrings = {
   groupRetouch: () => 'Retouch',
   groupReflectionRemoval: () => 'Reflection removal',
   groupGeometry: () => 'Geometry',
+  // Names a tab of several panels; PhotoDetailStrings' 'Info' heads the labels and notes one.
+  groupInfo: () => 'Info',
 
   colourProfile: () => 'Colour profile',
   colourProfileNone: () => 'None',
