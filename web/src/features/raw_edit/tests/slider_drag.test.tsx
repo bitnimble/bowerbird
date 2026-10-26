@@ -21,6 +21,7 @@ test('a touch drag moves the thumb on every move while the picture is still draw
         crop={editor.crop}
         keystone={editor.keystone}
         repair={editor.repair}
+        reflection={editor.reflection}
         colourWheel={editor.colourWheel}
         print={editor.print}
         presenter={editor.presenter}

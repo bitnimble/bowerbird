@@ -175,6 +175,35 @@ pub unsafe extern "C" fn bb_hold_upscaler_model(
     0
 }
 
+/// Removes reflections with the model the app downloaded, at these two paths
+/// (`dereflect::hold_model`). Answers as `bb_hold_upscaler_model` does, and -3 for a bundle this
+/// build cannot run.
+///
+/// # Safety
+/// Both must be NUL-terminated, borrowed for the call.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_hold_dereflect_model(
+    manifest: *const c_char,
+    weights: *const c_char,
+) -> i32 {
+    let (Some(manifest), Some(weights)) = (unsafe { as_str(manifest) }, unsafe { as_str(weights) })
+    else {
+        return -1;
+    };
+    let (Ok(manifest), Ok(weights)) = (std::fs::read_to_string(manifest), std::fs::read(weights))
+    else {
+        return -2;
+    };
+    match crate::dereflect::hold_model(&manifest, &weights) {
+        Ok(()) => 0,
+        Err(why) => {
+            crate::warn(&format!("rawshim: the reflection model was refused: {why}"));
+            -3
+        }
+    }
+}
+
 /// Writes one rendition a client rendered (`job::render_bytes`), as `bb_run_job` would have written
 /// it: `command` is the job naming the one target, `framed` the client's frame. Replies as
 /// `bb_run_job` does.

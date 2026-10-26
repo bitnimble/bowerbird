@@ -138,6 +138,7 @@ pub mod decode_rawler;
 /// The photographs that arrive already rendered: PNG, JPEG, HEIC and AVIF.
 pub mod decode_rendered;
 pub mod demosaic;
+pub mod dereflect;
 /// Sensor particles found on the mosaic, and their shadows divided back out of it.
 pub mod dust;
 /// The search half of that, dispatched on the device the mosaic is already on.

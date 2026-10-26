@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { IDENTITY_TONE_CURVE } from '../../../../schemas/photo_edits';
+import type { ReflectionStroke } from '../../../../schemas/stored_grid';
 import { developed } from '../developed';
 
 describe('developed', () => {
@@ -36,6 +37,9 @@ describe('developed', () => {
       dustRemoval: false,
       dustSensitivity: 25,
       dustIntensity: 100,
+      reflectionRemoval: false,
+      reflectionStrength: 100,
+      reflectionStrokes: [],
     });
     expect(job.sharpen).toBeCloseTo(1.05);
     expect(job.denoiseLuminance).toBe(30);
@@ -44,6 +48,35 @@ describe('developed', () => {
     expect(job.dust.enabled).toBe(false);
     expect(job.exposure).toBe(1.5);
     expect(developed(stored, 'galosh', () => true).sharpen).toBeCloseTo(0.45);
+  });
+
+  it('carries reflection removal to the job, its strength as a gain, and off where unedited', () => {
+    expect(developed(null, 'galosh', () => true).reflection).toEqual({
+      enabled: false,
+      strength: 1,
+      strokes: [],
+    });
+    const stroke: ReflectionStroke = { kind: 'remove', radius: 3000, points: [[100, 200]] };
+    const stored = JSON.stringify({ reflectionRemoval: true, reflectionStrokes: [stroke] });
+    expect(developed(stored, 'galosh', () => true).reflection).toEqual({
+      enabled: true,
+      strength: 1,
+      strokes: [stroke],
+    });
+    const previewed = developed(stored, 'galosh', () => true, {
+      luminanceNoise: null,
+      colourNoise: null,
+      denoiser: 'galosh',
+      highlightRecovery: 100,
+      sharpening: null,
+      dustRemoval: true,
+      dustSensitivity: 25,
+      dustIntensity: 100,
+      reflectionRemoval: true,
+      reflectionStrength: 150,
+      reflectionStrokes: [],
+    });
+    expect(previewed.reflection).toEqual({ enabled: true, strength: 1.5, strokes: [] });
   });
 
   it("denoises with the library's filter unless the edit names one", () => {

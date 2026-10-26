@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { Contrast, Eye, Grid3x3, Palette, Shapes, Sun } from 'lucide-react';
+import { Contrast, Eye, Grid3x3, Palette, Shapes, Sparkles, Sun } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { CheckLabel } from '../../ui/check_label';
 import { focusRing } from '../../ui/focus_ring';
@@ -12,17 +12,8 @@ import { CropPanel, GeometryControls } from './crop/crop_panel';
 import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
-import {
-  COLOUR,
-  DETAIL,
-  DUST,
-  EFFECTS,
-  LIGHT,
-  snapped,
-  sliderValue,
-  reading,
-  type SliderSpec,
-} from './edit_sliders';
+import { EditSlider } from './edit_slider';
+import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 import { TEMPERATURE_KELVIN, TINT, type ColourProfile } from '../../../../src/schemas/photo_edits';
@@ -33,6 +24,8 @@ import { styles } from './raw_edit_panel.stylex';
 import type { StageStore } from './stage/stage_store';
 import { RepairPanel } from './repair/repair_panel';
 import type { RepairStore } from './repair/repair_store';
+import { ReflectionPanel } from './reflection/reflection_panel';
+import type { ReflectionStore } from './reflection/reflection_store';
 import type { PrintStore } from './print/print_store';
 import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
@@ -114,67 +107,6 @@ function Group({
     </Panel>
   );
 }
-
-const EditSlider = observer(function EditSlider({
-  edit,
-  stage,
-  presenter,
-  spec,
-  disabled,
-}: {
-  edit: EditStore;
-  stage: StageStore;
-  presenter: RawEditPresenter;
-  spec: SliderSpec;
-  /** For a slider whose group has a switch above it, and means nothing while that is off. */
-  disabled?: boolean;
-}): JSX.Element {
-  const stored = edit.doc?.[spec.key];
-  const follows = spec.follows != null;
-  // Where something else answers for the slider, "untouched" is the document holding nothing
-  // rather than the document holding a particular number - so the reset arrow goes back to null
-  // and the row goes on following it.
-  const followed =
-    spec.follows === 'photo'
-      ? stage.measured?.[spec.key]
-      : spec.follows === 'denoiser'
-        ? edit.denoiserDefaults[spec.key]
-        : undefined;
-  const neutral = followed == null ? (spec.neutral ?? 0) : snapped(followed, spec);
-  const value = Number(stored ?? neutral);
-  const untouched = follows ? stored == null : value === neutral;
-  // Blank until the header lands: the measurement comes off it, and a number in its place would
-  // state a value the module has not resolved - which is exactly what this row is here to stop.
-  const unknown = follows && stored == null && followed == null;
-  const shut = disabled === true || !stage.editable;
-  const format = (at: number): string =>
-    RawEditPanelStrings.valueWithUnit(reading(at, spec), spec.unit ?? '');
-
-  return (
-    <EditControl
-      label={spec.label}
-      value={unknown ? '' : format(value)}
-      reset={
-        shut || untouched ? null : () => presenter.settle({ [spec.key]: follows ? null : neutral })
-      }
-      typing={shut ? null : { ...spec, set: (typed) => presenter.settle({ [spec.key]: typed }) }}
-    >
-      <Slider
-        style={styles.slider}
-        value={value}
-        onChange={(next) => presenter.preview({ [spec.key]: sliderValue(next, spec, neutral) })}
-        onCommit={(next) => presenter.settle({ [spec.key]: sliderValue(next, spec, neutral) })}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step}
-        snap={[neutral]}
-        label={spec.label}
-        valueText={format}
-        disabled={shut}
-      />
-    </EditControl>
-  );
-});
 
 /**
  * Taking the sensor's dust off: a switch, and two sliders that mean nothing without it.
@@ -394,6 +326,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   crop,
   keystone,
   repair,
+  reflection,
   colourWheel,
   print,
   presenter,
@@ -405,6 +338,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  reflection: ReflectionStore;
   colourWheel: ColourWheelStore;
   print: PrintStore;
   presenter: RawEditPresenter;
@@ -584,6 +518,25 @@ export const RawEditPanel = observer(function RawEditPanel({
                 ),
               ]
             : []),
+        ],
+      },
+      {
+        id: 'retouch',
+        title: RawEditPanelStrings.groupRetouch(),
+        icon: <Sparkles size={ICON} />,
+        panels: [
+          panelGroup(
+            'reflection',
+            RawEditPanelStrings.groupReflectionRemoval(),
+            stage.mosaic ? (
+              <ReflectionPanel edit={edit} stage={stage} store={reflection} presenter={presenter} />
+            ) : (
+              <Text variant="muted" as="p">
+                {RawEditPanelStrings.noReflectionRemoval()}
+              </Text>
+            ),
+            stage.repreparing,
+          ),
         ],
       },
       {

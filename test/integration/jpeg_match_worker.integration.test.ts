@@ -82,6 +82,7 @@ async function render(
     denoiser: 'galosh',
     highlightRecovery: 100,
     repairs: [],
+    reflection: { enabled: false, strength: 1, strokes: [] },
     // Unedited: this measures what the camera match does, so a
     // reader's would be a second variable in it.
     exposure: null,

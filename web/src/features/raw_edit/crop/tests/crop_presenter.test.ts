@@ -3,6 +3,7 @@ import { KeystoneStore } from '../../keystone/keystone_store';
 import { EditStore } from '../../edit/edit_store';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
+import { ReflectionStore } from '../../reflection/reflection_store';
 import { ColourWheelStore } from '../../colour_wheel/colour_wheel_store';
 import { PrintStore } from '../../print/print_store';
 import { DeviceSettingsStore } from '../../../settings/device_settings_store';
@@ -293,6 +294,7 @@ describe('cropping to what the geometry left', () => {
       reopenedCrop,
       reopenedKeystone,
       reopenedRepair,
+      new ReflectionStore(reopenedEdit, reopened),
       new ColourWheelStore(reopenedEdit),
       reopenedLoupe,
       new PrintStore(),

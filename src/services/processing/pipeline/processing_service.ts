@@ -208,6 +208,14 @@ export class ProcessingService extends RenderService {
     );
   }
 
+  /** Both derived stages of every photo removing reflections, whose model has changed. */
+  rebuildRemovingReflections(): number {
+    return this.drainQueued(
+      this.photoProcessing.queueRemovingReflections(),
+      'could not rebuild after a model update',
+    );
+  }
+
   private drainQueued(queued: readonly string[], failure: string): number {
     // Reported rather than thrown past: nothing is awaiting this, so an unhandled
     // rejection is all a failure would otherwise produce.

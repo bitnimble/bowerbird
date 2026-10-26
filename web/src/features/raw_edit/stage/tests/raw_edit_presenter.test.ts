@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { autorun, runInAction } from 'mobx';
 import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
-import { prepareOf } from '../../local_decode/open_photo';
+import { prepareOf, sameDevelop } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
 import type { KeystoneStore } from '../../keystone/keystone_store';
@@ -321,6 +321,11 @@ describe('a slider reaching the picture', () => {
         intensity: neutral.dustIntensity / 100,
       },
       repairs: neutral.repairs,
+      reflection: {
+        enabled: neutral.reflectionRemoval,
+        strength: neutral.reflectionStrength / 100,
+        strokes: neutral.reflectionStrokes,
+      },
     });
   });
 
@@ -357,6 +362,7 @@ describe('a slider reaching the picture', () => {
         sharpening: 50,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],
+        reflection: { enabled: false, strength: 1, strokes: [] },
       },
     ]);
 
@@ -409,6 +415,43 @@ describe('a slider reaching the picture', () => {
     presenter.settle({ dustRemoval: true, dustSensitivity: 80, dustIntensity: 60 });
     await settled();
     expect(asked().length).toBe(ran + 5);
+
+    presenter.settle({ reflectionRemoval: true });
+    await settled();
+    expect(asked().length).toBe(ran + 6);
+    expect(asked().at(-1)?.reflection).toEqual({ enabled: true, strength: 1, strokes: [] });
+
+    presenter.settle({ reflectionStrength: 150 });
+    await settled();
+    expect(asked().length).toBe(ran + 7);
+    expect(asked().at(-1)?.reflection.strength).toBe(1.5);
+  });
+
+  test('re-prepares for a reflection strength or stroke only while removal is on', () => {
+    const at = prepareOf(
+      { ...neutralEdits(), reflectionRemoval: true, reflectionStrength: 100 },
+      'galosh',
+      true,
+    );
+    const stroke = {
+      kind: 'remove' as const,
+      radius: 3000,
+      points: [[100, 200]] as [number, number][],
+    };
+    const stronger = { ...at, reflection: { ...at.reflection, strength: 1.5 } };
+    const stroked = { ...at, reflection: { ...at.reflection, strokes: [stroke] } };
+    const off = { ...at, reflection: { enabled: false, strength: 1, strokes: [] } };
+
+    expect(sameDevelop(at, stronger)).toBe(false);
+    expect(sameDevelop(at, stroked)).toBe(false);
+    // Off, neither the strength nor the strokes can move a pixel.
+    expect(
+      sameDevelop(off, {
+        ...off,
+        reflection: { ...off.reflection, strength: 2, strokes: [stroke] },
+      }),
+    ).toBe(true);
+    expect(sameDevelop(at, off)).toBe(false);
   });
 
   test("an edit naming no denoiser runs its library's, until the reader picks one", async () => {
@@ -962,6 +1005,8 @@ describe('the level a zoom is served at', () => {
   let headerOverrides: Partial<PreparedHeader>;
   /** Every prepare the presenter asked the server for, as the query stated it. */
   let asked: URL[];
+  /** The settings each of those prepares previewed, in its body. */
+  let developed: unknown[];
   let realFetch: typeof globalThis.fetch;
 
   afterEach(() => {
@@ -973,13 +1018,15 @@ describe('the level a zoom is served at', () => {
   beforeEach(() => {
     headerOverrides = {};
     asked = [];
+    developed = [];
     realFetch = globalThis.fetch;
     // **Answered through the server's own arithmetic, not a fixed header.** Which window a region
     // comes back as is the other side's decision, and a test that invented one would pass while
     // the two sides disagreed about what was in hand.
-    globalThis.fetch = ((input: string | URL) => {
+    globalThis.fetch = ((input: string | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://library.test');
       asked.push(url);
+      developed.push(typeof init?.body === 'string' ? JSON.parse(init.body) : null);
       const parts = (url.searchParams.get('region') ?? '0,0,1,1').split(',').map(Number);
       const [x = 0, y = 0, width = 1, height = 1] = parts;
       const at = pictureLevel(PAN, PAN_ROW, {
@@ -1185,14 +1232,12 @@ describe('the level a zoom is served at', () => {
     expect(decoder.bands).toEqual([]);
     expect(decoder.dropped).toBe(1);
     expect(asked.length).toBeGreaterThan(0);
-    const develop = (url: URL | undefined): unknown =>
-      JSON.parse(url?.searchParams.get('develop') ?? 'null');
-    expect(develop(asked.at(-1))).toMatchObject({ sharpening: 80, dustRemoval: true });
+    expect(developed.at(-1)).toMatchObject({ sharpening: 80, dustRemoval: true });
 
     decoder.missing = [[[1024, 2048, 1024, 1024]]];
     presenter.showRegion({ ...QUARTER, x: QUARTER.x + 900 });
     await settled();
-    expect(develop(asked.at(-1))).toMatchObject({ sharpening: 80 });
+    expect(developed.at(-1)).toMatchObject({ sharpening: 80 });
   });
 
   test('a small pan inside what is held asks for nothing', async () => {
@@ -1534,6 +1579,7 @@ describe('leaving the editor', () => {
       crop,
       keystone,
       editor.repair,
+      editor.reflection,
       editor.colourWheel,
       loupe,
       editor.print,

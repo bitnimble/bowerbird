@@ -1,0 +1,13 @@
+[project]
+name = "dereflect"
+version = "0.1.0"
+description = "Trains the reflection remover"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2", "torch>=2.9,<2.12", "triton>=3.4", "training"]
+
+[project.scripts]
+train-dereflect = "dereflect.train:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

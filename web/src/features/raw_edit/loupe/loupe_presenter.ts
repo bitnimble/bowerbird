@@ -1,6 +1,7 @@
 import { action } from 'mobx';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
+import { reflectionSettings } from '../../../../../src/schemas/reflection_settings';
 import { sharpenOf } from '../../../../../src/schemas/sharpening';
 import { describe } from '../../../errors';
 import type { Region } from '../edits';
@@ -285,26 +286,29 @@ export class LoupePresenter {
     if (doc == null) throw new Error('there is no document to build a tile against');
     // Built and kept where it will be drawn: the module holds it on its own device, so what
     // comes back is the window's rectangle rather than a few megabytes of samples.
-    return local.decoder.holdTile({
-      tile: [rect.left, rect.top, rect.width, rect.height],
-      frame: [this.stage.width, this.stage.height],
-      grade: local.open.grade,
-      strengths: {
-        sharpen: sharpenOf(doc.sharpening, this.edit.denoiser),
-        defringe: local.open.defringe,
+    return local.decoder.holdTile(
+      {
+        tile: [rect.left, rect.top, rect.width, rect.height],
+        frame: [this.stage.width, this.stage.height],
+        grade: local.open.grade,
+        strengths: {
+          sharpen: sharpenOf(doc.sharpening, this.edit.denoiser),
+          defringe: local.open.defringe,
+        },
+        denoiseLuminance: doc.luminanceNoise,
+        denoiseColour: doc.colourNoise,
+        denoiser: this.edit.denoiser,
+        highlightRecovery: doc.highlightRecovery,
+        dust: dustSettings(doc),
+        adjust: adjustOf(doc),
+        levels: this.stage.levels,
+        noiseFit: this.stage.noiseFit,
+        defocus: this.stage.defocus,
+        photoAnalysis: local.photoAnalysis,
+        repairs: doc.repairs,
       },
-      denoiseLuminance: doc.luminanceNoise,
-      denoiseColour: doc.colourNoise,
-      denoiser: this.edit.denoiser,
-      highlightRecovery: doc.highlightRecovery,
-      dust: dustSettings(doc),
-      adjust: adjustOf(doc),
-      levels: this.stage.levels,
-      noiseFit: this.stage.noiseFit,
-      defocus: this.stage.defocus,
-      photoAnalysis: local.photoAnalysis,
-      repairs: doc.repairs,
-    });
+      reflectionSettings(doc),
+    );
   }
 
   /**
@@ -327,7 +331,8 @@ export class LoupePresenter {
         : `${doc.luminanceNoise},${doc.colourNoise},${this.edit.denoiser},${doc.highlightRecovery},` +
           `${doc.sharpening},${doc.clarity},` +
           `${doc.texture},${doc.dehaze},${doc.dustRemoval},${doc.dustSensitivity},` +
-          `${doc.dustIntensity},${JSON.stringify(doc.repairs)}`;
+          `${doc.dustIntensity},${JSON.stringify(doc.repairs)},` +
+          JSON.stringify(reflectionSettings(doc));
     return `${this.host.photoId()}:${this.edit.rev}:${shape}`;
   }
 

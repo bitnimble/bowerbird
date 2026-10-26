@@ -115,6 +115,9 @@ export const PhotoDetailStrings = {
   dustSensitivity: () => 'Dust sensitivity',
   dustIntensity: () => 'Dust intensity',
   dustRemovalOff: () => 'Off',
+  reflectionStrength: () => 'Reflection strength',
+  reflectionRemovalOn: () => 'On',
+  strokes: (count: number) => (count === 1 ? '1 stroke' : `${count} strokes`),
   rotate: () => 'Rotate',
   cropOfFrame: (width: number, height: number, aspect: string | null) =>
     aspect == null ? `${width}% × ${height}%` : `${width}% × ${height}% (${aspect})`,

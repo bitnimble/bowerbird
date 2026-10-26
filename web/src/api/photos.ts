@@ -45,7 +45,6 @@ import {
   UpdatePhotoRequestSchema,
 } from '../../../src/schemas/photos';
 import type { EditDoc } from '../../../src/schemas/photo_edits';
-import type { PrepareDevelop } from '../../../src/schemas/prepare_develop';
 import { PathSegment, route } from '../../../src/schemas/route';
 import {
   REQUEST_ACTIVITY_HEADER,
@@ -376,14 +375,10 @@ export const photosApi = {
    *
    * Fractions rather than pixels: the canvas is the recipe's rather than the row's, so a client
    * naming its coordinates would have to be told the canvas before it could ask.
-   *
-   * `develop` is the settings the reader is previewing that the prepare runs before the samples
-   * cross, where they differ from the last save.
    */
-  preparedPictureUrl: (photoId: string, asked?: AskedPicture, develop?: PrepareDevelop): string => {
+  preparedPictureUrl: (photoId: string, asked?: AskedPicture): string => {
     const url = route(PathSegment.image(), photoId, PathSegment.prepare());
     const query = shownQuery(asked);
-    if (develop != null) query.push(`develop=${encodeURIComponent(JSON.stringify(develop))}`);
     return query.length === 0 ? url : `${url}?${query.join('&')}`;
   },
 };

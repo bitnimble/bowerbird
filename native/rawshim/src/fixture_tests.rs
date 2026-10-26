@@ -248,6 +248,7 @@ fn tile_job(
             ..Default::default()
         },
         repairs: Vec::new(),
+        reflection: Default::default(),
         sharpen: 0.0,
         defringe: 0.0,
         exposure: None,
@@ -1087,6 +1088,8 @@ mod decode_geometry {
                 intensity: 1.0,
             },
             repairs: Vec::new(),
+            reflection: Default::default(),
+            found: None,
             stated_white: false,
         };
 
@@ -1163,6 +1166,7 @@ mod decode_geometry {
                     scale: crate::view::Scale::Full,
                     repairs: Vec::new(),
                     drawn: None,
+                    removal: None,
                 },
             ))
             .expect("the band");
@@ -2315,8 +2319,7 @@ mod loupe_tile {
             &job,
             &job.targets[0],
             &held,
-            &rendered.known,
-            rendered.peak,
+            &rendered,
             1 << 20,
         ))
         .expect("the bands");
@@ -4334,6 +4337,8 @@ mod pictures {
                 highlight_recovery: None,
                 dust: Default::default(),
                 repairs: Vec::new(),
+                reflection: Default::default(),
+                found: None,
                 stated_white: false,
             },
             40.0,
@@ -4486,6 +4491,8 @@ mod one_open_at_a_time {
             photo_analysis: None,
             dust: Default::default(),
             repairs: Vec::new(),
+            reflection: Default::default(),
+            found: None,
             stated_white: false,
             // The document's own defaults, so the open this times is the one a reader gets
             // rather than a cheaper one that skips the denoise.

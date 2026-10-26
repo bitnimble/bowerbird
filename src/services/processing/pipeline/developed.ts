@@ -3,6 +3,7 @@ import { adjustOf, exposureOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
+import { reflectionSettings } from '../../../schemas/reflection_settings';
 import { sharpenOf } from '../../../schemas/sharpening';
 import type { Developed } from '../workers/processing_types';
 
@@ -76,6 +77,7 @@ function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: () => boolea
     // same function for the same reason.
     dust: dustSettings(doc),
     repairs: doc.repairs,
+    reflection: reflectionSettings(doc),
     adjust: adjustOf(doc),
     geometry: {
       crop: [doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom],

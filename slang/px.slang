@@ -38,7 +38,10 @@
 //   Lanczos-3 over the demosaic of the upscale, two of its pixels a photosite.
 // - *Scale-exact by construction.* `chroma_smooth`'s `SIGMA` and `REACH` in texels of a grid that
 //   is itself a share, `detail`'s `DETAIL_LONG` at 512, `patch_stats`'s `PATCH` on the fit's own
-//   1280 plane. A working plane of fixed size has fixed pixels, so constants in it are safe.
+//   1280 plane, and the reflection remover's taps and DINOv2's `PATCH` on its own `Looked` plane,
+//   the frame shrunk to 1024 on its long edge (`dereflect.slang`, `dereflect_frame.slang`, whose
+//   `BRUSH_SOFTNESS` is a share of a stroke's own radius). A working plane of fixed size has fixed
+//   pixels, so constants in it are safe.
 // - *A pixel of whatever is drawn, on purpose.* `assembly_weight::W_HIGH_PX`, the high band's two
 //   render pixels: what it smooths is the staircase a rasteriser leaves, which is one pixel at
 //   every size, so a share of the picture would be the wrong answer at every size but one.
@@ -95,6 +98,9 @@ public struct Canvas : ISpace {}
 
 /// The camera match's own plane, at the fixed long edge its fit sets (`FIT_LONG_EDGE`).
 public struct FitPlane : IAbsolute {}
+
+/// The reflection remover's plane: the frame shrunk to 1024 on its long edge (`dereflect::EDGE`).
+public struct Looked : IAbsolute {}
 
 /// The plane a composite's geometry search runs on: the frames' embedded JPEGs, brought to one
 /// size.
@@ -188,6 +194,12 @@ public Share share(uint numerator, uint denominator)
     Share s;
     s.fraction = float(numerator) / float(denominator);
     return s;
+}
+
+/// A place along a plane `from` across, at the same place along one `to` across.
+public float onto<S : ISpace, T : ISpace>(float place, Span<S> from, Span<T> to)
+{
+    return place * float(to.n) / float(from.n);
 }
 
 public Span<S> plus<S : ISpace>(Span<S> a, Span<S> b)

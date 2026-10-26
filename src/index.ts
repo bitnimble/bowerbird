@@ -95,8 +95,13 @@ import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api'
 import { ModelsApi } from './api/models/models_api';
 import { modelsDir, originalPathOf, printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
+import { REFLECTION_MODEL } from './schemas/models';
 import { ModelsService } from './services/models/models_service';
-import { holdUpscalerModel, isUpscalable } from './services/processing/rawshim/rawshim_ops';
+import {
+  holdDereflectModel,
+  holdUpscalerModel,
+  isUpscalable,
+} from './services/processing/rawshim/rawshim_ops';
 import { VERSION } from './version';
 import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
@@ -242,6 +247,15 @@ const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'dow
     hold: (dir) =>
       holdUpscalerModel(path.join(dir, 'upscaler.json'), path.join(dir, 'upscaler.bin')),
     changed: () => processingService.rebuildDenoisedWith('upscaler'),
+  },
+  {
+    files: [`${REFLECTION_MODEL}.json`, `${REFLECTION_MODEL}.bin`],
+    hold: (dir) =>
+      holdDereflectModel(
+        path.join(dir, `${REFLECTION_MODEL}.json`),
+        path.join(dir, `${REFLECTION_MODEL}.bin`),
+      ),
+    changed: () => processingService.rebuildRemovingReflections(),
   },
 ]);
 // A downloaded model is handed over before the first await, so before any render starts.

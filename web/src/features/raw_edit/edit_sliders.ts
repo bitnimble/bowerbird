@@ -157,6 +157,16 @@ export const DUST: readonly SliderSpec[] = [
   },
 ];
 
+export const REFLECTION: SliderSpec = {
+  key: 'reflectionStrength',
+  label: RawEditPanelStrings.strength(),
+  min: 0,
+  max: 200,
+  step: 1,
+  unit: RawEditPanelStrings.percentUnit(),
+  neutral: 100,
+};
+
 /** Every slider whose value is a plain number, in the order the panel shows them. */
 export const EDIT_SLIDERS: readonly SliderSpec[] = [...LIGHT, ...COLOUR, ...EFFECTS, ...DETAIL];
 

@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { MOST_REPAIRS, MOST_REPAIR_VERTICES, STORED_LONG, type Repair } from './stored_grid';
+import {
+  MOST_REFLECTION_STROKES,
+  MOST_REPAIRS,
+  MOST_REPAIR_VERTICES,
+  MOST_STROKE_POINTS,
+  STORED_LONG,
+  type ReflectionStroke,
+  type Repair,
+} from './stored_grid';
 
 // One photo's develop settings: what the editor shows, what a rendition is built
 // from, and what an undo steps through.
@@ -125,6 +133,13 @@ export const RepairSchema: z.ZodType<Repair> = z.object({
 });
 export type { Repair };
 
+/** On the same grid and in the same photograph as a repair. */
+export const ReflectionStrokeSchema: z.ZodType<ReflectionStroke> = z.object({
+  kind: z.enum(['remove', 'keep']),
+  radius: z.number().int().min(1).max(STORED_LONG),
+  points: z.array(StoredPointSchema).min(1).max(MOST_STROKE_POINTS),
+});
+
 export const COLOUR_NODES_MAX = 32;
 const HueSchema = z.number().min(0).max(360);
 const ChromaSchema = z.number().min(0).max(100);
@@ -239,6 +254,10 @@ export const EditDocSchema = z
 
     // In the order they were made, each drawn over those before it.
     repairs: z.array(RepairSchema).max(MOST_REPAIRS).default([]),
+
+    reflectionRemoval: z.boolean().default(false),
+    reflectionStrength: z.number().int().min(0).max(200).default(100),
+    reflectionStrokes: z.array(ReflectionStrokeSchema).max(MOST_REFLECTION_STROKES).default([]),
 
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.
@@ -365,6 +384,7 @@ const FRAME_BOUND_FIELDS: ReadonlySet<string> = new Set([
   'version',
   'awaitsCameraMatch',
   'repairs',
+  'reflectionStrokes',
   'cropLeft',
   'cropTop',
   'cropRight',

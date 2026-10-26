@@ -8,9 +8,11 @@ import {
   ColourNodeSchema,
   ColourProfileSchema,
   DenoiserSchema,
+  ReflectionStrokeSchema,
   RepairSchema,
   ToneCurveSchema,
 } from './photo_edits';
+import type { ReflectionSettings } from './reflection_settings';
 import { CameraMatchSchema } from './render_stages';
 import { RenderingIntentSchema } from './rendering_intent';
 
@@ -145,6 +147,12 @@ export const DustSettingsSchema = z.object({
   intensity: z.number(),
 }) satisfies z.ZodType<DustSettings>;
 
+const ReflectionSettingsSchema = z.object({
+  enabled: z.boolean(),
+  strength: z.number(),
+  strokes: z.array(ReflectionStrokeSchema),
+}) satisfies z.ZodType<ReflectionSettings>;
+
 export const JobSchema = z.object({
   rawFilePath: z.string(),
   cameraMatch: CameraMatchSchema,
@@ -204,6 +212,8 @@ export const JobSchema = z.object({
   dust: DustSettingsSchema,
   /** The reader's repairs, applied to the one frame every target is cut from. */
   repairs: z.array(RepairSchema).optional(),
+  /** Absent is off. */
+  reflection: ReflectionSettingsSchema.optional(),
   /**
    * How much of a deconvolution to blend into the sharpen, 0 to 1.25 (`sharpenOf`). Belongs to
    * the render rather than to a rendition, so every target shares it, and unitless - how much

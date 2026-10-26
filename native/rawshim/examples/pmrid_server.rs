@@ -10,6 +10,18 @@
 //!   writes the picture area, conditioned, dust-removed and, unless `noisy`, denoised, cropped to
 //!   even sides
 //!   -> {"width": w, "height": h, "cfa": [4 colours from its top-left], "gains": [r, g, b], "fit": NoiseFit|null}
+//! {"decode": "<raw>", "out": "<file>", "floor": long edge}
+//!   decodes the RAW as the library does an unedited photo for a rendition `floor` on its long edge:
+//!   dust removed, denoised, highlights reconstructed, demosaiced, cropped and stood upright; writes
+//!   it as interleaved Rec.2020 RGB over full scale
+//!   -> {"width": w, "height": h, "ceilings": [r, g, b], "matrix": camera to Rec.2020}
+//! {"develop": "<file>", "out": "<file>", "width": w, "height": h, "ceilings": [..], "matrix": [..]}
+//!   demosaics an RGGB mosaic of camera light over full scale, clipped at `ceilings`, as a decode
+//!   halving it does, highlights reconstructed; writes w/2 x h/2 interleaved Rec.2020 RGB
+//!   -> {}
+//! {"header": "<raw>"}
+//!   reads only the RAW's metadata
+//!   -> {"iso": n, "shutter": seconds, "aperture": f-number}, each 0 where the camera recorded none
 //! {"denoise": "<file>", "out": "<file>", "width": w, "height": h, "cfa": [..], "gains": [..], "fit": NoiseFit}
 //!   denoises each of the file's stacked w x h mosaics on its own
 //!   -> {}
@@ -24,6 +36,16 @@
 //!   at `amount`, the editor's default unless given, as Rec.2020 light over reference white,
 //!   interleaved RGB
 //!   -> {"matrix": camera to Rec.2020, "sigma": the sharpen's}
+//! {"grade": "<raw>", "floor": long edge, "out": "<file>", "output": "pq"|"srgb", "edge": long edge?,
+//!  "taken": "<file>"?, "gains": [g, ...]?, "alone": bool?}
+//!   opens the RAW as the library renders it unedited (`support::Open::shipped` at `floor`) and grades
+//!   it as a rendition with nobody's edit on it, `edge` on its long side (the frame's own size unless
+//!   given); with `taken`, interleaved RGB light at the frame's size in `decode`'s units, once per
+//!   gain, each time taking that much of it out of the decode, never below black, before the open
+//!   measures and grades what is left; or with `alone`, grading that much of it in place of the
+//!   photo, under the photo's own grade. Writes each image's interleaved RGB as little-endian `u16`,
+//!   16-bit PQ Rec.2020 or sRGB codes in the low byte
+//!   -> {"width": w, "height": h, "count": n}
 //! ```
 //!
 //! `NoiseFit` is `galosh::NoiseFit` as serde writes it: `alpha`, `sigmaSq`, `unifiedSigma`,
@@ -56,6 +78,46 @@ enum Request {
     Measure {
         measure: String,
     },
+    Decode {
+        decode: String,
+        out: String,
+        floor: u32,
+    },
+    Develop(Develop),
+    Grade(Grade),
+    Header {
+        header: String,
+    },
+}
+
+#[derive(serde::Deserialize)]
+struct Develop {
+    develop: String,
+    out: String,
+    width: usize,
+    height: usize,
+    ceilings: [f32; 3],
+    matrix: [[f32; 3]; 3],
+}
+
+#[derive(serde::Deserialize)]
+struct Grade {
+    grade: String,
+    floor: u32,
+    out: String,
+    output: Coding,
+    edge: Option<usize>,
+    taken: Option<String>,
+    gains: Option<Vec<f32>>,
+    #[serde(default)]
+    alone: bool,
+}
+
+#[derive(serde::Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum Coding {
+    Pq,
+    Srgb,
 }
 
 #[derive(serde::Deserialize)]
@@ -166,6 +228,38 @@ fn main() {
                 measured(&measure).map(|found| serde_json::json!(found))
             }))
             .unwrap_or_else(|_| Err(Failed::Error(panicked(&format!("measuring {measure}"))))),
+            Ok(Request::Decode { decode, out, floor }) => {
+                catch_unwind(AssertUnwindSafe(|| decoded(&decode, &out, floor))).unwrap_or_else(
+                    |_| Err(Failed::Unreadable(panicked(&format!("decoding {decode}")))),
+                )
+            }
+            Ok(Request::Develop(request)) => {
+                catch_unwind(AssertUnwindSafe(|| developed(gpu, &request))).unwrap_or_else(|_| {
+                    Err(Failed::Error(panicked(&format!(
+                        "developing {}",
+                        request.develop
+                    ))))
+                })
+            }
+            Ok(Request::Grade(request)) => catch_unwind(AssertUnwindSafe(|| graded(&request)))
+                .unwrap_or_else(|_| {
+                    Err(Failed::Error(panicked(&format!(
+                        "grading {}",
+                        request.grade
+                    ))))
+                }),
+            Ok(Request::Header { header }) => catch_unwind(AssertUnwindSafe(|| {
+                rawshim::header::read_path(&header)
+                    .map(|read| {
+                        serde_json::json!({
+                            "iso": read.iso,
+                            "shutter": read.shutter,
+                            "aperture": read.aperture,
+                        })
+                    })
+                    .ok_or_else(|| Failed::Unreadable(format!("{header} has no readable header")))
+            }))
+            .unwrap_or_else(|_| Err(Failed::Unreadable(panicked(&format!("reading {header}"))))),
             Err(why) => Err(Failed::Error(format!("not a request: {why}"))),
         };
         let reply = reply.unwrap_or_else(|failed| match failed {
@@ -234,6 +328,148 @@ fn opened(
         "gains": held.ceilings(),
         "fit": usable.then_some(fit),
     }))
+}
+
+fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Failed> {
+    let frame = rawshim::decode::frame_from_path(
+        path,
+        Detail::AUTO,
+        floor,
+        false,
+        rawshim::galosh::wanted(None, Detail::AUTO),
+        rawshim::dust::Settings::default().wanted(None),
+    )
+    .ok_or_else(|| Failed::Unreadable(format!("{path} did not decode")))?;
+    let matrix = frame
+        .matrix
+        .ok_or_else(|| Failed::Unreadable(format!("{path} has no mosaic")))?;
+    let (width, height, ceilings) = (frame.width, frame.height, frame.wb_gains);
+    let frame = pollster::block_on(frame.to_host())
+        .ok_or_else(|| Failed::Error("the frame did not read back".into()))?;
+    let samples = frame
+        .samples16()
+        .ok_or_else(|| Failed::Error("the frame is not half floats".into()))?;
+    write(out, &full_scale(samples))?;
+    Ok(serde_json::json!({
+        "width": width,
+        "height": height,
+        "ceilings": ceilings,
+        "matrix": matrix,
+    }))
+}
+
+fn developed(
+    gpu: &'static rawshim::gpu::Gpu,
+    request: &Develop,
+) -> Result<serde_json::Value, Failed> {
+    let (width, height) = (request.width, request.height);
+    let samples = read(&request.develop)?;
+    if width % 2 != 0 || height % 2 != 0 || samples.len() != width * height {
+        return Err(Failed::Error(format!(
+            "{} is not one {width}x{height} mosaic of whole sites",
+            request.develop
+        )));
+    }
+    let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, width, height);
+    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let colour = rawshim::demosaic::Colour {
+        matrix: request.matrix,
+        ceiling: request.ceilings,
+    };
+    let built = pollster::block_on(rawshim::decode_rawler::demosaic_as_decoded(
+        &mosaic, &cfa, colour, 2,
+    ))
+    .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
+    let host = pollster::block_on(built.into_host())
+        .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))?;
+    write(&request.out, &full_scale(&host))?;
+    Ok(serde_json::json!({}))
+}
+
+fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
+    let taken = request.taken.as_deref().map(read).transpose()?;
+    let gains = match (&taken, &request.gains) {
+        (None, _) => vec![0.0],
+        (Some(_), Some(gains)) => gains.clone(),
+        (Some(_), None) => vec![1.0],
+    };
+    let options = rawshim::hdr_args::EncodeOptions {
+        still_chroma: rawshim::hdr_args::Chroma::Yuv444,
+        output_path: String::new(),
+        grade: support::GRADE,
+        crf: 26,
+        preset: 6,
+        strengths: support::STRENGTHS,
+        sharpen_sigma: None,
+        max_edge: request.edge.map_or(100_000.0, |edge| edge as f64),
+        content_light: None,
+    };
+    let output = match request.output {
+        Coding::Pq => rawshim::gpu::Output::Pq,
+        Coding::Srgb => rawshim::gpu::Output::Srgb,
+    };
+    let unopened = || Failed::Unreadable(format!("{} did not open", request.grade));
+    let matched = match taken {
+        Some(_) => {
+            support::Open::shipped(&request.grade, request.floor)
+                .run()
+                .ok_or_else(unopened)?
+                .measured
+                .matched
+        }
+        None => None,
+    };
+    let mut bytes = Vec::new();
+    let (mut width, mut height) = (0, 0);
+    for &gain in &gains {
+        let mismatch = std::cell::Cell::new(None);
+        let take = |samples: &mut [u16]| match &taken {
+            Some(taken) if taken.len() != samples.len() => mismatch.set(Some(samples.len())),
+            Some(taken) if !request.alone => {
+                for (sample, light) in samples.iter_mut().zip(taken) {
+                    let level = half::f16::from_bits(*sample).to_f32();
+                    *sample = half::f16::from_f32((level - gain * light).max(0.0)).to_bits();
+                }
+            }
+            _ => {}
+        };
+        // Taken out ahead of the open, as a stage would be, so the grade measures what is left.
+        let mut opened = support::Open {
+            edit: Some(&take),
+            matched: matched.clone(),
+            ..support::Open::shipped(&request.grade, request.floor)
+        }
+        .run()
+        .ok_or_else(unopened)?;
+        if let Some(frame) = mismatch.get() {
+            return Err(Failed::Error(format!(
+                "{} holds {} samples, the frame {frame}",
+                request.taken.as_deref().unwrap_or_default(),
+                taken.as_ref().map_or(0, Vec::len)
+            )));
+        }
+        if let (Some(taken), true) = (&taken, request.alone) {
+            // In place of the opened photo, under the grade the photo measured.
+            opened.frame.pixels = rawshim::frame::Pixels::Sixteen(
+                taken
+                    .iter()
+                    .map(|light| half::f16::from_f32((gain * light).max(0.0)).to_bits())
+                    .collect(),
+            );
+        }
+        let (coded, w, h) = support::graded(&opened, &options, output);
+        (width, height) = (w, h);
+        bytes.extend(coded.iter().flat_map(|code| code.to_le_bytes()));
+    }
+    std::fs::write(&request.out, bytes)
+        .map_err(|why| Failed::Error(format!("could not write {}: {why}", request.out)))?;
+    Ok(serde_json::json!({ "width": width, "height": height, "count": gains.len() }))
+}
+
+fn full_scale(bits: &[u16]) -> Vec<f32> {
+    bits.iter()
+        .map(|&b| half::f16::from_bits(b).to_f32())
+        .collect()
 }
 
 fn denoised(

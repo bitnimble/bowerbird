@@ -180,6 +180,9 @@ pub struct Job {
     /// the one frame they are applied to, the largest, and the rest are downscales of it.
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
+    /// The Retouch tab's reflection removal, found over the whole frame every target is cut from.
+    #[serde(default)]
+    pub reflection: crate::dereflect::Settings,
     /// The fraction of the deconvolution to blend in, as the Detail panel's Sharpening slider
     /// sets it (§10.9). Read against `image::SHARPEN_GAIN`, so 1 is the top of that track and
     /// the deconvolution as computed is its middle.
@@ -640,6 +643,9 @@ pub(crate) struct Base {
     /// the grid tile is the arm a merge runs first, so the camera's peak would be the first thing
     /// ever filed and every later render of that canvas would roll off against it.
     pub(crate) describes_the_photograph: bool,
+    /// The reflection found over this base's whole frame and already taken out of it, for the
+    /// windows a render cuts afterwards to take out too.
+    pub(crate) removal: Option<crate::dereflect::Removal>,
 }
 
 /// The picture this job is of, assembled at `size` on its long edge, whatever it is composed from.
@@ -777,6 +783,14 @@ impl Base {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
         };
 
+        let refused = || crate::base::without_a_device("the coding and the defringe");
+        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        // Shrunk off the frame before the open defringes it in place: the network learned on
+        // frames as the demosaic leaves them.
+        let looked = match job.reflection.takes_out() && crate::dereflect::ready(gpu) {
+            true => Some(crate::dereflect::looked(gpu, &resident).ok_or_else(refused)?),
+            false => None,
+        };
         let strengths = job.strengths().before_the_fit();
         // **The open, which is the editor's** (`crate::open`): the correction ahead of the fit, the
         // camera match, and the levels - one implementation, so a rendition and the tab that
@@ -800,6 +814,16 @@ impl Base {
             blur,
         } = crate::open::measure(&resident, &opening).await?;
         lap("defringe, camera match, levels");
+        // After the open, so the match and the levels are the photograph's whatever is taken out:
+        // the camera's JPEG still shows the reflection.
+        let full = crate::px::Size::exact(width, height);
+        let removal = looked.and_then(|looked| {
+            crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
+        });
+        if let Some(removal) = &removal {
+            removal.take_out(gpu, &resident, crate::px::At::ORIGIN, full);
+            lap("reflection");
+        }
         // Carried from an earlier pass or read off the frame just measured; the sensor's own long
         // edge travels beside it because the sigma is in sensor pixels and the decode may have
         // halved, which is also what scales a blur read on the decode back into them.
@@ -834,8 +858,6 @@ impl Base {
         // end of it). No lens here: a rendition's warp is per target and happens further down,
         // so this is the coding and the defringe alone. What it does about the aberration is the
         // open's answer, not a second one derived here.
-        let refused = || crate::base::without_a_device("the coding and the defringe");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
         let base = crate::base::device(gpu).ok_or_else(refused)?;
         let (prepared, defocus) = crate::base::prepare(
             gpu,
@@ -903,6 +925,7 @@ impl Base {
             sensor_long,
             sharpen_noise,
             describes_the_photograph: true,
+            removal,
         })
     }
 
@@ -950,7 +973,8 @@ impl Base {
         stored: &crate::photo_analysis::PhotoAnalysis,
     ) -> Option<Result<Base, String>> {
         let geometry = job.pixel_geometry();
-        if geometry.is_identity() {
+        // The network reads the whole frame, which a window does not decode.
+        if geometry.is_identity() || job.reflection.takes_out() {
             return None;
         }
         let header = match raw {
@@ -1064,6 +1088,7 @@ impl Base {
                 scale,
                 repairs: job.repairs.clone(),
                 drawn: None,
+                removal: None,
             },
         )
         .await;
@@ -1110,6 +1135,7 @@ impl Base {
             sensor_long: photograph.0.max(photograph.1),
             sharpen_noise: crate::image::SharpenNoise::NONE,
             describes_the_photograph: true,
+            removal: None,
         }))
     }
 }
@@ -1204,7 +1230,46 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         scale: crate::view::Scale::Full,
         repairs: job.repairs.clone(),
         drawn: None,
+        removal: whole_removal(job),
     }
+}
+
+/// The reflection a window of this job's photograph takes out, found over a decode of the whole
+/// frame once per set of strokes: a tile has no frame to find it in.
+#[cfg(feature = "renditions")]
+pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
+    let gpu = crate::gpu::device()?;
+    if !job.reflection.takes_out() || !crate::dereflect::ready(gpu) {
+        return None;
+    }
+    let stored = job.stored();
+    let matched = job.camera_match.apply(stored.from_raw.matched.clone());
+    let found = crate::dereflect::Found {
+        photograph: job.raw_file_path.clone(),
+        strokes: job.reflection.strokes.clone(),
+        lens: matched.as_ref().map(|matched| matched.lens.clone()),
+        detail: job.detail(),
+        dust: job.dust,
+        half_size: job.half_size,
+    };
+    let layer = crate::dereflect::kept(found, || {
+        let frame = crate::decode::frame_from_path(
+            &job.raw_file_path,
+            job.detail(),
+            MEASURED_LONG_EDGE,
+            job.half_size,
+            crate::galosh::wanted(stored.from_raw.noise, job.detail()),
+            job.dust.wanted(stored.from_raw.dust.as_deref()),
+        )?;
+        let looked = crate::dereflect::looked(gpu, frame.resident()?)?;
+        let full = crate::px::Size::exact(frame.width, frame.height);
+        crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
+            .map(|removal| removal.layer)
+    })?;
+    Some(crate::dereflect::Removal {
+        layer,
+        strength: job.reflection.strength,
+    })
 }
 
 /// The job's repairs over a whole cut of the picture, which for a composite is its canvas. A window
@@ -1428,7 +1493,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
     crate::progress::advance();
-    let measured = pollster::block_on(render(
+    let mut measured = pollster::block_on(render(
         job,
         base,
         &first,
@@ -1451,8 +1516,8 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             )
         },
     ))?;
-    outcome.photo_analysis = measured.owed;
-    outcome.camera_tone = measured.camera_tone;
+    outcome.photo_analysis = measured.owed.take();
+    outcome.camera_tone = measured.camera_tone.take();
     if banded.is_empty() {
         return Ok(outcome);
     }
@@ -1466,8 +1531,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             job,
             target,
             &held,
-            &measured.known,
-            measured.peak,
+            &measured,
             output_rotation,
             exif,
             &mut outcome,
@@ -1563,13 +1627,12 @@ async fn bands(
     job: &Job,
     target: &Target,
     held: &crate::decode::Held,
-    known: &crate::photo_analysis::PhotoAnalysis,
-    scene_peak: Light<DisplayNits>,
+    measured: &Rendered,
     rotate: u16,
     exif: Option<&[u8]>,
     outcome: &mut Outcome,
 ) -> Result<(), String> {
-    let graded = graded_bands(job, target, held, known, scene_peak, BAND_PIXELS).await?;
+    let graded = graded_bands(job, target, held, measured, BAND_PIXELS).await?;
     let (width, height) = graded.size;
     // A grid at 4:2:0 has no odd edge, where a single frame pads one itself.
     let odd = width % 2 == 1 || height % 2 == 1;
@@ -1641,10 +1704,10 @@ pub(crate) async fn graded_bands(
     job: &Job,
     target: &Target,
     held: &crate::decode::Held,
-    known: &crate::photo_analysis::PhotoAnalysis,
-    scene_peak: Light<DisplayNits>,
+    measured: &Rendered,
     pixels: usize,
 ) -> Result<Graded, String> {
+    let (known, scene_peak) = (&measured.known, measured.peak);
     let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
     let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
     let photograph = held.size().raw();
@@ -1694,6 +1757,7 @@ pub(crate) async fn graded_bands(
             scale,
             repairs: job.repairs.clone(),
             drawn: Some([drawn.width.raw(), drawn.height.raw()]),
+            removal: measured.removal.clone(),
         };
         let (frame, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request).await?;
@@ -1772,9 +1836,12 @@ pub(crate) async fn render(
         sensor_long,
         sharpen_noise,
         describes_the_photograph,
+        removal,
         // No window: a rendition is of the whole picture, and the crop it ships is taken here rather
         // than asked of the assembly (`Base::cropped`).
     } = base;
+    #[cfg(not(feature = "renditions"))]
+    drop(removal);
     // A window has been through the photograph's own gather already (`tile::prepared`), so there is
     // no lens left to apply to it.
     let lens = match window {
@@ -2017,6 +2084,8 @@ pub(crate) async fn render(
         known,
         #[cfg(feature = "renditions")]
         peak,
+        #[cfg(feature = "renditions")]
+        removal,
     })
 }
 
@@ -2027,6 +2096,9 @@ pub(crate) struct Rendered {
     pub(crate) known: crate::photo_analysis::PhotoAnalysis,
     #[cfg(feature = "renditions")]
     pub(crate) peak: Light<DisplayNits>,
+    /// The base's, for the bands cut after it.
+    #[cfg(feature = "renditions")]
+    pub(crate) removal: Option<crate::dereflect::Removal>,
 }
 
 /// A graded frame off the device, in the depth its output is written at.

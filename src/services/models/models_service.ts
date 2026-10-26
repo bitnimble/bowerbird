@@ -68,11 +68,10 @@ export class ModelsService {
 
   private async loading(): Promise<void> {
     const installed = this.read();
-    if (installed != null && isNewer(installed, this.bundledModels)) {
+    if (installed != null) {
       try {
-        this.hold(installed.revision);
-        this.installed = installed;
-        return;
+        this.installed = this.hold(installed);
+        if (this.installed != null) return;
       } catch (err) {
         log.warn("could not load the downloaded models, so the build's own are in use", {
           err: String(err),
@@ -100,6 +99,7 @@ export class ModelsService {
         revision: current.revision,
         committed_at: current.committed_at,
         downloaded: this.installed != null,
+        files: Object.keys(current.git_oids),
       },
       available:
         available == null
@@ -116,16 +116,20 @@ export class ModelsService {
 
   async download(): Promise<ModelsStatus> {
     if (this.downloading) throw new Error('the models are already being downloaded');
+    await this.loaded;
     const next = this.newer();
     if (next == null) throw new Error('there are no newer models to download');
     this.downloading = true;
     this.error = null;
-    const before = this.installed ?? this.bundledModels;
+    const before = this.inUse();
+    let installed: Installed | null;
     try {
-      await this.loaded;
       await this.fetchInto(next);
-      this.hold(next.version.revision);
-      this.installed = await this.record(next);
+      installed = this.hold(recorded(next));
+      if (installed == null)
+        throw new Error('the download holds nothing newer than the models in use');
+      await this.record(installed);
+      this.installed = installed;
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       throw err;
@@ -133,8 +137,9 @@ export class ModelsService {
       this.downloading = false;
     }
     log.info('the models were updated', { revision: next.version.revision });
-    const installed = this.installed;
     for (const model of this.models) {
+      // A model the download doesn't hold keeps what it rendered with, so nothing of it renders again.
+      if (!carries(installed, model.files)) continue;
       if (model.files.every((file) => before.git_oids[file] === installed.git_oids[file])) continue;
       try {
         model.changed();
@@ -147,18 +152,66 @@ export class ModelsService {
 
   /** A downloaded model's file, for a page to fetch; null unless `revision` is the one in use. */
   file(revision: string, name: string): string | null {
-    if (this.installed?.revision !== revision || !this.files.includes(name)) return null;
+    const installed = this.installed;
+    if (installed?.revision !== revision || installed.git_oids[name] == null) return null;
+    if (!this.files.includes(name)) return null;
     return path.join(this.home, revision, name);
   }
 
-  private hold(revision: string): void {
-    for (const model of this.models) model.hold(path.join(this.home, revision));
+  /**
+   * The models that render from `installed`, held, as the record of what is in use from it: each
+   * it has every file of, unless the build carries one at least as new. A model that refuses its
+   * files keeps what it had. Null where nothing renders from it.
+   */
+  private hold(installed: Installed): Installed | null {
+    const dir = path.join(this.home, installed.revision);
+    const newer = isNewer(installed, this.bundledModels);
+    const held: string[] = [];
+    let refusal: unknown = null;
+    for (const model of this.models) {
+      if (!carries(installed, model.files)) continue;
+      if (!newer && carries(this.bundledModels, model.files)) continue;
+      try {
+        model.hold(dir);
+        held.push(...model.files);
+      } catch (err) {
+        refusal = err;
+        log.warn('a downloaded model was refused, so it keeps the one it had', {
+          files: model.files,
+          err: String(err),
+        });
+      }
+    }
+    if (held.length === 0) {
+      if (refusal != null) throw refusal;
+      return null;
+    }
+    if (refusal != null) this.error = refusal instanceof Error ? refusal.message : String(refusal);
+    return {
+      ...installed,
+      git_oids: Object.fromEntries(
+        Object.entries(installed.git_oids).filter(([name]) => held.includes(name)),
+      ),
+    };
+  }
+
+  /** Every model's files as they render now, from the download where it holds them. */
+  private inUse(): Installed {
+    const installed = this.installed;
+    const bundled = this.bundledModels;
+    if (installed == null) return bundled;
+    return {
+      ...(isNewer(installed, bundled) ? installed : bundled),
+      git_oids: { ...bundled.git_oids, ...installed.git_oids },
+    };
   }
 
   private newer(): HubModels | null {
     const next = this.latest;
-    const current = this.installed ?? this.bundledModels;
-    if (next == null || !isNewer(next.version, current)) return null;
+    if (next == null) return null;
+    const current = this.inUse();
+    const lacking = next.files.some((file) => current.git_oids[file.name] == null);
+    if (!isNewer(next.version, current) && !lacking) return null;
     // A commit that only added a model the app doesn't use is nothing to download.
     return next.files.some((file) => current.git_oids[file.name] !== file.git_oid) ? next : null;
   }
@@ -208,12 +261,8 @@ export class ModelsService {
   }
 
   /** The models as the ones in use at the next start, and every other in `home` dropped. */
-  private async record(next: HubModels): Promise<Installed> {
-    const { revision } = next.version;
-    const installed: Installed = {
-      ...next.version,
-      git_oids: Object.fromEntries(next.files.map((file) => [file.name, file.git_oid])),
-    };
+  private async record(installed: Installed): Promise<void> {
+    const { revision } = installed;
     const written = path.join(this.home, `${INSTALLED}.partial`);
     await Bun.write(written, JSON.stringify(installed));
     renameSync(written, path.join(this.home, INSTALLED));
@@ -224,7 +273,6 @@ export class ModelsService {
         log.warn('could not drop a superseded model download', { entry, err: String(err) }),
       );
     }
-    return installed;
   }
 
   private read(): Installed | null {
@@ -237,11 +285,22 @@ export class ModelsService {
       return null;
     }
     if (!parsed.success) return null;
-    const complete = this.files.every((name) =>
-      existsSync(path.join(this.home, parsed.data.revision, name)),
-    );
+    const complete = this.files
+      .filter((name) => parsed.data.git_oids[name] != null)
+      .every((name) => existsSync(path.join(this.home, parsed.data.revision, name)));
     return complete ? parsed.data : null;
   }
+}
+
+function recorded(next: HubModels): Installed {
+  return {
+    ...next.version,
+    git_oids: Object.fromEntries(next.files.map((file) => [file.name, file.git_oid])),
+  };
+}
+
+function carries(installed: Installed, files: readonly string[]): boolean {
+  return files.every((name) => installed.git_oids[name] != null);
 }
 
 function isNewer(candidate: { committed_at: string }, than: { committed_at: string }): boolean {

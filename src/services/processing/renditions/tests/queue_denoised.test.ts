@@ -11,7 +11,7 @@ function library(id: string, denoiser: string): void {
   ).run(id, `/${id}`, id, denoiser);
 }
 
-function photo(id: string, libraryId: string, denoiser?: string | null): void {
+function photo(id: string, libraryId: string, denoiser?: string | null, edit: object = {}): void {
   db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
        VALUES (?, ?, '{"kind":"file","path":"a.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
@@ -20,7 +20,7 @@ function photo(id: string, libraryId: string, denoiser?: string | null): void {
   db.query(
     `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at)
        VALUES (?, ?, 0, 1, '2026-01-01T00:00:00.000Z')`,
-  ).run(id, JSON.stringify({ exposure: 0, denoiser }));
+  ).run(id, JSON.stringify({ exposure: 0, denoiser, ...edit }));
 }
 
 function owing(): string[] {
@@ -57,4 +57,14 @@ test('a denoiser model change owes every photo denoised with it, by its own edit
     'unset-in-edit:full',
     'unset-in-edit:grid',
   ]);
+});
+
+test('a reflection model change owes every photo whose edit removes reflections', () => {
+  photo('removing', 'plain', null, { reflectionRemoval: true });
+  photo('switched-off', 'plain', null, { reflectionRemoval: false });
+  photo('never-edited', 'plain');
+  db.query('UPDATE renditions SET needs_build = 0').run();
+
+  expect(new RenditionsRepository(db).queueRemovingReflections()).toEqual(['removing']);
+  expect(owing()).toEqual(['removing:full', 'removing:grid']);
 });

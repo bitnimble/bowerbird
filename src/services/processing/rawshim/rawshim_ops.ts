@@ -223,6 +223,18 @@ export function holdUpscalerModel(manifestPath: string, weightsPath: string): vo
   }
 }
 
+/** Removes reflections with this model from the next frame on, in every worker. */
+export function holdDereflectModel(manifestPath: string, weightsPath: string): void {
+  const held = shim().bb_hold_dereflect_model(
+    Buffer.from(`${manifestPath}\0`),
+    Buffer.from(`${weightsPath}\0`),
+  );
+  if (held === -3) throw new Error(`this build cannot run the reflection model at ${manifestPath}`);
+  if (held !== 0) {
+    throw new Error(`could not read the reflection model at ${manifestPath} and ${weightsPath}`);
+  }
+}
+
 /**
  * The camera's embedded JPEG preview, as bytes. Null when the file has none.
  *

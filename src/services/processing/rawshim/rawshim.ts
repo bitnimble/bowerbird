@@ -80,6 +80,7 @@ const SYMBOLS = {
   bb_upscalable: { args: [FFIType.cstring], returns: FFIType.i32 },
   // The upscaler model the app downloaded, by its manifest's and weights' paths.
   bb_hold_upscaler_model: { args: [FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
+  bb_hold_dereflect_model: { args: [FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
   // A response body on its way to a socket, copied into a buffer the caller owns
   // rather than handed over as an address (§10.4).
   bb_transcode_jpeg: {

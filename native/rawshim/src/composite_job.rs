@@ -1246,6 +1246,7 @@ pub(crate) fn base(
         // The camera arm measures the bodies' own pictures rather than this canvas, so nothing it
         // found is true of the photograph - the peak `run` is about to read included.
         describes_the_photograph: from == crate::composite_tile::From::Original,
+        removal: None,
     })
 }
 

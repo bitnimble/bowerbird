@@ -4,8 +4,9 @@ import type { EditDoc } from './photo_edits';
 
 /**
  * What a picture prepared on the server is a function of that its client cannot apply itself: the
- * denoise, the sharpen and the dust removal all run before the samples cross. A client previewing
- * one names all of them on every prepare it asks for, since the stored document is the last save.
+ * denoise, the sharpen, the dust removal and the reflection removal all run before the samples
+ * cross. A client previewing one names all of them on every prepare it asks for, since the stored
+ * document is the last save.
  */
 export type PrepareDevelop = Pick<
   EditDoc,
@@ -17,4 +18,7 @@ export type PrepareDevelop = Pick<
   | 'dustRemoval'
   | 'dustSensitivity'
   | 'dustIntensity'
+  | 'reflectionRemoval'
+  | 'reflectionStrength'
+  | 'reflectionStrokes'
 >;

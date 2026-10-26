@@ -86,6 +86,22 @@ test('dust removal turned off says so instead of listing its sliders', () => {
   expect(rows.map(([label]) => label)).not.toContain('Dust sensitivity');
 });
 
+test('reflection removal is listed only while on, with its strokes and a moved strength', () => {
+  expect(labels({ reflectionStrength: 150 })).toEqual([]);
+  expect(rowsOf(doc({ reflectionRemoval: true }))).toEqual([['Reflection removal', 'On']]);
+  const stroke = {
+    kind: 'keep' as const,
+    radius: 3000,
+    points: [[100, 200]] as [number, number][],
+  };
+  expect(
+    rowsOf(doc({ reflectionRemoval: true, reflectionStrength: 150, reflectionStrokes: [stroke] })),
+  ).toEqual([
+    ['Reflection removal', '1 stroke'],
+    ['Reflection strength', '150%'],
+  ]);
+});
+
 // A sidecar names the camera's own mode with no Kelvins beside it, and the render then uses
 // the as-shot multipliers: a row there describes a photograph nothing changed.
 test('a white balance mode is listed only with the temperature that carries it', () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { type ColourNode, type Repair, RepairSchema } from '../../../../../src/schemas/photo_edits';
 import { type Job as RenditionCommand } from '../../../../../src/schemas/jobs';
+import type { ReflectionSettings } from '../../../../../src/schemas/reflection_settings';
 import type { SdrMatch } from '../../../../../src/schemas/sdr_match';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
@@ -252,8 +253,12 @@ export class LocalDecoder {
   }
 
   /** One rendition tile, built and kept for the glass to draw instead of the editor's frame. */
-  holdTile(request: LocalTileRequest): Promise<TileKeep> {
-    return this.ask(TileKeepSchema, { kind: 'holdTile', request: JSON.stringify(request) });
+  holdTile(request: LocalTileRequest, reflection: ReflectionSettings): Promise<TileKeep> {
+    return this.ask(TileKeepSchema, {
+      kind: 'holdTile',
+      request: JSON.stringify(request),
+      reflection: JSON.stringify(reflection),
+    });
   }
 
   releaseTile(): Promise<void> {

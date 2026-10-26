@@ -238,9 +238,11 @@ test('a loop drawn on a zoomed panorama is offered fills, and one is kept', asyn
  * old one are let go, and the editor keeps drawing. What the setting does is native's.
  */
 test('moving the sharpening prepares the picture again at it', async ({ page }) => {
-  const prepares: URL[] = [];
+  const developed: unknown[] = [];
   page.on('request', (request) => {
-    if (isPrepare(request.url())) prepares.push(new URL(request.url()));
+    if (isPrepare(request.url()) && request.method() === 'POST') {
+      developed.push(request.postDataJSON());
+    }
   });
   await openComposite(page);
   const wasAt = await savedRev(page, panoramaId);
@@ -249,11 +251,7 @@ test('moving the sharpening prepares the picture again at it', async ({ page }) 
   await page.getByRole('slider', { name: 'Sharpening' }).focus();
   await page.keyboard.press('PageUp');
 
-  await expect
-    .poll(() => prepares.some((url) => url.searchParams.get('develop') != null), {
-      timeout: 60_000,
-    })
-    .toBe(true);
+  await expect.poll(() => developed.length, { timeout: 60_000 }).toBeGreaterThan(0);
   await expect.poll(async () => savedRev(page, panoramaId), { timeout: 30_000 }).not.toBe(wasAt);
   await waitForEditorLive(page, 10_000);
 

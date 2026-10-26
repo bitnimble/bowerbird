@@ -62,6 +62,11 @@ pub struct EditRequest {
     /// The reader's repairs, which the open applies after the chain as every window does.
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
+    #[serde(default)]
+    pub reflection: crate::dereflect::Settings,
+    /// The layer an earlier open found for these same strokes, taken out rather than found again.
+    #[serde(skip)]
+    pub found: Option<std::sync::Arc<crate::dereflect::Layer>>,
     /// Diffuse white where a finished picture states it rather than where its histogram puts it:
     /// a rendition shown as it was encoded.
     #[serde(default)]
@@ -415,6 +420,18 @@ pub async fn from_frame(
         // reader sees is the editor reporting `failed` with `unreachable` behind it. Every readback
         // on this path is a future for that reason (`gpu::read_back`).
         let resident = frame.resident().ok_or("the decode is not on the device")?;
+        let reflection = &request.reflection;
+        // Shrunk before the open defringes the frame in place, as `job::Base::built` shrinks it.
+        let looked = match (reflection.takes_out(), &request.found) {
+            (true, None) => {
+                let gpu = crate::gpu::device()
+                    .ok_or_else(|| crate::base::without_a_device("the reflection removal"))?;
+                crate::dereflect::ready(gpu)
+                    .then(|| crate::dereflect::looked(gpu, resident))
+                    .flatten()
+            }
+            _ => None,
+        };
         let opening = crate::open::Opening {
             camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
             grade: request.grade,
@@ -441,6 +458,18 @@ pub async fn from_frame(
             blur,
         } = crate::open::measure(resident, &opening).await?;
         lap("defringe, camera match, levels");
+        let removal = match (&request.found, crate::gpu::device()) {
+            _ if !reflection.takes_out() => None,
+            (Some(layer), _) => Some(crate::dereflect::Removal {
+                layer: layer.clone(),
+                strength: reflection.strength,
+            }),
+            (None, Some(gpu)) => looked.and_then(|looked| {
+                let full = crate::px::Size::exact(width, height);
+                crate::dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
+            }),
+            (None, None) => None,
+        };
         let levels = match stated_white {
             Some(white) => levels.at_stated_white(white),
             None => levels,
@@ -538,6 +567,7 @@ pub async fn from_frame(
                 scale: crate::view::Scale::Full,
                 repairs: request.repairs.clone(),
                 drawn: None,
+                removal: removal.clone(),
             },
         )
         .await?;
@@ -568,6 +598,7 @@ pub async fn from_frame(
             levels,
             matched,
             as_shot,
+            removal,
         })
     }
 }
@@ -585,6 +616,8 @@ pub struct Opened {
     pub levels: crate::tone::Levels,
     pub matched: Option<crate::hdr_fit::HdrMatch>,
     pub as_shot: Option<crate::white_balance::Illuminant>,
+    /// What the open took out, kept by a host that opens this photograph again.
+    pub removal: Option<crate::dereflect::Removal>,
 }
 
 impl Opened {

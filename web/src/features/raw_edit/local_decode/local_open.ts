@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { DustSettings } from '../../../../../src/schemas/dust_settings';
+import type { ReflectionSettings } from '../../../../../src/schemas/reflection_settings';
 import { SdrMatchSchema } from '../../../../../src/schemas/sdr_match';
 import {
   type ColourNode,
@@ -75,16 +76,22 @@ export type LocalPrepare = {
    * what puts those pixels back.
    */
   repairs: Repair[];
+  reflection: ReflectionSettings;
 };
 
 /**
- * A `LocalPrepare` as it crosses to the worker: the repairs as JSON text, because on this side
- * they are the document's own observable arrays, and a proxy cannot be structured-cloned.
+ * A `LocalPrepare` as it crosses to the worker: the repairs and the reflection removal as JSON
+ * text, because on this side they hold the document's own observable arrays, and a proxy cannot be
+ * structured-cloned.
  */
 export type PrepareCrossing = z.infer<typeof PrepareCrossingSchema>;
 
 export function crossing(mosaic: LocalPrepare): PrepareCrossing {
-  return { ...mosaic, repairs: JSON.stringify(mosaic.repairs) };
+  return {
+    ...mosaic,
+    repairs: JSON.stringify(mosaic.repairs),
+    reflection: JSON.stringify(mosaic.reflection),
+  };
 }
 
 /** `crate::tile::TileRequest`, which the module takes as JSON. */
@@ -188,6 +195,7 @@ const PrepareCrossingSchema = z.object({
   sharpening: z.number(),
   dust: DustSettingsSchema,
   repairs: JsonSchema,
+  reflection: JsonSchema,
 });
 
 /** The key a closed open's stage was kept under, which an open adopts rather than a new canvas. */
@@ -261,7 +269,7 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('wheelSwatches'), colours: z.array(z.number()) }),
   /** ZCAM lightness, opponent pair and weight, flattened, for the profile's push at each. */
   z.object({ kind: z.literal('probeWheel'), places: z.array(z.number()), adjust: z.string() }),
-  z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
+  z.object({ kind: z.literal('holdTile'), request: JsonSchema, reflection: JsonSchema }),
   z.object({ kind: z.literal('releaseTile') }),
   z.object({ kind: z.literal('analysis') }),
   z.object({

@@ -99,11 +99,13 @@ def main() -> None:
         objective,
         validate,
         steps=args.steps,
+        keep_every=args.keep_every,
         lr=args.lr,
+        lr_floor=args.lr_floor,
         bf16=bf16,
         settings={
             name: getattr(args, name)
-            for name in ("steps", "batch", "channels", "encoder", "decoder", "lr", "edges")
+            for name in ("steps", "batch", "channels", "encoder", "decoder", "lr", "lr_floor", "edges")
         },
         plan=plan,
         out=args.out,

@@ -28,6 +28,8 @@ import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
 import { RepairPresenter } from '../repair/repair_presenter';
+import { ReflectionPresenter } from '../reflection/reflection_presenter';
+import type { ReflectionStore } from '../reflection/reflection_store';
 import { ColourWheelPresenter } from '../colour_wheel/colour_wheel_presenter';
 import type { ColourWheelStore } from '../colour_wheel/colour_wheel_store';
 import { EditPresenter } from '../edit/edit_presenter';
@@ -143,6 +145,7 @@ export class RawEditPresenter {
   readonly print: PrintPresenter;
   /** The repair tool, which the panel and the stage drive directly. */
   readonly repair: RepairPresenter;
+  readonly reflection: ReflectionPresenter;
   readonly colourWheel: ColourWheelPresenter;
 
   constructor(
@@ -151,6 +154,7 @@ export class RawEditPresenter {
     cropStore: CropStore,
     private readonly keystoneStore: KeystoneStore,
     repairStore: RepairStore,
+    reflectionStore: ReflectionStore,
     private readonly colourWheelStore: ColourWheelStore,
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
@@ -204,6 +208,16 @@ export class RawEditPresenter {
       closeCrop: () => this.crop.closeForSibling(),
       closeKeystone: () => this.keystone.closeForSibling(),
       showGeometry: () => this.showGeometry(),
+      fail: (why) => this.fail(why),
+    });
+    this.reflection = new ReflectionPresenter(stage, editStore, keystoneStore, reflectionStore, {
+      local: () => this.local,
+      closed: () => this.closed,
+      settle: (patch) => this.settle(patch),
+      putToolsAway: () => {
+        this.setTool('cursor');
+        this.leaveSheet();
+      },
       fail: (why) => this.fail(why),
     });
     this.colourWheel = new ColourWheelPresenter(colourWheelStore, editStore, stage, {
@@ -623,6 +637,7 @@ export class RawEditPresenter {
 
   @action.bound
   setTool(tool: EditTool): void {
+    if (tool !== 'cursor') this.reflection.setBrushing(false);
     this.setCropping(tool === 'crop');
     this.setKeystoning(tool === 'perspective');
     this.setRepairing(tool === 'repair');
@@ -1037,6 +1052,7 @@ export class RawEditPresenter {
     this.rewindowing?.abort();
     this.rewindowing = null;
     this.repair.close();
+    this.reflection.close();
     this.colourWheel.close();
     this.edit.close();
 
@@ -1263,6 +1279,7 @@ export class RawEditPresenter {
     this.crop.begin();
     this.keystone.begin();
     this.repair.begin();
+    this.reflection.begin();
     this.loupe.begin();
   }
 
