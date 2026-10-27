@@ -701,7 +701,7 @@ fn union_levels(
 ///
 /// The geometry half of a match is not fitted here at all. Every source's lens was gathered by the
 /// recipe on the way onto the canvas, so the composite has none left to correct and carries
-/// [`crate::fit::Lens::none`], which is what the reference's match was already reduced to.
+/// [`geometry::lens::Lens::none`], which is what the reference's match was already reduced to.
 fn union_match(
     gpu: &'static gpu::Gpu,
     job: &Job,
@@ -765,11 +765,11 @@ fn union_match(
         &prepared.plane,
         prepared.levels,
         wide_jpeg,
-        crate::fit::Lens::none(),
+        geometry::lens::Lens::none(),
         as_shot,
     ))?;
     Some(crate::hdr_fit::HdrMatch {
-        lens: crate::fit::Lens::none(),
+        lens: geometry::lens::Lens::none(),
         colour: matched.colour,
     })
 }
@@ -1115,7 +1115,7 @@ pub(crate) fn base(
             // is graded through, and the reference's is the fallback.
             fallback_match = fallback_match.or_else(|| {
                 prepared.matched.map(|m| crate::hdr_fit::HdrMatch {
-                    lens: crate::fit::Lens::none(),
+                    lens: geometry::lens::Lens::none(),
                     colour: m.colour,
                 })
             });

@@ -212,7 +212,7 @@ pub struct Job {
     /// The crop and straighten run in the grade's dispatch. The quarter turn is written to
     /// the output container so the encoded pixels keep their unturned positions.
     #[serde(default = "upright")]
-    pub geometry: crate::image::Geometry,
+    pub geometry: geometry::warp::Geometry,
     #[serde(default)]
     pub preserve_source_orientation: bool,
     pub grade: hdr::Grade,
@@ -255,8 +255,8 @@ const NO_ADAPTER: &str = "no GPU adapter of any kind, so the grade cannot run - 
                           (`bun run get:swiftshader`) will do, slowly";
 
 /// Serde's default for [`Job::geometry`]: the whole frame, as the camera framed it.
-fn upright() -> crate::image::Geometry {
-    crate::image::Geometry::none()
+fn upright() -> geometry::warp::Geometry {
+    geometry::warp::Geometry::none()
 }
 
 impl Job {
@@ -286,8 +286,8 @@ impl Job {
         }
     }
 
-    pub(crate) fn pixel_geometry(&self) -> crate::image::Geometry {
-        crate::image::Geometry {
+    pub(crate) fn pixel_geometry(&self) -> geometry::warp::Geometry {
+        geometry::warp::Geometry {
             rotate: 0,
             ..self.geometry
         }
@@ -500,7 +500,7 @@ fn drawn_size(
     let mut options = options.clone();
     loop {
         let size = hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options);
-        let (width, height) = hdr::cropped_size(
+        let (width, height) = geometry::warp::cropped_size(
             size.width as usize,
             size.height as usize,
             job.pixel_geometry(),
@@ -876,7 +876,7 @@ impl Base {
             strengths,
             crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
             crate::image::SharpenNoise::NONE,
-            &crate::fit::Lens::none(),
+            &geometry::lens::Lens::none(),
             defringe,
             noise,
             matrix,
@@ -1053,8 +1053,8 @@ impl Base {
             return None;
         }
 
-        let out = crate::hdr::cropped_size(photograph.0, photograph.1, geometry);
-        let asked = crate::image::geometry_footprint(photograph, out, geometry);
+        let out = geometry::warp::cropped_size(photograph.0, photograph.1, geometry);
+        let asked = geometry::warp::geometry_footprint(photograph, out, geometry);
         // Nothing to save where the crop reads the whole picture anyway - a straighten alone does -
         // and the window route would then be the long way round to the same frame.
         if asked.2 * asked.3 * 10 >= photograph.0 * photograph.1 * 9 {
@@ -1614,7 +1614,7 @@ fn is_banded(job: &Job, target: &Target) -> bool {
     let (drawn_width, drawn_height) = (drawn.width as usize, drawn.height as usize);
     // A straighten's bounding box is larger than the frame it turns.
     let (out_width, out_height) =
-        hdr::cropped_size(drawn_width, drawn_height, job.pixel_geometry());
+        geometry::warp::cropped_size(drawn_width, drawn_height, job.pixel_geometry());
     [drawn_width * drawn_height, decoded, out_width * out_height]
         .into_iter()
         .any(|pixels| pixels > BANDED_PIXELS)
@@ -1726,7 +1726,7 @@ pub(crate) async fn graded_bands(
     let drawn =
         units::px::Size::<units::px::Drawn>::exact(size.width as usize, size.height as usize);
     let geometry = job.pixel_geometry();
-    let out = hdr::cropped_out(drawn, geometry);
+    let out = geometry::warp::cropped_out(drawn, geometry);
     let (out_width, out_height) = out.raw();
     let rows = band_rows(out_width, out_height, pixels);
     let analysis = with_camera_match(&crate::photo_analysis::encode(known), job.camera_match);
@@ -1741,12 +1741,12 @@ pub(crate) async fn graded_bands(
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
-        let band = crate::grade::Band {
+        let band = geometry::warp::Band {
             top: units::px::Place::measured(top),
             rows: units::px::Span::measured(rows),
         };
         let (left, top_read, width, height) =
-            crate::image::rows_footprint(drawn, out, geometry, band).raw();
+            geometry::warp::rows_footprint(drawn, out, geometry, band).raw();
         let request = crate::tile::TileRequest {
             tile: [left, top_read, width, height],
             frame: [photograph.0, photograph.1],
@@ -2383,7 +2383,7 @@ mod tests {
         job.geometry.angle_degrees = 5.0;
         let capped = drawn_size(&job, (32768, 8192), &options);
         assert!(capped.width < 32768);
-        let (width, height) = hdr::cropped_size(
+        let (width, height) = geometry::warp::cropped_size(
             capped.width as usize,
             capped.height as usize,
             job.pixel_geometry(),

@@ -1,5 +1,5 @@
+use geometry::warp::Geometry;
 use rawshim::grade::{Canvas, Grade};
-use rawshim::image::Geometry;
 use rawshim::print::{Presentation, Scene};
 use units::light::{Gain, Light, SceneNits};
 use units::px::Size;

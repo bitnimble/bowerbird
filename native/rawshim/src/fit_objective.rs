@@ -352,7 +352,7 @@ impl Paired {
         &self,
         source: &gpu::Buffer,
         source_size: (usize, usize),
-        lenses: &[crate::fit::Lens],
+        lenses: &[geometry::lens::Lens],
     ) -> Option<Vec<Scored>> {
         assert!(
             lenses.len() <= self.candidates,

@@ -25,7 +25,7 @@ pub enum Projection {
     Equirectangular,
 }
 
-/// A lens as a recipe carries it: `fit::Lens`, in the same shape `photo_analysis` stores.
+/// A lens as a recipe carries it: `geometry::lens::Lens`, in the same shape `photo_analysis` stores.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LensSpec {
@@ -37,8 +37,8 @@ pub struct LensSpec {
     pub axis: [f64; 2],
 }
 
-impl From<&crate::fit::Lens> for LensSpec {
-    fn from(lens: &crate::fit::Lens) -> LensSpec {
+impl From<&geometry::lens::Lens> for LensSpec {
+    fn from(lens: &geometry::lens::Lens) -> LensSpec {
         LensSpec {
             distortion: lens.distortion.clone(),
             crop: lens.crop,
@@ -53,11 +53,11 @@ impl LensSpec {
     /// The identity, for a source that is a finished picture: its own geometry is the corrected
     /// one, so there is nothing to undo.
     pub fn none() -> LensSpec {
-        LensSpec::from(&crate::fit::Lens::none())
+        LensSpec::from(&geometry::lens::Lens::none())
     }
 
-    pub fn to_lens(&self) -> crate::fit::Lens {
-        crate::fit::Lens {
+    pub fn to_lens(&self) -> geometry::lens::Lens {
+        geometry::lens::Lens {
             distortion: self.distortion.clone(),
             crop: self.crop,
             falloff: self.falloff,
@@ -395,7 +395,7 @@ fn optical_centre(source: &SourceSpec) -> ([f64; 2], f64) {
     let [ax, ay] = source.lens.axis;
     (
         [cx + ax * half, cy + ay * half],
-        half * crate::fit::reach(source.lens.axis),
+        half * geometry::lens::reach(source.lens.axis),
     )
 }
 
@@ -411,7 +411,7 @@ pub fn corrected_to_sensor(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]
     let ratio = if radius == 0.0 {
         crop
     } else {
-        crate::image::sample_radius(knots, radius, crop) / radius
+        geometry::lens::sample_radius(knots, radius, crop) / radius
     };
     Some([centre[0] + delta[0] * ratio, centre[1] + delta[1] * ratio])
 }
@@ -431,7 +431,7 @@ pub fn sensor_to_corrected(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]
     let corrected_radius = if knots.is_empty() {
         radius / crop
     } else {
-        let at_radius = |r| crate::image::sample_radius(knots, r, crop);
+        let at_radius = |r| geometry::lens::sample_radius(knots, r, crop);
         let (mut low, mut high) = (0.0, radius.max(1.0));
         while at_radius(high) < radius && high < 16.0 {
             high *= 2.0;
@@ -619,7 +619,7 @@ mod tests {
             let (sx, sy) =
                 lens.read_from(((at[0] - 3000.0) / half, (at[1] - 2000.0) / half), |r2| {
                     let radius = r2.sqrt();
-                    crate::image::sample_radius(&knots, radius, lens.crop) / radius
+                    geometry::lens::sample_radius(&knots, radius, lens.crop) / radius
                 });
             assert!(
                 (sensor[0] - (3000.0 + sx * half)).abs() < 1e-6

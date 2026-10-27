@@ -344,11 +344,11 @@ calls `grade::present`, sharing the rendition's WGSL and passes. Page chooses wh
 Where logic exists twice, pin agreement:
 
 - `the_draw_places_a_pixel_where_the_gather_does`: every output pixel across geometries,
-  `image::Plan::at` versus `geometry.slang`.
+  `geometry::warp::Plan::at` versus `geometry.slang`.
 - `module-json.json`: three worker-boundary shapes, decoded by `module_json.rs`, rebuilt by
   `module_json.test.ts`. One-sided renames yield `missing
 field` and a black stage.
-- `display-size.txt`: `hdr::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
+- `display-size.txt`: `geometry::warp::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
 - `avif-planes.txt`: libavif's planes of `test/fixtures/avif-planes/`, which `avif_planes` must
   hand back (Safari's decoder). rawshim's `libavif_decodes_the_browser_decoders_fixtures` writes
   the files, planes and table.

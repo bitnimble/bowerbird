@@ -5,7 +5,7 @@
 //! else holds the two together: a renamed field compiles on both sides, passes every unit test,
 //! and fails at the first tick with `missing field`, which is a black stage and a `failed` panel.
 //! That has happened - the page kept sending the flattened `cropLeft`/`cropTop` shape its own
-//! uniform writer had used after `image::Geometry` became what reads it.
+//! uniform writer had used after `geometry::warp::Geometry` became what reads it.
 //!
 //! So one committed sample, deserialised here and rebuilt there
 //! (`web/src/features/raw_edit/tests/module_json.test.ts`). Values are distinct and off zero
@@ -18,7 +18,7 @@ use serde::Deserialize;
 struct Sample {
     region: rawshim::grade::Region,
     adjust: rawshim::grade::Adjust,
-    geometry: rawshim::image::Geometry,
+    geometry: geometry::warp::Geometry,
     print: rawshim::print::Scene,
 }
 

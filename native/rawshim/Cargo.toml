@@ -178,6 +178,7 @@ heif = { path = "../heif" }
 colour = { path = "../colour" }
 denoise = { path = "../denoise" }
 formats = { path = "../formats" }
+geometry = { path = "../geometry" }
 gpu = { path = "../gpu" }
 linalg = { path = "../linalg" }
 mosaic = { path = "../mosaic" }

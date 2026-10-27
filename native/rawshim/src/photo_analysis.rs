@@ -16,12 +16,12 @@
 //! "nothing stored" rather than an error: everything in it is then measured the slow way, which is
 //! what happened before any of this existed.
 
-use crate::fit::Lens;
 use crate::hdr_fit::HdrMatch;
 use colour::lattice::ChromaMap;
 use colour::matched::HdrColour;
 use colour::tone::Levels;
 use denoise::galosh::NoiseFit;
+use geometry::lens::Lens;
 use half::f16;
 
 /// Bumped when a section's own layout changes, so an older blob is ignored rather than misread.

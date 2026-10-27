@@ -198,7 +198,7 @@ fn find_spline(
         if knots.len() != declared as usize {
             continue;
         }
-        if (knots[knots.len() - 1] / crate::image::SPLINE_UNIT).abs() > PLAUSIBLE_CORNER {
+        if (knots[knots.len() - 1] / geometry::lens::SPLINE_UNIT).abs() > PLAUSIBLE_CORNER {
             continue;
         }
         return Some(knots);
@@ -258,7 +258,7 @@ fn find_lateral(
         let sane = |knots: &Vec<f64>| {
             knots
                 .iter()
-                .all(|knot| (knot / crate::image::SPLINE_UNIT).abs() < 0.01)
+                .all(|knot| (knot / geometry::lens::SPLINE_UNIT).abs() < 0.01)
         };
         if !sane(&red) || !sane(&blue) {
             continue;
@@ -775,7 +775,7 @@ mod tests {
     fn refuses_a_correction_too_large_to_be_a_lens() {
         // 0.5 of the half-diagonal is a misparse, not a lens. Accepting it would
         // hand the fit a wildly wrong geometry that it would then rank as best.
-        let absurd = (0.5 * crate::image::SPLINE_UNIT) as i16;
+        let absurd = (0.5 * geometry::lens::SPLINE_UNIT) as i16;
         assert!(read_distortion_spline(&synthetic(&[0, 100, absurd])).is_none());
     }
 

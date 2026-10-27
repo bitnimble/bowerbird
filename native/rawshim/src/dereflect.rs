@@ -568,7 +568,7 @@ pub fn removal(
         trace::warn("rawshim: reflection removal is on, and no model has been downloaded");
         return None;
     };
-    let none = crate::fit::Lens::none();
+    let none = geometry::lens::Lens::none();
     let lens = matched.map_or(&none, |matched| &matched.lens);
     Some(Removal {
         layer: std::sync::Arc::new(remover.layer(gpu, looked, full, &settings.strokes, lens)),
@@ -583,7 +583,7 @@ pub fn removal(
 pub struct Found {
     pub photograph: String,
     pub strokes: Vec<Stroke>,
-    pub lens: Option<crate::fit::Lens>,
+    pub lens: Option<geometry::lens::Lens>,
     pub detail: denoise::galosh::Detail,
     pub dust: denoise::dust::Settings,
     pub half_size: bool,
@@ -642,7 +642,7 @@ impl Remover {
         looked: &Resident,
         full: Size<Drawn>,
         strokes: &[Stroke],
-        lens: &crate::fit::Lens,
+        lens: &geometry::lens::Lens,
     ) -> Layer {
         let (width, height) = looked.size();
         let looked_size = Size::<Looked>::exact(width, height);
@@ -803,7 +803,7 @@ fn segments(
     strokes: &[Stroke],
     full: Size<Drawn>,
     looked: Size<Looked>,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
 ) -> Vec<f32> {
     let stored = full.stored();
     let on_drawn: Vec<Point<Drawn>> = strokes
@@ -817,7 +817,7 @@ fn segments(
             .onto(stored, full)
         })
         .collect();
-    let mut read = crate::image::lens_sources(full, &on_drawn, lens)
+    let mut read = geometry::warp::lens_sources(full, &on_drawn, lens)
         .into_iter()
         .map(|point| point.onto(full, looked))
         .map(|point| [point.x.raw() as f32, point.y.raw() as f32]);

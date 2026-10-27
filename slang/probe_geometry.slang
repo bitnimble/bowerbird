@@ -1,5 +1,5 @@
 // `geometry_at` over every output pixel, so `the_draw_places_a_pixel_where_the_gather_does`
-// can hold it against `image::Plan::at`.
+// can hold it against `geometry::warp::Plan::at`.
 //
 // The mapping is four lines of arithmetic on each side and nothing else compares them: the
 // editor draws through this one, and Rust needs its own to work out what a cropped render has

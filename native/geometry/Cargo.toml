@@ -1,0 +1,9 @@
+[package]
+name = "geometry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+units = { path = "../units" }
+rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }

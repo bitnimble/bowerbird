@@ -1,6 +1,6 @@
 // The reader's crop, straighten and quarter turn, as a coordinate mapping.
 //
-// **`image::Plan::at` in a shader, and the two are held together by
+// **`geometry::warp::Plan::at` in a shader, and the two are held together by
 // `the_draw_places_a_pixel_where_the_gather_does`.** They cannot be one implementation the way
 // the grade is: a rendition applies geometry inside the *gather* that corrects the lens, on the
 // CPU, over a frame it is producing; the editor applies it in the draw, to a frame already

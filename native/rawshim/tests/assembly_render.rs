@@ -1542,7 +1542,7 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
     let matched = rawshim::photo_analysis::PhotoAnalysis {
         from_raw: rawshim::photo_analysis::FromRaw {
             matched: Some(rawshim::hdr_fit::HdrMatch {
-                lens: rawshim::fit::Lens::none(),
+                lens: geometry::lens::Lens::none(),
                 colour: Some(colour::matched::HdrColour::identity()),
             }),
             ..Default::default()

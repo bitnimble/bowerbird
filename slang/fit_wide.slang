@@ -51,7 +51,7 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float> ours;
 /// The camera's preview, linearised, at the same grid.
 [vk::binding(1, 0)] StructuredBuffer<float> theirs;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(2, 0)] StructuredBuffer<float> gains;
 /// Four floats a gathered position: dx, dy, peak, and which outcome the search reached.
 [vk::binding(3, 0)] StructuredBuffer<float> found;

@@ -509,7 +509,7 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
         None => {
             println!("lens: {} matches nothing, so the identity", name_of(path));
             analysis.from_raw.matched = Some(rawshim::hdr_fit::HdrMatch {
-                lens: rawshim::fit::Lens::none(),
+                lens: geometry::lens::Lens::none(),
                 colour: None,
             });
         }

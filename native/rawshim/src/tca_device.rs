@@ -216,7 +216,7 @@ impl Frame {
             (crate::tca::MIN_EDGE as f32).to_ne_bytes(),
             (ask.stride as i32).to_ne_bytes(),
             (ask.knots as i32).to_ne_bytes(),
-            (crate::image::SPLINE_UNIT as f32).to_ne_bytes(),
+            (geometry::lens::SPLINE_UNIT as f32).to_ne_bytes(),
         ]
         .concat();
         // Twenty-three fields is ninety-two bytes, and a uniform block is rounded up to sixteen.

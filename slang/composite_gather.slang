@@ -54,9 +54,9 @@ struct Params {
     float4 warp_m;
     /// That warp's translation in the same frame, which the identity makes exactly zero.
     float2 warp_t;
-    /// `fit::Lens::axis` in the source's full-resolution pixels.
+    /// `geometry::lens::Lens::axis` in the source's full-resolution pixels.
     float2 axis;
-    /// `1 / reach^2` of `fit::Lens::reach` in those pixels, which the ratio table is indexed over.
+    /// `1 / reach^2` of `geometry::lens::Lens::reach` in those pixels, which the ratio table is indexed over.
     float inv_reach2;
 };
 

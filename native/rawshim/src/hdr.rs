@@ -88,7 +88,7 @@ pub async fn fit_match(
     raw_path: &str,
     frame: &colour::resident::Resident,
     quantile: f64,
-    lens: crate::fit::Lens,
+    lens: geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let preview = match_preview(raw_path)?;
@@ -100,7 +100,7 @@ pub async fn fit_match_from(
     frame: &colour::resident::Resident,
     quantile: f64,
     preview: &units::rgb::Rgb,
-    lens: crate::fit::Lens,
+    lens: geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
@@ -521,46 +521,6 @@ enum CutFrame {
     Host(Vec<u16>),
 }
 
-/// What a frame measures once the reader's geometry is applied to it.
-///
-/// The Rust twin of `displaySize` in `schemas/display_size.ts`, and the same three steps in the
-/// same order: straighten to the bounding box, crop as fractions of *that*, then the quarter
-/// turn. The two have to agree, because the catalogue lays a grid tile out on one and the
-/// encoder writes a file at the other - a disagreement is a tile that is the wrong shape for
-/// the picture inside it.
-///
-/// Floored at one: the fractions are free to describe a rectangle narrower than a pixel at
-/// tile size, and a rendition of no pixels is a failed encode rather than a small picture.
-///
-/// **Not a sub-rectangle of what went in.** A straighten's bounding box is larger than the frame it
-/// was cut from, so what comes back is its own space - which is why `encode` indexes
-/// `output_width` and a caller that sized a buffer off the frame instead under-allocated it.
-pub fn cropped_out(
-    frame: units::px::Size<units::px::Drawn>,
-    geometry: image::Geometry,
-) -> units::px::Size<units::px::Output> {
-    let (width, height) = cropped_size(frame.width.raw(), frame.height.raw(), geometry);
-    // The extent of a frame that is about to exist, which is the one thing `Output` can be given
-    // from outside: its pixels are as large as the rendition is small, so nothing in that space
-    // can be written down and everything else in it is derived from this.
-    units::px::Size::measured(width, height)
-}
-
-pub fn cropped_size(width: usize, height: usize, geometry: image::Geometry) -> (usize, usize) {
-    let radians = geometry.angle_degrees.to_radians();
-    let (cos, sin) = (radians.cos().abs(), radians.sin().abs());
-    let (sw, sh) = (
-        width as f64 * cos + height as f64 * sin,
-        width as f64 * sin + height as f64 * cos,
-    );
-    let [left, top, right, bottom] = geometry.crop;
-    let w = sw * (right - left).max(0.0);
-    let h = sh * (bottom - top).max(0.0);
-    let turned = matches!(geometry.rotate % 360, 90 | 270);
-    let (w, h) = if turned { (h, w) } else { (w, h) };
-    ((w.round() as usize).max(1), (h.round() as usize).max(1))
-}
-
 impl Cut {
     /// The largest rendition's frame, off the shared base.
     ///
@@ -573,7 +533,7 @@ impl Cut {
     /// and the grade reads the levels off `crate::grade::SceneGrade` rather than off the frame.
     pub fn from_base(
         frame: colour::resident::Resident,
-        lens: Option<&crate::fit::Lens>,
+        lens: Option<&geometry::lens::Lens>,
         size: formats::still::Size,
         sharpen: f64,
         sharpen_sigma: image::SharpenSigma,

@@ -814,7 +814,7 @@ fn shared_lenses(
                 .unwrap_or_default(),
         )
     };
-    let own: Vec<Option<crate::fit::Lens>> = sources
+    let own: Vec<Option<geometry::lens::Lens>> = sources
         .iter()
         .map(|s| {
             let bytes = s.analysis?;
@@ -839,7 +839,7 @@ fn shared_lenses(
         let members: Vec<usize> = (0..sources.len())
             .filter(|&i| group_of(&sources[i]) == key)
             .collect();
-        let fits: Vec<&crate::fit::Lens> =
+        let fits: Vec<&geometry::lens::Lens> =
             members.iter().filter_map(|&i| own[i].as_ref()).collect();
         let Some(median) = middle_lens(&fits) else {
             // Nothing on this lens has ever been rendered, so nothing has fitted it. Said rather
@@ -868,7 +868,7 @@ fn shared_lenses(
 }
 
 /// The knot-by-knot median of several fits of one lens, and the median of their crops.
-fn middle_lens(fits: &[&crate::fit::Lens]) -> Option<crate::fit::Lens> {
+fn middle_lens(fits: &[&geometry::lens::Lens]) -> Option<geometry::lens::Lens> {
     if fits.is_empty() {
         return None;
     }
@@ -895,7 +895,7 @@ fn middle_lens(fits: &[&crate::fit::Lens]) -> Option<crate::fit::Lens> {
         })
         .collect();
     let falloff = fits.iter().filter_map(|l| l.falloff).collect::<Vec<_>>();
-    Some(crate::fit::Lens {
+    Some(geometry::lens::Lens {
         distortion: (!distortion.is_empty()).then_some(distortion),
         crop: middle(fits.iter().map(|l| l.crop).collect()),
         falloff: (!falloff.is_empty()).then(|| {
@@ -912,10 +912,10 @@ fn middle_lens(fits: &[&crate::fit::Lens]) -> Option<crate::fit::Lens> {
 }
 
 /// How far two lenses disagree at the corner, in the pixels of a preview.
-fn corner_apart(one: &crate::fit::Lens, other: &crate::fit::Lens) -> f64 {
+fn corner_apart(one: &geometry::lens::Lens, other: &geometry::lens::Lens) -> f64 {
     let half = crate::hdr_fit::sample_long_edge() as f64 / 2.0;
-    let at = |lens: &crate::fit::Lens| {
-        crate::image::sample_radius(
+    let at = |lens: &geometry::lens::Lens| {
+        geometry::lens::sample_radius(
             lens.distortion.as_deref().unwrap_or_default(),
             1.0,
             lens.crop,
@@ -999,7 +999,7 @@ pub(crate) mod tests {
     fn a_fitted_lens_with_no_distortion_is_not_a_lens_nobody_fitted() {
         let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
         analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
-            lens: crate::fit::Lens::none(),
+            lens: geometry::lens::Lens::none(),
             colour: None,
         });
         let stored = crate::photo_analysis::encode(&analysis);
@@ -1024,7 +1024,7 @@ pub(crate) mod tests {
     /// is nobody's measurement; a warp the file states is the camera's.
     #[test]
     fn a_stated_rendering_measured_only_the_lens_it_states() {
-        let shared = |lens: crate::fit::Lens| {
+        let shared = |lens: geometry::lens::Lens| {
             let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
             analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
                 lens,
@@ -1044,12 +1044,12 @@ pub(crate) mod tests {
             (lenses, lensless)
         };
 
-        assert_eq!(shared(crate::fit::Lens::none()).1, vec![0]);
+        assert_eq!(shared(geometry::lens::Lens::none()).1, vec![0]);
 
-        let (lenses, lensless) = shared(crate::fit::Lens {
+        let (lenses, lensless) = shared(geometry::lens::Lens {
             distortion: Some(vec![0.0, -400.0, -1200.0]),
             axis: [0.015625, -0.0078125],
-            ..crate::fit::Lens::none()
+            ..geometry::lens::Lens::none()
         });
         assert!(lensless.is_empty());
         assert_eq!(lenses[0].axis, [0.015625, -0.0078125]);

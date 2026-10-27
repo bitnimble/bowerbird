@@ -9,7 +9,7 @@
 mod support;
 
 use formats::resize::resize;
-use rawshim::{fit, hdr_fit};
+use rawshim::hdr_fit;
 
 const BINS: usize = 8;
 const POINTS: usize = 6000;
@@ -60,16 +60,16 @@ fn probe(path: &str) -> Result<(), String> {
 
     // The lateral correction is per channel and this is luma, so the geometry is asked
     // about on its own.
-    let shipped = fit::Lens {
+    let shipped = geometry::lens::Lens {
         tca: None,
         ..matched.lens
     };
-    report("uncorrected", &sampled, &searched, &fit::Lens::none());
+    report("uncorrected", &sampled, &searched, &geometry::lens::Lens::none());
     report("as shipped", &sampled, &searched, &shipped);
     Ok(())
 }
 
-fn report(label: &str, render: &units::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
+fn report(label: &str, render: &units::rgb::Rgb, preview: &hdr_fit::Source, lens: &geometry::lens::Lens) {
     let stride = (((preview.width * preview.height) as f64 / POINTS as f64).sqrt() as usize).max(1);
     let gpu = gpu::device().expect("an adapter");
     let ours = hdr_fit::Source {

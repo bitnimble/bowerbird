@@ -31,7 +31,7 @@ struct Params {
 
 /// Interleaved f32 RGB, the plane the samples are taken from.
 [vk::binding(0, 0)] StructuredBuffer<float> plane;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(1, 0)] StructuredBuffer<float> gains;
 /// Four floats a sample, as `fit_model.slang` reads them: the colour, then a neighbourhood of zero.
 [vk::binding(2, 0)] RWStructuredBuffer<float> samples;

@@ -318,7 +318,7 @@ fn the_editor_filters_detail_in_the_order_this_host_does() {
 
 /// What a geometry does to a frame's shape, for the page and the catalogue to be held against.
 ///
-/// **Three consumers, two implementations, and nothing between them until now.** `hdr::cropped_size`
+/// **Three consumers, two implementations, and nothing between them until now.** `geometry::warp::cropped_size`
 /// decides what a rendition is written at; `displaySize` in `schemas/display_size.ts` decides what
 /// shape the grid lays a tile out in *and* what the editor sizes its stage to. Its own doc says the
 /// two have to agree - "a disagreement is a tile that is the wrong shape for the picture inside it" -
@@ -347,13 +347,13 @@ fn the_page_shapes_a_geometry_the_way_this_host_does() {
     let rows: Vec<String> = cases
         .iter()
         .map(|(width, height, crop, angle, rotate)| {
-            let geometry = rawshim::image::Geometry {
+            let geometry = geometry::warp::Geometry {
                 crop: *crop,
                 angle_degrees: *angle,
                 rotate: *rotate,
                 keystone: None,
             };
-            let (out_w, out_h) = rawshim::hdr::cropped_size(*width, *height, geometry);
+            let (out_w, out_h) = geometry::warp::cropped_size(*width, *height, geometry);
             format!(
                 "{width}x{height} {},{},{},{} {angle} {rotate} {out_w}x{out_h}",
                 crop[0], crop[1], crop[2], crop[3],
@@ -2157,7 +2157,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     let mut coded = frame.clone();
     rawshim::hdr::code_base(&mut coded, levels.anchored(), settings.reference_white_nits);
 
-    let grading = |geometry: rawshim::image::Geometry| rawshim::grade::Grade {
+    let grading = |geometry: geometry::warp::Geometry| rawshim::grade::Grade {
         output: rawshim::grade::Output::Rolled,
         geometry,
         ..rawshim::grade::Grade::new(
@@ -2169,7 +2169,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
         )
     };
 
-    let whole = rawshim::grade::device(gpu).encode(&coded, &grading(rawshim::image::Geometry::none()));
+    let whole = rawshim::grade::device(gpu).encode(&coded, &grading(geometry::warp::Geometry::none()));
 
     // Eighths and quarters, so every edge lands on a whole pixel of a 192x128 frame.
     for crop in [
@@ -2177,9 +2177,9 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
         [0.0, 0.5, 0.5, 1.0],
         [0.625, 0.0, 1.0, 0.25],
     ] {
-        let geometry = rawshim::image::Geometry {
+        let geometry = geometry::warp::Geometry {
             crop,
-            ..rawshim::image::Geometry::none()
+            ..geometry::warp::Geometry::none()
         };
         let grade = grading(geometry);
         let (out_width, out_height) = grade.output_size();

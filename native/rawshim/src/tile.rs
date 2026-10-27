@@ -411,7 +411,7 @@ pub async fn prepared_on_device(
     // gather is the photograph's, restricted to what this window writes (`base::Gather::window`) -
     // a crop corrected as though it were the whole picture bends at the wrong radius. The reader's
     // geometry is not applied, because a tile is named in coordinates that already carry it.
-    let none = crate::fit::Lens::none();
+    let none = geometry::lens::Lens::none();
     // Every rectangle here is the buffer's, which is what `grown` hands back and what the frame in
     // hand actually is - the decode's own region is the one thing named in the photograph's pixels,
     // and it is `reading`'s business rather than the gather's.
@@ -584,7 +584,7 @@ struct Grown {
     /// about whether there is a lens.
     matched: Option<crate::hdr_fit::HdrMatch>,
     /// Its lens, where that match carries one worth applying.
-    lens: Option<crate::fit::Lens>,
+    lens: Option<geometry::lens::Lens>,
     /// Where the decode is resized between the coding and the lens, for a request with a `drawn`
     /// size.
     resize: Option<Resize>,
@@ -831,7 +831,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     let decode = match lens
         .as_ref()
         .filter(|_| window != whole)
-        .and_then(|lens| crate::image::lens_footprint(frame, window, lens))
+        .and_then(|lens| geometry::warp::lens_footprint(frame, window, lens))
     {
         Some(read) => Rect::<Drawn>::exact(read.0, read.1, read.2, read.3),
         // Nothing to correct, or nothing to restrict: a window that is already the whole picture
@@ -1060,7 +1060,7 @@ mod tests {
                 from_raw: crate::photo_analysis::FromRaw {
                     matched: Some(crate::hdr_fit::HdrMatch {
                         colour: Some(colour::matched::HdrColour::identity()),
-                        lens: crate::fit::Lens::none(),
+                        lens: geometry::lens::Lens::none(),
                     }),
                     ..Default::default()
                 },

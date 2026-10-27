@@ -33,7 +33,7 @@ struct Params {
 [vk::binding(1, 0)] StructuredBuffer<float> theirs;
 /// Four floats a grid position: dx, dy, peak, and which of the three outcomes the search reached.
 [vk::binding(2, 0)] StructuredBuffer<float> found;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(3, 0)] StructuredBuffer<float> gains;
 [vk::binding(4, 0)] RWStructuredBuffer<float> render;
 [vk::binding(5, 0)] RWStructuredBuffer<float> jpeg;

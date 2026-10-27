@@ -251,7 +251,7 @@ fn tile_job(
         defringe: 0.0,
         exposure: None,
         adjust: crate::grade::Adjust::none(),
-        geometry: crate::image::Geometry::none(),
+        geometry: geometry::warp::Geometry::none(),
         preserve_source_orientation: false,
         grade: crate::hdr::Grade {
             reference_white_nits: units::light::Light::exactly(203.0),
@@ -268,7 +268,7 @@ enum Lensing {
     /// The camera match's, as a job takes it.
     Fitted,
     Without,
-    Given(crate::fit::Lens),
+    Given(geometry::lens::Lens),
 }
 
 /// The rendition, assembled as `job::run` assembles it: cut, sharpened, and graded through a
@@ -2045,7 +2045,7 @@ mod loupe_tile {
         let path = path.to_str().unwrap();
         // Off-centre, straightened and turned, and small enough that the restriction is worth
         // taking - `cropped` declines a crop that reads nearly the whole picture anyway.
-        let geometry = crate::image::Geometry {
+        let geometry = geometry::warp::Geometry {
             crop: [0.31, 0.22, 0.68, 0.63],
             angle_degrees: 1.75,
             rotate: 90,
@@ -2183,9 +2183,9 @@ mod loupe_tile {
         // at the window's edge where the frame's carries on. That ring is halo - it exists to be
         // read past and never to be read - so comparing it would be asserting the two routes agree
         // about pixels neither of them shows.
-        let out_size = crate::hdr::cropped_size(whole.width, whole.height, geometry);
+        let out_size = geometry::warp::cropped_size(whole.width, whole.height, geometry);
         let read =
-            crate::image::geometry_footprint((whole.width, whole.height), out_size, geometry);
+            geometry::warp::geometry_footprint((whole.width, whole.height), out_size, geometry);
         let (whole_cut, cropped_cut) = (framed(&mut whole), framed(&mut cropped));
         let (whole_w, cropped_w) = (whole_cut.width, cropped_cut.width);
         // Both routes are graded below off the same cuts, so the frames are read here rather
@@ -2270,7 +2270,7 @@ mod loupe_tile {
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
-        job.geometry = crate::image::Geometry {
+        job.geometry = geometry::warp::Geometry {
             crop: [0.12, 0.08, 0.93, 0.9],
             angle_degrees: -2.25,
             rotate: 90,
@@ -2677,7 +2677,7 @@ mod a_halved_frame_is_the_same_picture {
 /// "the fit ran and the picture was wrong" (§10.8).
 mod camera_match {
     use super::*;
-    use crate::image::SPLINE_UNIT;
+    use geometry::lens::SPLINE_UNIT;
 
     #[test]
     fn lens_only_is_measured_and_completed_with_colour_through_the_same_geometry() {
@@ -3477,7 +3477,7 @@ mod hdr_grade {
         // This body corrects no illumination, so the lift has to be given something to
         // carry - which is also the only way to reach a corner gain worth measuring.
         // A quarter more light at the corner, none at the centre.
-        fitted.lens = crate::fit::Lens {
+        fitted.lens = geometry::lens::Lens {
             distortion: None,
             crop: 1.0,
             falloff: Some((0.25, 0.0)),
@@ -3569,7 +3569,7 @@ mod hdr_grade {
         let path = sony();
         let p = path.to_str().unwrap();
         let curves = |falloff| {
-            let lens = crate::fit::Lens {
+            let lens = geometry::lens::Lens {
                 distortion: None,
                 crop: 1.0,
                 falloff,
@@ -4067,26 +4067,26 @@ mod pictures {
             -0.083_333_333_333_333_3,
             -0.125,
         ];
-        let none = crate::image::Geometry::none();
+        let none = geometry::warp::Geometry::none();
         for (name, geometry) in [
             ("geometry/none", none),
             (
                 "geometry/crop",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     crop: [0.1, 0.15, 0.85, 0.8],
                     ..none
                 },
             ),
             (
                 "geometry/straighten",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     angle_degrees: 6.0,
                     ..none
                 },
             ),
             (
                 "geometry/keystone",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     keystone: Some(LEANING),
                     ..none
                 },
@@ -4123,9 +4123,9 @@ mod pictures {
             0.0,
             0.0,
         ];
-        let lens = crate::fit::Lens {
+        let lens = geometry::lens::Lens {
             distortion: Some(CANON_KNOTS.to_vec()),
-            ..crate::fit::Lens::none()
+            ..geometry::lens::Lens::none()
         };
         let job = plain(&canon());
         // The tablecloth's edge at the left border and the shelf's at the right, high-contrast

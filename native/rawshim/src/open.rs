@@ -271,7 +271,7 @@ async fn stated_match(
         .colour(gpu::device()?, levels, neutral_ceiling)
         .await?;
     Some(crate::hdr_fit::HdrMatch {
-        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(crate::fit::Lens::none),
+        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(geometry::lens::Lens::none),
         colour: Some(colour),
     })
 }

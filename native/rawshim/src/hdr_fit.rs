@@ -513,7 +513,7 @@ impl NodeGrid {
 #[derive(Clone)]
 pub struct HdrMatch {
     /// The geometry search's lens and falloff, as they were fitted (10.8.1).
-    pub lens: crate::fit::Lens,
+    pub lens: geometry::lens::Lens,
     pub colour: Option<HdrColour>,
 }
 
@@ -3139,7 +3139,7 @@ async fn plane_read(
 enum Shape<'a> {
     /// Through the lens, onto the grid `out` is sized for, every sample scaled on the way.
     Warp {
-        lens: &'a crate::fit::Lens,
+        lens: &'a geometry::lens::Lens,
         luma: bool,
         scale: f64,
     },
@@ -3198,7 +3198,7 @@ impl Shaping {
         };
         let (kernel, table, (source_binding, table_binding), warping, luma) = match shape {
             Shape::Warp { lens, luma, .. } => {
-                let tables = crate::image::ratio_tables(
+                let tables = geometry::lens::ratio_tables(
                     lens.distortion.as_deref().unwrap_or_default(),
                     lens.crop,
                     &lens.channels(),
@@ -3216,7 +3216,7 @@ impl Shaping {
                 // `moves_pixels` so a lens carrying a scale and no spline still warps, and a
                 // source held larger than the grid is gathered down whatever the lens does.
                 let moves = lens.tca.is_some()
-                    || crate::image::moves_pixels(lens.distortion.as_deref(), lens.crop)
+                    || geometry::lens::moves_pixels(lens.distortion.as_deref(), lens.crop)
                     || (sw, sh) != (width, height);
                 (warp_device(gpu), ratios, (0, 1), moves, luma)
             }
@@ -3233,7 +3233,7 @@ impl Shaping {
                 let table = match finish {
                     Finish::Falloff((a, b)) => {
                         let gains: Vec<u8> = (0..=u8::MAX)
-                            .flat_map(|r| (crate::fit::Gain::at(a, b, r) as f32).to_ne_bytes())
+                            .flat_map(|r| (geometry::lens::falloff(a, b, r) as f32).to_ne_bytes())
                             .collect();
                         recording.init(&wgpu::util::BufferInitDescriptor {
                             label: Some("fit falloff gains"),
@@ -4048,7 +4048,7 @@ fn sampled_at_found(
         None => unused_buffer(&mut recording),
         Some((a, b)) => {
             let contents: Vec<u8> = (0..=u8::MAX)
-                .flat_map(|r| (crate::fit::Gain::at(a, b, r) as f32).to_ne_bytes())
+                .flat_map(|r| (geometry::lens::falloff(a, b, r) as f32).to_ne_bytes())
                 .collect();
             recording.init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fit register gains"),
@@ -5607,7 +5607,7 @@ pub async fn fit(
     plane: &Source,
     levels: colour::tone::Levels,
     preview: &units::rgb::Rgb,
-    lens: crate::fit::Lens,
+    lens: geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
     let (wide_jpeg, _) = preview_planes(gpu, preview).await?;
@@ -5698,7 +5698,7 @@ pub async fn fit_linearised(
     plane: &Source,
     levels: colour::tone::Levels,
     wide_jpeg: Source,
-    lens: crate::fit::Lens,
+    lens: geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
     if !(levels.white > units::light::Light::ZERO) {
@@ -5886,7 +5886,7 @@ async fn prepared_planes(
     source: &Source,
     scale: f64,
     wide_jpeg: Source,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
 ) -> Option<FitPlanes> {
     let mut lap = trace::clock::laps("  planes ");
     let (wide, tall) = (source.width, source.height);
@@ -5999,7 +5999,7 @@ async fn fit_model_planes(
     source: &Source,
     scale: f64,
     wide_jpeg: Source,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
     let mut lap = trace::clock::laps("  colour ");
@@ -6055,7 +6055,7 @@ pub(crate) fn warped_planes(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     (sw, sh): (usize, usize),
-    lenses: &[crate::fit::Lens],
+    lenses: &[geometry::lens::Lens],
     (width, height): (usize, usize),
 ) -> Vec<gpu::Buffer> {
     if lenses.is_empty() {
@@ -6085,7 +6085,7 @@ pub(crate) fn warped_into(
     recording: &mut gpu::Recording<'_>,
     source: &gpu::Buffer,
     source_size: (usize, usize),
-    lenses: &[crate::fit::Lens],
+    lenses: &[geometry::lens::Lens],
     planes: &[gpu::Buffer],
     size: (usize, usize),
 ) {
@@ -6123,7 +6123,7 @@ pub(crate) async fn warped_levels(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     source_size: (usize, usize),
-    lenses: &[crate::fit::Lens],
+    lenses: &[geometry::lens::Lens],
     (width, height): (usize, usize),
 ) -> Option<Vec<Vec<u8>>> {
     let planes = warped_planes(gpu, source, source_size, lenses, (width, height));
@@ -6239,7 +6239,7 @@ impl Settling {
 pub async fn registration(
     gpu: &'static gpu::Gpu,
     settling: &Settling,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
     bins: usize,
 ) -> Option<Registration> {
     if settling.width != settling.preview_width
@@ -6348,7 +6348,7 @@ pub async fn correspondence_at(
     gpu: &'static gpu::Gpu,
     render: &units::rgb::Rgb,
     preview: &Source,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
     points: &[(usize, usize)],
 ) -> Option<(Plane, Plane, Vec<Option<Found>>)> {
     let ours = Source {
@@ -7999,7 +7999,7 @@ mod tests {
         const SOURCE: &str = include_str!("../../../slang/fit_warp.slang");
         let last = format!(
             "static const int TABLE_LAST = {};",
-            crate::image::RATIO_TABLE_LAST
+            geometry::lens::RATIO_TABLE_LAST
         );
         assert!(
             SOURCE.contains(&last),
@@ -8774,7 +8774,7 @@ mod tests {
             &source_of(searching(), &plane),
             unit_levels(),
             &preview,
-            crate::fit::Lens::none(),
+            geometry::lens::Lens::none(),
             None,
         ))
         .expect("the chart is fittable");
@@ -8807,7 +8807,7 @@ mod tests {
             &source_of(searching(), &plane),
             unit_levels(),
             &preview,
-            crate::fit::Lens::none(),
+            geometry::lens::Lens::none(),
             None,
         ))
         .expect("the chart is fittable");
@@ -8953,7 +8953,7 @@ mod tests {
             &source_of(searching(), &plane),
             unit_levels(),
             &preview,
-            crate::fit::Lens::none(),
+            geometry::lens::Lens::none(),
             Some(as_shot),
         ))
         .expect("the chart is fittable");

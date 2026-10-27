@@ -150,7 +150,7 @@ pub struct HeldRaw {
     /// Counts uses, so the oldest tile is the one eviction takes.
     tick: std::cell::Cell<u64>,
     /// What a tick that named no region draws, and what the reader's crop moves.
-    geometry: std::cell::Cell<crate::image::Geometry>,
+    geometry: std::cell::Cell<geometry::warp::Geometry>,
     adjust: std::cell::RefCell<crate::grade::Adjust>,
     /// Which output the reader is proofing against, which the draw grades and clips for.
     proof: std::cell::Cell<crate::grade::Output>,
@@ -443,7 +443,7 @@ impl HeldRaw {
             repairs: std::cell::RefCell::new(Vec::new()),
             searched: std::cell::RefCell::new(None),
             tick: std::cell::Cell::new(0),
-            geometry: std::cell::Cell::new(crate::image::Geometry::none()),
+            geometry: std::cell::Cell::new(geometry::warp::Geometry::none()),
             adjust: std::cell::RefCell::new(crate::grade::Adjust::none()),
             proof: std::cell::Cell::new(crate::grade::Output::Pq),
             proof_intent: std::cell::Cell::new(crate::grade::Intent::default()),
@@ -659,7 +659,7 @@ impl HeldRaw {
     /// by its own align is enough to see it.
     ///
     /// Asked of the module rather than worked out by the page, because the module already does
-    /// exactly this mapping for every pixel it draws ([`crate::image::geometry_at`]) - a second
+    /// exactly this mapping for every pixel it draws ([`geometry::warp::geometry_at`]) - a second
     /// implementation on the page is a second answer waiting to drift from the one on screen.
     ///
     /// The *bounding box* of the mapped region, and over-covered rather than exact: under a
@@ -674,7 +674,7 @@ impl HeldRaw {
             let held = self.drawing.borrow();
             if let Some(drawing) = held.as_ref() {
                 let picture = drawing.picture();
-                let shape = crate::hdr::cropped_size(picture.0, picture.1, self.geometry.get());
+                let shape = geometry::warp::cropped_size(picture.0, picture.1, self.geometry.get());
                 (region.x, region.y, region.width, region.height) =
                     scene.photo_region(shape, (region.x, region.y, region.width, region.height));
             }
@@ -691,7 +691,7 @@ impl HeldRaw {
         };
         let picture = drawing.picture();
         let geometry = self.geometry.get();
-        let out = crate::hdr::cropped_size(picture.0, picture.1, geometry);
+        let out = geometry::warp::cropped_size(picture.0, picture.1, geometry);
         let (mut low, mut high) = ([f64::MAX; 2], [f64::MIN; 2]);
         const ROUND: usize = 16;
         for step in 0..=ROUND {
@@ -702,7 +702,7 @@ impl HeldRaw {
                 (region.x, region.y + along * region.height),
                 (region.x + region.width, region.y + along * region.height),
             ] {
-                let (px, py) = crate::image::geometry_at(picture, out, geometry, x, y);
+                let (px, py) = geometry::warp::geometry_at(picture, out, geometry, x, y);
                 low = [low[0].min(px), low[1].min(py)];
                 high = [high[0].max(px), high[1].max(py)];
             }
@@ -723,7 +723,7 @@ impl HeldRaw {
     #[wasm_bindgen(js_name = pictureOfOutput)]
     pub fn picture_of_output(&self, geometry: &str, points: &str) -> Result<String, JsValue> {
         self.mapped(geometry, points, |picture, out, geometry, [x, y]| {
-            let (px, py) = crate::image::geometry_at(
+            let (px, py) = geometry::warp::geometry_at(
                 picture,
                 out,
                 geometry,
@@ -738,7 +738,7 @@ impl HeldRaw {
     #[wasm_bindgen(js_name = outputOfPicture)]
     pub fn output_of_picture(&self, geometry: &str, points: &str) -> Result<String, JsValue> {
         self.mapped(geometry, points, |picture, out, geometry, [x, y]| {
-            let (ox, oy) = crate::image::output_at(
+            let (ox, oy) = geometry::warp::output_at(
                 picture,
                 out,
                 geometry,
@@ -753,12 +753,12 @@ impl HeldRaw {
         &self,
         geometry: &str,
         points: &str,
-        map: impl Fn((usize, usize), (usize, usize), crate::image::Geometry, [f64; 2]) -> [f64; 2],
+        map: impl Fn((usize, usize), (usize, usize), geometry::warp::Geometry, [f64; 2]) -> [f64; 2],
     ) -> Result<String, JsValue> {
         let malformed = |what: &str, e: serde_json::Error| {
             JsValue::from_str(&format!("rawshim: this {what} is malformed: {e}"))
         };
-        let geometry: crate::image::Geometry =
+        let geometry: geometry::warp::Geometry =
             serde_json::from_str(geometry).map_err(|e| malformed("geometry", e))?;
         let points: Vec<[f64; 2]> =
             serde_json::from_str(points).map_err(|e| malformed("list of points", e))?;
@@ -767,7 +767,7 @@ impl HeldRaw {
             return Err(JsValue::from_str("rawshim: no picture is open to measure"));
         };
         let picture = drawing.picture();
-        let out = crate::hdr::cropped_size(picture.0, picture.1, geometry);
+        let out = geometry::warp::cropped_size(picture.0, picture.1, geometry);
         let mapped: Vec<[f64; 2]> = points
             .into_iter()
             .map(|point| map(picture, out, geometry, point))
@@ -2281,10 +2281,10 @@ impl HeldRaw {
         Ok(())
     }
 
-    /// The reader's crop, straighten and turn, as `image::Geometry` JSON.
+    /// The reader's crop, straighten and turn, as `geometry::warp::Geometry` JSON.
     #[wasm_bindgen(js_name = setGeometry)]
     pub fn set_geometry(&self, geometry: &str) -> Result<(), JsValue> {
-        let next: crate::image::Geometry = serde_json::from_str(geometry)
+        let next: geometry::warp::Geometry = serde_json::from_str(geometry)
             .map_err(|e| JsValue::from_str(&format!("rawshim: this geometry is malformed: {e}")))?;
         self.geometry.set(next);
         Ok(())
@@ -2314,7 +2314,7 @@ impl HeldRaw {
             None => {
                 let (picture_w, picture_h) = drawing.picture();
                 let (width, height) =
-                    crate::hdr::cropped_size(picture_w, picture_h, self.geometry.get());
+                    geometry::warp::cropped_size(picture_w, picture_h, self.geometry.get());
                 crate::grade::Region {
                     x: 0.0,
                     y: 0.0,

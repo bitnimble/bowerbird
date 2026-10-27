@@ -9,7 +9,7 @@
 // The model is one scale per channel against green, which is all a rectilinear lens's
 // lateral aberration is. It composes with the distortion warp rather than needing a
 // pass of its own: both are radial maps about the frame centre, so the warp multiplies
-// its ratio by this channel's scale and resamples once (`image::ratio_tables`, `warp.slang`).
+// its ratio by this channel's scale and resamples once (`geometry::lens::ratio_tables`, `warp.slang`).
 //
 // **Three sources, in this order** (`fit.rs`), because they are not equally trustworthy:
 //
@@ -145,8 +145,8 @@ const MIN_IMPROVEMENT: f64 = 0.05;
 /// one.
 pub fn flat(red: f64, blue: f64) -> [Vec<f64>; 2] {
     [
-        vec![(red - 1.0) * crate::image::SPLINE_UNIT; 2],
-        vec![(blue - 1.0) * crate::image::SPLINE_UNIT; 2],
+        vec![(red - 1.0) * geometry::lens::SPLINE_UNIT; 2],
+        vec![(blue - 1.0) * geometry::lens::SPLINE_UNIT; 2],
     ]
 }
 
@@ -210,7 +210,7 @@ pub fn widest(tca: Option<&[Vec<f64>; 2]>) -> f64 {
         .iter()
         .flat_map(|knots| knots.iter())
         .fold(1.0f64, |peak, knot| {
-            peak.max(1.0 + knot / crate::image::SPLINE_UNIT)
+            peak.max(1.0 + knot / geometry::lens::SPLINE_UNIT)
         })
 }
 
@@ -354,7 +354,7 @@ fn radial_knots(samples: &[(f64, f64)], intercept: f64, slope: f64, half: f64) -
             // a displacement by a vanishing radius there would invent everything.
             match radius <= 0.0 {
                 true => 0.0,
-                false => scale_at(radius) * crate::image::SPLINE_UNIT,
+                false => scale_at(radius) * geometry::lens::SPLINE_UNIT,
             }
         })
         .collect()
@@ -495,7 +495,7 @@ fn plausible(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[
     let half = frame.half();
     let reach = |knots: &Vec<f64>| {
         knots.iter().fold(0.0f64, |peak, knot| {
-            peak.max((knot / crate::image::SPLINE_UNIT).abs())
+            peak.max((knot / geometry::lens::SPLINE_UNIT).abs())
         })
     };
     let (red, blue) = (reach(&curve[0]), reach(&curve[1]));
@@ -603,7 +603,7 @@ mod tests {
     /// A curve's scale at the corner, which for the flat ones `estimate` produces is
     /// its scale everywhere.
     fn corner(curve: &[Vec<f64>; 2], channel: usize) -> f64 {
-        1.0 + crate::image::spline_at(&curve[channel], 1.0)
+        1.0 + geometry::lens::spline_at(&curve[channel], 1.0)
     }
 
     fn framed(gpu: &'static gpu::Gpu, image: &Rgb) -> crate::tca_device::Frame {
@@ -688,7 +688,7 @@ mod tests {
         // A ramp rather than a flat scale, so a path that quietly refitted this would have
         // to reproduce the shape as well as the size to pass.
         let ramp: Vec<f64> = (0..KNOTS)
-            .map(|i| -0.0015 * crate::image::SPLINE_UNIT * i as f64 / (KNOTS - 1) as f64)
+            .map(|i| -0.0015 * geometry::lens::SPLINE_UNIT * i as f64 / (KNOTS - 1) as f64)
             .collect();
         let supplied = [ramp.clone(), vec![0.0; KNOTS]];
         let applied = pollster::block_on(supplied_curve(&framed(gpu, &aberrated), supplied))

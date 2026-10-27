@@ -14,6 +14,7 @@
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use colour::matched::HdrColour;
+use geometry::warp::Band;
 use colour::sdr_match::CANVAS_WHITE_NITS;
 use colour::tone::{Anchored, Levels};
 use gpu::{Buffer, Gpu, Recording, Texture, dispatch, read_back};
@@ -1670,7 +1671,7 @@ pub struct Grade<'a> {
     /// the frame on every frame - so this is the draw's own mapping (`geometry.slang`), and a
     /// rendition reaching it through the same uniform is the same picture rather than a second
     /// route that agrees.
-    pub geometry: crate::image::Geometry,
+    pub geometry: geometry::warp::Geometry,
     /// Where the frame above sits in the photograph, when it is only a piece of one.
     ///
     /// **None is the whole picture**, which is the editor and every rendition that had no crop to
@@ -1703,13 +1704,6 @@ pub struct ReachMask {
     pub node: colour::lattice::ColourNode,
     /// 0 draws the picture as it is, 1 draws what the edit does not reach black.
     pub strength: f64,
-}
-
-/// A run of whole output rows.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Band {
-    pub top: units::px::Place<units::px::Output>,
-    pub rows: units::px::Span<units::px::Output>,
 }
 
 /// How a picture is brought inside what its target can show. `gamut_map.slang` reads these by
@@ -1786,7 +1780,7 @@ impl<'a> Grade<'a> {
             adjust: Adjust::none(),
             as_shot: None,
             output: Output::Pq,
-            geometry: crate::image::Geometry::none(),
+            geometry: geometry::warp::Geometry::none(),
             window: None,
             neighbourhood_window: None,
             canvas: None,
@@ -1806,7 +1800,7 @@ impl<'a> Grade<'a> {
     }
 
     /// The same grade showing the reader's crop, straighten and turn.
-    pub fn showing(self, geometry: crate::image::Geometry) -> Grade<'a> {
+    pub fn showing(self, geometry: geometry::warp::Geometry) -> Grade<'a> {
         Grade { geometry, ..self }
     }
 
@@ -1881,7 +1875,7 @@ impl<'a> Grade<'a> {
     /// instead of this under-allocates and writes a picture with an unwritten tail.
     pub fn output(&self) -> units::px::Size<units::px::Output> {
         let (width, height) = self.photograph();
-        crate::hdr::cropped_out(units::px::Size::exact(width, height), self.geometry)
+        geometry::warp::cropped_out(units::px::Size::exact(width, height), self.geometry)
     }
 
     /// The same, as the two numbers a dispatch and a buffer size want.
@@ -4768,8 +4762,8 @@ mod tests {
         angle_degrees: f64,
         rotate: u16,
         keystone: Option<[f64; 8]>,
-    ) -> crate::image::Geometry {
-        crate::image::Geometry {
+    ) -> geometry::warp::Geometry {
+        geometry::warp::Geometry {
             crop,
             angle_degrees,
             rotate,
@@ -4811,7 +4805,7 @@ mod tests {
             for top in (0..out_height).step_by(7) {
                 let rows = 7.min(out_height - top);
                 let band = super::Grade {
-                    band: Some(super::Band {
+                    band: Some(geometry::warp::Band {
                         top: units::px::Place::measured(top),
                         rows: units::px::Span::measured(rows),
                     }),
@@ -6552,7 +6546,7 @@ mod tests {
     /// The shader's crop against this crate's, pixel for pixel.
     ///
     /// Both hosts run the shader, so this holds no two renderers together - what it
-    /// pins is `geometry.slang` against `image::Plan::at`, which is the mapping Rust needs to work
+    /// pins is `geometry.slang` against `geometry::warp::Plan::at`, which is the mapping Rust needs to work
     /// out what a cropped render has to decode. The two are four lines of arithmetic each and
     /// nothing else compares them.
     ///
@@ -6610,7 +6604,7 @@ mod tests {
             -0.083_333_333_333_333_3,
             -0.125,
         ];
-        let cases: [crate::image::Geometry; 10] = [
+        let cases: [geometry::warp::Geometry; 10] = [
             geometry([0.0, 0.0, 1.0, 1.0], 0.0, 0, None),
             geometry([0.13, 0.07, 0.82, 0.91], 0.0, 0, None),
             geometry([0.0, 0.0, 1.0, 1.0], 7.5, 0, None),
@@ -6637,7 +6631,7 @@ mod tests {
             .iter()
             .flat_map(|g| [(*g, (0usize, 0usize)), (*g, (37, 23))])
         {
-            let out = crate::hdr::cropped_size(full.0, full.1, geometry);
+            let out = geometry::warp::cropped_size(full.0, full.1, geometry);
             let pixels = out.0 * out.1;
             let bytes = (pixels * 2 * 4) as u64;
             let probe = gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -6734,7 +6728,7 @@ mod tests {
 
             for y in 0..out.1 {
                 for x in 0..out.0 {
-                    let whole = crate::image::geometry_at(
+                    let whole = geometry::warp::geometry_at(
                         full,
                         out,
                         geometry,

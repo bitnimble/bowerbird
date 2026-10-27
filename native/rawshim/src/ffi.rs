@@ -908,7 +908,7 @@ pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
 fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
     knots
         .into_iter()
-        .map(|it| it * crate::image::SPLINE_UNIT)
+        .map(|it| it * geometry::lens::SPLINE_UNIT)
         .collect()
 }
 

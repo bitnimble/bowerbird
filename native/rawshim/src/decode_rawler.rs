@@ -1586,7 +1586,7 @@ fn shading<'a>(
 }
 
 /// The lens correction a DNG's OpcodeList3 states, about its own optical centre.
-pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<crate::fit::Lens> {
+pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<geometry::lens::Lens> {
     use rawler::tags::{DngTag, TiffCommonTag};
     let decoder = rawler::get_decoder(source).ok()?;
     let bytes = opcode_list_of(decoder.as_ref(), DngTag::OpcodeList3)?;
@@ -1643,7 +1643,7 @@ fn warp_lens(
     active: [f64; 4],
     photo: [f64; 4],
     upright: rawler::decoders::Orientation,
-) -> Result<crate::fit::Lens, String> {
+) -> Result<geometry::lens::Lens, String> {
     let planes = body.word(0)? as usize;
     if planes != 1 && planes != 3 {
         return Err(format!("a WarpRectilinear over {planes} planes"));
@@ -1681,7 +1681,7 @@ fn warp_lens(
         ],
         upright,
     );
-    let unit = half * crate::fit::reach(axis) / far;
+    let unit = half * geometry::lens::reach(axis) / far;
 
     let ratio = |c: usize, radius: f64| {
         let k = &radial[if planes == 1 { 0 } else { c }];
@@ -1692,15 +1692,15 @@ fn warp_lens(
     let crop = ratio(1, 0.0);
     let distortion = radii
         .clone()
-        .map(|r| (ratio(1, r) / crop - 1.0) * crate::image::SPLINE_UNIT)
+        .map(|r| (ratio(1, r) / crop - 1.0) * geometry::lens::SPLINE_UNIT)
         .collect();
     let lateral = |c| {
         radii
             .clone()
-            .map(|r| (ratio(c, r) / ratio(1, r) - 1.0) * crate::image::SPLINE_UNIT)
+            .map(|r| (ratio(c, r) / ratio(1, r) - 1.0) * geometry::lens::SPLINE_UNIT)
             .collect::<Vec<_>>()
     };
-    Ok(crate::fit::Lens {
+    Ok(geometry::lens::Lens {
         distortion: Some(distortion),
         crop,
         falloff: None,
@@ -3698,8 +3698,8 @@ mod tests {
                     let [ux, uy] = upright(at);
                     let got = lens.read_from((ux, uy), |squared| {
                         let r = squared.sqrt();
-                        crate::image::sample_radius(&knots, r, lens.crop) / r
-                            * (1.0 + crate::image::spline_at(lateral, r))
+                        geometry::lens::sample_radius(&knots, r, lens.crop) / r
+                            * (1.0 + geometry::lens::spline_at(lateral, r))
                     });
                     let apart = (got.0 - want[0]).hypot(got.1 - want[1]) * half;
                     assert!(apart < 0.1, "{turn:?} channel {c} at {at:?}: {apart} px");

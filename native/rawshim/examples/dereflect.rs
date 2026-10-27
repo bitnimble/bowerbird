@@ -88,7 +88,7 @@ fn frame(args: &[String]) {
     let resident = colour::resident::Resident::upload(gpu, &samples, w, h);
     let full = units::px::Size::exact(w, h);
     let looked = rawshim::dereflect::looked(gpu, &resident).expect("the shrink");
-    let layer = remover.layer(gpu, &looked, full, &strokes, &rawshim::fit::Lens::none());
+    let layer = remover.layer(gpu, &looked, full, &strokes, &geometry::lens::Lens::none());
     let before = resident.duplicate();
     layer.take_out(gpu, &resident, units::px::At::ORIGIN, full, 1.0);
     let levels = |frame: &colour::resident::Resident| {

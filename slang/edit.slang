@@ -127,7 +127,7 @@ public struct Edit {
     public uint rotate;
     /// The size of the picture this produces, which is what the region is a window on.
     ///
-    /// Sent rather than derived: it is `displaySize` on the client and `hdr::cropped_size`
+    /// Sent rather than derived: it is `displaySize` on the client and `geometry::warp::cropped_size`
     /// natively, and the turn's own arithmetic reads the *output* grid's dimensions - so a
     /// shader computing them again would be a third answer to a question two hosts already
     /// agree on.

@@ -214,7 +214,7 @@ fn params(
         Through::Lens => source_at.lens.axis,
         Through::Corrected => [0.0; 2],
     };
-    let reach = crate::fit::reach(axis);
+    let reach = geometry::lens::reach(axis);
     for value in [
         axis[0] * half2.sqrt(),
         axis[1] * half2.sqrt(),
@@ -249,7 +249,7 @@ pub(crate) fn params_block() -> usize {
 /// The three tables the gather reads for a source, or a stub where it reads none.
 fn tables(recording: &mut gpu::Recording<'_>, from: &Gathered<'_>) -> (gpu::Buffer, gpu::Buffer) {
     let lens = match from.through {
-        Through::Corrected => crate::fit::Lens::none(),
+        Through::Corrected => geometry::lens::Lens::none(),
         Through::Lens => from.source.lens.to_lens(),
     };
     (
@@ -1168,7 +1168,7 @@ async fn taken(
         // the strengths above zero it here on both arms.
         crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
         crate::image::SharpenNoise::NONE,
-        &crate::fit::Lens::none(),
+        &geometry::lens::Lens::none(),
         stored
             .and_then(|a| a.from_render.defocus)
             .and_then(|d| {
@@ -1870,7 +1870,7 @@ mod tests {
                     let radius = squared.sqrt();
                     match radius == 0.0 {
                         true => lens.crop,
-                        false => crate::image::sample_radius(&knots, radius, lens.crop) / radius,
+                        false => geometry::lens::sample_radius(&knots, radius, lens.crop) / radius,
                     }
                 });
                 (sx * half, sy * half)

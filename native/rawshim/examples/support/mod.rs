@@ -188,7 +188,11 @@ pub struct Cutting {
 /// downscales the rest from it.
 ///
 /// `options.sharpen_sigma` fixes the deconvolution's sigma in place of the measured one.
-pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit::Lens>) -> Cutting {
+pub fn cut(
+    opened: &Opened,
+    options: &EncodeOptions,
+    lens: Option<&geometry::lens::Lens>,
+) -> Cutting {
     let frame = &opened.frame;
     let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
@@ -238,7 +242,7 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         options.strengths.before_the_fit(),
         rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
         rawshim::image::SharpenNoise::NONE,
-        &rawshim::fit::Lens::none(),
+        &geometry::lens::Lens::none(),
         opened.measured.defringe,
         frame.noise,
         frame.matrix,

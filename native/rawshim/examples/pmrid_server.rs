@@ -606,7 +606,7 @@ fn sharpened(
                 support::STRENGTHS.before_the_fit(),
                 rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
                 rawshim::image::SharpenNoise::NONE,
-                &rawshim::fit::Lens::none(),
+                &geometry::lens::Lens::none(),
                 defringe,
                 measured.noise,
                 Some(matrix),

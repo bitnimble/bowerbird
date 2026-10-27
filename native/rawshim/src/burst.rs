@@ -126,8 +126,8 @@ mod tests {
 
         let distortion = vec![
             0.0,
-            -0.02 * crate::image::SPLINE_UNIT,
-            -0.04 * crate::image::SPLINE_UNIT,
+            -0.02 * geometry::lens::SPLINE_UNIT,
+            -0.04 * geometry::lens::SPLINE_UNIT,
         ];
         for source in &mut recipe.sources {
             source.lens.distortion = Some(distortion.clone());

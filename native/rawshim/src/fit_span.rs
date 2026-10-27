@@ -102,7 +102,7 @@ pub(crate) fn lifted(
     let gains: Vec<u8> = match falloff {
         None => vec![0u8; 4],
         Some((a, b)) => (0..=u8::MAX)
-            .flat_map(|r| (crate::fit::Gain::at(a, b, r) as f32).to_ne_bytes())
+            .flat_map(|r| (geometry::lens::falloff(a, b, r) as f32).to_ne_bytes())
             .collect(),
     };
     let gains = recording.init(&wgpu::util::BufferInitDescriptor {

@@ -561,7 +561,7 @@ pub async fn prepare(
     strengths: crate::image::Strengths,
     sharpen_sigma: crate::image::SharpenSigma,
     sharpen_noise: crate::image::SharpenNoise,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
     defocus: Defringe,
     noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
@@ -1769,16 +1769,16 @@ fn encode_base_into(
     });
 }
 
-/// `image::ratio_tables` end to end, as `f32`.
+/// `geometry::lens::ratio_tables` end to end, as `f32`.
 ///
 /// **The table, not the spline.** The knots are `f64` and evaluating them per pixel is a handful
 /// of instructions a shader would not notice - but its 4096 buckets in r^2 and the linear
 /// interpolation between them are part of the answer, not an optimisation over it: the fit's
-/// gather (`fit_warp.slang`) and the host's decode window (`image::lens_footprint`) read the same
+/// gather (`fit_warp.slang`) and the host's decode window (`geometry::warp::lens_footprint`) read the same
 /// table, and a shader that evaluated the spline exactly would disagree with both in a way that
 /// moves with the lens. So the quantisation is uploaded along with the values.
-pub(crate) fn ratio_tables(lens: &crate::fit::Lens) -> Vec<f32> {
-    crate::image::ratio_tables(
+pub(crate) fn ratio_tables(lens: &geometry::lens::Lens) -> Vec<f32> {
+    geometry::lens::ratio_tables(
         lens.distortion.as_deref().unwrap_or_default(),
         lens.crop,
         &lens.channels(),
@@ -1797,7 +1797,7 @@ pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
     (0..256)
         .map(|radius| {
             let Some((a, b)) = falloff else { return 1.0 };
-            let gain = crate::fit::Gain::at(a, b, radius as u8);
+            let gain = geometry::lens::falloff(a, b, radius as u8);
             match (gain - 1.0).abs() < 1e-5 {
                 true => 1.0,
                 false => colour::tone::gain_in_y(units::light::Gain::of_ratio(gain)) as f32,
@@ -1888,7 +1888,7 @@ impl Gather {
     /// read at the frame's own resolution - so what changes from [`Gather::whole`] is where the
     /// photograph's centre falls in the buffer and where the window sits relative to it.
     ///
-    /// `image::lens_footprint` reads the identical plan for what has to be *decoded*, which is a
+    /// `geometry::warp::lens_footprint` reads the identical plan for what has to be *decoded*, which is a
     /// bounds question the host answers before there are any pixels to gather.
     pub fn window(
         full: units::px::Size<units::px::Drawn>,
@@ -1928,7 +1928,7 @@ pub fn warp_lens(
     base: &'static Base,
     frame: &colour::resident::Resident,
     gather: Gather,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
 ) -> Option<(colour::resident::Resident, gpu::Buffer)> {
     if !warps(frame.samples(), gather.source.raw(), gather.out.raw(), lens) {
         return None;
@@ -1960,7 +1960,7 @@ pub fn gather_and_sharpen(
     base: &'static Base,
     frame: colour::resident::Resident,
     gather: Gather,
-    lens: Option<&crate::fit::Lens>,
+    lens: Option<&geometry::lens::Lens>,
     sharpen: f64,
     sharpen_sigma: crate::image::SharpenSigma,
     sharpen_noise: crate::image::SharpenNoise,
@@ -2016,7 +2016,7 @@ fn warps(
     samples: usize,
     source: (usize, usize),
     out: (usize, usize),
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
 ) -> bool {
     let (sw, sh) = source;
     !lens.is_identity() && sw >= 2 && sh >= 2 && out.0 > 0 && out.1 > 0 && samples >= sw * sh * 3
@@ -2032,7 +2032,7 @@ fn warp_lens_into(
     frame: &gpu::Buffer,
     warped: &gpu::Buffer,
     gather: Gather,
-    lens: &crate::fit::Lens,
+    lens: &geometry::lens::Lens,
 ) -> gpu::Buffer {
     let (sw, sh) = gather.source.raw();
     let (width, height) = gather.out.raw();
@@ -3284,9 +3284,9 @@ mod tests {
     /// A lens that genuinely bends: a strong pincushion correction, so the Jacobian is well
     /// away from one at the corners - and the corners read *inward*, where there is picture,
     /// rather than off the edge into black a sharpen cannot move.
-    fn bending() -> crate::fit::Lens {
-        let unit = crate::image::SPLINE_UNIT;
-        crate::fit::Lens {
+    fn bending() -> geometry::lens::Lens {
+        let unit = geometry::lens::SPLINE_UNIT;
+        geometry::lens::Lens {
             distortion: Some(vec![
                 0.0,
                 -0.01 * unit,
@@ -3420,7 +3420,7 @@ mod tests {
                 },
                 sigma,
                 crate::image::SharpenNoise::NONE,
-                &crate::fit::Lens {
+                &geometry::lens::Lens {
                     axis: [0.0; 2],
                     ..bending()
                 },
@@ -3617,7 +3617,7 @@ mod tests {
         base: &'static super::Base,
         samples: &[u16],
         gather: super::Gather,
-        lens: &crate::fit::Lens,
+        lens: &geometry::lens::Lens,
     ) -> Option<Vec<u16>> {
         let (sw, sh) = gather.source.raw();
         let frame = Resident::upload(gpu, samples, sw, sh);
@@ -4369,8 +4369,8 @@ mod tests {
         let (width, height) = (257usize, 181);
         let frame = edged(width, height);
         let knots = vec![0.0, 40.0, 160.0, 380.0];
-        let lens = crate::fit::Lens {
-            crop: crate::image::fill_crop(&knots, width, height),
+        let lens = geometry::lens::Lens {
+            crop: geometry::lens::fill_crop(&knots, width, height),
             distortion: Some(knots),
             falloff: Some((0.25, 0.1)),
             tca: Some([vec![0.0, 24.0, 60.0], vec![0.0, -18.0, -44.0]]),
@@ -4439,10 +4439,10 @@ mod tests {
         let frame: Vec<u16> = (0..w * h)
             .flat_map(|at| [(2_000 + (at % w) * 900) as u16; 3])
             .collect();
-        let flat = |scale: f64| vec![(scale - 1.0) * crate::image::SPLINE_UNIT; 2];
+        let flat = |scale: f64| vec![(scale - 1.0) * geometry::lens::SPLINE_UNIT; 2];
         let gather = super::Gather::frame(units::px::Size::exact(w, h));
         let plain = warped(gpu, base, &frame, gather, &bending()).expect("a bending lens warps");
-        let scaled = crate::fit::Lens {
+        let scaled = geometry::lens::Lens {
             tca: Some([flat(1.05), flat(0.95)]),
             ..bending()
         };
@@ -4500,14 +4500,14 @@ mod tests {
                 .flat_map(|at| [plane((at % width) as f64, (at / width) as f64) as f32; 3]),
         );
 
-        let unit = crate::image::SPLINE_UNIT;
-        let lens = crate::fit::Lens {
+        let unit = geometry::lens::SPLINE_UNIT;
+        let lens = geometry::lens::Lens {
             tca: Some([vec![0.0, 0.01 * unit], vec![0.0, -0.008 * unit]]),
             ..bending()
         };
         // An off-centre crop, a straighten and a quarter turn: a pixel's error is a function of how
         // far it travels, and a gentle case would say nothing about the frames this protects.
-        let geometry = crate::image::Geometry {
+        let geometry = geometry::warp::Geometry {
             crop: [0.08, 0.06, 0.92, 0.94],
             angle_degrees: 2.5,
             rotate: 90,
@@ -4521,7 +4521,7 @@ mod tests {
         };
         let code =
             |samples: &mut [u16]| crate::hdr::code_base(samples, levels.anchored(), REFERENCE);
-        let grading = |width: usize, height: usize, geometry: crate::image::Geometry| {
+        let grading = |width: usize, height: usize, geometry: geometry::warp::Geometry| {
             crate::grade::Grade {
                 // Rolled rather than PQ, so a difference in counts is a difference in light: the
                 // transfer compresses the shadows and would flatter every number below.
@@ -4547,18 +4547,18 @@ mod tests {
         let ours = crate::grade::device(gpu).encode(&warped, &staged);
 
         // The reference: the plane read at where both mappings, composed, put each output pixel.
-        let tables = crate::image::ratio_tables(
+        let tables = geometry::lens::ratio_tables(
             lens.distortion.as_deref().unwrap_or_default(),
             lens.crop,
             &lens.channels(),
         );
-        let last = crate::image::RATIO_TABLE_LAST;
+        let last = geometry::lens::RATIO_TABLE_LAST;
         let (full_w, full_h) = (width as f64, height as f64);
         let half = (full_w / 2.0).hypot(full_h / 2.0);
         let mut fused = vec![0u16; out.0 * out.1 * 3];
         for y in 0..out.1 {
             for x in 0..out.0 {
-                let (px, py) = crate::image::geometry_at(
+                let (px, py) = geometry::warp::geometry_at(
                     (width, height),
                     out,
                     geometry,
@@ -4584,7 +4584,7 @@ mod tests {
         code(&mut fused);
         let theirs = crate::grade::device(gpu).encode(
             &fused,
-            &grading(out.0, out.1, crate::image::Geometry::none()),
+            &grading(out.0, out.1, geometry::warp::Geometry::none()),
         );
 
         assert_eq!(
@@ -4663,15 +4663,15 @@ mod tests {
         })
         .unwrap_or((0.0, 0.0));
         let knots = vec![0.0, 40.0, 160.0, 380.0];
-        let lens = crate::fit::Lens {
-            crop: crate::image::fill_crop(&knots, width, height),
+        let lens = geometry::lens::Lens {
+            crop: geometry::lens::fill_crop(&knots, width, height),
             distortion: Some(knots),
             falloff: Some((0.25, 0.1)),
             tca: Some([vec![0.0, 24.0, 60.0], vec![0.0, -18.0, -44.0]]),
             axis: [0.0125, -0.02],
         };
 
-        let staged = |lens: &crate::fit::Lens| {
+        let staged = |lens: &geometry::lens::Lens| {
             // Defringe, then code, then warp - the order `prepare` runs them in, the correction
             // belonging to the linear frame the decode hands over.
             let mut samples = frame.clone();
@@ -4701,7 +4701,7 @@ mod tests {
             );
             gathered.unwrap_or(samples)
         };
-        let chained = |lens: &crate::fit::Lens| {
+        let chained = |lens: &geometry::lens::Lens| {
             let prepared = pollster::block_on(super::prepare(
                 gpu,
                 base,
@@ -4743,7 +4743,7 @@ mod tests {
             "the chained frame differs"
         );
 
-        let identity = crate::fit::Lens::none();
+        let identity = geometry::lens::Lens::none();
         assert_eq!(
             differing(&chained(&identity), &staged(&identity)),
             0,
@@ -4919,7 +4919,7 @@ mod tests {
             defringe: 1.0,
         };
         let gather = super::Gather::frame(units::px::Size::exact(width, height));
-        let none = crate::fit::Lens::none();
+        let none = geometry::lens::Lens::none();
 
         // What an open does: correct the linear frame for the fit, then run the chain over it.
         let first = Resident::upload(gpu, &samples, width, height);

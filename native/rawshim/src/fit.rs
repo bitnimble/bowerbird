@@ -17,7 +17,7 @@
 // capacities "all land within 1.5 of each other" - does not stand, being a small
 // difference read off the blind measure described at the `deltaE` section below.
 
-use crate::image::polynomial_knots;
+use geometry::lens::{Lens, polynomial_knots};
 use gpu::dispatch::Whole;
 #[cfg(test)]
 use units::rgb::RgbRef;
@@ -98,89 +98,6 @@ pub const SOURCE_FITTED: u32 = 2;
 pub const SOURCE_LENSFUN: u32 = 3;
 /// The settle found a curve where no tier offered one.
 pub const SOURCE_MEASURED: u32 = 4;
-
-/// What the lens did to the frame, as this fit resolved it: the halves that depend on
-/// where a pixel sits rather than what colour it is.
-///
-/// One struct because §10.8.1 lifts all of it into the HDR grade together and nothing
-/// may lift a subset. Passed as three loose arguments first, and `fit_all` promptly
-/// forgot the falloff on one of the two routes with every test still green.
-#[derive(Clone, PartialEq)]
-pub struct Lens {
-    /// Radial knots in `SPLINE_UNIT`s, or None where no correction is needed.
-    pub distortion: Option<Vec<f64>>,
-    /// Overall rescale accompanying the distortion.
-    pub crop: f64,
-    /// The falloff's two coefficients, in the currency `Gain::at` reads.
-    pub falloff: Option<(f64, f64)>,
-    /// Red and blue's radial correction against green, where the lens imaged them at
-    /// different magnifications (`tca.rs`). Knots rather than a scalar because a
-    /// database curve is radius-dependent and a measured scale is the flat case of one.
-    pub tca: Option<[Vec<f64>; 2]>,
-    /// The optical axis the distortion and crop are radial about, as an offset from the frame's
-    /// centre in half-diagonals of the upright frame. Zero for every fitted lens; a DNG's
-    /// WarpRectilinear states its own.
-    pub axis: [f64; 2],
-}
-
-impl Lens {
-    /// A lens that did nothing, for a caller with no fit to hand.
-    pub fn none() -> Self {
-        Lens {
-            distortion: None,
-            crop: 1.0,
-            falloff: None,
-            tca: None,
-            axis: [0.0; 2],
-        }
-    }
-
-    /// Where a point of the corrected picture is read from, both as offsets from the frame's
-    /// centre in half-diagonals, given this lens's ratio at a squared radius about its axis in
-    /// [`reach`]es.
-    pub fn read_from(&self, at: (f64, f64), ratio: impl Fn(f64) -> f64) -> (f64, f64) {
-        let (dx, dy) = (at.0 - self.axis[0], at.1 - self.axis[1]);
-        let ratio = ratio((dx * dx + dy * dy) / self.reach().powi(2));
-        (self.axis[0] + dx * ratio, self.axis[1] + dy * ratio)
-    }
-
-    pub fn reach(&self) -> f64 {
-        reach(self.axis)
-    }
-
-    /// The radius each channel is read at, relative to green's.
-    ///
-    /// The warp folds these into its own ratio, so the lateral aberration is undone by
-    /// the resample that undoes the distortion rather than by a pass of its own.
-    pub fn channels(&self) -> crate::image::Channels {
-        match &self.tca {
-            Some([red, blue]) => [red.clone(), Vec::new(), blue.clone()],
-            None => crate::image::registered(),
-        }
-    }
-
-    /// Whether applying this would change any pixel.
-    ///
-    /// The crop counts. It is a geometry on its own - a rescale - so a lens with no
-    /// curve beside it is not an identity, and reading only `distortion` drops the
-    /// scale a fit measured for a frame whose curve it declined.
-    pub fn is_identity(&self) -> bool {
-        !crate::image::moves_pixels(self.distortion.as_deref(), self.crop)
-            && self.falloff.is_none()
-            && !self.corrects_channels()
-    }
-
-    /// Whether any channel is read at its own radius.
-    pub fn corrects_channels(&self) -> bool {
-        !crate::image::is_registered(&self.channels())
-    }
-}
-
-/// The radius a lens's knots end at about `axis`, in half-diagonals: no corner of the frame is
-/// further from it, so the tables never read past their last entry.
-pub fn reach(axis: [f64; 2]) -> f64 {
-    1.0 + axis[0].hypot(axis[1])
-}
 
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
@@ -685,11 +602,6 @@ impl Gain {
         &self.lut
     }
 
-    /// Bounded because these are two free parameters fitted to one frame, and a
-    /// degenerate solve should distort the corners rather than black them out or
-    /// blow them away: no lens falls off by four stops, and none gains.
-    const LIMIT: (f64, f64) = (0.25, 4.0);
-
     /// Tabulated rather than left to be evaluated, because the geometry search reads it
     /// per pair and evaluating it is a `powf` for the transfer.
     pub(crate) fn from_poly(a: f64, b: f64) -> Self {
@@ -697,23 +609,14 @@ impl Gain {
         let mut lut = vec![0u8; 256 * 256];
         for radius in 0..256 {
             for level in 0..256 {
-                lut[radius * 256 + level] = to_srgb8(linear[level] * Gain::at(a, b, radius as u8));
+                lut[radius * 256 + level] =
+                    to_srgb8(linear[level] * geometry::lens::falloff(a, b, radius as u8));
             }
         }
         Gain {
             lut,
             coefficients: (a, b),
         }
-    }
-
-    /// The multiplier itself, in linear light, at a quantised radius.
-    ///
-    /// Kept separate from the table so a caller working in linear light already can
-    /// evaluate it rather than round-trip through 8 bits (`hdr_fit`).
-    #[inline]
-    pub(crate) fn at(a: f64, b: f64, radius: u8) -> f64 {
-        let r2 = (f64::from(radius) / 255.0).powi(2);
-        (1.0 + a * r2 + b * r2 * r2).clamp(Self::LIMIT.0, Self::LIMIT.1)
     }
 
     /// The two coefficients, for the HDR fit to reuse.
@@ -1114,7 +1017,7 @@ async fn fit_family(
     mut step: f64,
 ) -> Option<(Vec<f64>, f64, f64)> {
     let (width, height) = (grids.full.jpeg.width, grids.full.jpeg.height);
-    let fill = |parameter: f64| crate::image::fill_crop(&family(parameter), width, height);
+    let fill = |parameter: f64| geometry::lens::fill_crop(&family(parameter), width, height);
     let candidates: Vec<(f64, f64)> = coarse
         .iter()
         .flat_map(|parameter| SLACK_SCAN.iter().map(move |slack| (*parameter, *slack)))
@@ -1255,7 +1158,7 @@ async fn settled_on_registration(
         (current, best) = (trial, measured);
     }
     // A crop the settled curve no longer fills is black in the corners.
-    let crop = crop.min(crate::image::fill_crop(
+    let crop = crop.min(geometry::lens::fill_crop(
         &current,
         preview.width,
         preview.height,
@@ -1267,7 +1170,7 @@ fn on_knot_grid(knots: &[f64]) -> Vec<f64> {
     (0..SETTLE_KNOTS)
         .map(|i| {
             let radius = i as f64 / (SETTLE_KNOTS - 1) as f64;
-            crate::image::spline_at(knots, radius) * crate::image::SPLINE_UNIT
+            geometry::lens::spline_at(knots, radius) * geometry::lens::SPLINE_UNIT
         })
         .collect()
 }
@@ -1328,7 +1231,7 @@ fn nudged(knots: &[f64], measured: &crate::hdr_fit::Registration, feedback: f64)
     knots
         .iter()
         .zip(change)
-        .map(|(knot, change)| knot + feedback * change * crate::image::SPLINE_UNIT)
+        .map(|(knot, change)| knot + feedback * change * geometry::lens::SPLINE_UNIT)
         .collect()
 }
 
@@ -2216,7 +2119,7 @@ mod tests {
         let source = crate::hdr_fit::levelled_source(gpu, render.as_ref());
         let knots = |strength: f64| -> Vec<f64> {
             (0..16)
-                .map(|i| strength * (i as f64 / 15.0).powi(2) * crate::image::SPLINE_UNIT)
+                .map(|i| strength * (i as f64 / 15.0).powi(2) * geometry::lens::SPLINE_UNIT)
                 .collect()
         };
         let jpeg = crate::hdr_fit::warped_planes(
@@ -2335,7 +2238,7 @@ mod tests {
         let truth: Vec<f64> = (0..16)
             .map(|i| {
                 let radius = i as f64 / 15.0;
-                -0.02 * (std::f64::consts::PI * radius).sin() * crate::image::SPLINE_UNIT
+                -0.02 * (std::f64::consts::PI * radius).sin() * geometry::lens::SPLINE_UNIT
             })
             .collect();
         let start: Vec<f64> = truth.iter().map(|knot| knot * 0.5).collect();
@@ -2369,9 +2272,9 @@ mod tests {
             "a curve that only magnifies still fills the frame"
         );
         for radius in [0.4, 0.5, 0.6] {
-            let want = crate::image::spline_at(&truth, radius);
-            let got = crate::image::spline_at(&settled, radius);
-            let started = crate::image::spline_at(&start, radius);
+            let want = geometry::lens::spline_at(&truth, radius);
+            let got = geometry::lens::spline_at(&settled, radius);
+            let started = geometry::lens::spline_at(&start, radius);
             assert!(
                 (got - want).abs() < (started - want).abs() / 3.0,
                 "at r {radius}: settled {got}, wanted {want}, started {started}"
