@@ -36,9 +36,7 @@ fn main() {
     // in - and at 4:2:0 a chroma sample covers two of its own pixels each way, which over the ratio
     // to the sensor is several photosites. A chroma structure finer than that is not in the file to
     // disagree with, and reading one as a fault in the render is reading the container.
-    if let Some(jpeg) =
-        rawshim::decode_rawler::upright_preview_jpeg(&raw, rawshim::decode_rawler::Preview::Largest)
-    {
+    if let Some(jpeg) = decode::raw::upright_preview_jpeg(&raw, decode::raw::Preview::Largest) {
         let mut at = 2usize;
         while at + 9 < jpeg.len() {
             if jpeg[at] != 0xff {

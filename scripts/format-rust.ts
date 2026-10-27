@@ -9,6 +9,7 @@ const manifests = [
   'native/burst/Cargo.toml',
   'native/colour/Cargo.toml',
   'native/composition/Cargo.toml',
+  'native/decode/Cargo.toml',
   'native/denoise/Cargo.toml',
   'native/fit/Cargo.toml',
   'native/formats/Cargo.toml',

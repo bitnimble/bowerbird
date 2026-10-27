@@ -87,7 +87,7 @@ struct Params {
     /// Camera RGB to Rec.2020, a row per vector. Three `float4` rather than a `float3x3` because the
     /// host writes these bytes by hand and a matrix's column stride is a rule to get wrong.
     ///
-    /// Each row's `w` carries that channel's ceiling (`decode_rawler::channel_ceilings`), riding in
+    /// Each row's `w` carries that channel's ceiling (`decode::raw::channel_ceilings`), riding in
     /// the tail a `float3` would waste rather than in four more words of the block above.
     float4 row0;
     float4 row1;

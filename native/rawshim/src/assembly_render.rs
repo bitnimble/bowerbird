@@ -124,7 +124,7 @@ pub async fn prepared(
     recipe: &crate::assembly::Drawing,
     hold: &Lowpass,
     request: &crate::composite_tile::CompositeRequest<'_>,
-) -> Result<(colour::resident::Resident, crate::tile::Prepared), String> {
+) -> Result<(colour::resident::Resident, decode::Prepared), String> {
     let refused = || render::base::without_a_device("the assembly's render");
     let gpu = gpu::device().ok_or_else(refused)?;
     let base = render::base::device(gpu).ok_or_else(refused)?;
@@ -190,7 +190,7 @@ pub async fn prepared(
     let canvas = |value: usize| ((value as f64) / request.scale).round() as usize;
     Ok((
         picture,
-        crate::tile::Prepared {
+        decode::Prepared {
             samples: Vec::new(),
             width,
             height,

@@ -14,7 +14,7 @@
 // **Three sources, in this order** (`profile.rs`), because they are not equally trustworthy:
 //
 // 1. `supplied_curve` - the curve the body recorded for this shot, where the file carries
-//    one. Sony writes it in the SubIFD `lens.rs` walks. Scored on the fringe left around
+//    one. Sony writes it in the SubIFD `decode::lens` walks. Scored on the fringe left around
 //    point sources over 43 frames of two lenses, the tag leaves 10.23 against 18.25
 //    uncorrected. lensfun's TCA was tried for the same job and dropped: it covers three of
 //    five frames sampled and never won.

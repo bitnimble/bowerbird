@@ -9,7 +9,7 @@
 //! fitted inside 512px and re-encoded by `vips` at two qualities, bracketing what MediaProvider
 //! keeps. Frames are taken in capture order.
 
-use rawshim::decode_rawler::{Preview, upright_preview_jpeg};
+use decode::raw::{Preview, upright_preview_jpeg};
 use rawshim::stacks::{describe, group, similarity};
 
 const TILE: usize = 800;

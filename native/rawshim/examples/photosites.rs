@@ -35,10 +35,10 @@ fn main() {
         panic!("a float raw");
     };
 
-    let white = rawshim::decode_rawler::saturation_of(&image);
+    let white = decode::raw::saturation_of(&image);
     let stated = image.whitelevel.0.iter().copied().max().unwrap_or(0);
     let black: Vec<f32> = image.blacklevel.levels.iter().map(|v| v.as_f32()).collect();
-    let ceiling = rawshim::decode_rawler::channel_ceilings(&image);
+    let ceiling = decode::raw::channel_ceilings(&image);
     println!("{width}x{height}  make {}", image.clean_make);
     println!("white level stated {stated}, used {white}");
     println!("black {black:?}");

@@ -41,10 +41,10 @@ fn main() {
         // Answers "did the decode change" without a reference image, and answers it exactly, which
         // a mean does not: two runs agreeing here agree on every sample.
         let checksum = match &frame.pixels {
-            rawshim::frame::Pixels::Sixteen(p) => p.iter().map(|s| u64::from(*s)).sum::<u64>(),
-            rawshim::frame::Pixels::Eight(p) => p.iter().map(|s| u64::from(*s)).sum::<u64>(),
+            decode::frame::Pixels::Sixteen(p) => p.iter().map(|s| u64::from(*s)).sum::<u64>(),
+            decode::frame::Pixels::Eight(p) => p.iter().map(|s| u64::from(*s)).sum::<u64>(),
             // `decode_frame` reads the frame back; only the pipeline's own spellings keep it.
-            rawshim::frame::Pixels::Resident(_) => unreachable!("this decode returns host samples"),
+            decode::frame::Pixels::Resident(_) => unreachable!("this decode returns host samples"),
         };
         drop(frame);
 

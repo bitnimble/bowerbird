@@ -366,6 +366,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1e3a325bc115f096c8b77bbf027a7c2592230e70be2d985be950d3d5e60ebe"
 
 [[package]]
+name = "decode"
+version = "0.1.0"
+dependencies = [
+ "burst",
+ "bytemuck",
+ "colour",
+ "composition",
+ "denoise",
+ "fit",
+ "formats",
+ "geometry",
+ "gpu",
+ "mosaic",
+ "pollster",
+ "rawler",
+ "rayon",
+ "render",
+ "serde",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "denoise"
 version = "0.1.0"
 dependencies = [
@@ -1580,6 +1605,7 @@ dependencies = [
  "colour",
  "composition",
  "crc32fast",
+ "decode",
  "denoise",
  "fast_image_resize",
  "fit",

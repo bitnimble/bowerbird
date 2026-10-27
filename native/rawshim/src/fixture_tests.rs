@@ -206,12 +206,12 @@ fn falloff(source: &units::rgb::Rgb, corner: f64) -> units::rgb::Rgb {
     }
 }
 
-fn decode(path: &PathBuf, long_edge: u32) -> crate::frame::Frame {
+fn decode(path: &PathBuf, long_edge: u32) -> decode::frame::Frame {
     crate::decode_frame(path.to_str().unwrap(), long_edge)
         .unwrap_or_else(|| panic!("could not decode {}", path.display()))
 }
 
-fn long_edge(frame: &crate::frame::Frame) -> usize {
+fn long_edge(frame: &decode::frame::Frame) -> usize {
     frame.width.max(frame.height)
 }
 
@@ -343,8 +343,7 @@ mod decode_geometry {
     #[test]
     fn a_real_raf_yields_a_six_by_six_xtrans_period() {
         let path = fuji();
-        let source =
-            crate::decode_rawler::mapped(path.to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(path.to_str().unwrap()).expect("the fixture maps");
         let image = rawler::get_decoder(&source)
             .expect("a decoder for a RAF")
             .raw_image(
@@ -381,8 +380,7 @@ mod decode_geometry {
     /// second body lands on one of them. An X-Trans II sensor against the X-T3's IV.
     #[test]
     fn a_second_body_yields_a_pattern_of_its_own() {
-        let source =
-            crate::decode_rawler::mapped(fuji_noisy().to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(fuji_noisy().to_str().unwrap()).expect("the fixture maps");
         let image = rawler::get_decoder(&source)
             .expect("a decoder for a RAF")
             .raw_image(
@@ -534,9 +532,9 @@ mod decode_geometry {
     }
 
     /// A window of a photograph on disk, at the sensor's own resolution.
-    fn viewing(path: &str, tile: formats::orientation::Tile) -> crate::view::View {
+    fn viewing(path: &str, tile: formats::orientation::Tile) -> decode::view::View {
         let header = formats::header::read_path(path).expect("a header");
-        crate::view::View::whole(units::px::Size::exact(
+        decode::view::View::whole(units::px::Size::exact(
             header.width as usize,
             header.height as usize,
         ))
@@ -580,7 +578,7 @@ mod decode_geometry {
                 viewing(canon().to_str().unwrap(), tile),
                 detail,
                 denoise::galosh::Fit::Measure,
-                crate::RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
             )
             .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
             assert_eq!((frame.width, frame.height), (width, height));
@@ -614,7 +612,7 @@ mod decode_geometry {
         let path = canon();
         let path = path.to_str().unwrap();
         let whole = pollster::block_on(
-            crate::decode_rawler::decode(path, detail)
+            decode::raw::decode(path, detail)
                 .expect("the whole frame")
                 .to_host(),
         )
@@ -629,12 +627,12 @@ mod decode_geometry {
                 width: span,
                 height: span,
             };
-            let cut = crate::decode_rawler::decode_tile(
+            let cut = decode::raw::decode_tile(
                 path,
                 viewing(path, tile),
                 detail,
                 denoise::galosh::Fit::Measure,
-                crate::RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
                 denoise::dust::Known::Off,
             )
             .and_then(|cut| pollster::block_on(cut.to_host()))
@@ -665,9 +663,9 @@ mod decode_geometry {
     /// would have been graded less accurately than every Sony one for a reason nothing reported.
     #[test]
     fn a_raf_hands_back_the_preview_the_camera_wrote() {
-        let jpeg = crate::decode_rawler::upright_preview_jpeg(
+        let jpeg = decode::raw::upright_preview_jpeg(
             fuji().to_str().unwrap(),
-            crate::decode_rawler::Preview::Largest,
+            decode::raw::Preview::Largest,
         )
         .expect("the embedded JPEG");
         assert_eq!(&jpeg[..2], &[0xff, 0xd8], "a JPEG starts with SOI");
@@ -688,7 +686,7 @@ mod decode_geometry {
         let read = |colour: f64| {
             let detail = denoise::galosh::Detail::at(0.0, colour);
             pollster::block_on(
-                crate::decode_rawler::decode(path, detail)
+                decode::raw::decode(path, detail)
                     .expect("the frame")
                     .to_host(),
             )
@@ -697,7 +695,7 @@ mod decode_geometry {
         // Neighbour to neighbour over the green channel, which every position of the period holds
         // something of, against the level - the same shape of measure the pane test takes. Inside
         // the blue pane and clear of its edges: an edge's contrast is not roughness.
-        let roughness = |frame: &crate::frame::Frame| {
+        let roughness = |frame: &decode::frame::Frame| {
             let samples = frame.samples16().expect("16-bit");
             let (x0, y0, side) = (2150usize, 1006, 32);
             let at = |x: usize, y: usize| {
@@ -823,7 +821,7 @@ mod decode_geometry {
     fn the_denoise_takes_no_pattern_off(path: &str) {
         let read = |detail| {
             pollster::block_on(
-                crate::decode_rawler::decode(path, detail)
+                decode::raw::decode(path, detail)
                     .expect("the frame")
                     .to_host(),
             )
@@ -936,7 +934,7 @@ mod decode_geometry {
 
         for (path, prefix, crops, tolerance) in frames {
             let path = path.to_str().unwrap();
-            let decode = |detail| crate::decode_rawler::decode(path, detail).expect("the frame");
+            let decode = |detail| decode::raw::decode(path, detail).expect("the frame");
 
             let off = decode(denoise::galosh::Detail::at(0.0, 0.0));
             let resident = off
@@ -986,7 +984,7 @@ mod decode_geometry {
         let path = fuji();
         let path = path.to_str().unwrap();
         let whole = pollster::block_on(
-            crate::decode_rawler::decode(path, detail)
+            decode::raw::decode(path, detail)
                 .expect("the whole frame")
                 .to_host(),
         )
@@ -999,12 +997,12 @@ mod decode_geometry {
             width: 512,
             height: 512,
         };
-        let cut = crate::decode_rawler::decode_tile(
+        let cut = decode::raw::decode_tile(
             path,
             viewing(path, tile),
             detail,
             denoise::galosh::Fit::Measure,
-            crate::RENDITION_TILE_HALO,
+            decode::RENDITION_TILE_HALO,
             denoise::dust::Known::Off,
         )
         .and_then(|cut| pollster::block_on(cut.to_host()))
@@ -1084,7 +1082,7 @@ mod decode_geometry {
             stated_white: false,
         };
 
-        let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
+        let held = pollster::block_on(decode::hold_bytes(&bytes)).expect("held");
         let Some(fit) = pollster::block_on(held.fit()) else {
             return;
         };
@@ -1111,7 +1109,7 @@ mod decode_geometry {
                 .await
         })
         .expect("the open");
-        use crate::open_stage::Stage;
+        use decode::open_stage::Stage;
         assert_eq!(
             stages.into_inner(),
             [
@@ -1154,7 +1152,7 @@ mod decode_geometry {
                     sensor_long: Some(held.picture_long()),
                     defocus: render::base::Defringe::Take(whole.header.defocus),
                     photo_analysis: whole.header.photo_analysis.clone(),
-                    scale: crate::view::Scale::Full,
+                    scale: decode::view::Scale::Full,
                     repairs: Vec::new(),
                     drawn: None,
                     removal: None,
@@ -1251,7 +1249,7 @@ mod decode_geometry {
         let path = canon();
         let bytes = std::fs::read(&path).expect("the fixture reads");
 
-        let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
+        let held = pollster::block_on(decode::hold_bytes(&bytes)).expect("held");
         let Some(fit) = pollster::block_on(held.fit()) else {
             return;
         };
@@ -1277,7 +1275,7 @@ mod decode_geometry {
             0,
             denoise::galosh::Fit::Given(fit),
             settings.wanted(Some(&spots)),
-            &crate::open_stage::quiet,
+            &decode::open_stage::quiet,
         ))
         .expect("the whole frame");
         let whole = pollster::block_on(decoded.to_host()).expect("the frame on the host");
@@ -1301,10 +1299,10 @@ mod decode_geometry {
             let cut = pollster::block_on(async {
                 held.window(
                     units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
-                    crate::view::Scale::Full,
+                    decode::view::Scale::Full,
                     detail,
                     denoise::galosh::Fit::Given(fit),
-                    crate::RENDITION_TILE_HALO,
+                    decode::RENDITION_TILE_HALO,
                     settings.known(&spots),
                 )
                 .await?
@@ -1441,7 +1439,7 @@ mod decode_geometry {
     fn the_fit_is_the_one_this_sensor_has() {
         let detail = denoise::galosh::Detail::at(20.0, 30.0);
         // alpha and sigma_sq are green's, in the conditioned mosaic's own units - where full scale
-        // is the most amplified channel's saturation (`decode_rawler::channel_ceilings`). The dark
+        // is the most amplified channel's saturation (`decode::raw::channel_ceilings`). The dark
         // reference slots are in the stabilised domain those two define.
         let recorded = [
             (
@@ -1536,7 +1534,7 @@ mod decode_geometry {
     /// Both of the defringe's noise inputs survive the decode, which no other test would miss.
     ///
     /// `measure_defocus` takes them as `Option`, and every unit test of it passes `None` because a
-    /// GPU fixture has neither. So a refactor that stopped `decode_rawler` populating either one
+    /// GPU fixture has neither. So a refactor that stopped `decode::raw` populating either one
     /// leaves the fit falling back to a constant ceiling and the lattice's own correlations, on
     /// every photograph, with the whole suite still green.
     #[test]
@@ -1624,7 +1622,7 @@ mod decode_geometry {
                     viewing(path, region),
                     detail,
                     fit,
-                    crate::RENDITION_TILE_HALO,
+                    decode::RENDITION_TILE_HALO,
                 )
                 .expect("the region decodes");
                 assert_eq!((cut.width, cut.height), (region.width, region.height));
@@ -1697,10 +1695,10 @@ mod decode_geometry {
         ] {
             let cut = crate::decode_tile(
                 path,
-                viewing(path, region).at(crate::view::Scale::Half),
+                viewing(path, region).at(decode::view::Scale::Half),
                 detail,
                 fit,
-                crate::RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
             )
             .expect("the region decodes");
             let (cut_w, cut_h) = (region.width / 2, region.height / 2);
@@ -1747,7 +1745,7 @@ mod decode_geometry {
             width: 512,
             height: 512,
         };
-        let halo = crate::RENDITION_TILE_HALO;
+        let halo = decode::RENDITION_TILE_HALO;
         let given = crate::decode_tile(
             &path,
             viewing(&path, tile),
@@ -1786,8 +1784,7 @@ mod decode_geometry {
     #[test]
     fn a_held_region_is_the_decode_it_stands_in_for() {
         let path = clipped();
-        let source =
-            crate::decode_rawler::mapped(path.to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(path.to_str().unwrap()).expect("the fixture maps");
         let params = rawler::decoders::RawDecodeParams::default();
         // Off the grid the rest of the suite asks on, so that this test's own two calls are the
         // only ones the process-wide store has ever been asked for these rectangles.
@@ -1807,16 +1804,16 @@ mod decode_geometry {
                 .expect("a decoder")
                 .raw_image_region_tight(&source, &params, region, false)
                 .expect("the region decodes");
-            crate::raw_cache::Region { image, covered }
+            decode::raw_cache::Region { image, covered }
         };
-        let samples = |region: &crate::raw_cache::Region| match &region.image.data {
+        let samples = |region: &decode::raw_cache::Region| match &region.image.data {
             rawler::RawImageData::Integer(samples) => samples.clone(),
             rawler::RawImageData::Float(_) => panic!("a CFA frame came back as floats"),
         };
 
-        let first = crate::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
+        let first = decode::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
             .expect("the region decodes");
-        let again = crate::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
+        let again = decode::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
             .expect("the region is held");
         assert_eq!(
             decodes.get(),
@@ -1833,7 +1830,7 @@ mod decode_geometry {
         // And a rectangle the store has not been asked for is decoded rather than answered with
         // the one it holds, which is the failure a key too loose would produce.
         let other =
-            crate::raw_cache::region(&source, &params, elsewhere, || Some(decode(elsewhere)))
+            decode::raw_cache::region(&source, &params, elsewhere, || Some(decode(elsewhere)))
                 .expect("the region decodes");
         assert_eq!(
             decodes.get(),
@@ -2305,8 +2302,7 @@ mod loupe_tile {
             panic!("a PQ target")
         };
 
-        let held =
-            pollster::block_on(crate::decode::hold_path(path)).expect("the photograph opens");
+        let held = pollster::block_on(decode::hold_path(path)).expect("the photograph opens");
         let banded = pollster::block_on(crate::job::graded_bands(
             &job,
             &job.targets[0],
@@ -2543,7 +2539,7 @@ mod halving {
         );
         // Aspect must survive the halving, or the crop insets were scaled wrongly and
         // the frame comes out stretched.
-        let aspect = |f: &crate::frame::Frame| f.width as f64 / f.height as f64;
+        let aspect = |f: &decode::frame::Frame| f.width as f64 / f.height as f64;
         assert!((aspect(&halved) - aspect(&whole)).abs() < 0.01);
     }
 
@@ -2597,7 +2593,7 @@ mod halving {
 mod a_halved_frame_is_the_same_picture {
     use super::*;
 
-    fn frame_mean(frame: &crate::frame::Frame) -> f64 {
+    fn frame_mean(frame: &decode::frame::Frame) -> f64 {
         let levels = colour::resident::levels_of(frame.samples16().expect("16-bit"));
         levels.iter().map(|&level| f64::from(level)).sum::<f64>() / levels.len() as f64
     }
@@ -3182,9 +3178,8 @@ mod camera_match {
     fn the_preview_the_fit_measures_arrives_upright() {
         for raw in [sony(), canon()] {
             let path = raw.to_str().expect("a fixture path");
-            let largest = crate::decode_rawler::Preview::Largest;
-            let stored =
-                crate::decode_rawler::upright_preview_jpeg(path, largest).expect("a preview");
+            let largest = decode::raw::Preview::Largest;
+            let stored = decode::raw::upright_preview_jpeg(path, largest).expect("a preview");
             let long_edge = colour::matched::sample_long_edge();
             let upright = crate::decode_embedded_rgb(path, long_edge).expect("a preview");
             let render = decode(&raw, 0);
@@ -3448,11 +3443,11 @@ mod hdr_grade {
     }
 
     /// The scene-linear decode every case here grades from.
-    fn linear() -> crate::frame::Frame {
+    fn linear() -> decode::frame::Frame {
         decode(&sony(), 0)
     }
 
-    fn source(frame: &crate::frame::Frame) -> crate::hdr::Source<'_> {
+    fn source(frame: &decode::frame::Frame) -> crate::hdr::Source<'_> {
         crate::hdr::Source {
             samples: frame.samples16().expect("a 16-bit decode"),
             width: frame.width,
@@ -3462,7 +3457,7 @@ mod hdr_grade {
     }
 
     /// The camera match, fitted the way a job fits it (§10.8.1).
-    fn matched(frame: &crate::frame::Frame) -> Option<fit::hdr::HdrMatch> {
+    fn matched(frame: &decode::frame::Frame) -> Option<fit::hdr::HdrMatch> {
         let resident = frame.on_device(adapter())?;
         crate::fit_hdr_for(&resident, sony().to_str().unwrap(), QUANTILE, frame.as_shot)
     }
@@ -3596,7 +3591,7 @@ mod hdr_grade {
     /// `hdr::graded`, which is already the shader - these tests only ever wanted the rolled
     /// frame it returns.
     fn graded(
-        frame: &crate::frame::Frame,
+        frame: &decode::frame::Frame,
         options: &EncodeOptions,
         m: Option<&fit::hdr::HdrMatch>,
     ) -> (Vec<u16>, usize, usize) {
@@ -3676,7 +3671,7 @@ mod hdr_grade {
         let frame = linear();
         let digest = |m: Option<&fit::hdr::HdrMatch>| {
             let (graded, _, _) = graded(&frame, &options(800.0, "/dev/null"), m);
-            crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(
+            crate::debug::sha256_hex(&crate::debug::to_bytes(&decode::frame::Pixels::Sixteen(
                 graded,
             )))
         };
@@ -4240,14 +4235,13 @@ mod pictures {
             ),
         ] {
             let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held =
-                pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("the mosaic");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("the mosaic");
             let frame = pollster::block_on(held.frame(
                 denoise::galosh::Detail::at(0.0, 0.0),
                 0,
                 denoise::galosh::Fit::Only,
                 denoise::dust::Wanted::Off,
-                &crate::open_stage::quiet,
+                &decode::open_stage::quiet,
             ))
             .expect("the frame");
             let resident = frame
@@ -4809,7 +4803,7 @@ mod tone_domain {
     fn graded(
         gpu: &'static gpu::Gpu,
         samples: &[u16],
-        frame: &crate::frame::Frame,
+        frame: &decode::frame::Frame,
         colour: Option<&colour::matched::HdrColour>,
         levels: colour::tone::Levels,
         adjust: render::grade::Adjust,
@@ -5184,10 +5178,10 @@ mod pmrid {
             super::bayer_noisy(),
         ] {
             let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
             let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
             let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let gains = decode::raw::channel_ceilings(&image);
             let lift = pollster::block_on(denoise::pmrid::lift(
                 gpu,
                 network,
@@ -5235,10 +5229,10 @@ mod pmrid {
         denoise::pmrid::hold_arenas();
         for path in [super::sony(), super::clipped()] {
             let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
             let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
             let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let gains = decode::raw::channel_ceilings(&image);
             let (cfa, mosaic) = (held.cfa(), held.device_mosaic());
             let detail = denoise::galosh::Detail::at(100.0, 100.0);
             let run = |network: &denoise::pmrid::Pmrid| {

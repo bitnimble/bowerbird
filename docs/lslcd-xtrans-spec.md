@@ -17,7 +17,7 @@ Leung, Jeon and Dubois's _Least-squares luma-chroma demultiplexing algorithm for
 ## 1. Scope
 
 Input is a conditioned mosaic: black subtracted, normalised by saturation, white balanced, one
-`f32` per photosite, as `decode_rawler::condition` leaves it. Output is three interleaved `f32`
+`f32` per photosite, as `decode::raw::condition` leaves it. Output is three interleaved `f32`
 planes of the same extent, in the sensor's own colour space, exactly as RCD leaves them - the
 matrix and the highlight reconstruction downstream are shared and unchanged.
 

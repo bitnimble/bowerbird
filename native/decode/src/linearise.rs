@@ -506,7 +506,7 @@ impl Picture {
         }
     }
 
-    /// The uniform block, written by hand: see `crate::wgsl_layout` for why the two sides are
+    /// The uniform block, written by hand: see `shaders::layout` for why the two sides are
     /// held together by a test rather than by care.
     fn block(
         &self,
@@ -594,7 +594,7 @@ impl Picture {
 }
 
 /// What [`Picture::block`] writes, for `wgsl_layout` to hold against the shader's own struct.
-pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 32;
+pub const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 32;
 
 fn float_storage(gpu: &gpu::Gpu, values: &[f32]) -> gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len().max(1) * 4);

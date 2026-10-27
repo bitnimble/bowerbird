@@ -1,7 +1,7 @@
 //! Which decoder a photograph gets, and the one thing every caller above them holds.
 //!
-//! **Two front ends and one pipeline.** A RAW is read by `decode_rawler` and stops at the
-//! conditioned mosaic; a JPEG, PNG, HEIC or AVIF is read by `decode_rendered` and stops at its code
+//! **Two front ends and one pipeline.** A RAW is read by `raw` and stops at the
+//! conditioned mosaic; a JPEG, PNG, HEIC or AVIF is read by `rendered` and stops at its code
 //! values. Below both, everything is the same code: the coding, the defringe, the lens gather, the
 //! sharpen, the grade, the crop and the roll-off. This module is the seam, and it is deliberately
 //! the *only* one - the alternative is every caller asking what kind of file it has, which is a
@@ -12,21 +12,39 @@
 //! lattice to read. Each of those is already an `Option` or a no-op for a RAW that arrived without
 //! an adapter, so the callers were written for it.
 
-use units::px::{Photograph, Rect, Size};
+#![deny(unsafe_code)]
+#![deny(unfulfilled_lint_expectations)]
+#![deny(unsafe_op_in_unsafe_fn)]
+
+mod acr3;
+pub mod dng_rendering;
+pub mod frame;
+pub mod lens;
+/// A finished picture's code values into the frame the pipeline reads. The rendered formats'
+/// answer to the conditioning and the demosaic, which they have no mosaic for.
+pub mod linearise;
+pub mod open_stage;
+pub mod raw;
+pub mod raw_cache;
+/// The photographs that arrive already rendered: PNG, JPEG, HEIC and AVIF.
+pub mod rendered;
+pub mod view;
+
+use units::px::{At, Photograph, Rect, Size};
 
 /// A photograph opened as far as the stage a setting can still move.
 pub enum Held {
     /// A RAW, at the conditioned mosaic.
-    Mosaic(crate::decode_rawler::Held),
+    Mosaic(crate::raw::Held),
     /// A finished picture, or a linear DNG, at its code values: neither has a mosaic.
-    Rendered(crate::decode_rendered::Held),
+    Rendered(crate::rendered::Held),
 }
 
 /// Opens whatever these bytes are, as far as the device.
 pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
     match formats::rendered::is_rendered_bytes(bytes) {
-        true => crate::decode_rendered::hold(bytes).map(Held::Rendered),
-        false => crate::decode_rawler::open_bytes(bytes).await,
+        true => crate::rendered::hold(bytes).map(Held::Rendered),
+        false => crate::raw::open_bytes(bytes).await,
     }
 }
 
@@ -34,15 +52,15 @@ pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
 #[cfg(feature = "renditions")]
 pub async fn hold_path(path: &str) -> Result<Held, String> {
     if !formats::rendered::is_rendered(path) {
-        return crate::decode_rawler::open_path(path).await;
+        return crate::raw::open_path(path).await;
     }
     let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
-    crate::decode_rendered::hold(&bytes).map(Held::Rendered)
+    crate::rendered::hold(&bytes).map(Held::Rendered)
 }
 
 /// The whole photograph as a scene-linear frame, from bytes a caller already holds.
 ///
-/// `at_least_long_edge` is the floor `decode_rawler::decode_fitted` documents: the smallest long
+/// `at_least_long_edge` is the floor `crate::raw::decode_fitted` documents: the smallest long
 /// edge that would still serve, which a photograph at least twice that is halved to.
 pub async fn frame_from_bytes(
     bytes: &[u8],
@@ -52,17 +70,8 @@ pub async fn frame_from_bytes(
     dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     match formats::rendered::is_rendered_bytes(bytes) {
-        true => {
-            whole(
-                &crate::decode_rendered::hold(bytes).ok()?,
-                at_least_long_edge,
-            )
-            .await
-        }
-        false => {
-            crate::decode_rawler::decode_bytes_async(bytes, detail, at_least_long_edge, fit, dust)
-                .await
-        }
+        true => whole(&crate::rendered::hold(bytes).ok()?, at_least_long_edge).await,
+        false => crate::raw::decode_bytes_async(bytes, detail, at_least_long_edge, fit, dust).await,
     }
 }
 
@@ -80,17 +89,10 @@ pub fn frame_from_path(
     dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     if !formats::rendered::is_rendered(path) {
-        return crate::decode_rawler::decode_fitted(
-            path,
-            detail,
-            at_least_long_edge,
-            force_half,
-            fit,
-            dust,
-        );
+        return crate::raw::decode_fitted(path, detail, at_least_long_edge, force_half, fit, dust);
     }
     let bytes = std::fs::read(path).ok()?;
-    let held = crate::decode_rendered::hold(&bytes).ok()?;
+    let held = crate::rendered::hold(&bytes).ok()?;
     pollster::block_on(whole(&held, at_least_long_edge))
 }
 
@@ -110,16 +112,16 @@ pub fn hold_path_unturned(path: &str) -> Result<Held, String> {
 }
 
 #[cfg(feature = "renditions")]
-fn held_unturned(path: &str) -> Result<crate::decode_rendered::Held, String> {
+fn held_unturned(path: &str) -> Result<crate::rendered::Held, String> {
     let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
     let mut read = formats::rendered::read(&bytes)?;
     read.turn = rawler::decoders::Orientation::Normal;
-    crate::decode_rendered::holding(read)
+    crate::rendered::holding(read)
 }
 
 /// A held finished picture as its whole self, halved where the caller's floor allows it.
-pub(crate) async fn whole(
-    held: &crate::decode_rendered::Held,
+pub async fn whole(
+    held: &crate::rendered::Held,
     at_least_long_edge: u32,
 ) -> Option<crate::frame::Frame> {
     let size = held.size();
@@ -163,17 +165,17 @@ pub async fn tile_from(
         _ => None,
     };
     if let Some(bytes) = rendered {
-        return crate::decode_rendered::hold(bytes)
+        return crate::rendered::hold(bytes)
             .ok()?
             .window(view.window, view.scale);
     }
     let raw = match source {
-        // Lazily, because this is a region read: `decode_rawler::mapped` says what the prefault in
+        // Lazily, because this is a region read: `crate::raw::mapped` says what the prefault in
         // `RawSource::new` would cost a caller that indexes a rectangle of the file.
-        Source::Path(path) => crate::decode_rawler::mapped(path)?,
+        Source::Path(path) => crate::raw::mapped(path)?,
         Source::Bytes(it) => rawler::rawsource::RawSource::new_from_slice(it),
     };
-    crate::decode_rawler::decode_tile_source(&raw, view, detail, fit, halo, dust).await
+    crate::raw::decode_tile_source(&raw, view, detail, fit, halo, dust).await
 }
 
 /// [`tile_from`] over a stack's RAWs, merged on the mosaic (`merge`).
@@ -197,9 +199,9 @@ pub async fn merged_tile_from(
     }
     let sources = paths
         .iter()
-        .map(|path| crate::decode_rawler::mapped(path))
+        .map(|path| crate::raw::mapped(path))
         .collect::<Option<Vec<_>>>()?;
-    crate::decode_rawler::decode_merged_tile(
+    crate::raw::decode_merged_tile(
         &sources, view, detail, fit, halo, prior, recipe, stack, scale,
     )
     .await
@@ -312,5 +314,118 @@ impl Held {
             }
             Held::Rendered(held) => held.window(window, scale),
         }
+    }
+}
+/// How much context a tile is given either side, where what a seam costs is worth more than what
+/// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
+/// GALOSH reads farther and raises it to its own ([`denoise::galosh::reach`]).
+///
+/// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
+/// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
+/// the export is a magnifier that lies, which is worse than a slower one.
+pub const RENDITION_TILE_HALO: usize = 96;
+
+/// The same, for a tile the editor draws and then replaces.
+pub const EDITOR_TILE_HALO: usize = 32;
+
+/// Set by the seam harnesses to cut one frame at several halos from one process, which is the only
+/// way to put the results beside each other. `usize::MAX` leaves the caller's own choice alone.
+static TILE_HALO_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(usize::MAX);
+
+pub fn set_tile_halo(halo: usize) {
+    TILE_HALO_OVERRIDE.store(halo, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The halo to use, which is the caller's unless a harness has taken the choice away.
+pub fn tile_halo(asked: usize) -> usize {
+    match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        usize::MAX => asked,
+        set => set,
+    }
+}
+
+/// The window a tile was built in, ready for the grade.
+pub struct Prepared {
+    /// Normalised PQ Rec.2020 ([`colour::tone::encode_base`]), the window and its margin.
+    pub samples: Vec<u16>,
+    pub width: usize,
+    pub height: usize,
+    /// `[left, top, width, height]` of the rectangle actually asked for, inside that window.
+    pub keep: [usize; 4],
+    /// The levels the samples above were coded against, which the grade anchors to.
+    pub levels: colour::tone::Anchored,
+    pub matched: Option<fit::hdr::HdrMatch>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
+    /// The camera's own multipliers, which a composite files as its balance
+    /// (`photo_analysis::FromRaw::balance`).
+    ///
+    /// **A composite's are the reference source's**, the frame a composite is graded as. None where
+    /// no source of this window carried any - the case a synthetic fixture and a finished picture
+    /// both are.
+    pub wb_gains: Option<[f32; 3]>,
+    /// The mosaic noise the window was denoised and is sharpened against: a composite's is its
+    /// reference source's.
+    pub noise: Option<denoise::galosh::NoiseFit>,
+    /// The photograph the window is a piece of, which is the scale the presence sliders read at.
+    pub photograph: (usize, usize),
+    /// Where the window starts in that photograph, which is where the grade reads the
+    /// neighbourhood thumb.
+    pub origin: (usize, usize),
+    /// The longitudinal aberration the defringe took off, measured here where the caller had none
+    /// to hand. Whole-frame, so what a window is *given* it must hand on rather than refit.
+    pub defocus: (f32, f32),
+    /// The library's reference white, which the coding above already used.
+    pub reference_nits: units::light::Light<units::light::SceneNits>,
+}
+
+impl Prepared {
+    /// The scene this window is graded as part of: the photograph's colour and levels, with the
+    /// reader's own exposure and sliders.
+    pub fn scene(
+        &self,
+        exposure: Option<units::light::Stops>,
+        adjust: render::grade::Adjust,
+    ) -> render::grade::SceneGrade<'_> {
+        render::grade::SceneGrade::new(
+            self.matched.as_ref().and_then(|m| m.colour.as_ref()),
+            self.levels,
+            self.reference_nits,
+            exposure,
+            adjust,
+            self.as_shot,
+        )
+    }
+
+    /// That scene over this window, which differs from a whole frame's in one word.
+    pub fn grade<'a>(
+        &self,
+        scene: &'a render::grade::SceneGrade<'a>,
+        peak_nits: units::light::Light<units::light::DisplayNits>,
+        output: render::grade::Output,
+    ) -> render::grade::Grade<'a> {
+        render::grade::Grade {
+            peak_nits,
+            ..scene.gpu_grade(self.width, self.height, output)
+        }
+        .within(self.photograph)
+        .neighbourhood_windowed(
+            Size::exact(self.photograph.0, self.photograph.1),
+            At::exact(self.origin.0, self.origin.1),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
+    #[test]
+    fn every_uniform_is_the_size_its_shader_reads() {
+        shaders::layout::check(&[(
+            "linearise.wgsl",
+            "Params",
+            shaders::LINEARISE.source,
+            crate::linearise::BLOCK_BYTES,
+        )]);
     }
 }

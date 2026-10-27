@@ -370,49 +370,6 @@ pub fn read_distortion(bytes: &[u8]) -> Distortion {
     out
 }
 
-/// Every entry in the SubIFDs, as tag/type/count/first-values. For working out what an
-/// undocumented tag actually holds.
-#[cfg(all(test, feature = "fixtures"))]
-pub fn _for_testing_subifd(bytes: &[u8], wanted: u16) -> Option<(u16, u32, Vec<i32>)> {
-    let reader = Reader {
-        bytes,
-        little: byte_order(bytes)?,
-    };
-    let ifd0 = reader.u32(4)?;
-    // This one is handed whole files, so how far a pointer reached is nobody's question.
-    let reach = &mut None;
-    let top = read_ifd(&reader, ifd0 as usize, reach);
-    for entry in top {
-        if entry.tag != SUBIFD_TAG || entry.kind != TYPE_LONG {
-            continue;
-        }
-        for k in 0..entry.count as usize {
-            let Some(offset) = reader.u32(entry.start + k * 4) else {
-                break;
-            };
-            for found in read_ifd(&reader, offset as usize, reach) {
-                if found.tag != wanted {
-                    continue;
-                }
-                let unit = type_size(found.kind)?;
-                if found.start + (found.count * unit) as usize > bytes.len() {
-                    continue;
-                }
-                let values = (0..found.count as usize)
-                    .filter_map(|i| match found.kind {
-                        TYPE_SSHORT => reader.i16(found.start + i * 2).map(i32::from),
-                        TYPE_SHORT => reader.u16(found.start + i * 2).map(i32::from),
-                        TYPE_LONG => reader.u32(found.start + i * 4).map(|v| v as i32),
-                        _ => reader.bytes.get(found.start + i).map(|v| i32::from(*v)),
-                    })
-                    .collect();
-                return Some((found.kind, found.count, values));
-            }
-        }
-    }
-    None
-}
-
 /// The spline alone, whatever the correction flag says. For the tests, which check
 /// the parser rather than the decision made from it.
 pub fn read_distortion_spline(bytes: &[u8]) -> Option<Vec<f64>> {

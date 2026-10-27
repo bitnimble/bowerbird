@@ -56,14 +56,15 @@ fn the_laps_run_either_way() {
 /// closing one fails this test rather than being forgotten.
 #[test]
 fn the_wasm_modules_read_the_clock_through_the_shim() {
-    // `lib.rs`: an `#[ignore]`d benchmark in a test module, which no browser builds.
-    let known = ["lib.rs"];
+    // `rawshim/src/lib.rs`: an `#[ignore]`d benchmark in a test module, which no browser builds.
+    // `trace/src/clock.rs`: the shim itself, which says why it exists.
+    let known = ["rawshim/src/lib.rs", "trace/src/clock.rs"];
 
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let native = native();
     let mut found: Vec<String> = Vec::new();
-    for name in wasm_modules() {
+    for name in wasm_modules().into_iter().chain(wasm_crate_sources()) {
         let text =
-            std::fs::read_to_string(src.join(&name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+            std::fs::read_to_string(native.join(&name)).unwrap_or_else(|e| panic!("{name}: {e}"));
         if text.contains("Instant::now") {
             found.push(name);
         }
@@ -85,9 +86,9 @@ fn the_wasm_modules_read_the_clock_through_the_shim() {
 /// bar one: `renditions` is the lens database and libavif and the rest are test-only, while
 /// `target_arch = "wasm32"` is the browser's own entry points and is in this build alone.
 fn wasm_modules() -> Vec<String> {
-    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+    let lib = native().join("rawshim/src/lib.rs");
     let text = std::fs::read_to_string(&lib).expect("lib.rs reads");
-    let mut out = vec!["lib.rs".to_string()];
+    let mut out = vec!["rawshim/src/lib.rs".to_string()];
     let mut gated = false;
     for line in text.lines() {
         let line = line.trim();
@@ -104,27 +105,102 @@ fn wasm_modules() -> Vec<String> {
         {
             if let Some(name) = rest.strip_suffix(';') {
                 if !gated {
-                    out.push(format!("{name}.rs"));
+                    out.push(format!("rawshim/src/{name}.rs"));
                 }
             }
         }
         gated = false;
     }
     assert!(
-        out.contains(&"decode_rawler.rs".to_string()),
+        out.contains(&"rawshim/src/edit.rs".to_string()),
         "the module scan found nothing"
     );
     assert!(
-        out.contains(&"wasm.rs".to_string()),
+        out.contains(&"rawshim/src/wasm.rs".to_string()),
         "the browser's own entry points went unscanned"
     );
     for excluded in ["picture.rs", "pin.rs", "fixture_tests.rs"] {
         assert!(
-            !out.contains(&excluded.to_string()),
+            !out.contains(&format!("rawshim/src/{excluded}")),
             "{excluded} is not in a wasm build"
         );
     }
     out
+}
+
+/// Every source file of every workspace crate rawshim links into the page, found by walking the
+/// path dependencies its manifest and theirs name rather than listed here. Optional dependencies
+/// are the server's half, and the vendored fork carries its own clock shim (`ppg.rs`).
+fn wasm_crate_sources() -> Vec<String> {
+    let native = native();
+    let mut crates: Vec<String> = Vec::new();
+    let mut pending = vec!["rawshim".to_string()];
+    while let Some(name) = pending.pop() {
+        let manifest = std::fs::read_to_string(native.join(&name).join("Cargo.toml"))
+            .unwrap_or_else(|e| panic!("{name}/Cargo.toml: {e}"));
+        for dependency in linked_paths(&manifest) {
+            if dependency.starts_with("vendor/") || crates.contains(&dependency) {
+                continue;
+            }
+            crates.push(dependency.clone());
+            pending.push(dependency);
+        }
+    }
+    for expected in ["decode", "fit", "render", "trace"] {
+        assert!(
+            crates.contains(&expected.to_string()),
+            "the dependency walk missed {expected}"
+        );
+    }
+    let mut out = Vec::new();
+    for name in crates {
+        sources_under(&native, &format!("{name}/src"), &mut out);
+    }
+    out
+}
+
+/// The `path` dependencies a manifest links into its own build, relative to `native/`.
+fn linked_paths(manifest: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut linked = false;
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            linked =
+                line == "[dependencies]" || line == "[target.wasm32-unknown-unknown.dependencies]";
+            continue;
+        }
+        if !linked || line.contains("optional = true") {
+            continue;
+        }
+        let Some((_, rest)) = line.split_once("path = \"../") else {
+            continue;
+        };
+        if let Some((path, _)) = rest.split_once('"') {
+            out.push(path.to_string());
+        }
+    }
+    out
+}
+
+fn sources_under(native: &std::path::Path, dir: &str, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(native.join(dir)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = format!("{dir}/{}", entry.file_name().to_string_lossy());
+        if entry.path().is_dir() {
+            sources_under(native, &name, out);
+        } else if name.ends_with(".rs") {
+            out.push(name);
+        }
+    }
+}
+
+fn native() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("rawshim sits in native/")
+        .to_path_buf()
 }
 
 /// The names the page imports, which are `wasm.rs`'s to declare and nothing native's to notice.

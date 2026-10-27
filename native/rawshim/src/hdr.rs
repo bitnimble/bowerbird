@@ -30,10 +30,10 @@ const MATCH_PREVIEW: usize = 0;
 
 /// The preview the camera match is fitted against, by path.
 pub fn match_preview(raw_path: &str) -> Option<units::rgb::Rgb> {
-    crate::decode_rawler::upright_preview_rgb(
+    decode::raw::upright_preview_rgb(
         raw_path,
         MATCH_PREVIEW,
-        crate::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     )
 }
 
@@ -44,10 +44,8 @@ pub fn match_preview(raw_path: &str) -> Option<units::rgb::Rgb> {
 /// tag of its own would come out differently through the two, and
 /// `both_hosts_take_the_same_preview_pixels` is what holds them to one answer.
 pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
-    let jpeg = crate::decode_rawler::upright_preview_jpeg_bytes(
-        bytes,
-        crate::decode_rawler::Preview::for_the_match(),
-    )?;
+    let jpeg =
+        decode::raw::upright_preview_jpeg_bytes(bytes, decode::raw::Preview::for_the_match())?;
     formats::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
 }
 

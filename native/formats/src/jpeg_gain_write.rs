@@ -264,7 +264,7 @@ fn map_xmp(terms: &Terms) -> String {
     )
 }
 
-/// ISO 21496-1's metadata payload, which `decode_rendered::iso_21496_terms` reads back.
+/// ISO 21496-1's metadata payload, which `decode::rendered::iso_21496_terms` reads back.
 fn iso_payload(terms: &Terms) -> Vec<u8> {
     fn rational(value: f32) -> [u8; 8] {
         const DENOMINATOR: u32 = 1_000_000;

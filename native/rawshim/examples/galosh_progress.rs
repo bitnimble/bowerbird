@@ -61,7 +61,7 @@ fn main() {
         width,
         height,
         (width * height) as f64 / 1e6,
-        rawshim::RENDITION_TILE_HALO,
+        decode::RENDITION_TILE_HALO,
     );
 
     let mut one = std::time::Duration::MAX;
@@ -150,10 +150,10 @@ fn main() {
         "-",
     );
     for tile in [4096usize, 2048, 1024, 512] {
-        let (out, mut taken, ticks, gap) = tiled(tile, rawshim::RENDITION_TILE_HALO);
+        let (out, mut taken, ticks, gap) = tiled(tile, decode::RENDITION_TILE_HALO);
         // Best of three, since a run this long picks up whatever else wanted the GPU.
         for _ in 0..2 {
-            taken = taken.min(tiled(tile, rawshim::RENDITION_TILE_HALO).1);
+            taken = taken.min(tiled(tile, decode::RENDITION_TILE_HALO).1);
         }
         println!(
             "  {tile:>5}  {ticks:>6}  {:>6}ms  {:>6}ms  {:>6.2}x  {:>11e}",

@@ -453,7 +453,7 @@ fn whole_levels(
         }
 
         const MEASURED_LONG_EDGE: u32 = 1024;
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             file.path,
             job.detail(),
             MEASURED_LONG_EDGE,
@@ -596,7 +596,7 @@ fn stacked_sources(
     let mut fits = Vec::with_capacity(files.len());
     for (at, file) in files.iter().enumerate() {
         let stored = file.analysis.and_then(|a| a.from_raw.noise);
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             file.path,
             read,
             DECODED_AT,
@@ -714,10 +714,10 @@ fn union_match(
     // what it compares is the content rather than the arrangement of it.
     let mut theirs: Vec<units::rgb::Rgb> = Vec::with_capacity(files.len());
     for file in files {
-        theirs.push(crate::decode_rawler::upright_preview_rgb(
+        theirs.push(decode::raw::upright_preview_rgb(
             file.path,
             FITTED_ON,
-            crate::decode_rawler::Preview::for_the_match(),
+            decode::raw::Preview::for_the_match(),
         )?);
     }
     // Each stack has to be square, so a set whose cameras embed previews of different widths
@@ -1222,12 +1222,12 @@ pub(crate) fn base(
                 noise,
                 match drawn {
                     Drawn::Merged(..) => job.detail().without_upscaler(),
-                    _ => job.detail().on_bayer(crate::decode_rawler::upscalable_at(
-                        files[spec.reference].path,
-                    )),
+                    _ => job
+                        .detail()
+                        .on_bayer(decode::raw::upscalable_at(files[spec.reference].path)),
                 }
                 .noise_left(noise),
-                crate::decode_rawler::camera_to_rec2020_at(files[spec.reference].path),
+                decode::raw::camera_to_rec2020_at(files[spec.reference].path),
                 wb_gains.unwrap_or([1.0; 3]),
                 1,
             ),
@@ -1427,7 +1427,7 @@ mod tests {
         let coded = pollster::block_on(composite.into_host()).expect("the window reads back");
 
         // The picture itself, over the same rectangle, as the decode hands it over.
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             &paths[0],
             denoise::galosh::Detail::at(0.0, 0.0),
             wide as u32,

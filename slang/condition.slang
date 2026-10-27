@@ -1,4 +1,4 @@
-// `decode_rawler::conditioned` as a kernel: the sensor's samples become the mosaic every later
+// `decode::raw::conditioned` as a kernel: the sensor's samples become the mosaic every later
 // stage reads.
 //
 // **The samples arrive packed two to a `u32`, which is the whole point.** WGSL has no `u16`, so
@@ -11,7 +11,7 @@
 // requires only 2.5 ULP of `OpFDiv` and RADV takes it, lowering the divide to a reciprocal and a
 // multiply - so a shader spelling `(raw - floor) / range * gain` disagrees with the CPU in the last
 // bit, and this frame is what every rendition and every later stage is built from. A conditioned
-// sample is a function of sixteen bits and a slot, so `decode_rawler::curve` evaluates its own
+// sample is a function of sixteen bits and a slot, so `decode::raw::curve` evaluates its own
 // expression over the whole of that domain and nothing is computed twice.
 //
 // **A slot is not a position, and on a 6x6 pattern the difference is 33 runs of the table.** What

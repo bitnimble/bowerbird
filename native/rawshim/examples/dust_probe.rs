@@ -51,7 +51,7 @@ fn main() {
         let aperture = header.as_ref().map_or(0.0, |header| header.aperture);
 
         let started = std::time::Instant::now();
-        let Some(held) = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)) else {
+        let Some(held) = pollster::block_on(decode::raw::hold_bytes(&bytes)) else {
             eprintln!("{path}: no decoder read these bytes");
             continue;
         };

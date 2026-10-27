@@ -754,12 +754,9 @@ async fn preview_of(
 
     let path = source.path;
     if !formats::rendered::is_rendered(path) {
-        let preview = crate::decode_rawler::upright_preview_rgb(
-            path,
-            wide,
-            crate::decode_rawler::Preview::for_the_match(),
-        )
-        .ok_or_else(|| format!("{} embeds no preview to align on", source.photo_id))?;
+        let preview =
+            decode::raw::upright_preview_rgb(path, wide, decode::raw::Preview::for_the_match())
+                .ok_or_else(|| format!("{} embeds no preview to align on", source.photo_id))?;
         return Ok(fit::hdr::Source {
             buffer: fit::hdr::levelled_source(gpu, preview.as_ref()),
             width: preview.width,
@@ -767,7 +764,7 @@ async fn preview_of(
         });
     }
 
-    let frame = crate::decode::frame_from_path(
+    let frame = decode::frame_from_path(
         path,
         denoise::galosh::Detail::at(0.0, 0.0),
         wide as u32,
@@ -1145,7 +1142,7 @@ pub(crate) mod tests {
         across: usize,
         down: usize,
         from: crate::composite_tile::From,
-    ) -> (colour::resident::Resident, crate::tile::Prepared) {
+    ) -> (colour::resident::Resident, decode::Prepared) {
         let files: Vec<crate::composite_tile::SourceFile<'_>> = paths
             .iter()
             .map(|path| crate::composite_tile::SourceFile {

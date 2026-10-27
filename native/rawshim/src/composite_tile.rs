@@ -847,7 +847,7 @@ pub(crate) fn combined(measured: &[colour::tone::Levels]) -> Option<colour::tone
 pub async fn prepared(
     spec: &Composition,
     request: &CompositeRequest<'_>,
-) -> Result<(Resident, crate::tile::Prepared), String> {
+) -> Result<(Resident, decode::Prepared), String> {
     prepared_with(spec, request, None).await
 }
 
@@ -869,7 +869,7 @@ pub async fn merged(
     request: &CompositeRequest<'_>,
     frames: &[&str],
     stack: burst::Stack,
-) -> Result<(Resident, crate::tile::Prepared), String> {
+) -> Result<(Resident, decode::Prepared), String> {
     if spec.sources.len() != frames.len() || request.sources.len() != frames.len() {
         return Err("the stack's recipe and its frames disagree".into());
     }
@@ -904,7 +904,7 @@ async fn prepared_with(
     spec: &Composition,
     request: &CompositeRequest<'_>,
     merging: Option<Merging<'_>>,
-) -> Result<(Resident, crate::tile::Prepared), String> {
+) -> Result<(Resident, decode::Prepared), String> {
     let refused =
         || render::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = gpu::device().ok_or_else(refused)?;
@@ -949,7 +949,7 @@ async fn prepared_with(
     let canvas = |value: usize| ((value as f64) / request.scale).round() as usize;
     Ok((
         composite,
-        crate::tile::Prepared {
+        decode::Prepared {
             samples: Vec::new(),
             width,
             height,
@@ -1059,20 +1059,20 @@ async fn taken(
     };
     let (frame, full, region_at) = match request.from {
         From::Original => {
-            let view = crate::view::View {
+            let view = decode::view::View {
                 photograph,
                 window: region,
-                scale: crate::view::Scale::for_long_edge(photograph.raw(), wanted as u32),
+                scale: decode::view::Scale::for_long_edge(photograph.raw(), wanted as u32),
             };
             let fit = denoise::galosh::wanted(noise, request.detail);
             let frame = match merging {
                 None => {
-                    crate::decode::tile_from(
-                        crate::decode::Source::Path(file.path),
+                    decode::tile_from(
+                        decode::Source::Path(file.path),
                         view,
                         request.detail,
                         fit,
-                        crate::RENDITION_TILE_HALO,
+                        decode::RENDITION_TILE_HALO,
                         // A panorama carries no reader's settings yet, and dust removal is one.
                         denoise::dust::Known::Off,
                     )
@@ -1082,12 +1082,12 @@ async fn taken(
                     let prior = burst::prior(merging.recipe, view.window, merging.stack.taken)
                         .ok_or("a stack's frame cannot be projected")?;
                     let finer = (wanted / long).ceil().clamp(1.0, magnified);
-                    crate::decode::merged_tile_from(
+                    decode::merged_tile_from(
                         merging.frames,
                         view,
                         request.detail,
                         fit,
-                        crate::RENDITION_TILE_HALO,
+                        decode::RENDITION_TILE_HALO,
                         &prior,
                         merging.recipe,
                         merging.stack,
@@ -1125,11 +1125,11 @@ async fn taken(
     lap("decode");
     let drawn = (frame.width, frame.height);
     let resident = match frame.pixels {
-        crate::frame::Pixels::Resident(resident) => resident,
-        crate::frame::Pixels::Sixteen(samples) => {
+        decode::frame::Pixels::Resident(resident) => resident,
+        decode::frame::Pixels::Sixteen(samples) => {
             colour::resident::Resident::upload(gpu, &samples, drawn.0, drawn.1)
         }
-        crate::frame::Pixels::Eight(_) => {
+        decode::frame::Pixels::Eight(_) => {
             return Err("a composite needs a 16-bit scene-linear decode".into());
         }
     };
@@ -1250,7 +1250,7 @@ pub(crate) fn coded_as(anchored: colour::tone::Anchored, gain: f64) -> colour::t
 /// wanted of it has to be taken before `take` returns: at scale 1 a layer is ten bytes a canvas
 /// pixel, and holding a set of them is gigabytes for a panorama.
 ///
-/// Answers the levels the whole window was coded against - what a [`crate::tile::Prepared`] built
+/// Answers the levels the whole window was coded against - what a [`decode::Prepared`] built
 /// from these layers anchors to - and `None` where no source reached it.
 pub async fn layers_of(
     spec: &Composition,
@@ -1355,10 +1355,9 @@ fn preview_of(path: &str, at_least_long_edge: u32) -> Result<units::rgb::Rgb, St
     // portrait frame upright through `upright_preview_jpeg` is a full-size decode, a full-size
     // encode and then a second decode here. `upright_preview_rgb` reduces before it turns, and what
     // comes back is a finished picture that never was a file.
-    let want = crate::decode_rawler::Preview::SmallestCovering(at_least_long_edge as usize);
-    let preview =
-        crate::decode_rawler::upright_preview_rgb(path, at_least_long_edge as usize, want)
-            .ok_or_else(|| format!("{path} embeds no JPEG to composite"))?;
+    let want = decode::raw::Preview::SmallestCovering(at_least_long_edge as usize);
+    let preview = decode::raw::upright_preview_rgb(path, at_least_long_edge as usize, want)
+        .ok_or_else(|| format!("{path} embeds no JPEG to composite"))?;
     PREVIEWS.with_borrow_mut(|held| {
         let mut bytes: usize = held.iter().map(|(_, _, each)| each.data.len()).sum();
         // Oldest first, which for a canvas walked tile by tile is the source furthest behind the
@@ -1382,9 +1381,9 @@ fn preview_of(path: &str, at_least_long_edge: u32) -> Result<units::rgb::Rgb, St
 pub(crate) async fn camera_picture(
     path: &str,
     at_least_long_edge: u32,
-) -> Result<crate::frame::Frame, String> {
+) -> Result<decode::frame::Frame, String> {
     if formats::rendered::is_rendered(path) {
-        return crate::decode::frame_from_path(
+        return decode::frame_from_path(
             path,
             denoise::galosh::Detail::at(0.0, 0.0),
             at_least_long_edge,
@@ -1396,7 +1395,7 @@ pub(crate) async fn camera_picture(
     }
     let preview = preview_of(path, at_least_long_edge)?;
     let (width, height) = (preview.width, preview.height);
-    let held = crate::decode_rendered::holding(formats::rendered::Read {
+    let held = decode::rendered::holding(formats::rendered::Read {
         codes: formats::rendered::interleaved(&preview.data, width * height, 3),
         width,
         height,
@@ -1414,7 +1413,7 @@ pub(crate) async fn camera_picture(
             at: units::px::At::ORIGIN,
             size,
         },
-        crate::view::Scale::for_long_edge(size.raw(), at_least_long_edge),
+        decode::view::Scale::for_long_edge(size.raw(), at_least_long_edge),
     )
     .ok_or_else(|| format!("{path}'s embedded JPEG could not be read onto the device"))
 }
@@ -1431,7 +1430,7 @@ pub(crate) fn camera_peak(path: &str) -> Result<units::light::Light<units::light
         // ponytail: whole decode for a header answer; a header-only coding read if it shows. Never
         // assume sRGB here: three stops out on a gain-mapped JPEG.
         let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
-        return crate::decode_rendered::hold(&bytes)?
+        return decode::rendered::hold(&bytes)?
             .peak_level()
             .ok_or_else(|| format!("{path} states no brightest level"));
     }

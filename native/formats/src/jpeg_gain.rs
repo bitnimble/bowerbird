@@ -7,7 +7,7 @@
 //!
 //!   ISO 21496-1  an `APP2` segment introduced by `urn:iso:std:iso:ts:21496:-1\0`, holding the
 //!                payload a HEIC's `tmap` item holds behind its version byte - so
-//!                `decode_rendered::iso_21496_terms` reads both and there is one parser for the
+//!                `decode::rendered::iso_21496_terms` reads both and there is one parser for the
 //!                standard.
 //!   Apple        nothing in the file beside the map: the headroom is two maker note tags, which
 //!                `apple_gain` turns into the one number that arm needs.

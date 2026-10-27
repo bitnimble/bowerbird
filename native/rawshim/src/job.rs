@@ -20,12 +20,12 @@
 // rendition, and everything that does not depend on a target's size or its display settled
 // before the loop over them.
 
-use crate::decode::Source as Raw;
 use crate::hdr;
 use crate::hdr_args::{self, EncodeOptions};
 #[cfg(feature = "renditions")]
 use crate::stacks;
 use colour::tone;
+use decode::Source as Raw;
 use formats::still::Chroma;
 use render::detail::Strengths;
 use serde::{Deserialize, Serialize};
@@ -760,10 +760,10 @@ impl Base {
         let frame = match raw {
             #[cfg(feature = "renditions")]
             Raw::Path(path) if job.preserve_source_orientation => {
-                crate::decode::frame_from_path_unturned(path, size)
+                decode::frame_from_path_unturned(path, size)
             }
             Raw::Path(path) => {
-                crate::decode::frame_from_path(path, job.detail(), size, job.half_size, fit, dust)
+                decode::frame_from_path(path, job.detail(), size, job.half_size, fit, dust)
             }
             Raw::Bytes(_) if job.preserve_source_orientation => {
                 return Err("source orientation can only be preserved from a file".into());
@@ -772,7 +772,7 @@ impl Base {
                 return Err("a halved decode is an export's, which is not drawn from bytes".into());
             }
             Raw::Bytes(bytes) => {
-                crate::decode::frame_from_bytes(bytes, job.detail(), size, fit, dust).await
+                decode::frame_from_bytes(bytes, job.detail(), size, fit, dust).await
             }
         }
         .ok_or("could not decode this photograph scene-linear")?;
@@ -785,7 +785,7 @@ impl Base {
         let wb_gains = frame.wb_gains;
         let neutral_ceiling = frame.neutral_ceiling;
         let dust = frame.dust.clone();
-        let crate::frame::Pixels::Resident(resident) = frame.pixels else {
+        let decode::frame::Pixels::Resident(resident) = frame.pixels else {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
         };
 
@@ -1011,8 +1011,8 @@ impl Base {
             (size.width as usize, size.height as usize)
         };
         let out = sized(rendered.first()?);
-        let scale = crate::view::Scale::for_long_edge(photograph, out.0.max(out.1) as u32);
-        let drawn = crate::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
+        let scale = decode::view::Scale::for_long_edge(photograph, out.0.max(out.1) as u32);
+        let drawn = decode::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
             .at(scale)
             .drawn();
         if rendered.iter().any(|target| sized(target) != out) || out != drawn.raw() {
@@ -1236,7 +1236,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
             .as_deref()
             .map(|analysis| with_camera_match(analysis, job.camera_match)),
         // A loupe is showing the reader the export's own pixels, so it never halves.
-        scale: crate::view::Scale::Full,
+        scale: decode::view::Scale::Full,
         repairs: job.repairs.clone(),
         drawn: None,
         removal: whole_removal(job),
@@ -1262,7 +1262,7 @@ pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
         half_size: job.half_size,
     };
     let layer = crate::dereflect::kept(found, || {
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             &job.raw_file_path,
             job.detail(),
             MEASURED_LONG_EDGE,
@@ -1429,18 +1429,16 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             // Extracted, decoded and shrunk inside one call, so the preview - which is
             // full resolution on a 61MP body, 5-14MB of JPEG - is never held whole.
             let size = target.size as usize;
-            let want = crate::decode_rawler::Preview::SmallestCovering(size);
+            let want = decode::raw::Preview::SmallestCovering(size);
             let preview = crate::guard("the embedded preview", None, || {
                 match (source.as_ref(), decoder.as_ref()) {
-                    (Some(source), Some(decoder)) => {
-                        crate::decode_rawler::upright_preview_rgb_with(
-                            source,
-                            decoder.as_ref(),
-                            size,
-                            want,
-                            formats::jpeg::decode_tile,
-                        )
-                    }
+                    (Some(source), Some(decoder)) => decode::raw::upright_preview_rgb_with(
+                        source,
+                        decoder.as_ref(),
+                        size,
+                        want,
+                        formats::jpeg::decode_tile,
+                    ),
                     // A JPEG that arrived as itself *is* the camera's rendering, so the tile is a
                     // bounded decode of the file. Every other rendered format has no preview to
                     // lift and falls through to the render below, which is the same answer a RAW
@@ -1448,7 +1446,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     _ if formats::rendered::is_rendered(&job.raw_file_path) => {
                         formats::rendered::preview_rgb(&job.raw_file_path, size)
                     }
-                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want),
+                    _ => decode::raw::upright_preview_tile(&job.raw_file_path, size, want),
                 }
             });
             if let Some(preview) = preview {
@@ -1532,8 +1530,8 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         return Ok(outcome);
     }
     let held = match job.preserve_source_orientation {
-        true => crate::decode::hold_path_unturned(&job.raw_file_path)?,
-        false => pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?,
+        true => decode::hold_path_unturned(&job.raw_file_path)?,
+        false => pollster::block_on(decode::hold_path(&job.raw_file_path))?,
     };
     lap("hold");
     for target in banded {
@@ -1609,7 +1607,7 @@ fn is_banded(job: &Job, target: &Target) -> bool {
         photograph,
         &encode_options(job, target, &target.output_path),
     );
-    let scale = crate::view::Scale::for_long_edge(photograph, drawn.width.max(drawn.height));
+    let scale = decode::view::Scale::for_long_edge(photograph, drawn.width.max(drawn.height));
     let decoded = scale.of(photograph.0) * scale.of(photograph.1);
     let (drawn_width, drawn_height) = (drawn.width as usize, drawn.height as usize);
     // A straighten's bounding box is larger than the frame it turns.
@@ -1636,7 +1634,7 @@ fn band_rows(width: usize, height: usize, pixels: usize) -> usize {
 async fn bands(
     job: &Job,
     target: &Target,
-    held: &crate::decode::Held,
+    held: &decode::Held,
     measured: &Rendered,
     rotate: u16,
     exif: Option<&[u8]>,
@@ -1713,7 +1711,7 @@ pub(crate) struct Graded {
 pub(crate) async fn graded_bands(
     job: &Job,
     target: &Target,
-    held: &crate::decode::Held,
+    held: &decode::Held,
     measured: &Rendered,
     pixels: usize,
 ) -> Result<Graded, String> {
@@ -1730,7 +1728,7 @@ pub(crate) async fn graded_bands(
     let (out_width, out_height) = out.raw();
     let rows = band_rows(out_width, out_height, pixels);
     let analysis = with_camera_match(&fit::photo_analysis::encode(known), job.camera_match);
-    let scale = crate::view::Scale::for_long_edge(photograph, size.width.max(size.height));
+    let scale = decode::view::Scale::for_long_edge(photograph, size.width.max(size.height));
     let output = match target.output {
         Output::Pq => render::grade::Output::Pq,
         Output::Srgb => render::grade::Output::Srgb,

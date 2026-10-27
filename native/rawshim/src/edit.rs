@@ -351,7 +351,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
     //
     // Denoised on the mosaic at the reader's own Detail, which is `job::Base::build`'s call: what
     // the editor shows and what the export ships are one pipeline because they are one line.
-    let frame = crate::decode::frame_from_bytes(
+    let frame = decode::frame_from_bytes(
         bytes,
         request.detail(),
         request.long_edge,
@@ -369,7 +369,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
         !formats::rendered::is_rendered_bytes(bytes),
         request,
         sharpen,
-        &crate::open_stage::quiet,
+        &decode::open_stage::quiet,
     )
     .await
 }
@@ -377,7 +377,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
 /// Everything an open does once it has a frame, which is everything a Detail amount cannot move.
 ///
 /// **Split out so a caller holding a mosaic can re-run the pipeline without re-reading a file.**
-/// The editor keeps a `decode_rawler::Held` for as long as a photograph is open and re-denoises a
+/// The editor keeps a `decode::raw::Held` for as long as a photograph is open and re-denoises a
 /// copy of it when a slider moves; this is the half below that, and it is the same half a fresh
 /// open runs, so the two cannot drift.
 /// `mosaic` is whether the photograph has a sensor behind it, and `bytes` its file - which a
@@ -386,19 +386,19 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
 /// here: deriving it from the buffer is the same fact twice, and the second derivation is wrong
 /// the moment a caller stops carrying the buffer.
 pub async fn from_frame(
-    frame: crate::frame::Frame,
+    frame: decode::frame::Frame,
     bytes: &[u8],
     mosaic: bool,
     request: &EditRequest,
     sharpen: f64,
-    report: crate::open_stage::Report<'_>,
+    report: decode::open_stage::Report<'_>,
 ) -> Result<Opened, String> {
     let strengths = Strengths {
         sharpen,
         defringe: request.defringe,
     };
     {
-        // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
+        // The same switch and the same shape as `decode::raw::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
         let mut lap = trace::clock::laps("  open ");
         let noise_fit = frame.noise;
@@ -450,7 +450,7 @@ pub async fn from_frame(
             neutral_ceiling: frame.neutral_ceiling,
         };
         if mosaic {
-            report(crate::open_stage::Stage::Matching);
+            report(decode::open_stage::Stage::Matching);
         }
         let crate::open::Measured {
             matched,
@@ -527,7 +527,7 @@ pub async fn from_frame(
             ..Default::default()
         });
         if mosaic {
-            report(crate::open_stage::Stage::Correcting);
+            report(decode::open_stage::Stage::Correcting);
         }
         let (resident, window) = crate::tile::prepared_on_device(
             crate::tile::Source::Frame(frame),
@@ -565,7 +565,7 @@ pub async fn from_frame(
                 // host decoded are the only copy of it there is.
                 // The editor is handed the photograph at the size it asked the decode for, and the
                 // decode has already halved it if it was going to.
-                scale: crate::view::Scale::Full,
+                scale: decode::view::Scale::Full,
                 repairs: request.repairs.clone(),
                 drawn: None,
                 removal: removal.clone(),

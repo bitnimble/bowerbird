@@ -411,7 +411,7 @@ impl Sensor {
     ///
     /// **The file says where the picture is, and the file can be wrong.** `crop_area` is
     /// `DefaultCropOrigin`/`DefaultCropSize` on a DNG and a camera table elsewhere, carried into
-    /// `decode_rawler::hold` with nothing but an evening of the extent - so an origin of 100 beside
+    /// `decode::raw::hold` with nothing but an evening of the extent - so an origin of 100 beside
     /// a full-width size describes a rectangle that runs off the end of every row. Unclamped, the
     /// read below walks into the next row for most of the frame and past the buffer on the last
     /// band, which is a panic in a worker rather than a wrong picture.

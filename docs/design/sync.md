@@ -80,7 +80,7 @@ so the viewer offers no rendition choice for one (`is_raw`). None of them is ren
 edited. `hasEmbeddedJpeg` separates a file with a JPEG to share or tile from one without.
 
 Everything below those runs unchanged: the coding, the defringe, the lens gather, the sharpen, the
-grade, the crop, the roll-off and the whole editor. `native/rawshim/src/decode.rs` is the one seam
+grade, the crop, the roll-off and the whole editor. `native/decode/src/lib.rs` is the one seam
 between the two front ends, and `linearise.slang` is the rendered family's answer to the
 conditioning and the demosaic at once - the transfer undone, the gain map applied, the primaries
 converted, cropped, halved and turned upright, in one pass.

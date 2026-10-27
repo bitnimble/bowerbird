@@ -12,10 +12,10 @@
 
 use colour::resident::stored_within;
 use colour::transfer::{Coding, Curve, Primaries};
+use decode::linearise::Picture;
+use decode::view::Scale;
 use formats::gain_map::{GainMap, Reconstruction};
 use rawler::decoders::Orientation;
-use rawshim::linearise::Picture;
-use rawshim::view::Scale;
 use units::light::{Light, SceneNits};
 use units::px::{At, Photograph, Rect, Size};
 
@@ -26,7 +26,7 @@ fn linearised(
     scale: Scale,
 ) -> Option<(Vec<f32>, usize, usize)> {
     let gpu = gpu::device()?;
-    let frame = picture.window(gpu, rawshim::linearise::device(gpu), window, scale)?;
+    let frame = picture.window(gpu, decode::linearise::device(gpu), window, scale)?;
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
     Some((colour::resident::levels_of(&samples), width, height))

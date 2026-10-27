@@ -51,12 +51,6 @@ mod tests {
                 shaders::COPY_RECT.source,
                 crate::retouched_frame::params_block(),
             ),
-            (
-                "linearise.wgsl",
-                "Params",
-                shaders::LINEARISE.source,
-                crate::linearise::BLOCK_BYTES,
-            ),
         ];
         shaders::layout::check(&cases);
     }

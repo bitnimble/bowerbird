@@ -413,10 +413,10 @@ fn transposes(orientation: u32) -> bool {
 /// matrix's input is in.
 #[derive(Clone, Copy)]
 pub struct Colour {
-    /// The sensor's own camera-to-Rec.2020 3x3 (`rawshim::decode_rawler::camera_to_rec2020`), which is not
+    /// The sensor's own camera-to-Rec.2020 3x3 (`decode::raw::camera_to_rec2020`), which is not
     /// the fitted camera match - that one is the grade's.
     pub matrix: [[f32; 3]; 3],
-    /// Where each channel's photosites saturated (`rawshim::decode_rawler::channel_ceilings`), which is what
+    /// Where each channel's photosites saturated (`decode::raw::channel_ceilings`), which is what
     /// tells a blown pixel from a channel that merely clipped.
     pub ceiling: [f32; 3],
 }

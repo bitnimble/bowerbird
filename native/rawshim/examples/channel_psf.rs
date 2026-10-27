@@ -91,7 +91,7 @@ fn fitted(path: &str) -> String {
     let Some(frame) = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only) else {
         return "no decode".to_string();
     };
-    let rawshim::frame::Pixels::Sixteen(samples) = &frame.pixels else {
+    let decode::frame::Pixels::Sixteen(samples) = &frame.pixels else {
         return "not 16-bit".to_string();
     };
     match pollster::block_on(render::base::measure_defocus(

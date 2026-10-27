@@ -17,7 +17,7 @@ fn main() {
         // The mean of each, because a half-size frame that is the right size and the wrong pixels
         // is the failure this can actually have: a site combined off an odd origin reads the
         // colours next door, and comes out plausible, sharp and green.
-        let mean = |frame: &rawshim::frame::Frame| -> f64 {
+        let mean = |frame: &decode::frame::Frame| -> f64 {
             frame.samples16().map_or(0.0, |s| {
                 s.iter()
                     .map(|&bits| f64::from(colour::resident::level_of_bits(bits)))

@@ -193,7 +193,7 @@ What is left is that this pipeline denoises ahead of the warp and sharpens after
 
 Release the cut immediately after GPU upload (`job::run`), its last read. Peak falls to 1381MB, level with the two-pipeline version's 1375.
 
-**Rawler's remaining decode working set is unmeasured.** Denoise and demosaic use 2048px tiles; whole-frame RCD would need 3.1GB of planes at 61MP (`decode_rawler.rs`).
+**Rawler's remaining decode working set is unmeasured.** Denoise and demosaic use 2048px tiles; whole-frame RCD would need 3.1GB of planes at 61MP (`decode::raw`).
 
 For a single picture whose drawn frame, decode or straightened output exceeds 128Mi pixels, the job measures a small whole view for its levels and scene peak, then prepares overlapping windows of the held source. Each window carries the neighbouring pixels needed by denoise, resize, lens gather and sharpen. The grade writes output rows in bands of roughly 16Mi pixels, and libavif writes those bands as one-column AVIF grid cells. The reader uses the same window path at a level too large to prepare whole.
 
@@ -269,7 +269,7 @@ The embedded JPEG carries its own EXIF orientation, so the decode reads tag 0x01
 > Both are the only implementation there is: a host with no Vulkan reads nothing rather than reading
 > a different reconstruction (§2.1). So `imgdata.image`, `user_qual`, the
 > PPG-against-AHD table and the C accessors are all history. The half-size decision is _not_: the
-> gate below still reads, only the collapsing of each Bayer quad is now ours (`decode_rawler.rs`)
+> gate below still reads, only the collapsing of each Bayer quad is now ours (`decode::raw`)
 > rather than a LibRaw flag. What is still true, and why this stays: the _shape_ of the boundary is unchanged - a command
 > and a result over `bun:ffi`, no pointers held across calls - and the measurements here are what the
 > numbers since are compared against. Read the mechanism as history and the reasoning as current.
@@ -455,7 +455,7 @@ That the _seek_ is paid once either way is why this is a fifth rather than a hal
 
 So the header is the tile job's (`Job::header`), and the scan reads none (DESIGN §11.2). That buys the fifth, and on a share slower than this mount, where a header read is several round trips, it is what lets the rows land at the rate the share answers `stat`.
 
-**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small preview the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of _that_ was the EXIF rotation shuffling 60MP. Shrinking during the decode instead (`Decoder::scale`, then a reduce for the rest, and the rotation last where it moves a 1280px frame) takes B to 105ms. B asks for the smallest preview that covers the tile (`decode_rawler::Preview::SmallestCovering`), which on that body is the 1MB one rather than the 5-14MB one, and that is what puts it at 18ms.
+**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small preview the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of _that_ was the EXIF rotation shuffling 60MP. Shrinking during the decode instead (`Decoder::scale`, then a reduce for the rest, and the rotation last where it moves a 1280px frame) takes B to 105ms. B asks for the smallest preview that covers the tile (`decode::raw::Preview::SmallestCovering`), which on that body is the 1MB one rather than the 5-14MB one, and that is what puts it at 18ms.
 
 **The DCT is asked to go all the way to the target**, rather than stopping a factor of two short and leaving the reduce something to work with. It is a quality trade, because libjpeg's scaling and a Lanczos3 reduce are different filters: measured against decoding whole and reducing once, an 800px tile moves from deltaE 0.29 mean to 0.63, and its worst pixels from 7 to 24. The error is confined to fine detail where the two filters disagree - foliage, not sky - and at tile size it is invisible even under a 1:1 crop, which is the whole argument for taking it. Worth 105ms per file against 125ms.
 
@@ -586,7 +586,7 @@ The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-b
 
 **What each container can carry is a table rather than a rule restated per caller** (`schemas/export.ts`). `honoured()` returns the options as the picked format can actually meet them, and both the dialog - which greys a control out - and the route - which must not trust that it did - ask it. HDR is whether the format can _signal_ high dynamic range that a viewer honours, which is not the same question as bit depth: TIFF stores 16-bit and 32-bit float and has no signalling anything reads, where PNG earned its yes in the Third Edition, whose `cICP` chunk states BT.2100 PQ in four bytes.
 
-**Half-size decode is asked for rather than inferred.** The decode already halves on its own where the caller's size floor allows it, which is right for a rendition - that is a size request and halving is an optimisation inside it. An export is not: a reader ticking the box has chosen the trade, and on a frame small enough that the floor would never have triggered, inferring it would silently ignore them. So `Job.half_size` crosses to `decode_rawler::into_frame`, where it joins the floor in one condition; the even-crop requirement still refuses, since an odd origin puts the colours in a halved frame one site over.
+**Half-size decode is asked for rather than inferred.** The decode already halves on its own where the caller's size floor allows it, which is right for a rendition - that is a size request and halving is an optimisation inside it. An export is not: a reader ticking the box has chosen the trade, and on a frame small enough that the floor would never have triggered, inferring it would silently ignore them. So `Job.half_size` crosses to `decode::raw::into_frame`, where it joins the floor in one condition; the even-crop requirement still refuses, since an odd origin puts the colours in a halved frame one site over.
 
 **A gain map export is a second render, not a tone map of the first.** The SDR arm is the same grade with its peak at diffuse white - what `grade::Output::mastered` gives every SDR rendition - so the base a viewer without gain map support sees is the picture this app would have served it anyway. For whole-frame targets of one size, `job::run` uploads the frame once and pays a dispatch for the second; large single pictures render windows at that size. `avifRGBImageComputeGainMap` derives the per-pixel ratio and the ISO 21496-1 metadata; reimplementing that here would be a second answer to a specification the _reader_ half already takes from libavif, and the two would drift.
 

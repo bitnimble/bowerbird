@@ -624,18 +624,18 @@ impl Sheet<'_> {
 fn draw(paths: &[String], planes: &[fit::hdr::Source], a: usize, b: usize, to: &str) {
     let gpu = gpu::device().expect("a Vulkan adapter");
     let long = |at: usize| planes[at].width.max(planes[at].height);
-    let Some(left) = rawshim::decode_rawler::upright_preview_rgb(
+    let Some(left) = decode::raw::upright_preview_rgb(
         &paths[a],
         long(a),
-        rawshim::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     ) else {
         println!("  {} embeds no preview", paths[a]);
         return;
     };
-    let Some(right) = rawshim::decode_rawler::upright_preview_rgb(
+    let Some(right) = decode::raw::upright_preview_rgb(
         &paths[b],
         long(b),
-        rawshim::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     ) else {
         println!("  {} embeds no preview", paths[b]);
         return;
@@ -879,8 +879,8 @@ fn full_scale(p: &composition::Composition) -> f64 {
 
 /// The JPEG the search's plane is built from, for a reader who wants to see what it was given.
 fn write_preview(to: &str, from: &str) {
-    let want = rawshim::decode_rawler::Preview::for_the_match();
-    let Some(jpeg) = rawshim::decode_rawler::upright_preview_jpeg(from, want) else {
+    let want = decode::raw::Preview::for_the_match();
+    let Some(jpeg) = decode::raw::upright_preview_jpeg(from, want) else {
         println!("  {from} embeds no preview");
         return;
     };

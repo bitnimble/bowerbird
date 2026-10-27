@@ -103,7 +103,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
     // what an amount can move - the denoise, the demosaic, the coding and the warp. If the two are
     // close then holding the mosaic bought nothing.
     let began = std::time::Instant::now();
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes))?;
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes))?;
     let fit = pollster::block_on(held.fit());
     let held_ms = began.elapsed().as_millis();
 
@@ -121,7 +121,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             request.long_edge,
             fit.map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given),
             request.dust.wanted(stored.from_raw.dust.as_deref()),
-            &rawshim::open_stage::quiet,
+            &decode::open_stage::quiet,
         ));
         let frame = frame?;
         let prepared = pollster::block_on(rawshim::edit::from_frame(
@@ -130,7 +130,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             true,
             &request,
             sharpen,
-            &rawshim::open_stage::quiet,
+            &decode::open_stage::quiet,
         ));
         let ms = began.elapsed().as_millis();
         println!(
@@ -234,7 +234,7 @@ fn mosaic_stages(width: usize, height: usize) {
         ));
         let whole = read(gpu, &whole);
 
-        let halo = rawshim::EDITOR_TILE_HALO;
+        let halo = decode::EDITOR_TILE_HALO;
 
         // One region at a time, over a range of sizes. Tiling costs far more than the halo can
         // account for, so what this separates is the part of a call that scales with the region
@@ -340,8 +340,8 @@ fn mosaic_stages(width: usize, height: usize) {
             UNGAINED,
             amounts,
             fit,
-            rawshim::RENDITION_TILE_HALO,
-            rawshim::decode_rawler::RENDER_TILE,
+            decode::RENDITION_TILE_HALO,
+            decode::raw::RENDER_TILE,
             |_| {},
         ));
         let worst = read(gpu, &tiled)

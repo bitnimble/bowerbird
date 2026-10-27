@@ -62,7 +62,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       Only `Gpu`'s own construction is gated, so nothing native moved.
 
 - [x] **A wasm decode runs, not merely compiles** (`a7bfbf1`). Reading
-      `decode_rawler::decode_source` after compilation found both first-frame panic blockers.
+      `decode::raw::decode_source` after compilation found both first-frame panic blockers.
 
       - **The clock, answered by `clock::Mark`.** `std::time::Instant::now()` panics on
         `wasm32-unknown-unknown`, and four paths read it for `BOWERBIRD_DECODE_PROFILE`'s laps
@@ -277,7 +277,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
 
 - [x] **Keep the inverse-GAT table** (`40def3d`). The 395ms per-call fixed cost is gone; a denoise
       is now 85-91ms/MP flat from 0.04MP to 60MP.
-- [x] **The whole decode tiles at 2048, renders included** (`decode_rawler::denoise_in_tiles`,
+- [x] **The whole decode tiles at 2048, renders included** (`decode::raw::denoise_in_tiles`,
       `demosaic_in_tiles`). A render is now assembled from the same regions at the same halo as
       the loupe that predicts it, rather than two routes that ought to agree. Output is unchanged - the 266-test fixture suite passes with the pinned renders untouched, same decode checksum - and it is _faster_: 1068ms against 1385ms at 61MP, 56.4 MP/s against 43.5, because 3.1GB
       of RCD planes costs an integrated GPU more than a halo saves. It also bounds the GPU, which
@@ -301,7 +301,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       neighbourhood the whole-frame answer never uses: 94% of a 61MP frame's samples differ by up
       to 1.6e-3, spread across the frame rather than banded at the seams, and identical at halo 64
       and halo 512. Rounding each origin down to `2 * PASS12_TILE` fixes it exactly for ~5% extra
-      area. `decode_rawler` had the same geometry without the rounding and now delegates
+      area. `decode::raw` had the same geometry without the rounding and now delegates
       (`8ba748f`), so every rendition carried this until tonight.
 
 - [x] **The halo is two constants, 32 and 64** (`RENDITION_TILE_HALO`, `EDITOR_TILE_HALO`), chosen
@@ -310,7 +310,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       takes the exact one - and so does the loupe, whose whole purpose is to predict a rendition.
       Nothing in production moves today: the loupe is the only thing that tiles, and it was
       already on 64. What 32 is for is the editor's own tiling, below.
-- [x] **The tile is 2048** (`decode_rawler::RENDER_TILE`), which is where the halo stops mattering.
+- [x] **The tile is 2048** (`decode::raw::RENDER_TILE`), which is where the halo stops mattering.
       Over a 61MP frame, as the area actually put through the denoise with the wall clock beside
       it, against 5311ms for the frame whole:
 

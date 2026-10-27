@@ -40,8 +40,8 @@ fn main() {
     let w = image.width;
     let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern");
     let (pw, ph) = cfa.period();
-    let gains = rawshim::decode_rawler::channel_ceilings(&image);
-    let white = rawshim::decode_rawler::saturation_of(&image);
+    let gains = decode::raw::channel_ceilings(&image);
+    let white = decode::raw::saturation_of(&image);
     // **By position, as `Coefficients::at` takes it.** A sensor reports a black level per position
     // of the period and they are not equal - `per_position_black` says the two greens of a 2x2 can
     // differ by enough to leave a checkerboard - so conditioning a window against the first of them
@@ -106,7 +106,7 @@ fn main() {
         let mut out = [0.0f64; 3];
         let mut coded = [0.0f64; 3];
         let mut count = 0.0f64;
-        let matrix = rawshim::decode_rawler::camera_to_rec2020(&image).expect("a colour matrix");
+        let matrix = decode::raw::camera_to_rec2020(&image).expect("a colour matrix");
         for y in margin..side - margin {
             for x in margin..side - margin {
                 let at = (y * side + x) * 3;

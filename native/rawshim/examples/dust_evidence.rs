@@ -52,7 +52,7 @@ fn rendered(path: &str, glass: denoise::dust::Wanted<'_>) -> (Vec<u8>, usize, us
 fn candidates(path: &str) -> Vec<denoise::dust::Spot> {
     let gpu = gpu::device().expect("a Vulkan adapter");
     let bytes = std::fs::read(path).expect("the file");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("a decoder");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("a decoder");
     let sensor = held.glass();
     eprintln!(
         "  f/{}  {}x{}",

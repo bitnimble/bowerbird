@@ -1,6 +1,6 @@
 //! A rendition the page decoded, as the codes a finished picture is held at.
 //!
-//! The browser's `ImageDecoder` reads an AVIF this crate cannot in wasm (`decode_rendered::av1`),
+//! The browser's `ImageDecoder` reads an AVIF this crate cannot in wasm (`decode::rendered::av1`),
 //! and hands back its planes rather than RGB; where there is none, `native/avif_planes` does. `planes.slang` is the conversion libavif does on the
 //! server, so what `rawshim::linearise::Picture` holds is the same either way.
 

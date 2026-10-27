@@ -288,12 +288,12 @@ fn opened(
         .map_err(|why| Failed::Error(format!("could not read {path}: {why}")))?;
     // rawler panics on corrupt files under overflow checks: the file's fault, unlike a panic later.
     let decoded = catch_unwind(AssertUnwindSafe(|| {
-        pollster::block_on(rawshim::decode_rawler::open_bytes(&bytes))
+        pollster::block_on(decode::raw::open_bytes(&bytes))
     }))
     .map_err(|_| Failed::Unreadable(panicked(&format!("decoding {path}"))))?;
     let held = match decoded {
-        Ok(rawshim::decode::Held::Mosaic(held)) => held,
-        Ok(rawshim::decode::Held::Rendered(_)) => {
+        Ok(decode::Held::Mosaic(held)) => held,
+        Ok(decode::Held::Rendered(_)) => {
             return Err(Failed::Unreadable(format!("{path} has no mosaic")));
         }
         Err(why) => return Err(Failed::Unreadable(format!("{path}: {why}"))),
@@ -337,7 +337,7 @@ fn opened(
 }
 
 fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Failed> {
-    let frame = rawshim::decode::frame_from_path(
+    let frame = decode::frame_from_path(
         path,
         Detail::AUTO,
         floor,
@@ -382,7 +382,7 @@ fn developed(
         matrix: request.matrix,
         ceiling: request.ceilings,
     };
-    let built = pollster::block_on(rawshim::decode_rawler::demosaic_as_decoded(
+    let built = pollster::block_on(decode::raw::demosaic_as_decoded(
         &mosaic, &cfa, colour, 2,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
@@ -456,7 +456,7 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         }
         if let (Some(taken), true) = (&taken, request.alone) {
             // In place of the opened photo, under the grade the photo measured.
-            opened.frame.pixels = rawshim::frame::Pixels::Sixteen(
+            opened.frame.pixels = decode::frame::Pixels::Sixteen(
                 taken
                     .iter()
                     .map(|light| half::f16::from_f32((gain * light).max(0.0)).to_bits())

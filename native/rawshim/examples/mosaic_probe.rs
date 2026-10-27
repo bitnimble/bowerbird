@@ -45,7 +45,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let bytes = std::fs::read(&path).expect("read the raw");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
     let gpu = gpu::device().expect("an adapter");
     let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     let mosaic = held.device_mosaic();

@@ -36,7 +36,7 @@ fn main() {
 
     let amounts = denoise::galosh::Detail::at(0.0, 0.0);
     let started = std::time::Instant::now();
-    let Some(whole) = rawshim::decode_rawler::decode(&path, amounts) else {
+    let Some(whole) = decode::raw::decode(&path, amounts) else {
         eprintln!("the whole frame declined");
         return;
     };
@@ -44,13 +44,13 @@ fn main() {
 
     // Twice, because the first pays for the GPU pipelines the frame decode already built and a
     // loupe's second tile is the one that matters.
-    let halo = rawshim::RENDITION_TILE_HALO;
+    let halo = decode::RENDITION_TILE_HALO;
     let view =
-        rawshim::view::View::whole(units::px::Size::exact(whole.width, whole.height)).showing(
+        decode::view::View::whole(units::px::Size::exact(whole.width, whole.height)).showing(
             units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
         );
     let glass = denoise::dust::Known::Off;
-    rawshim::decode_rawler::decode_tile(
+    decode::raw::decode_tile(
         &path,
         view,
         amounts,
@@ -59,7 +59,7 @@ fn main() {
         glass,
     );
     let started = std::time::Instant::now();
-    let Some(cut) = rawshim::decode_rawler::decode_tile(
+    let Some(cut) = decode::raw::decode_tile(
         &path,
         view,
         amounts,
@@ -77,7 +77,7 @@ fn main() {
         whole.width, whole.height, cut.width, cut.height, tile.width, tile.height
     );
 
-    // Both come off `decode_rawler`, which leaves the frame on the device for the pipeline; this
+    // Both come off `decode::raw`, which leaves the frame on the device for the pipeline; this
     // reads samples, so it says so.
     let (Some(whole), Some(cut)) = (
         pollster::block_on(whole.to_host()),

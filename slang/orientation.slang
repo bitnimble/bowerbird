@@ -1,4 +1,4 @@
-// `rawler`'s `Orientation`, numbered as `decode_rawler::orient` walks it on the host.
+// `rawler`'s `Orientation`, numbered as `decode::raw::orient` walks it on the host.
 module orientation;
 
 /// Which pixel of the unoriented frame an upright one came from, for an invocation that owns an

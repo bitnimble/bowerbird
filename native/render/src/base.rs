@@ -1711,7 +1711,7 @@ pub fn noise_through_balance(luma: [f64; 3], wb_gains: [f32; 3]) -> (f64, f64) {
 /// The same two factors a `NoiseFit` **already carries**, the conditioning having gained the mosaic
 /// before GALOSH ever measured it.
 ///
-/// `decode_rawler::conditioned` multiplies each photosite by its channel's gain, and `Held::fit`
+/// `decode::raw::conditioned` multiplies each photosite by its channel's gain, and `Held::fit`
 /// runs over that on green's positions alone (`ne_block_stats`), so the fitted `alpha` and
 /// `sigma_sq` carry green's gain, once and squared; the per-channel terms are only a *re*-weighting
 /// once divided by these.

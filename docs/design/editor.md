@@ -125,14 +125,14 @@ the mockup clears the reader's own choice, and `max` for an address opened direc
 already in a rendition, so the page asks for it to be built or fetched where it is missing or behind
 the edits and downloads the file, and nothing of it is prepared on the server. The camera's JPEG is
 decoded by the module, as a JPEG original is, turned by its EXIF. The module has no AV1 decoder
-(`decode_rendered::av1`), so an HDR AVIF reaches it as the planes WebCodecs' `ImageDecoder` hands
+(`decode::rendered::av1`), so an HDR AVIF reaches it as the planes WebCodecs' `ImageDecoder` hands
 back from `copyTo`, or `native/avif_planes` (below) where there is no `ImageDecoder` or it declines,
 and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the same
 video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against
 libavif (`planes_convert_to_the_codes_libavif_decodes`). Both decoders take limited-range PQ only,
 so an SDR AVIF - a library with HDR renditions off, a composite's camera view - is decoded by the
 browser to RGBA, which is all an SDR picture is, and handed over with the file for its colour
-(`decode_rendered::hold_pixels`, which refuses an HDR file that got that far rather than clip it).
+(`decode::rendered::hold_pixels`, which refuses an HDR file that got that far rather than clip it).
 The open is a finished picture's, unedited, with no analysis read or filed, and anchored at the
 white its file states (`EditRequest::stated_white`) rather than at a quantile, and the page draws it
 at neutral without reading the saved edits. A neutral grade of that frame is the file's own light,

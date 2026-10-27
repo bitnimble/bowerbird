@@ -95,7 +95,7 @@ Ban extends to every host pixel loop. Fit resamplers, histograms, descriptor gri
 illuminant search use kernels for consistent measurements across machines.
 
 CPU-only algorithms remain valid: fit solvers (`fit::profile`, `fit::hdr`, `tca.rs`: f64 least
-squares, golden section), dust blob flood fill, shader input tables, `decode_rawler::conditioned`.
+squares, golden section), dust blob flood fill, shader input tables, `decode::raw::conditioned`.
 The latter builds conditioning tables, never a second frame path;
 `the_kernel_conditions_every_sample_at_its_own_position` pins kernel agreement.
 

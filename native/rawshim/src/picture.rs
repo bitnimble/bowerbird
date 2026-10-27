@@ -74,7 +74,7 @@ pub fn prepared(
         } else {
             size
         };
-    let scale = crate::view::Scale::for_long_edge(picture, decode_size);
+    let scale = decode::view::Scale::for_long_edge(picture, decode_size);
     if let Some(window) = window.filter(|_| {
         job.composite.is_none()
             && scale.of(picture.0) * scale.of(picture.1) > crate::job::BANDED_PIXELS
@@ -231,7 +231,7 @@ fn windowed(
     level: u32,
     window: units::px::Rect<units::px::Composite>,
 ) -> Result<crate::edit::Prepared, String> {
-    let held = pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?;
+    let held = pollster::block_on(decode::hold_path(&job.raw_file_path))?;
     let picture = held.size().raw();
     let shape = crate::composite_job::level_shape(&[picture.0, picture.1], level);
     let known = known(job)?;
@@ -253,7 +253,7 @@ fn windowed(
         sensor_long: None,
         defocus: render::base::Defringe::Measure,
         photo_analysis: Some(fit::photo_analysis::encode(&known)),
-        scale: crate::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
+        scale: decode::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
         // No repairs: the client draws them over whatever level and tiles it holds
         // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
         repairs: Vec::new(),

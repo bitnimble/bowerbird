@@ -46,7 +46,7 @@ fn main() {
     let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     let held = |path: &str| {
         let bytes = std::fs::read(path).expect("read the raw");
-        pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held")
+        pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held")
     };
 
     let clean = held(&clean_path);

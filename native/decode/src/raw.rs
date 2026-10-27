@@ -218,11 +218,11 @@ pub fn decode_tile(
 /// A format that cannot be cut still decodes whole and still touches every page. It just faults
 /// them on demand instead of being handed them, which is the kernel's own readahead rather than
 /// the advice `new` gives. ARW1 and the SRF fall-backs are the ones that reach it.
-pub(crate) fn mapped(path: &str) -> Option<rawler::rawsource::RawSource> {
+pub fn mapped(path: &str) -> Option<rawler::rawsource::RawSource> {
     rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()
 }
 
-pub(crate) async fn decode_tile_source(
+pub async fn decode_tile_source(
     source: &rawler::rawsource::RawSource,
     view: crate::view::View,
     detail: denoise::galosh::Detail,
@@ -263,7 +263,7 @@ pub(crate) async fn decode_tile_source(
 /// `scale` is the frame's pixels a side per photosite of `view`: 2 merges onto a grid twice as fine
 /// as the sensor's, and hands back a frame twice the size of the window.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn decode_merged_tile(
+pub async fn decode_merged_tile(
     sources: &[rawler::rawsource::RawSource],
     view: crate::view::View,
     detail: denoise::galosh::Detail,
@@ -1112,26 +1112,26 @@ pub struct Held {
 /// The decode as far as the mosaic, from bytes a caller is already holding.
 pub async fn hold_bytes(bytes: &[u8]) -> Option<Held> {
     match open_bytes(bytes).await.ok()? {
-        crate::decode::Held::Mosaic(held) => Some(held),
-        crate::decode::Held::Rendered(_) => None,
+        crate::Held::Mosaic(held) => Some(held),
+        crate::Held::Rendered(_) => None,
     }
 }
 
 /// The decode as far as a setting is irrelevant, from bytes a caller is already holding.
-pub async fn open_bytes(bytes: &[u8]) -> Result<crate::decode::Held, String> {
+pub async fn open_bytes(bytes: &[u8]) -> Result<crate::Held, String> {
     open(&rawler::rawsource::RawSource::new_from_slice(bytes)).await
 }
 
 /// The same, from a file this process can open.
 #[cfg(feature = "renditions")]
-pub async fn open_path(path: &str) -> Result<crate::decode::Held, String> {
+pub async fn open_path(path: &str) -> Result<crate::Held, String> {
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path))
         .map_err(|why| format!("could not read {path}: {why}"))?;
     open(&source).await
 }
 
 /// The mosaic, or for a linear DNG the picture, which has no mosaic to stop at.
-async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::Held, String> {
+async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::Held, String> {
     let mut lap = trace::clock::laps("  decode ");
 
     let decoder = rawler::get_decoder(source).map_err(|why| why.to_string())?;
@@ -1147,11 +1147,11 @@ async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::He
     if is_linear(&image) {
         return linear(decoder.as_ref(), image, upright)
             .await
-            .map(crate::decode::Held::Rendered);
+            .map(crate::Held::Rendered);
     }
     hold(decoder.as_ref(), source, &params, image, upright)
         .await
-        .map(crate::decode::Held::Mosaic)
+        .map(crate::Held::Mosaic)
         .ok_or_else(|| "no decoder read these bytes".to_string())
 }
 
@@ -1174,7 +1174,7 @@ async fn linear(
     decoder: &dyn rawler::decoders::Decoder,
     mut image: rawler::RawImage,
     upright: rawler::decoders::Orientation,
-) -> Result<crate::decode_rendered::Held, String> {
+) -> Result<crate::rendered::Held, String> {
     let gpu =
         gpu::device().ok_or_else(|| render::base::without_a_device("reading a linear DNG"))?;
     let (width, height) = (image.width, image.height);
@@ -1236,8 +1236,8 @@ async fn linear(
             (picture, [1.0; 3])
         }
     };
-    let camera = crate::decode_rendered::Camera { as_shot, ceiling };
-    Ok(crate::decode_rendered::Held::camera(picture, camera))
+    let camera = crate::rendered::Camera { as_shot, ceiling };
+    Ok(crate::rendered::Held::camera(picture, camera))
 }
 
 /// [`linear_table`]'s arithmetic for a DNG stored as floating point, whose samples are not codes.
@@ -1586,7 +1586,7 @@ fn shading<'a>(
 }
 
 /// The lens correction a DNG's OpcodeList3 states, about its own optical centre.
-pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<geometry::lens::Lens> {
+pub fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<geometry::lens::Lens> {
     use rawler::tags::{DngTag, TiffCommonTag};
     let decoder = rawler::get_decoder(source).ok()?;
     let bytes = opcode_list_of(decoder.as_ref(), DngTag::OpcodeList3)?;
@@ -1828,7 +1828,7 @@ async fn decode_source(
         .await
         .map_err(|why| trace::warn(&format!("rawshim: {why}")));
     match opened.ok()? {
-        crate::decode::Held::Mosaic(held) => {
+        crate::Held::Mosaic(held) => {
             held.into_frame(
                 detail,
                 at_least_long_edge,
@@ -1839,9 +1839,7 @@ async fn decode_source(
             )
             .await
         }
-        crate::decode::Held::Rendered(held) => {
-            crate::decode::whole(&held, at_least_long_edge).await
-        }
+        crate::Held::Rendered(held) => crate::whole(&held, at_least_long_edge).await,
     }
 }
 
@@ -3976,8 +3974,8 @@ mod tests {
         }
         let bytes = float_dng(&[[0.25; 3], [1.0; 3], [4.0; 3], [f32::NAN; 3]]);
         let held = match pollster::block_on(super::open_bytes(&bytes)).expect("the DNG opens") {
-            crate::decode::Held::Rendered(held) => held,
-            crate::decode::Held::Mosaic(_) => panic!("a linear DNG was read as a mosaic"),
+            crate::Held::Rendered(held) => held,
+            crate::Held::Mosaic(_) => panic!("a linear DNG was read as a mosaic"),
         };
         let window = units::px::Rect {
             at: units::px::At::ORIGIN,

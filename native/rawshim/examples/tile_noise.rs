@@ -112,15 +112,14 @@ fn main() {
             if left + 512 >= frame.width || top + 512 >= frame.height {
                 continue;
             }
-            let view =
-                rawshim::view::View::whole(units::px::Size::exact(frame.width, frame.height))
-                    .showing(units::px::Rect::exact(left, top, 512, 512));
+            let view = decode::view::View::whole(units::px::Size::exact(frame.width, frame.height))
+                .showing(units::px::Rect::exact(left, top, 512, 512));
             let Some(cut) = rawshim::decode_tile(
                 &path,
                 view,
                 amounts,
                 denoise::galosh::Fit::Measure,
-                rawshim::RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
             ) else {
                 println!("{name:>16}  the tile at {left},{top} declined");
                 continue;

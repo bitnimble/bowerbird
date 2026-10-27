@@ -67,7 +67,7 @@ fn main() {
     );
 
     let cut = |left: usize, top: usize, width: usize, height: usize| -> Vec<u8> {
-        let view = rawshim::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
+        let view = decode::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
             .showing(units::px::Rect::exact(left, top, width, height));
         // Whatever is passed here is overridden by `set_tile_halo` for the whole sweep, which is
         // the point of the harness; the constant only names what a caller would have asked for.
@@ -76,7 +76,7 @@ fn main() {
             view,
             amounts,
             denoise::galosh::Fit::Given(fit),
-            rawshim::RENDITION_TILE_HALO,
+            decode::RENDITION_TILE_HALO,
         )
         .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
         assert_eq!(
@@ -105,7 +105,7 @@ fn main() {
     //
     // A tile keeps every other thing about the path identical, so the halo is the only variable.
     const REFERENCE_HALO: usize = 512;
-    rawshim::set_tile_halo(REFERENCE_HALO);
+    decode::set_tile_halo(REFERENCE_HALO);
     let reference = cut(x, y, side, side);
     let half = side / 2;
     // Both seams cross at the region's middle, so one square centred there shows each of them at
@@ -137,7 +137,7 @@ fn main() {
         "halo", "V excess", "H excess", "baseline", "band avg", "away avg",
     );
     for halo in &halos {
-        rawshim::set_tile_halo(*halo);
+        decode::set_tile_halo(*halo);
         // Four quarters, reassembled. The seams are the region's own middle row and column.
         let mut assembled = vec![0u8; side * side * 3];
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -171,7 +171,7 @@ fn main() {
         write(&format!("{out}/diff-halo{halo}"), &diff, window, window);
         strip.push(panel(&assembled));
     }
-    rawshim::set_tile_halo(usize::MAX);
+    decode::set_tile_halo(usize::MAX);
 
     // The reference and every halo in one row, so they are judged against each other rather than
     // against a memory of the last one - which is the whole difficulty with a difference this

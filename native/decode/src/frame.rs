@@ -115,7 +115,7 @@ pub struct Frame {
     ///
     /// **What a display-referred read of these samples has to divide by.** The conditioning gives
     /// each channel its own ceiling so a highlight keeps the colour its unsaturated channels still
-    /// carry (`decode_rawler::channel_ceilings`), which puts full scale at the *most* amplified
+    /// carry (`crate::raw::channel_ceilings`), which puts full scale at the *most* amplified
     /// channel's saturation - a level only a clipping sensor reaches. Nothing grading these samples
     /// can see that, the levels being a quantile of the frame itself; a read with no quantile
     /// would render every photograph by however far apart that camera's white balance put its
@@ -123,7 +123,7 @@ pub struct Frame {
     ///
     /// One for a frame that came from no sensor, which is every synthetic fixture.
     pub neutral_ceiling: f32,
-    /// The camera's own multipliers, as R, G and B (`decode_rawler::channel_ceilings`).
+    /// The camera's own multipliers, as R, G and B (`crate::raw::channel_ceilings`).
     ///
     /// Here for the reason `matrix` above is: what the demosaic did to the *noise* cannot be read
     /// back off the samples. `galosh::NoiseFit` is fitted on the mosaic, before these are applied,

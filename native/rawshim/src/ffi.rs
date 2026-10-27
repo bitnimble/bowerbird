@@ -148,7 +148,7 @@ pub unsafe extern "C" fn bb_upscalable(path: *const c_char) -> i32 {
     let Some(path) = (unsafe { as_str(path) }) else {
         return 0;
     };
-    i32::from(crate::decode_rawler::upscalable_at(path))
+    i32::from(decode::raw::upscalable_at(path))
 }
 
 /// Renders with the upscaler model the app downloaded, at these two paths, from the next frame on
@@ -812,7 +812,7 @@ pub fn _for_testing_distortion_spline(path: &str) -> Option<Vec<f64>> {
     distortion_of(path).ok()?.spline
 }
 
-fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
+fn distortion_of(path: &str) -> std::io::Result<decode::lens::Distortion> {
     use std::io::Read;
 
     let mut window = SPLINE_WINDOW;
@@ -821,7 +821,7 @@ fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
         std::fs::File::open(path)?
             .take(window)
             .read_to_end(&mut head)?;
-        let found = crate::lens::read_distortion(&head);
+        let found = decode::lens::read_distortion(&head);
         if found.spline.is_some() {
             return Ok(found);
         }

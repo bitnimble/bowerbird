@@ -1,7 +1,7 @@
 //! What a finished picture's code values mean, and the scale they land on.
 //!
 //! **A RAW carries no colour space and a delivered picture carries nothing else.** The sensor's
-//! samples are counts of light in the camera's own primaries, and `decode_rawler` reads the matrix
+//! samples are counts of light in the camera's own primaries, and `decode::raw` reads the matrix
 //! that takes them to Rec.2020 off the file. A JPEG, a PNG, a HEIC or an AVIF has been rendered
 //! already: its numbers are code values in somebody's transfer, in somebody's primaries, and both
 //! have to be undone before the pipeline can treat them as light.
@@ -383,7 +383,7 @@ impl Coding {
     ///
     /// **A run per channel although a transfer is the same for all three**, because the kernel is
     /// shared with a linear DNG, whose black level and white balance are each channel's own
-    /// (`decode_rawler::linear`).
+    /// (`decode::raw::linear`).
     ///
     /// **Relative rather than on the frame's scale**, because the gain map is applied between the
     /// two and ISO 21496-1's offsets are in units of diffuse white. The shader's one multiply by

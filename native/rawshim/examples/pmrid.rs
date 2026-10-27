@@ -44,7 +44,7 @@ fn main() {
 
     let gpu = gpu::device().expect("an adapter");
     let bytes = std::fs::read(&path).expect("read the raw");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
     let cfa = held.cfa();
     let mosaic = held.device_mosaic();
     let stride = mosaic.width;

@@ -58,7 +58,7 @@ pub struct Opening<'a> {
     /// The illuminant the decode balanced against, which the camera match's own white balance is
     /// fitted relative to.
     pub as_shot: Option<colour::white_balance::Illuminant>,
-    /// `crate::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
+    /// `decode::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
     pub neutral_ceiling: f32,
 }
 
@@ -259,7 +259,7 @@ async fn stated_match(
             rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?
         }
     };
-    let stated = crate::dng_rendering::Stated::of_source(&source)?;
+    let stated = decode::dng_rendering::Stated::of_source(&source)?;
     // An editor stage too narrow to pair against the preview fits no match either, and a stored
     // stated colour would keep every later open from fitting the real one.
     let previewed = match fitting {
@@ -275,7 +275,7 @@ async fn stated_match(
         .colour(gpu::device()?, levels, neutral_ceiling)
         .await?;
     Some(fit::hdr::HdrMatch {
-        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(geometry::lens::Lens::none),
+        lens: decode::raw::stated_lens(&source).unwrap_or_else(geometry::lens::Lens::none),
         colour: Some(colour),
     })
 }
@@ -327,7 +327,7 @@ async fn fit_from_preview(
         return None;
     }
     let preview = crate::hdr::match_preview_from_bytes(raw)?;
-    let recorded = crate::lens::read_distortion(raw);
+    let recorded = decode::lens::read_distortion(raw);
     let geometry = match (recorded.applied, recorded.spline) {
         (Some(false), _) => fit::profile::Geometry::Uncorrected,
         (_, Some(knots)) => fit::profile::Geometry::Recorded(knots),

@@ -22,7 +22,7 @@ fn main() {
     );
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).expect("read the raw");
-        let Some(held) = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)) else {
+        let Some(held) = pollster::block_on(decode::raw::hold_bytes(&bytes)) else {
             eprintln!("{path}: not a raw this decodes");
             continue;
         };

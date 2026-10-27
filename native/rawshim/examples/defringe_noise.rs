@@ -455,7 +455,7 @@ fn read_mosaic(path: &str) -> Option<Read> {
         width: image.width,
         height: image.height,
         cfa,
-        matrix: rawshim::decode_rawler::camera_to_rec2020(&image)?,
+        matrix: decode::raw::camera_to_rec2020(&image)?,
         native: std::fs::read(path).ok().and_then(|bytes| {
             rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
                 .and_then(|frame| frame.noise)

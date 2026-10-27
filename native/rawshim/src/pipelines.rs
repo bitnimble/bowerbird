@@ -12,7 +12,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     denoise::dust_find::device(gpu);
     denoise::galosh::device(gpu);
     mosaic::highlight::device(gpu);
-    crate::linearise::device(gpu);
+    decode::linearise::device(gpu);
     mosaic::lslcd::device(gpu);
     formats::planes::kernel(gpu);
     denoise::pmrid::device(gpu);

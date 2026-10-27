@@ -7,7 +7,7 @@ use crate::space::IDENTITY;
 /// free, and a 60MP fit is minutes of work for the same answer.
 ///
 /// Half the 1616px preview Sony embeds, which is what every match fits against where a body
-/// offers it (`decode_rawler::Preview::for_the_match`); a body that offers only its full JPEG
+/// offers it (`decode::raw::Preview::for_the_match`); a body that offers only its full JPEG
 /// is box-averaged to the same grid in linear light by `fit::hdr::fitted_preview_size`, so the
 /// grade's supervision footprint (`grade::mean_block`) is one number for every body. Measured on
 /// the Canon fixture against fitting its 6000px JPEG at 1280: the fit halves, and against the

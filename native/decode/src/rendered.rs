@@ -1,6 +1,6 @@
 //! Reading a photograph that arrives already rendered: PNG, JPEG, HEIC and AVIF.
 //!
-//! **The rendered counterpart of `decode_rawler`, and it stops at the same place.** That module
+//! **The rendered counterpart of `raw`, and it stops at the same place.** That module
 //! holds a RAW at the conditioned mosaic, where a Detail slider is the next thing that can move;
 //! this one holds a finished picture at its code values, where nothing above the transfer can move
 //! at all. Both hand the pipeline the same thing - a scene-linear Rec.2020 frame on the device -
@@ -21,7 +21,7 @@ use formats::rendered::{Read, coding_of, pixels_read, read, read_heif};
 
 /// A finished picture opened and kept where the kernel can reach it.
 ///
-/// **The rendered arm of `decode_rawler::Held`, and the pair is what `decode::Held` routes
+/// **The rendered arm of `crate::raw::Held`, and the pair is what `decode::Held` routes
 /// between.** A RAW stops at the mosaic because the Detail sliders live below it; this stops at
 /// the code values because nothing above the transfer can move at all. Both answer the same
 /// questions, and a caller above them asks without knowing which it has.
@@ -34,7 +34,7 @@ pub struct Held {
 /// What a picture demosaiced before it was written still says about the sensor behind it.
 pub struct Camera {
     pub as_shot: Option<colour::white_balance::Illuminant>,
-    /// Where each channel saturates on the frame's scale, as `decode_rawler::channel_ceilings`
+    /// Where each channel saturates on the frame's scale, as `crate::raw::channel_ceilings`
     /// states a RAW's.
     pub ceiling: [f32; 3],
 }
@@ -54,7 +54,7 @@ pub fn hold(bytes: &[u8]) -> Result<Held, String> {
 }
 
 /// The same, for a caller that already has the samples: a RAW's embedded preview, decoded and
-/// turned upright by `decode_rawler::upright_preview_rgb`, is a finished picture that never was a
+/// turned upright by `crate::raw::upright_preview_rgb`, is a finished picture that never was a
 /// file. Re-encoding one to hand it to `hold` costs a full-size encode and a second decode.
 pub fn holding(read: Read) -> Result<Held, String> {
     let gpu = gpu::device()

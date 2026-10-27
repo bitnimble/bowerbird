@@ -4,7 +4,7 @@
 //! **A container, not a codec.** HEIC and AVIF are the same file format with a different codec
 //! inside - ISO/IEC 23008-12 items in an ISOBMFF `meta` box - so everything about finding the
 //! picture is shared and only the bitstream at the end differs. That is why this is its own crate:
-//! rawshim's `decode_rendered` and the browser's AV1 decoder (`native/avif_planes`) ask it what is
+//! `decode::rendered` and the browser's AV1 decoder (`native/avif_planes`) ask it what is
 //! in the file and then hand the coded bytes to whichever decoder the item names.
 //!
 //! **Ours rather than a crate's**, because the two crates that read this are AGPL and the licence

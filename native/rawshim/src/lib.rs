@@ -55,7 +55,6 @@ use std::os::raw::c_char;
 #[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
-mod acr3;
 /// A composition's geometry, and the tiles across it that each take one frame.
 pub mod assembly;
 /// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
@@ -108,31 +107,19 @@ pub mod composite_solve;
 pub mod composite_tile;
 #[cfg(feature = "renditions")]
 pub mod debug;
-/// Which decoder a photograph gets, which is the one place the two front ends differ.
-pub mod decode;
-pub mod decode_rawler;
-/// The photographs that arrive already rendered: PNG, JPEG, HEIC and AVIF.
-pub mod decode_rendered;
 #[cfg(all(test, feature = "renditions"))]
 mod demosaic_tests;
 #[cfg(test)]
 mod grade_tests;
 pub mod dereflect;
-mod dng_rendering;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
 #[cfg(feature = "renditions")]
 pub mod ffi;
-pub mod frame;
 pub mod hdr;
 pub mod hdr_args;
 pub mod job;
-pub mod lens;
-/// A finished picture's code values into the frame the pipeline reads. The rendered formats'
-/// answer to the conditioning and the demosaic, which they have no mosaic for.
-pub mod linearise;
 pub mod open;
-pub mod open_stage;
 /// Where a patch of one frame lies in another, or elsewhere in its own.
 pub mod patch_search;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
@@ -144,7 +131,6 @@ pub mod picture;
 pub mod pipelines;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
 pub mod progress;
-pub mod raw_cache;
 pub mod repair;
 pub mod repair_solve;
 pub mod retouched_frame;
@@ -159,7 +145,6 @@ pub mod tile_grid;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
 #[cfg(all(feature = "renditions", target_os = "android"))]
 mod tv_stage;
-pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -311,7 +296,7 @@ pub(crate) fn release_freed_memory() {
 ///
 /// Every caller on this side wants a `Frame`; only the FFI boundary wants a pointer, and it is
 /// the one place that builds one.
-pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<frame::Frame> {
+pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<decode::frame::Frame> {
     decode_frame_via(
         DecodeSource::Path(path),
         at_least_long_edge,
@@ -329,7 +314,7 @@ pub fn decode_frame_denoised(
     at_least_long_edge: u32,
     detail: denoise::galosh::Detail,
     fit: denoise::galosh::Fit,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Path(path),
         at_least_long_edge,
@@ -346,7 +331,7 @@ pub fn decode_frame_bytes(
     bytes: &[u8],
     at_least_long_edge: u32,
     fit: denoise::galosh::Fit,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Bytes(bytes),
         at_least_long_edge,
@@ -365,7 +350,7 @@ fn decode_frame_via(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
     detail: denoise::galosh::Detail,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         source,
         at_least_long_edge,
@@ -381,9 +366,9 @@ fn decode_frame_cropped(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
     detail: denoise::galosh::Detail,
-    crop: Option<(crate::view::View, usize)>,
+    crop: Option<(decode::view::View, usize)>,
     fit: denoise::galosh::Fit,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     // Nothing taken off the glass here. The callers below are the ones that are not the pipeline -
     // the debug renders, the fixture pins, the examples - and a spot removed from a fixture is a
     // fixture that no longer pins what it was written to pin.
@@ -438,45 +423,16 @@ fn decode_frame_cropped(
 /// and starts moving as the reader pans.
 ///
 /// `halo` is how much context the denoise is given either side, and it is the caller's because the
-/// two callers want different answers: `RENDITION_TILE_HALO` where the tile has to match what a
+/// two callers want different answers: `decode::RENDITION_TILE_HALO` where the tile has to match what a
 /// render would produce, `EDITOR_TILE_HALO` where it is drawn and then replaced.
 pub fn decode_tile(
     path: &str,
-    view: crate::view::View,
+    view: decode::view::View,
     detail: denoise::galosh::Detail,
     fit: denoise::galosh::Fit,
     halo: usize,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(DecodeSource::Path(path), 0, detail, Some((view, halo)), fit)
-}
-
-/// How much context a tile is given either side, where what a seam costs is worth more than what
-/// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
-/// GALOSH reads farther and raises it to its own ([`denoise::galosh::reach`]).
-///
-/// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
-/// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
-/// the export is a magnifier that lies, which is worse than a slower one.
-pub const RENDITION_TILE_HALO: usize = 96;
-
-/// The same, for a tile the editor draws and then replaces.
-pub const EDITOR_TILE_HALO: usize = 32;
-
-/// Set by the seam harnesses to cut one frame at several halos from one process, which is the only
-/// way to put the results beside each other. `usize::MAX` leaves the caller's own choice alone.
-static TILE_HALO_OVERRIDE: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-
-pub fn set_tile_halo(halo: usize) {
-    TILE_HALO_OVERRIDE.store(halo, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The halo to use, which is the caller's unless a harness has taken the choice away.
-pub fn tile_halo(asked: usize) -> usize {
-    match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        usize::MAX => asked,
-        set => set,
-    }
 }
 
 /// The camera's embedded preview as an owned frame, fitted to `long_edge`.
@@ -490,18 +446,18 @@ pub fn tile_halo(asked: usize) -> usize {
 /// beside a small one, taking the large one reads 4-14MB to make an 800px tile that looks the same.
 /// A caller that wants the body's own rendering rather than a cheap source of pixels wants
 /// `decode_embedded_rgb` with `Preview::Largest`.
-pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Frame> {
+pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<decode::frame::Frame> {
     let image = guard("decode_embedded_frame", None, || {
-        decode_rawler::upright_preview_rgb(
+        decode::raw::upright_preview_rgb(
             raw_path,
             long_edge as usize,
-            decode_rawler::Preview::SmallestCovering(long_edge as usize),
+            decode::raw::Preview::SmallestCovering(long_edge as usize),
         )
     })?;
-    Some(frame::Frame::new(
+    Some(decode::frame::Frame::new(
         image.width,
         image.height,
-        frame::Pixels::Eight(image.data),
+        decode::frame::Pixels::Eight(image.data),
     ))
 }
 
@@ -595,14 +551,14 @@ pub fn save_avif_frame(
 ///
 /// A JPEG that arrived as itself is its own preview: nothing was lifted out of it, so what a
 /// caller asking for "the camera's rendering" gets is the file, byte for byte. Every other
-/// rendered format has none, and the caller renders (`decode_rendered`).
+/// rendered format has none, and the caller renders (`decode::rendered`).
 #[cfg(feature = "renditions")]
 fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
     if formats::rendered::is_rendered(path) {
         let bytes = std::fs::read(path).ok()?;
         return bytes.starts_with(&[0xFF, 0xD8]).then(|| use_bytes(&bytes));
     }
-    decode_rawler::upright_preview_jpeg(path, decode_rawler::Preview::Largest)
+    decode::raw::upright_preview_jpeg(path, decode::raw::Preview::Largest)
         .map(|jpeg| use_bytes(&jpeg))
 }
 
@@ -630,7 +586,7 @@ fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
 /// produced rather than looking for cheap pixels, which is the distinction `Preview` draws.
 #[cfg(feature = "renditions")]
 pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<units::rgb::Rgb> {
-    decode_rawler::upright_preview_rgb(path, long_edge, decode_rawler::Preview::Largest)
+    decode::raw::upright_preview_rgb(path, long_edge, decode::raw::Preview::Largest)
 }
 
 /// Reads what the catalogue needs from a RAW without decoding a pixel.
@@ -911,7 +867,7 @@ mod tests {
         // Warmed first, because the pipelines and the adapter are built once per process and a
         // loupe asks its second question with them already up.
         let seeing = |side: usize| {
-            view::View::whole(units::px::Size::exact(whole.width, whole.height))
+            decode::view::View::whole(units::px::Size::exact(whole.width, whole.height))
                 .showing(units::px::Rect::exact(2000, 1400, side, side))
         };
         let sliders = denoise::galosh::Detail::at(40.0, 40.0);
@@ -920,7 +876,7 @@ mod tests {
             seeing(400),
             sliders,
             denoise::galosh::Fit::Measure,
-            RENDITION_TILE_HALO,
+            decode::RENDITION_TILE_HALO,
         );
         for side in [400usize, 700] {
             let started = std::time::Instant::now();
@@ -929,7 +885,7 @@ mod tests {
                 seeing(side),
                 sliders,
                 denoise::galosh::Fit::Measure,
-                RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
             );
             let took = started.elapsed().as_millis();
             let frame = tile.expect("the tile decodes");

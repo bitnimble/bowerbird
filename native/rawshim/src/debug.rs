@@ -16,7 +16,7 @@
 // the frame is mostly picture and a bar barely moves a mean, but which is four
 // triples and so a summary like any other (`PixelsAt`). No samples leave this side.
 
-use crate::frame::{Frame, Pixels};
+use decode::frame::{Frame, Pixels};
 use serde::{Deserialize, Serialize};
 
 /// Per-channel range and average, which is what a "did the grade move" assertion

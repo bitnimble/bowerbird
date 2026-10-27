@@ -85,7 +85,7 @@ pub struct HeldRaw {
     ///
     /// Everything above the coding is shared, and that is the point: one `tick`, one grade, one
     /// set of canvases, whichever device prepared the picture.
-    held: Option<crate::decode::Held>,
+    held: Option<decode::Held>,
     /// The file, kept because the camera match is fitted against its embedded JPEG.
     ///
     /// Empty for a finished picture, which has no preview to fit against (`edit::from_frame`
@@ -187,7 +187,7 @@ pub struct KeptStage(render::grade::Stage);
 struct Tiled {
     _frame: colour::resident::Resident,
     uploaded: render::grade::Uploaded<'static>,
-    window: crate::tile::Prepared,
+    window: decode::Prepared,
 }
 
 use crate::tile_grid::{tile_rect, tiles_over};
@@ -304,19 +304,19 @@ enum Reading<'a> {
 ///
 /// A RAW is held at the mosaic and a finished picture at its code values; which of the two this is
 /// never reaches the page, because everything it then asks for is the same call
-/// ([`crate::decode::Held`]).
+/// ([`decode::Held`]).
 #[wasm_bindgen(js_name = holdRaw)]
 pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
     let rendered = formats::rendered::is_rendered_bytes(bytes);
     let report = reporting(report);
-    report(crate::open_stage::Stage::Decoding);
-    let held = crate::decode::hold_bytes(bytes)
+    report(decode::open_stage::Stage::Decoding);
+    let held = decode::hold_bytes(bytes)
         .await
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
     if !rendered {
-        report(crate::open_stage::Stage::MeasuringNoise);
+        report(decode::open_stage::Stage::MeasuringNoise);
     }
     let fit = held.fit().await;
     // The abnormal cases say so, because their only other symptom is a photograph that is not
@@ -361,10 +361,10 @@ pub async fn hold_planes(
     let layout: formats::planes::Layout = serde_json::from_str(layout).map_err(|e| {
         JsValue::from_str(&format!("rawshim: these planes are described wrongly: {e}"))
     })?;
-    let held = crate::decode_rendered::hold_planes(avif, planes, &layout)
+    let held = decode::rendered::hold_planes(avif, planes, &layout)
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
     Ok(HeldRaw::new(
-        Some(crate::decode::Held::Rendered(held)),
+        Some(decode::Held::Rendered(held)),
         Vec::new(),
         false,
         None,
@@ -384,10 +384,10 @@ pub async fn hold_pixels(
 ) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
-    let held = crate::decode_rendered::hold_pixels(avif, rgba, width, height)
+    let held = decode::rendered::hold_pixels(avif, rgba, width, height)
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
     Ok(HeldRaw::new(
-        Some(crate::decode::Held::Rendered(held)),
+        Some(decode::Held::Rendered(held)),
         Vec::new(),
         false,
         None,
@@ -397,14 +397,14 @@ pub async fn hold_pixels(
 
 #[wasm_bindgen]
 extern "C" {
-    /// Called with each [`crate::open_stage::Stage`]'s name as it begins.
+    /// Called with each [`decode::open_stage::Stage`]'s name as it begins.
     #[wasm_bindgen(typescript_type = "(stage: string) => void")]
     pub type Reporter;
     #[wasm_bindgen(method, js_name = call)]
     fn call(this: &Reporter, receiver: &JsValue, stage: &str);
 }
 
-fn reporting(to: &Reporter) -> impl Fn(crate::open_stage::Stage) + '_ {
+fn reporting(to: &Reporter) -> impl Fn(decode::open_stage::Stage) + '_ {
     move |stage| to.call(&JsValue::NULL, stage.name())
 }
 
@@ -415,7 +415,7 @@ fn request_of(request: &str) -> Result<crate::edit::EditRequest, JsValue> {
 
 impl HeldRaw {
     fn new(
-        held: Option<crate::decode::Held>,
+        held: Option<decode::Held>,
         bytes: Vec<u8>,
         mosaic: bool,
         fit: Option<denoise::galosh::NoiseFit>,
@@ -1346,7 +1346,7 @@ impl HeldRaw {
         };
         // Before the window is cut, since a window cannot look for itself. Costs a whole-frame read
         // on the first band after the switch is thrown, and nothing on the rest of the sweep.
-        self.look_for_dust(dust, &crate::open_stage::quiet).await;
+        self.look_for_dust(dust, &decode::open_stage::quiet).await;
         let denoiser = denoiser_of(denoiser)?;
         let detail = denoise::galosh::Detail {
             luminance,
@@ -1502,7 +1502,7 @@ impl HeldRaw {
                 render::base::Defringe::Take,
             ),
             photo_analysis: self.analysis_bytes(),
-            scale: crate::view::Scale::Full,
+            scale: decode::view::Scale::Full,
             repairs,
             drawn: None,
             removal: None,
@@ -1521,7 +1521,7 @@ impl HeldRaw {
         &self,
         mut request: crate::tile::TileRequest,
     ) -> crate::tile::TileRequest {
-        request.sensor_long = self.held.as_ref().map(crate::decode::Held::picture_long);
+        request.sensor_long = self.held.as_ref().map(decode::Held::picture_long);
         request
     }
 
@@ -1818,7 +1818,7 @@ impl HeldRaw {
     /// the demosaic, the dust search, the loupe's own rendition chain - has nothing to run over.
     /// Said rather than silently skipped: a Detail slider that does nothing is worse than one the
     /// page does not offer, and the page decides which to offer from `mosaic`.
-    fn mosaic_held(&self) -> Result<&crate::decode::Held, JsValue> {
+    fn mosaic_held(&self) -> Result<&decode::Held, JsValue> {
         self.held.as_ref().ok_or_else(|| {
             JsValue::from_str(
                 "rawshim: this picture was prepared elsewhere and arrived already coded, so there \
@@ -2498,7 +2498,7 @@ impl HeldRaw {
                 self.request.long_edge,
                 fit,
                 dust.wanted(Some(stored.from_raw.dust.as_deref().unwrap_or(&[]))),
-                &crate::open_stage::quiet,
+                &decode::open_stage::quiet,
             )
             .await
             .ok_or_else(|| JsValue::from_str("rawshim: the held mosaic would not finish"))?;
@@ -2541,7 +2541,7 @@ impl HeldRaw {
     async fn look_for_dust(
         &self,
         settings: denoise::dust::Settings,
-        report: crate::open_stage::Report<'_>,
+        report: decode::open_stage::Report<'_>,
     ) {
         // `does_anything`, not the switch alone: with the switch on and Intensity at nothing, the
         // correction will not run, and a whole-frame readback for a list nobody will divide out is
@@ -2554,7 +2554,7 @@ impl HeldRaw {
         let Some(held) = self.held.as_ref() else {
             return;
         };
-        report(crate::open_stage::Stage::FindingDust);
+        report(decode::open_stage::Stage::FindingDust);
         let Some(spots) = held.dust().await else {
             return;
         };

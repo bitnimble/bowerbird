@@ -47,7 +47,7 @@ pub struct Open<'a> {
 pub struct Opened {
     /// Read back to the host. A RAW is already defringed and `measured.defringe` is `Done`; a
     /// rendered file is not, and carries `Measure` or `Take`.
-    pub frame: rawshim::frame::Frame,
+    pub frame: decode::frame::Frame,
     pub measured: rawshim::open::Measured,
 }
 
@@ -67,7 +67,7 @@ impl<'a> Open<'a> {
     }
 
     pub fn run(self) -> Option<Opened> {
-        let mut frame = rawshim::decode::frame_from_path(
+        let mut frame = decode::frame_from_path(
             self.path,
             self.detail,
             self.floor,
@@ -81,7 +81,7 @@ impl<'a> Open<'a> {
             edit(&mut samples);
             let gpu = gpu::device()?;
             // Back on the device, since the measure below defringes the frame it is given in place.
-            frame.pixels = rawshim::frame::Pixels::Resident(colour::resident::Resident::upload(
+            frame.pixels = decode::frame::Pixels::Resident(colour::resident::Resident::upload(
                 gpu,
                 &samples,
                 frame.width,
