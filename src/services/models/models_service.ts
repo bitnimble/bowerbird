@@ -30,8 +30,6 @@ export interface Model {
   files: readonly string[];
   /** Renders with the model's files in `dir` from the next frame on. */
   hold: (dir: string) => void;
-  /** Once a downloaded model with different files is in use, for what was rendered with the last one. */
-  changed: () => void;
 }
 
 /**
@@ -121,11 +119,9 @@ export class ModelsService {
     if (next == null) throw new Error('there are no newer models to download');
     this.downloading = true;
     this.error = null;
-    const before = this.inUse();
-    let installed: Installed | null;
     try {
       await this.fetchInto(next);
-      installed = this.hold(recorded(next));
+      const installed = this.hold(recorded(next));
       if (installed == null)
         throw new Error('the download holds nothing newer than the models in use');
       await this.record(installed);
@@ -137,16 +133,6 @@ export class ModelsService {
       this.downloading = false;
     }
     log.info('the models were updated', { revision: next.version.revision });
-    for (const model of this.models) {
-      // A model the download doesn't hold keeps what it rendered with, so nothing of it renders again.
-      if (!carries(installed, model.files)) continue;
-      if (model.files.every((file) => before.git_oids[file] === installed.git_oids[file])) continue;
-      try {
-        model.changed();
-      } catch (err) {
-        log.warn('could not render again with an updated model', { err: String(err) });
-      }
-    }
     return this.status();
   }
 

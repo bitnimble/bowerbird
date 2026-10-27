@@ -392,8 +392,8 @@ every compared version comes from `VERSION`.
 **The AI models are downloaded by the running app, without an app update.** Our models live on
 Hugging Face (`bitnimble/bowerbird`), which publishes commits rather than releases: a model is its
 files at a commit, and a commit is one update for every model the app uses. Each registers its
-files with `ModelsService`, with how the renderer takes them and what renders again when they
-change: the upscaler and the reflection remover (§10.9.4). A build carries the models
+files with `ModelsService`, with how the renderer takes them: the upscaler and the reflection
+remover (§10.9.4). A build carries the models
 `bundled_models.json` pins, so the "Best" denoiser works offline and on first launch; the
 reflection remover's 77 MB is in no build, so it is present only once downloaded, and the page
 reads `current.files` to know. `ModelsService` checks `main`
@@ -402,10 +402,8 @@ that is newer than the models in use and changed one of their files. A commit th
 model the app does not use offers nothing.
 
 The reader sees it where they see an app update (§23.6): a sidebar row and a Settings row, both
-named "AI models". Both ask first, since every photo rendered with a changed model is then
-rendered again (for the upscaler, every photo it denoises by its own edit or its library's
-default, `rebuildDenoisedWith`; for the reflection remover, every photo with it on,
-`rebuildRemovingReflections`), so the editor and the renditions agree. A commit offers the
+named "AI models". Both ask first, naming the download's size. Renditions already built keep the
+model they were rendered with until the reader renders them again. A commit offers the
 registered files it has, so one without a model still updates the rest. It is offered when it is
 newer than the models in use, or when it holds a model they lack, whatever its date: a build's pin
 may already be `main` and still carry no reflection remover.

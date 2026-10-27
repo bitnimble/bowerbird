@@ -324,12 +324,6 @@ export class PhotoProcessingRepository {
   liftDeferral(photoId: string): void {
     this.renditions.liftDeferral(photoId);
   }
-  queueDenoisedWith(denoiser: Denoiser): string[] {
-    return this.renditions.queueDenoisedWith(denoiser);
-  }
-  queueRemovingReflections(): string[] {
-    return this.renditions.queueRemovingReflections();
-  }
   // Whole library, same tile-only rule as `queueTileRebuild`.
   queueTileRebuildForLibrary(libraryId: string): number {
     this.db

@@ -74,7 +74,6 @@ export class UpdatesPresenter {
     }
   }
 
-  /** Asks first, since every photo rendered with a changed model is rendered again. */
   @action.bound
   async downloadModels(): Promise<void> {
     const available = this.store.modelsAvailable;

@@ -246,7 +246,6 @@ const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'dow
     files: ['upscaler.json', 'upscaler.bin'],
     hold: (dir) =>
       holdUpscalerModel(path.join(dir, 'upscaler.json'), path.join(dir, 'upscaler.bin')),
-    changed: () => processingService.rebuildDenoisedWith('upscaler'),
   },
   {
     files: [`${REFLECTION_MODEL}.json`, `${REFLECTION_MODEL}.bin`],
@@ -255,7 +254,6 @@ const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'dow
         path.join(dir, `${REFLECTION_MODEL}.json`),
         path.join(dir, `${REFLECTION_MODEL}.bin`),
       ),
-    changed: () => processingService.rebuildRemovingReflections(),
   },
 ]);
 // A downloaded model is handed over before the first await, so before any render starts.

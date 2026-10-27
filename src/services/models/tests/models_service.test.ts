@@ -77,17 +77,15 @@ process.env.BOWERBIRD_MODELS_HUB = HUB;
 let root = '';
 let home = '';
 let held: string[][] = [];
-let changed: string[] = [];
 
-function model(name: string, files: string[]): Model {
+function model(files: string[]): Model {
   return {
     files,
     hold: (dir) => held.push(files.map((file) => readFileSync(path.join(dir, file), 'utf8'))),
-    changed: () => changed.push(name),
   };
 }
 
-const UPSCALER = model('upscaler', ['upscaler.json', 'upscaler.bin']);
+const UPSCALER = model(['upscaler.json', 'upscaler.bin']);
 
 function service(bundled: Installed = BUNDLED, models: Model[] = [UPSCALER]): ModelsService {
   return new ModelsService(home, models, bundled);
@@ -102,7 +100,6 @@ beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bowerbird-models-'));
   home = path.join(root, 'models', 'downloaded');
   held = [];
-  changed = [];
   commits.clear();
   served = (name, at) => at.files[name] ?? '';
   publish(BASE);
@@ -137,7 +134,6 @@ test('a newer model on the hub is offered, downloaded, used and rendered with', 
 
   const after = await models.download();
   expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
-  expect(changed).toEqual(['upscaler']);
   expect(after.current).toEqual({
     revision: NEWER.sha,
     committed_at: NEWER.committed_at,
@@ -163,7 +159,7 @@ test('a commit that only added a model the app does not use is nothing to downlo
   expect((await service().check()).available).toBeNull();
 });
 
-test('every model is held from the download, and only a changed one renders again', async () => {
+test('every model is held from the download', async () => {
   const bundled: Installed = {
     ...BUNDLED,
     git_oids: { ...BUNDLED.git_oids, 'other.bin': oidOf('other.bin', 'another network') },
@@ -173,7 +169,7 @@ test('every model is held from the download, and only a changed one renders agai
     committed_at: NEWER.committed_at,
     files: { ...BASE.files, 'other.bin': 'retrained network' },
   });
-  const both = (): Model[] => [UPSCALER, model('other', ['other.bin'])];
+  const both = (): Model[] => [UPSCALER, model(['other.bin'])];
   const models = service(bundled, both());
 
   expect((await models.check()).available?.bytes).toBe(
@@ -181,7 +177,6 @@ test('every model is held from the download, and only a changed one renders agai
   );
   await models.download();
   expect(held).toEqual([['{"for":"bundled"}', 'old'], ['retrained network']]);
-  expect(changed).toEqual(['other']);
   expect(models.file('c'.repeat(40), 'other.bin')).toBe(
     path.join(home, 'c'.repeat(40), 'other.bin'),
   );
@@ -199,7 +194,7 @@ test('every model is held from the download, and only a changed one renders agai
   expect(incomplete.status().current.downloaded).toBe(false);
 });
 
-const REMOVER = (): Model => model('remover', ['remover.json', 'remover.bin']);
+const REMOVER = (): Model => model(['remover.json', 'remover.bin']);
 const WITH_REMOVER = { 'remover.json': '{"for":"remover"}', 'remover.bin': 'network' };
 
 test('a hub without a model the app registers still offers the rest', async () => {
@@ -210,17 +205,15 @@ test('a hub without a model the app registers still offers the rest', async () =
   expect(status.available?.revision).toBe(NEWER.sha);
   await models.download();
   expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
-  expect(changed).toEqual(['upscaler']);
   expect(models.status().current.files).toEqual(['upscaler.json', 'upscaler.bin']);
 });
 
-test('a commit without a model the app uses renders nothing of that model again', async () => {
+test('a commit without a model the app uses holds nothing of that model', async () => {
   publish({ ...NEWER, files: WITH_REMOVER });
   const models = service(BUNDLED, [UPSCALER, REMOVER()]);
   await models.check();
   await models.download();
   expect(held).toEqual([['{"for":"remover"}', 'network']]);
-  expect(changed).toEqual(['remover']);
 });
 
 test('a model the build does not carry is offered from the commit the build pins', async () => {
@@ -228,7 +221,7 @@ test('a model the build does not carry is offered from the commit the build pins
   const models = service(BUNDLED, [UPSCALER, REMOVER()]);
   expect((await models.check()).available?.revision).toBe(BASE.sha);
   await models.download();
-  expect(changed).toEqual(['remover']);
+  expect(held).toEqual([['{"for":"remover"}', 'network']]);
   expect(models.status().current.files).toContain('remover.bin');
 });
 
@@ -271,7 +264,6 @@ test('a model the renderer refuses keeps what it had, and the rest of the downlo
   await models.check();
   await models.download();
   expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
-  expect(changed).toEqual(['upscaler']);
   const status = models.status();
   expect(status.current.files).toEqual(['upscaler.json', 'upscaler.bin']);
   expect(status.error).toMatch(/cannot run/);
@@ -302,7 +294,6 @@ test('a file that does not match what the hub lists is refused, and nothing chan
 
   await expect(models.download()).rejects.toThrow(/does not match/);
   expect(held).toEqual([]);
-  expect(changed).toEqual([]);
   expect(existsSync(path.join(home, 'installed.json'))).toBe(false);
   expect(existsSync(path.join(home, NEWER.sha))).toBe(false);
   expect(models.status().current.downloaded).toBe(false);
@@ -347,7 +338,6 @@ test('a model the renderer refuses is not recorded as in use', async () => {
   ]);
   await models.check();
   await expect(models.download()).rejects.toThrow(/could not read/);
-  expect(changed).toEqual([]);
   expect(models.status().current.downloaded).toBe(false);
   expect(existsSync(path.join(home, 'installed.json'))).toBe(false);
 });

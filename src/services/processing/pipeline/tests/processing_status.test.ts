@@ -223,12 +223,15 @@ describe('live library processing status', () => {
     });
   });
 
-  it('drains only the photos a model update queued, leaving the rest of the backlog', async () => {
+  it('drains only the photos an edit queued, leaving the rest of the backlog', async () => {
     add('a');
     add('backlog', OTHER);
-    db.query(`UPDATE libraries SET denoiser = 'upscaler' WHERE id = ?`).run(LIB);
+    db.query(
+      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp)
+         VALUES ('a', '{"exposure":1}', 0, 1, '2026-01-01T00:00:00.000Z', '0001')`,
+    ).run();
 
-    const queued = processing.rebuildDenoisedWith('upscaler');
+    const queued = processing.rebuildEdited(['a']);
     await Bun.sleep(0);
 
     expect(queued).toBe(1);

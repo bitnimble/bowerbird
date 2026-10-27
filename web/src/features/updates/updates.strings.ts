@@ -30,7 +30,6 @@ export const UpdatesStrings = {
   aiModels: () => 'AI models',
   modelsUpdateAvailable: () => 'Update AI models',
   modelsUpdateTitle: () => 'Update AI models?',
-  modelsUpdateBody: (size: string) =>
-    `Downloads ${size} and renders the photos that use them again.`,
+  modelsUpdateBody: (size: string) => `Downloads ${size}`,
   modelsUpdate: () => 'Update',
 };

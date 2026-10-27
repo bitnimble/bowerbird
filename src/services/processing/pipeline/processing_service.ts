@@ -6,7 +6,7 @@ import type {
   ProcessingWorkKind,
 } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
-import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
+import type { CameraTone } from '../../../schemas/photo_edits';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import {
@@ -197,22 +197,6 @@ export class ProcessingService extends RenderService {
     return this.drainQueued(
       this.photoProcessing.queuePasted(photoIds, shown),
       'could not rebuild after an edit',
-    );
-  }
-
-  /** Both derived stages of every photo denoised with `denoiser`, whose model has changed. */
-  rebuildDenoisedWith(denoiser: Denoiser): number {
-    return this.drainQueued(
-      this.photoProcessing.queueDenoisedWith(denoiser),
-      'could not rebuild after a model update',
-    );
-  }
-
-  /** Both derived stages of every photo removing reflections, whose model has changed. */
-  rebuildRemovingReflections(): number {
-    return this.drainQueued(
-      this.photoProcessing.queueRemovingReflections(),
-      'could not rebuild after a model update',
     );
   }
 
