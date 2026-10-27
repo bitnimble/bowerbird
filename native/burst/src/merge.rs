@@ -113,7 +113,7 @@ pub const WORKING_BYTES_PER_PIXEL: f64 = 4.0
         + 2.0 * (1.0 + 0.25 + 0.0625 + 0.015625));
 
 #[cfg(test)]
-pub(crate) fn block() -> usize {
+pub fn block() -> usize {
     std::mem::size_of::<Params>()
 }
 

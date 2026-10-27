@@ -2,6 +2,13 @@
 //! projected through its lens, less any shift the camera made on purpose, as the prior the aligner
 //! searches from.
 
+#![deny(unsafe_code)]
+
+pub mod align;
+pub mod merge;
+#[cfg(any(test, feature = "testing"))]
+pub mod scene;
+
 use units::px::{Extent, Sensor};
 
 /// A stack of frames merged on the mosaic: how they were taken, and how they are weighed.
@@ -60,7 +67,7 @@ pub const SHIFTS: [Offset; 4] = [
 ];
 
 pub fn prior(
-    recipe: &crate::composition::Composition,
+    recipe: &composition::Composition,
     window: units::px::Rect<units::px::Photograph>,
     taken: Taken,
 ) -> Option<Vec<Offset>> {
@@ -77,7 +84,7 @@ pub fn prior(
 }
 
 pub fn prior_at(
-    recipe: &crate::composition::Composition,
+    recipe: &composition::Composition,
     index: usize,
     at: [f64; 2],
     taken: Taken,
@@ -86,10 +93,10 @@ pub fn prior_at(
     let source = recipe.sources.get(index)?;
     let (shift, from) = (taken.shift(index)?, taken.shift(recipe.reference)?);
     let shift = Offset::exactly(shift.x.raw() - from.x.raw(), shift.y.raw() - from.y.raw());
-    let corrected = crate::composition::sensor_to_corrected(reference, at)?;
-    let ray = crate::composition::source_to_ray(reference, corrected[0], corrected[1]);
-    let corrected = crate::composition::ray_to_source(source, ray)?;
-    let source_at = crate::composition::corrected_to_sensor(source, corrected)?;
+    let corrected = composition::sensor_to_corrected(reference, at)?;
+    let ray = composition::source_to_ray(reference, corrected[0], corrected[1]);
+    let corrected = composition::ray_to_source(source, ray)?;
+    let source_at = composition::corrected_to_sensor(source, corrected)?;
     Some(Offset {
         x: Extent::measured(source_at[0] - at[0] - shift.x.raw()),
         y: Extent::measured(source_at[1] - at[1] - shift.y.raw()),
@@ -102,11 +109,36 @@ mod tests {
     use crate::align::{self, Exposure, Search};
     use units::px::{At, Rect};
 
+    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
+    #[test]
+    fn every_uniform_is_the_size_its_shader_reads() {
+        shaders::layout::check(&[
+            (
+                "align_luma.wgsl",
+                "Params",
+                shaders::ALIGN_LUMA.source,
+                align::luma_block(),
+            ),
+            (
+                "align.wgsl",
+                "Params",
+                shaders::ALIGN.source,
+                align::align_block(),
+            ),
+            (
+                "merge.wgsl",
+                "Params",
+                shaders::MERGE.source,
+                crate::merge::block(),
+            ),
+        ]);
+    }
+
     #[test]
     fn prior_maps_each_lens_back_to_sensor_coordinates() {
-        let mut recipe = crate::composition::Composition::of_one(
+        let mut recipe = composition::Composition::of_one(
             [1000, 800],
-            crate::composition::LensSpec {
+            composition::LensSpec {
                 distortion: None,
                 crop: 0.8,
                 falloff: None,
@@ -115,7 +147,7 @@ mod tests {
             },
         );
         recipe.sources = vec![recipe.sources[0].clone(); 4];
-        recipe.sources[1].lens = crate::composition::LensSpec::none();
+        recipe.sources[1].lens = composition::LensSpec::none();
         recipe.sources[2].lens.crop = 0.6;
         let window = Rect::exact(780, 600, 2, 2);
         let offsets = super::prior(&recipe, window, super::Taken::SensorShift).unwrap();

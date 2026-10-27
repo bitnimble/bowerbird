@@ -1,8 +1,8 @@
 //! The planes the analysis reads: the panorama's own prepared sources, gathered onto one canvas.
 
 use crate::composite_tile::{CompositeRequest, From, Layer, SourceFile};
-use crate::composition::Composition;
 use colour::resident::Resident;
+use composition::Composition;
 
 /// The long edge every plane is measured at.
 pub const ANALYSIS_LONG: usize = 3000;

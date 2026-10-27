@@ -10,7 +10,7 @@ use rawshim::assembly_weight::{W_HIGH_PX, Weights, slots_of, weights};
 use rawshim::composite_tile::{
     Blending, CompositeRequest, From, Layer, Mask, SourceFile, Weight, layers_of,
 };
-use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
+use composition::{Composition, LensSpec, Projection, SourceSpec};
 use denoise::galosh::Detail;
 use render::detail::Strengths;
 use units::light::{Gain, Light, SceneNits};
@@ -55,7 +55,7 @@ fn with_tile(drawing: &mut Drawing, corners: [[f32; 2]; 4], pick: usize, corrido
     drawing.corridor.push(corridor);
     drawing
         .warp
-        .push(rawshim::composition::no_warp().map(|at| at as f32));
+        .push(composition::no_warp().map(|at| at as f32));
     drawing.gain.push(Gain::ONE);
 }
 
@@ -419,10 +419,10 @@ fn two_sources_narrower_than_the_canvas(size: (usize, usize)) -> (Composition, V
         focal: FOCAL,
         lens: LensSpec::none(),
         gain: 1.0,
-        warp: rawshim::composition::no_warp(),
+        warp: composition::no_warp(),
     };
     let spec = Composition {
-        version: rawshim::composition::VERSION,
+        version: composition::VERSION,
         sources: vec![source(), source()],
         projection: Projection::Rectilinear,
         canvas: [size.0, size.1],
@@ -759,7 +759,7 @@ fn a_cylinder_of_two(size: (usize, usize)) -> (Composition, Vec<String>) {
         source.focal = size.0 as f64 / 2.0;
     }
     spec.sources[1].rotation =
-        rawshim::composition::from_axis_angle([0.0, std::f64::consts::FRAC_PI_4, 0.0]);
+        composition::from_axis_angle([0.0, std::f64::consts::FRAC_PI_4, 0.0]);
     (spec, paths)
 }
 

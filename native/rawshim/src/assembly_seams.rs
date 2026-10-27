@@ -210,7 +210,7 @@ fn pieces(
 pub(crate) mod tests {
     use super::*;
     use crate::assembly_seam::SeamField;
-    use crate::composition::{Composition, LensSpec};
+    use composition::{Composition, LensSpec};
 
     /// Large enough that [`RING`] is seventy-two cells.
     pub(crate) const SIZE: (usize, usize) = (240, 200);

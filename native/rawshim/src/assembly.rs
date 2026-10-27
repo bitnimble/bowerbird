@@ -1,7 +1,7 @@
 //! What an assembly is: a composition's geometry, and the tiles across it that each take one frame.
-//! A recipe, not a picture, for [`crate::composition`]'s reasons.
+//! A recipe, not a picture, for [`composition`]'s reasons.
 
-use crate::composition::Composition;
+use composition::Composition;
 use serde::{Deserialize, Serialize};
 use units::light::Gain;
 use units::px::Share;
@@ -89,7 +89,7 @@ impl Assembly {
                 self.tiles.clone(),
                 self.pick.clone(),
                 vec![0.0; tiles],
-                vec![crate::composition::no_warp().map(|at| at as f32); tiles],
+                vec![composition::no_warp().map(|at| at as f32); tiles],
                 vec![Gain::ONE; tiles],
             ));
         };

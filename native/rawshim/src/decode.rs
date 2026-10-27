@@ -184,9 +184,9 @@ pub async fn merged_tile_from(
     detail: denoise::galosh::Detail,
     fit: denoise::galosh::Fit,
     halo: usize,
-    prior: &[crate::burst::Offset],
-    recipe: &crate::composition::Composition,
-    stack: crate::burst::Stack,
+    prior: &[burst::Offset],
+    recipe: &composition::Composition,
+    stack: burst::Stack,
     scale: usize,
 ) -> Option<crate::frame::Frame> {
     if paths

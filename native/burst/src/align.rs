@@ -126,12 +126,12 @@ struct AlignParams {
 }
 
 #[cfg(test)]
-pub(crate) fn luma_block() -> usize {
+pub fn luma_block() -> usize {
     std::mem::size_of::<LumaParams>()
 }
 
 #[cfg(test)]
-pub(crate) fn align_block() -> usize {
+pub fn align_block() -> usize {
     std::mem::size_of::<AlignParams>()
 }
 
@@ -453,7 +453,7 @@ pub fn measure(
     reference_origin: units::px::At<Sensor>,
     frame_origin: units::px::At<Sensor>,
     window: units::px::Rect<Sensor>,
-    prior_at: impl Fn(f64, f64) -> crate::burst::Offset,
+    prior_at: impl Fn(f64, f64) -> crate::Offset,
     search: Search,
 ) -> Field {
     let (reference_left, reference_top) = reference_origin.raw();

@@ -5,8 +5,8 @@
 //! window asks each source for the region it actually reaches, gathers it into the window's own
 //! grid, and drops that region before the next source is decoded.
 
-use crate::composition::{Composition, Projection, SourceSpec};
 use colour::resident::Resident;
+use composition::{Composition, Projection, SourceSpec};
 use gpu::dispatch::Whole;
 use units::px::{Drawn, Rect, Size};
 
@@ -232,7 +232,7 @@ fn params(
 /// on a value, so any source's geometry writes the same run of words.
 #[cfg(test)]
 pub(crate) fn params_block() -> usize {
-    let spec = Composition::of_one([64, 64], crate::composition::LensSpec::none());
+    let spec = Composition::of_one([64, 64], composition::LensSpec::none());
     params(
         &spec.sources[0],
         Size::exact(64, 64),
@@ -855,7 +855,7 @@ pub async fn prepared(
 #[derive(Clone, Copy)]
 struct Merging<'a> {
     recipe: &'a Composition,
-    stack: crate::burst::Stack,
+    stack: burst::Stack,
     /// Every frame's path, in the recipe's order.
     frames: &'a [&'a str],
     /// Canvas pixels a side per photosite: 2 for a merge drawn finer than the sensor.
@@ -868,7 +868,7 @@ pub async fn merged(
     spec: &Composition,
     request: &CompositeRequest<'_>,
     frames: &[&str],
-    stack: crate::burst::Stack,
+    stack: burst::Stack,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
     if spec.sources.len() != frames.len() || request.sources.len() != frames.len() {
         return Err("the stack's recipe and its frames disagree".into());
@@ -880,12 +880,12 @@ pub async fn merged(
         .and_then(|analysis| analysis.from_raw.matched.as_ref())
         .map_or_else(
             || first.lens.clone(),
-            |matched| crate::composition::LensSpec::from(&matched.lens),
+            |matched| composition::LensSpec::from(&matched.lens),
         );
     let magnified = (spec.canvas[0] as f64 / first.size[0] as f64)
         .round()
         .max(1.0) as usize;
-    let mut direct = crate::composition::Composition::of_one(first.size, lens).magnified(magnified);
+    let mut direct = composition::Composition::of_one(first.size, lens).magnified(magnified);
     direct.sources[0].photo_id = first.photo_id.clone();
     let request = CompositeRequest {
         sources: &request.sources[at..at + 1],
@@ -1079,9 +1079,8 @@ async fn taken(
                     .await
                 }
                 Some(merging) => {
-                    let prior =
-                        crate::burst::prior(merging.recipe, view.window, merging.stack.taken)
-                            .ok_or("a stack's frame cannot be projected")?;
+                    let prior = burst::prior(merging.recipe, view.window, merging.stack.taken)
+                        .ok_or("a stack's frame cannot be projected")?;
                     let finer = (wanted / long).ceil().clamp(1.0, magnified);
                     crate::decode::merged_tile_from(
                         merging.frames,
@@ -1528,11 +1527,11 @@ fn footprint_of(
             a * canvas[0] + b * canvas[1] + tx,
             c * canvas[0] + d * canvas[1] + ty,
         ];
-        let ray = crate::composition::canvas_to_ray(spec, asked[0], asked[1]);
-        let Some(there) = crate::composition::ray_to_source(source, ray) else {
+        let ray = composition::canvas_to_ray(spec, asked[0], asked[1]);
+        let Some(there) = composition::ray_to_source(source, ray) else {
             return;
         };
-        let Some(sensor) = crate::composition::corrected_to_sensor(source, there) else {
+        let Some(sensor) = composition::corrected_to_sensor(source, there) else {
             return;
         };
         for (axis, value) in sensor.iter().enumerate() {
@@ -1713,7 +1712,7 @@ pub async fn probe_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composition::{LensSpec, VERSION, canvas_to_ray, ray_to_source};
+    use composition::{LensSpec, VERSION, canvas_to_ray, ray_to_source};
 
     fn drawing() -> &'static gpu::Gpu {
         gpu::device().expect("an adapter for the panorama gather")
@@ -1817,7 +1816,7 @@ mod tests {
         // against the host rather than assumed. The other two stay unwarped, which is what every
         // panorama writes and what the identity has to keep meaning.
         let warps = [
-            crate::composition::no_warp(),
+            composition::no_warp(),
             [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             [1.004, 0.011, -0.006, 0.997, 23.0, -14.0],
         ];
@@ -1829,9 +1828,7 @@ mod tests {
                 .map(|(axis, warp)| SourceSpec {
                     photo_id: "one".into(),
                     size: SOURCE,
-                    rotation: crate::composition::normalise(crate::composition::from_axis_angle(
-                        *axis,
-                    )),
+                    rotation: composition::normalise(composition::from_axis_angle(*axis)),
                     focal: 5200.0,
                     lens: match through {
                         Through::Lens => lens(),
@@ -1862,7 +1859,7 @@ mod tests {
         canvas: [f64; 2],
     ) -> Option<[f64; 2]> {
         // §3.7a, before the ray, as `composite_gather.slang` does it.
-        let asked = crate::composition::warped_canvas(source, canvas);
+        let asked = composition::warped_canvas(source, canvas);
         let at = ray_to_source(source, canvas_to_ray(p, asked[0], asked[1]))?;
         let (cx, cy) = (source.size[0] as f64 / 2.0, source.size[1] as f64 / 2.0);
         let (ox, oy) = (at[0] - cx, at[1] - cy);
@@ -1903,8 +1900,8 @@ mod tests {
         let apart = 0.55 * SOURCE[0] as f64 / 5200.0;
         let mut left = p.sources[0].clone();
         let mut right = p.sources[0].clone();
-        left.rotation = crate::composition::from_axis_angle([0.0, -apart / 2.0, 0.0]);
-        right.rotation = crate::composition::from_axis_angle([0.0, apart / 2.0, 0.0]);
+        left.rotation = composition::from_axis_angle([0.0, -apart / 2.0, 0.0]);
+        right.rotation = composition::from_axis_angle([0.0, apart / 2.0, 0.0]);
 
         // Wide enough to reach past the overlap at both ends, which is where each source is meant
         // to be alone: two 6000px frames a third apart share the middle 3300.

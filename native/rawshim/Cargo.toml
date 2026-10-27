@@ -177,6 +177,8 @@ lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 colour = { path = "../colour" }
 denoise = { path = "../denoise" }
+burst = { path = "../burst" }
+composition = { path = "../composition" }
 fit = { path = "../fit" }
 formats = { path = "../formats" }
 geometry = { path = "../geometry" }
@@ -256,6 +258,7 @@ web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 wasm-bindgen-futures = "0.4.58"
 
 [dev-dependencies]
+burst = { path = "../burst", features = ["testing"] }
 fit = { path = "../fit", features = ["testing"] }
 formats = { path = "../formats", features = ["testing"] }
 shaders = { path = "../shaders", features = ["layout"] }

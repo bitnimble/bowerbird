@@ -6,9 +6,7 @@
 //! model, and it is why ten frames cost sixteen parameters rather than a hundred.
 
 use crate::composite_pairs::{Match, Pair};
-use crate::composition::{
-    Projection, conjugate, cross, from_axis_angle, multiply, normalise, rotate,
-};
+use composition::{Projection, conjugate, cross, from_axis_angle, multiply, normalise, rotate};
 use units::px::{Share, TUNED_ON};
 
 /// Where every source points, in one frame.
@@ -1833,7 +1831,7 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composition::{Composition, VERSION};
+    use composition::{Composition, VERSION};
 
     struct Rng(u64);
 
@@ -2655,7 +2653,7 @@ mod tests {
                     solved.rotations[i],
                     [(at[0] - cx) / FOCAL, (at[1] - cy) / FOCAL, 1.0],
                 );
-                let on = crate::composition::ray_to_canvas(&p, ray).expect("in front");
+                let on = composition::ray_to_canvas(&p, ray).expect("in front");
                 assert!(
                     on[0] >= -1.0
                         && on[1] >= -1.0

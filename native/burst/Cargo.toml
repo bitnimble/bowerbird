@@ -1,0 +1,24 @@
+[package]
+name = "burst"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The synthetic burst this crate's tests align, for the crates above it to align too.
+testing = []
+
+[dependencies]
+composition = { path = "../composition" }
+denoise = { path = "../denoise" }
+geometry = { path = "../geometry" }
+gpu = { path = "../gpu" }
+mosaic = { path = "../mosaic" }
+shaders = { path = "../shaders" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+pollster = "0.4"
+rayon = "1.10"
+
+[dev-dependencies]
+shaders = { path = "../shaders", features = ["layout"] }

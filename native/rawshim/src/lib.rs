@@ -56,7 +56,6 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 
 mod acr3;
-mod align;
 /// A composition's geometry, and the tiles across it that each take one frame.
 pub mod assembly;
 /// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
@@ -86,9 +85,6 @@ pub mod assembly_tiles;
 pub mod assembly_volume;
 /// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
 pub mod assembly_weight;
-pub mod burst;
-#[cfg(test)]
-mod burst_scene;
 /// A set of photographs into a recipe: what overlaps what, and where each one points.
 pub mod composite_align;
 /// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
@@ -110,9 +106,6 @@ pub mod composite_scene;
 pub mod composite_solve;
 /// One rectangle of a composite's canvas, gathered source by source and blended.
 pub mod composite_tile;
-/// What a composition is: the sources a composite is made of, where each one points, and the
-/// surface they are projected onto. A panorama is one recipe over it; an assembly is another.
-pub mod composition;
 #[cfg(feature = "renditions")]
 pub mod debug;
 /// Which decoder a photograph gets, which is the one place the two front ends differ.
@@ -138,7 +131,6 @@ pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
 pub mod linearise;
-pub mod merge;
 pub mod open;
 pub mod open_stage;
 /// Where a patch of one frame lies in another, or elsewhere in its own.

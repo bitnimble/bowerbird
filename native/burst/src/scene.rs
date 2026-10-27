@@ -295,8 +295,8 @@ fn gaussian(x: usize, y: usize, frame: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{Burst, Focus, Noise, Random, Scene, Shake, Subject};
+    use crate::Offset;
     use crate::align::{self, Exposure};
-    use crate::burst::Offset;
     use crate::merge::{Frame, Grid, Merge};
     use denoise::galosh::NoiseModel;
     use units::px::{At, Rect};
@@ -596,7 +596,7 @@ mod tests {
             .map(|frame| match frame {
                 0 => Shake::default(),
                 _ if case.tripod => {
-                    let shift = crate::burst::SHIFTS[frame % crate::burst::SHIFTS.len()];
+                    let shift = crate::SHIFTS[frame % crate::SHIFTS.len()];
                     Shake {
                         shift: [shift.x.raw(), shift.y.raw()],
                         ..Shake::default()

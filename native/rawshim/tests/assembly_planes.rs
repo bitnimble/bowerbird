@@ -4,7 +4,7 @@ mod support;
 
 use rawshim::assembly_planes::{ANALYSIS_LONG, analysis_planes};
 use rawshim::composite_tile::SourceFile;
-use rawshim::composition::{Composition, LensSpec, SourceSpec, from_axis_angle, normalise};
+use composition::{Composition, LensSpec, SourceSpec, from_axis_angle, normalise};
 use rawshim::snapshot::{Frame, Snapshot};
 use support::*;
 

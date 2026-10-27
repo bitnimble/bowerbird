@@ -142,9 +142,10 @@ mod tests {
     #[test]
     fn a_job_names_what_its_want_needs_and_is_refused_without_it() {
         use crate::composite_job::{CompositeJob, Want};
-        let recipe = serde_json::to_value(Assembly::untiled(
-            crate::composition::Composition::of_one([16, 4], crate::composition::LensSpec::none()),
-        ))
+        let recipe = serde_json::to_value(Assembly::untiled(composition::Composition::of_one(
+            [16, 4],
+            composition::LensSpec::none(),
+        )))
         .unwrap();
         let read = |job: serde_json::Value| serde_json::from_value::<CompositeJob>(job);
 
@@ -178,9 +179,9 @@ mod tests {
     #[test]
     fn a_layout_is_cut_again_for_a_new_recipe_and_not_for_a_new_feather() {
         let volume = Arc::new(volume(4));
-        let mut recipe = Assembly::untiled(crate::composition::Composition::of_one(
+        let mut recipe = Assembly::untiled(composition::Composition::of_one(
             [16, 4],
-            crate::composition::LensSpec::none(),
+            composition::LensSpec::none(),
         ));
         let first = layout_for(&volume, &recipe).expect("a layout");
 

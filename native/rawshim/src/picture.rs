@@ -29,7 +29,7 @@ fn whole(job: &Job) -> Result<(usize, usize), String> {
 /// The picture at `level`, coded, with everything the grade needs beside it.
 ///
 /// `level` is a halving of the recipe's own long edge, and `window` a rectangle of that level in
-/// its own pixels - None for the whole of it. [`crate::composition::coarsest_level`] is the level to
+/// its own pixels - None for the whole of it. [`composition::coarsest_level`] is the level to
 /// ask for the whole picture at: below it the picture is larger than an adapter will hold a texture
 /// of, which is the whole reason a canvas has levels, and a window is how a reader reaches past it.
 pub fn prepared(

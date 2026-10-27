@@ -10,6 +10,8 @@
 //! applying its lens's ratio table after the pinhole, exactly as `warp.slang` does; a source that
 //! is already a finished picture is reached at the pinhole itself.
 
+#![deny(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 
 /// The surface the sources are projected onto.
@@ -509,7 +511,7 @@ pub fn normalise(q: [f64; 4]) -> [f64; 4] {
     q.map(|v| v / length)
 }
 
-pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],

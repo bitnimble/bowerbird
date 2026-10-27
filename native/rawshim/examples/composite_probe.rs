@@ -275,8 +275,8 @@ fn main() {
             // Where each frame's centre lands on the canvas, as fractions of it: which frame is in
             // the part of a finished panorama that looks wrong is otherwise a guess.
             for (at, source) in p.sources.iter().enumerate() {
-                let ray = rawshim::composition::rotate(source.rotation, [0.0, 0.0, 1.0]);
-                let on = rawshim::composition::ray_to_canvas(p, ray);
+                let ray = composition::rotate(source.rotation, [0.0, 0.0, 1.0]);
+                let on = composition::ray_to_canvas(p, ray);
                 let (across, down) = match on {
                     Some(on) => (on[0] / p.canvas[0] as f64, on[1] / p.canvas[1] as f64),
                     None => (f64::NAN, f64::NAN),
@@ -341,13 +341,13 @@ fn main() {
 /// The panorama itself, rendered through the job every rendition goes through and handed over as
 /// a JPEG somebody can look at.
 /// A composition as `CompositeJob::recipe` reads one: the server's own `kind` beside its fields.
-fn tagged(recipe: &rawshim::composition::Composition) -> serde_json::Value {
+fn tagged(recipe: &composition::Composition) -> serde_json::Value {
     let mut value = serde_json::to_value(recipe).expect("a recipe");
     value["kind"] = serde_json::Value::String("panorama".into());
     value
 }
 
-fn render(recipe: &rawshim::composition::Composition, to: &str) {
+fn render(recipe: &composition::Composition, to: &str) {
     // The recipe's own sources, in its order: an align that left a photograph out answers a recipe
     // shorter than the set it was handed, and the render is indexed against the recipe.
     //
@@ -455,7 +455,7 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
 /// Which frame is where is the question a seam actually asks, and reading it off a list of centres
 /// is guesswork: this puts the answer on the picture.
 fn outlined(
-    recipe: &rawshim::composition::Composition,
+    recipe: &composition::Composition,
     picture: units::rgb::RgbRef<'_>,
     crop: [f64; 4],
     to: &str,
@@ -477,8 +477,8 @@ fn outlined(
         // A source pixel to a ray in its own camera, then through its rotation onto the canvas.
         let onto = |x: f64, y: f64| -> Option<[f64; 2]> {
             let ray = [x - sw / 2.0, y - sh / 2.0, source.focal];
-            let world = rawshim::composition::rotate(source.rotation, ray);
-            let on = rawshim::composition::ray_to_canvas(recipe, world)?;
+            let world = composition::rotate(source.rotation, ray);
+            let on = composition::ray_to_canvas(recipe, world)?;
             Some([(on[0] - left) * scale, (on[1] - top) * scale])
         };
         let pen = PEN[at % PEN.len()];
@@ -846,14 +846,14 @@ fn focal_px(path: &str) -> Option<f64> {
 /// The visible symptom of a panorama that was not levelled: the frames make a staircase that runs
 /// uphill, and the horizon in them runs with it. Near zero is what `composite_solve::straighten` is for,
 /// and a residual here is the levelling's error rather than the solve's.
-fn climb(p: &rawshim::composition::Composition) -> f64 {
+fn climb(p: &composition::Composition) -> f64 {
     let centres: Vec<[f64; 2]> = p
         .sources
         .iter()
         .filter_map(|source| {
-            rawshim::composition::ray_to_canvas(
+            composition::ray_to_canvas(
                 p,
-                rawshim::composition::rotate(source.rotation, [0.0, 0.0, 1.0]),
+                composition::rotate(source.rotation, [0.0, 0.0, 1.0]),
             )
         })
         .collect();
@@ -872,7 +872,7 @@ fn climb(p: &rawshim::composition::Composition) -> f64 {
 }
 
 /// Full-resolution source pixels per preview pixel, which is what the recipe's focal is scaled by.
-fn full_scale(p: &rawshim::composition::Composition) -> f64 {
+fn full_scale(p: &composition::Composition) -> f64 {
     let source = &p.sources[0];
     source.size[0].max(source.size[1]) as f64 / units::px::TUNED_ON as f64
 }

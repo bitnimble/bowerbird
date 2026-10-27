@@ -62,22 +62,22 @@ pub enum Shape {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CompositeRecipe {
-    Panorama(crate::composition::Composition),
+    Panorama(composition::Composition),
     Assembly(Box<crate::assembly::Assembly>),
     /// Merged on the mosaic (`merge`), each frame weighed by its noise in the reference's light.
-    ExposureBracket(crate::composition::Composition),
+    ExposureBracket(composition::Composition),
     /// Merged on the mosaic, each place taking the frame in focus there.
-    FocusBracket(crate::composition::Composition),
+    FocusBracket(composition::Composition),
     /// Merged on the mosaic from where the sensor moved each frame.
-    PixelShift(crate::composition::Composition),
+    PixelShift(composition::Composition),
     /// Merged on the mosaic from wherever each frame's hand put it.
-    Burst(crate::composition::Composition),
+    Burst(composition::Composition),
 }
 
 impl CompositeRecipe {
     /// The geometry every kind shares - the levels-and-colour half of [`base`] reads only this,
     /// whichever arm it was handed.
-    pub fn composition(&self) -> &crate::composition::Composition {
+    pub fn composition(&self) -> &composition::Composition {
         match self {
             CompositeRecipe::Panorama(spec)
             | CompositeRecipe::ExposureBracket(spec)
@@ -88,7 +88,7 @@ impl CompositeRecipe {
         }
     }
 
-    fn stack(&self) -> Option<crate::burst::Stack> {
+    fn stack(&self) -> Option<burst::Stack> {
         let shape = match self {
             CompositeRecipe::Panorama(_) | CompositeRecipe::Assembly(_) => return None,
             CompositeRecipe::ExposureBracket(_) => Shape::ExposureBracket,
@@ -103,10 +103,10 @@ impl CompositeRecipe {
 impl Shape {
     /// How a shape merged on the mosaic is taken and weighed, and which frame it is drawn as, or
     /// None for one that is not.
-    fn merged(self) -> Option<(crate::burst::Stack, crate::composite_align::Reference)> {
-        use crate::burst::{Stack, Taken};
+    fn merged(self) -> Option<(burst::Stack, crate::composite_align::Reference)> {
         use crate::composite_align::Reference;
-        use crate::merge::Weights;
+        use burst::merge::Weights;
+        use burst::{Stack, Taken};
         let (taken, weights, reference) = match self {
             Shape::Pan => return None,
             Shape::ExposureBracket => (Taken::Placed, Weights::MOMENT, Reference::MiddleExposure),
@@ -165,7 +165,7 @@ const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 6.0;
 fn strip_bytes_per_pixel(recipe: &CompositeRecipe) -> f64 {
     STRIP_BYTES_PER_PIXEL
         + match recipe.stack() {
-            Some(_) => crate::merge::WORKING_BYTES_PER_PIXEL,
+            Some(_) => burst::merge::WORKING_BYTES_PER_PIXEL,
             None => 0.0,
         }
 }
@@ -194,7 +194,7 @@ fn tile_runs(
 /// The reference's, walked round its border rather than cornered: the sources of a pan are one
 /// body's frames at one focal length, so any of them stands for the set, and a projection bows the
 /// edges between the corners.
-fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
+fn source_shape(spec: &composition::Composition) -> Option<f64> {
     let source = spec.sources.get(spec.reference)?;
     let (across, down) = (source.size[0] as f64, source.size[1] as f64);
     let mut low = [f64::MAX; 2];
@@ -207,8 +207,8 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
             (0.0, along * down),
             (across, along * down),
         ] {
-            let ray = crate::composition::source_to_ray(source, x, y);
-            let Some(on) = crate::composition::ray_to_canvas(spec, ray) else {
+            let ray = composition::source_to_ray(source, x, y);
+            let Some(on) = composition::ray_to_canvas(spec, ray) else {
                 continue;
             };
             for (axis, value) in on.iter().enumerate() {
@@ -240,7 +240,7 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
 /// canvas is shorter than the shape asks for, which is every single-row pan. A pan of several rows
 /// is squarer and gets squarer tiles, which is the case a fixed axis would have got wrong.
 fn tile_of(
-    spec: &crate::composition::Composition,
+    spec: &composition::Composition,
     width: usize,
     height: usize,
     bytes_per_pixel: f64,
@@ -361,7 +361,7 @@ pub fn align(gpu: &'static gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Resul
                 return Err("every frame of a stack must be placed".into());
             }
             let on = &aligned.composition.sources[aligned.composition.reference];
-            let direct = crate::composition::Composition::of_one(on.size, on.lens.clone());
+            let direct = composition::Composition::of_one(on.size, on.lens.clone());
             aligned.composition.canvas = direct.canvas;
             aligned.composition.centre = direct.centre;
             aligned.composition.radians_per_pixel = direct.radians_per_pixel;
@@ -409,7 +409,7 @@ pub fn align(gpu: &'static gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Resul
 fn whole_levels(
     gpu: &'static gpu::Gpu,
     job: &Job,
-    spec: &crate::composition::Composition,
+    spec: &composition::Composition,
     files: &[crate::composite_tile::SourceFile<'_>],
     from: crate::composite_tile::From,
     stacked: Option<&colour::resident::Resident>,
@@ -808,7 +808,7 @@ fn overlap(
 enum Drawn {
     Blended,
     Assembly(crate::assembly::Drawing),
-    Merged(crate::composition::Composition, crate::burst::Stack),
+    Merged(composition::Composition, burst::Stack),
 }
 
 /// The composite this job's targets are cut from, at the largest of the sizes they asked for.
@@ -1243,7 +1243,7 @@ pub(crate) fn base(
 /// canvas pixels one of those is.
 ///
 /// Even, because a strip of a frame two samples to a word has to start on a word.
-fn sized(spec: &crate::composition::Composition, size: u32) -> (usize, usize, f64) {
+fn sized(spec: &composition::Composition, size: u32) -> (usize, usize, f64) {
     let long = spec.canvas[0].max(spec.canvas[1]) as f64;
     let want = match size {
         0 => long.min(f64::from(MAX_LONG_EDGE)),
@@ -1268,8 +1268,7 @@ fn sized(spec: &crate::composition::Composition, size: u32) -> (usize, usize, f6
 /// shallow levels of a very wide canvas are all the same shape.
 pub fn level_shape(canvas: &[usize; 2], level: u32) -> (usize, usize) {
     let long = canvas[0].max(canvas[1]);
-    let spec =
-        crate::composition::Composition::of_one(*canvas, crate::composition::LensSpec::none());
+    let spec = composition::Composition::of_one(*canvas, composition::LensSpec::none());
     let (width, height, _) = sized(&spec, (long >> level) as u32);
     (width, height)
 }
@@ -1279,11 +1278,11 @@ mod tests {
     use super::*;
     use colour::resident::BYTES_PER_PIXEL;
 
-    fn recipe(canvas: [usize; 2]) -> crate::composition::Composition {
-        crate::composition::Composition {
-            version: crate::composition::VERSION,
+    fn recipe(canvas: [usize; 2]) -> composition::Composition {
+        composition::Composition {
+            version: composition::VERSION,
             sources: Vec::new(),
-            projection: crate::composition::Projection::Cylindrical,
+            projection: composition::Projection::Cylindrical,
             canvas,
             centre: [canvas[0] as f64 / 2.0, canvas[1] as f64 / 2.0],
             radians_per_pixel: 1.0 / 5200.0,
@@ -1343,18 +1342,18 @@ mod tests {
             crate::composite_align::tests::fixtures("camera-identity", &[[1.0, 0.0, 0.0, 0.0]]);
         // A canvas the source's own size, at its own scale, looking along its own axis: the recipe
         // is then the identity, so anything the composite does to the picture is the pipeline's.
-        let spec = crate::composition::Composition {
-            version: crate::composition::VERSION,
-            sources: vec![crate::composition::SourceSpec {
+        let spec = composition::Composition {
+            version: composition::VERSION,
+            sources: vec![composition::SourceSpec {
                 photo_id: paths[0].clone(),
                 size: [wide, tall],
                 rotation: [1.0, 0.0, 0.0, 0.0],
                 focal,
-                lens: crate::composition::LensSpec::none(),
+                lens: composition::LensSpec::none(),
                 gain: 1.0,
-                warp: crate::composition::no_warp(),
+                warp: composition::no_warp(),
             }],
-            projection: crate::composition::Projection::Rectilinear,
+            projection: composition::Projection::Rectilinear,
             canvas: [wide, tall],
             centre: [wide as f64 / 2.0, tall as f64 / 2.0],
             radians_per_pixel: 1.0 / focal,
@@ -1496,17 +1495,17 @@ mod tests {
     }
 
     /// A panorama of `frame`-shaped sources, for the tiling to read a shape off.
-    fn shaped(canvas: [usize; 2], frame: [usize; 2]) -> crate::composition::Composition {
+    fn shaped(canvas: [usize; 2], frame: [usize; 2]) -> composition::Composition {
         let focal = 5200.0;
-        crate::composition::Composition {
-            sources: vec![crate::composition::SourceSpec {
+        composition::Composition {
+            sources: vec![composition::SourceSpec {
                 photo_id: "one".into(),
                 size: frame,
                 rotation: [1.0, 0.0, 0.0, 0.0],
                 focal,
-                lens: crate::composition::LensSpec::none(),
+                lens: composition::LensSpec::none(),
                 gain: 1.0,
-                warp: crate::composition::no_warp(),
+                warp: composition::no_warp(),
             }],
             ..recipe(canvas)
         }
@@ -1685,7 +1684,7 @@ mod tests {
             .composite
             .expect("an answer");
         let answer: serde_json::Value = serde_json::from_str(&answered).expect("an answer parses");
-        let recipe: crate::composition::Composition =
+        let recipe: composition::Composition =
             serde_json::from_value(answer["recipe"].clone()).expect("a recipe parses");
         assert_eq!(recipe.sources.len(), 2);
         assert!(
@@ -2066,9 +2065,9 @@ mod tests {
         };
         let base = render::base::device(gpu).expect("the base pipelines");
         let paths = views("gather-reduction");
-        let spec = crate::composition::Composition::of_one(
+        let spec = composition::Composition::of_one(
             [crate::composite_scene::WIDE, crate::composite_scene::TALL],
-            crate::composition::LensSpec::none(),
+            composition::LensSpec::none(),
         );
         let files = vec![crate::composite_tile::SourceFile {
             path: &paths[0],
@@ -2322,8 +2321,7 @@ mod tests {
     }
 
     fn views(name: &str) -> Vec<String> {
-        let pan =
-            |degrees: f64| crate::composition::from_axis_angle([0.0, degrees.to_radians(), 0.0]);
+        let pan = |degrees: f64| composition::from_axis_angle([0.0, degrees.to_radians(), 0.0]);
         crate::composite_align::tests::fixtures(name, &[pan(-10.0), pan(10.0)])
     }
 

@@ -18,7 +18,7 @@
 mod support;
 
 use rawshim::composite_tile::{CompositeRequest, From, SourceFile};
-use rawshim::composition::{Composition, LensSpec};
+use composition::{Composition, LensSpec};
 use rawshim::hdr::{self, Prepared};
 use colour::matched::{HdrColour, TRUST_CEILING};
 use render::detail::Strengths;
@@ -412,14 +412,14 @@ fn the_server_picks_the_level_this_host_produces() {
     let rows: Vec<String> = cases
         .iter()
         .map(|long| {
-            let level = rawshim::composition::coarsest_level(*long);
+            let level = composition::coarsest_level(*long);
             format!("{long} {level} {}", long >> level)
         })
         .chain(shapes.iter().flat_map(|canvas| {
             // Every level from the coarsest down to the picture's own pixels, which is the range a
             // ladder walks: the coarsest is what an open is served and 0 is where a reader ends up.
             let long = canvas[0].max(canvas[1]);
-            (0..=rawshim::composition::coarsest_level(long))
+            (0..=composition::coarsest_level(long))
                 .rev()
                 .map(move |level| {
                     let (width, height) = rawshim::composite_job::level_shape(canvas, level);
@@ -446,7 +446,7 @@ fn the_server_picks_the_level_this_host_produces() {
         "which level a picture is prepared at has moved"
     );
     // And the ceiling itself, since the page carries the constant rather than deriving it.
-    assert_eq!(rawshim::composition::COARSEST_LONG, 4096);
+    assert_eq!(composition::COARSEST_LONG, 4096);
 }
 
 /// How this host fills `Reduction`, so a rewrite of `base::Reduction::bytes` says what moved.
@@ -2434,7 +2434,7 @@ fn two_tiles_picking_two_frames(spec: Composition) -> rawshim::assembly::Drawing
         // The identity, and no correction: this fixture is what the blend's own pins are recorded
         // against, so either of them here would move every pixel of it for a reason that has
         // nothing to do with §5.2.
-        warp: vec![rawshim::composition::no_warp().map(|at| at as f32); 2],
+        warp: vec![composition::no_warp().map(|at| at as f32); 2],
         gain: vec![units::light::Gain::ONE; 2],
         feather: 0.01,
     }

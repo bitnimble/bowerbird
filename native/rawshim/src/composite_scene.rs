@@ -63,7 +63,7 @@ pub fn shot(rotation: [f64; 4]) -> Vec<u8> {
                 ((tap % SUPERSAMPLE) as f64 + 0.5) * step,
                 ((tap / SUPERSAMPLE) as f64 + 0.5) * step,
             );
-            let ray = crate::composition::rotate(
+            let ray = composition::rotate(
                 rotation,
                 [
                     (x + dx - WIDE as f64 / 2.0) / FOCAL,
@@ -107,7 +107,7 @@ pub fn wide_rig() -> Vec<[f64; 4]> {
     (0..6)
         .map(|i| {
             let pan = (f64::from(i) - 2.5) * 32.0 * std::f64::consts::PI / 180.0;
-            crate::composition::normalise(crate::composition::from_axis_angle([0.0, pan, 0.0]))
+            composition::normalise(composition::from_axis_angle([0.0, pan, 0.0]))
         })
         .collect()
 }
@@ -128,9 +128,9 @@ pub fn rig() -> Vec<[f64; 4]> {
     .iter()
     .map(|(pan, tilt)| {
         let d = std::f64::consts::PI / 180.0;
-        crate::composition::normalise(crate::composition::multiply(
-            crate::composition::from_axis_angle([0.0, pan * d, 0.0]),
-            crate::composition::from_axis_angle([tilt * d, 0.0, 0.0]),
+        composition::normalise(composition::multiply(
+            composition::from_axis_angle([0.0, pan * d, 0.0]),
+            composition::from_axis_angle([tilt * d, 0.0, 0.0]),
         ))
     })
     .collect()

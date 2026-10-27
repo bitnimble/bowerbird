@@ -12,7 +12,7 @@
 
 use crate::composite_pairs::{Match, Pair, Pyramid};
 use crate::composite_solve::{Leash, exposure_of, framed, gains, solve};
-use crate::composition::{Composition, LensSpec, SourceSpec, VERSION};
+use composition::{Composition, LensSpec, SourceSpec, VERSION};
 use units::px::Share;
 
 /// One photograph offered to a composite.
@@ -336,7 +336,7 @@ pub async fn align(
                 gain: matched[i],
                 // §3.7a is measured after the align and applied per tile; what the solve answers is
                 // where a whole frame points.
-                warp: crate::composition::no_warp(),
+                warp: composition::no_warp(),
             })
             .collect(),
         projection: framing.projection,
@@ -520,7 +520,7 @@ async fn chosen(
         Reference::Sharpest => {
             let mut sharpest = (0, f64::MIN);
             for (at, pyramid) in pyramids.iter().enumerate() {
-                let sharpness = crate::align::sharpness(gpu, &luma_of(pyramid))
+                let sharpness = burst::align::sharpness(gpu, &luma_of(pyramid))
                     .await
                     .unwrap_or(0.0);
                 if sharpness > sharpest.1 {
@@ -539,16 +539,16 @@ async fn stacked(
     pyramids: &[Pyramid],
     reference: usize,
 ) -> Result<Vec<Pair>, String> {
-    let preview = crate::align::Exposure {
+    let preview = burst::align::Exposure {
         gain: 1.0,
         ceilings: [1.0; 4],
     };
-    let on = crate::align::Pyramid::of(gpu, &luma_of(&pyramids[reference]), preview);
+    let on = burst::align::Pyramid::of(gpu, &luma_of(&pyramids[reference]), preview);
     let mut pairs = Vec::new();
     for at in (0..pyramids.len()).filter(|&at| at != reference) {
         crate::progress::stop_if_cancelled()?;
         let frame = luma_of(&pyramids[at]);
-        let field = crate::align::measure(
+        let field = burst::align::measure(
             gpu,
             &on,
             &frame,
@@ -556,8 +556,8 @@ async fn stacked(
             units::px::At::ORIGIN,
             units::px::At::ORIGIN,
             units::px::Rect::exact(0, 0, frame.width, frame.height),
-            |_, _| crate::burst::Offset::exactly(0.0, 0.0),
-            crate::align::Search::unplaced(frame.width.max(frame.height)),
+            |_, _| burst::Offset::exactly(0.0, 0.0),
+            burst::align::Search::unplaced(frame.width.max(frame.height)),
         );
         crate::progress::advance();
         let placed = field
@@ -933,7 +933,7 @@ fn assumed_focal(size: &[usize; 2]) -> f64 {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::composition::{Projection, from_axis_angle, multiply, ray_to_source};
+    use composition::{Projection, from_axis_angle, multiply, ray_to_source};
 
     pub(crate) use crate::composite_scene::{FOCAL, TALL, WIDE, rig};
 
@@ -1225,17 +1225,17 @@ pub(crate) mod tests {
             .iter()
             .map(|source| {
                 let want = multiply(
-                    crate::composition::conjugate(truth[0]),
+                    composition::conjugate(truth[0]),
                     truth[paths
                         .iter()
                         .position(|p| *p == source.photo_id)
                         .expect("a source")],
                 );
                 let got = multiply(
-                    crate::composition::conjugate(p.sources[0].rotation),
+                    composition::conjugate(p.sources[0].rotation),
                     source.rotation,
                 );
-                let off = multiply(crate::composition::conjugate(want), got);
+                let off = multiply(composition::conjugate(want), got);
                 2.0 * off[0].abs().min(1.0).acos().to_degrees()
             })
             .collect();
@@ -1263,7 +1263,7 @@ pub(crate) mod tests {
     /// and every tile of every other frame lands where the hand put it.
     #[test]
     fn a_stack_is_placed_on_its_sharpest_frame_where_each_hand_put_it() {
-        use crate::burst_scene::{Burst, Scene, Shake};
+        use burst::scene::{Burst, Scene, Shake};
         let gpu = gpu::device().expect("an adapter for the alignment");
         let shakes = vec![
             Shake {

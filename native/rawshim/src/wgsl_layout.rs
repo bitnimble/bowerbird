@@ -40,24 +40,6 @@ mod tests {
                 crate::composite_tile::blend_block(),
             ),
             (
-                "align_luma.wgsl",
-                "Params",
-                shaders::ALIGN_LUMA.source,
-                crate::align::luma_block(),
-            ),
-            (
-                "align.wgsl",
-                "Params",
-                shaders::ALIGN.source,
-                crate::align::align_block(),
-            ),
-            (
-                "merge.wgsl",
-                "Params",
-                shaders::MERGE.source,
-                crate::merge::block(),
-            ),
-            (
                 "repair.wgsl",
                 "Params",
                 shaders::REPAIR.source,

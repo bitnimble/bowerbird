@@ -269,9 +269,9 @@ pub(crate) async fn decode_merged_tile(
     detail: denoise::galosh::Detail,
     fit: denoise::galosh::Fit,
     halo: usize,
-    prior: &[crate::burst::Offset],
-    recipe: &crate::composition::Composition,
-    stack: crate::burst::Stack,
+    prior: &[burst::Offset],
+    recipe: &composition::Composition,
+    stack: burst::Stack,
     scale: usize,
 ) -> Option<Frame> {
     let taken = stack.taken;
@@ -283,7 +283,7 @@ pub(crate) async fn decode_merged_tile(
     }
     let reference_at = recipe.reference;
     let first = sources.get(reference_at)?;
-    if taken == crate::burst::Taken::SensorShift && view.scale.halves() {
+    if taken == burst::Taken::SensorShift && view.scale.halves() {
         return decode_tile_source(
             first,
             view,
@@ -309,7 +309,7 @@ pub(crate) async fn decode_merged_tile(
         _ => None,
     };
     let mut lap = trace::clock::laps("  merge ");
-    let reference_extra = crate::align::REFERENCE_MARGIN
+    let reference_extra = burst::align::REFERENCE_MARGIN
         .raw()
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
     let Region::Mosaic(mut reference) = region_mosaic(
@@ -333,7 +333,7 @@ pub(crate) async fn decode_merged_tile(
     let gpu = gpu::device()?;
     let rcd = mosaic::demosaic::device(gpu)?;
     reference.noise = given.or(reference.noise);
-    if taken == crate::burst::Taken::Placed {
+    if taken == burst::Taken::Placed {
         reference.halving = false;
     }
     let (Some(noise), false, true) = (reference.noise, reference.halving, reference.cfa.is_bayer())
@@ -351,8 +351,8 @@ pub(crate) async fn decode_merged_tile(
     };
     lap("reference");
     let noise = noise.model();
-    let exposure = crate::align::Exposure::of(&reference.cfa, reference.colour.ceiling, 1.0);
-    let reference_pyramid = crate::align::Pyramid::of(gpu, &reference.mosaic, exposure);
+    let exposure = burst::align::Exposure::of(&reference.cfa, reference.colour.ceiling, 1.0);
+    let reference_pyramid = burst::align::Pyramid::of(gpu, &reference.mosaic, exposure);
     let (period_w, period_h) = reference.cfa.period();
     let reach_x = RCD_MARGIN + period_w;
     let reach_y = RCD_MARGIN + period_h;
@@ -367,17 +367,17 @@ pub(crate) async fn decode_merged_tile(
         .next_multiple_of(period_h)
         .min(reference.mosaic.height);
     let (width, height) = reference.cfa.align_extent(right - left, bottom - top);
-    let grid = crate::merge::Grid {
+    let grid = burst::merge::Grid {
         left,
         top,
         width: width * scale,
         height: height * scale,
         scale,
     };
-    let merge = crate::merge::Merge::new(
+    let merge = burst::merge::Merge::new(
         gpu,
         rcd,
-        crate::merge::Frame {
+        burst::merge::Frame {
             mosaic: &reference.mosaic,
             cfa: &reference.cfa,
             origin: reference.origin,
@@ -408,7 +408,7 @@ pub(crate) async fn decode_merged_tile(
         if at == reference_at {
             continue;
         }
-        let frame_extra = (crate::align::frame_margin(crate::align::Search::AROUND_PRIOR).raw()
+        let frame_extra = (burst::align::frame_margin(burst::align::Search::AROUND_PRIOR).raw()
             + prior_spread(recipe, at, view, taken, prior[at]))
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
         let Region::Mosaic(frame) = region_mosaic(
@@ -434,12 +434,12 @@ pub(crate) async fn decode_merged_tile(
         let crop_shift_x = frame_photo_x as f64 - photo_x as f64;
         let crop_shift_y = frame_photo_y as f64 - photo_y as f64;
         let fallback = prior[at];
-        let frame_exposure = crate::align::Exposure::of(
+        let frame_exposure = burst::align::Exposure::of(
             &frame.cfa,
             frame.colour.ceiling,
             (recipe.sources[at].gain / reference_gain) as f32,
         );
-        let field = crate::align::measure(
+        let field = burst::align::measure(
             gpu,
             &reference_pyramid,
             &frame.mosaic,
@@ -449,20 +449,19 @@ pub(crate) async fn decode_merged_tile(
             window,
             |sensor_x, sensor_y| {
                 let point = [sensor_x - photo_x as f64, sensor_y - photo_y as f64];
-                let projected =
-                    crate::burst::prior_at(recipe, at, point, taken).unwrap_or(fallback);
-                crate::burst::Offset {
+                let projected = burst::prior_at(recipe, at, point, taken).unwrap_or(fallback);
+                burst::Offset {
                     x: units::px::Extent::measured(projected.x.raw() + crop_shift_x),
                     y: units::px::Extent::measured(projected.y.raw() + crop_shift_y),
                 }
             },
-            crate::align::Search::AROUND_PRIOR,
+            burst::align::Search::AROUND_PRIOR,
         );
         gpu.settle();
         lap("align");
         merge.add(
             gpu,
-            crate::merge::Frame {
+            burst::merge::Frame {
                 mosaic: &frame.mosaic,
                 cfa: &frame.cfa,
                 origin: frame.origin,
@@ -518,7 +517,7 @@ pub(crate) async fn decode_merged_tile(
 }
 
 /// `view` moved to where `prior` puts its content in a frame of the stack, kept inside the photograph.
-fn placed_at(view: crate::view::View, prior: crate::burst::Offset) -> crate::view::View {
+fn placed_at(view: crate::view::View, prior: burst::Offset) -> crate::view::View {
     let (x, y, width, height) = view.window.raw();
     let (photo_w, photo_h) = view.photograph.raw();
     let moved = |at: usize, by: f64, extent: usize, room: usize| {
@@ -538,11 +537,11 @@ fn placed_at(view: crate::view::View, prior: crate::burst::Offset) -> crate::vie
 /// How far the prior strays across `view`'s window from `prior`, the one it was cut around, in
 /// whole photosites: a roll moves the corners apart.
 fn prior_spread(
-    recipe: &crate::composition::Composition,
+    recipe: &composition::Composition,
     at: usize,
     view: crate::view::View,
-    taken: crate::burst::Taken,
-    prior: crate::burst::Offset,
+    taken: burst::Taken,
+    prior: burst::Offset,
 ) -> usize {
     let (x, y, width, height) = view.window.raw();
     [
@@ -552,7 +551,7 @@ fn prior_spread(
         (x + width, y + height),
     ]
     .into_iter()
-    .filter_map(|(cx, cy)| crate::burst::prior_at(recipe, at, [cx as f64, cy as f64], taken))
+    .filter_map(|(cx, cy)| burst::prior_at(recipe, at, [cx as f64, cy as f64], taken))
     .map(|corner| {
         (corner.x.raw() - prior.x.raw())
             .abs()

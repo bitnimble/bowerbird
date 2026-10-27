@@ -19,7 +19,7 @@
 //! BOWERBIRD_WRITE_FIXTURES=1 bun run scripts/cargo.ts test --manifest-path native/rawshim/Cargo.toml --test panorama_recipe
 //! ```
 
-use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec, VERSION};
+use composition::{Composition, LensSpec, Projection, SourceSpec, VERSION};
 
 fn fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43,7 +43,7 @@ fn sample() -> Composition {
         gain,
         // Never serialised and never a panorama's: §3.7a is an assembly's per-piece correction, and
         // this fixture is what holds the *stored* shape against the server's.
-        warp: rawshim::composition::no_warp(),
+        warp: composition::no_warp(),
     };
     Composition {
         version: VERSION,

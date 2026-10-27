@@ -10,7 +10,7 @@ use rawshim::assembly_tiles::{
     Cell, MIN_LOBE_AREA, Subdivision, crosses, enclosing, lobes, simplify, subdivide,
     tolerance_for, trace,
 };
-use rawshim::composition::{self, Composition, LensSpec};
+use composition::{self, Composition, LensSpec};
 use colour::resident::Resident;
 use support::{
     Patch, Rig, at, centre, code_of_light, codes_of, floats_of, ground, noise, rig, sigma_at,

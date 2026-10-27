@@ -10,7 +10,7 @@ use crate::assembly_levels::{MOST_SOURCES, seam_field};
 use crate::assembly_planes::Plane;
 use crate::assembly_seam::shrunk_size;
 use crate::composite_align::AlignSource;
-use crate::composition::Composition;
+use composition::Composition;
 use gpu::Gpu;
 use render::base::Base;
 use units::px::{Analysis, Extent, Share, Shrunk, Span};
@@ -318,13 +318,13 @@ pub fn intersection_crop(spec: &Composition) -> [f64; 4] {
     let covered: Vec<bool> = (0..across * down)
         .map(|cell| {
             let (x, y) = (cell % across, cell / across);
-            let ray = crate::composition::canvas_to_ray(
+            let ray = composition::canvas_to_ray(
                 spec,
                 (x as f64 + 0.5) / across as f64 * spec.canvas[0] as f64,
                 (y as f64 + 0.5) / down as f64 * spec.canvas[1] as f64,
             );
             spec.sources.iter().all(|source| {
-                crate::composition::ray_to_source(source, ray).is_some_and(|[sx, sy]| {
+                composition::ray_to_source(source, ray).is_some_and(|[sx, sy]| {
                     sx >= 0.0
                         && sy >= 0.0
                         && sx <= source.size[0] as f64
