@@ -2374,10 +2374,10 @@ pub async fn content_light(
     frame: &gpu::Buffer,
     width: usize,
     height: usize,
-) -> Option<crate::hdr_args::LightTally> {
+) -> Option<formats::still::LightTally> {
     const SIDE: usize = 16;
     if width == 0 || height == 0 {
-        return Some(crate::hdr_args::LightTally::default());
+        return Some(formats::still::LightTally::default());
     }
     let (tiles_w, tiles_h) = (width.div_ceil(SIDE), height.div_ceil(SIDE));
     let bytes = tiles_w * tiles_h * 2 * 4;
@@ -2440,7 +2440,7 @@ pub async fn content_light(
                 };
                 (brightest.max(word(0)), sum + word(4))
             });
-    Some(crate::hdr_args::LightTally {
+    Some(formats::still::LightTally {
         brightest,
         sum,
         pixels: width * height,

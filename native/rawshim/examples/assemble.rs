@@ -42,8 +42,8 @@ fn main() {
             // The metering, because the recipe's per-source gain is *only* ever what the headers
             // say - `align` hands `gains` no measured ratios at all - so a caller that leaves these
             // out is asking about a step with the correction switched off.
-            let header = rawshim::header::read_path(path);
-            let said = |of: fn(&rawshim::header::BbHeader) -> f32| {
+            let header = formats::header::read_path(path);
+            let said = |of: fn(&formats::header::BbHeader) -> f32| {
                 header.as_ref().map(of).filter(|v| *v > 0.0)
             };
             rawshim::composite_align::AlignSource {
@@ -519,7 +519,7 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
 
 fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
     let options = rawshim::hdr_args::EncodeOptions {
-        still_chroma: rawshim::hdr_args::Chroma::Yuv444,
+        still_chroma: formats::still::Chroma::Yuv444,
         output_path: path.to_string(),
         grade: support::GRADE,
         // Near-lossless and 4:4:4: this is a picture to pixel-peep, not one to ship.
@@ -632,14 +632,14 @@ fn plane_for(args: &Args, path: &str) -> Option<String> {
 
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
-    let header = rawshim::header::read_path(path)?;
-    rawshim::composite_job::focal_in_pixels(&header, rawshim::header::name(&header.camera_model))
+    let header = formats::header::read_path(path)?;
+    rawshim::composite_job::focal_in_pixels(&header, formats::header::name(&header.camera_model))
 }
 
 fn size_of(path: &str) -> [usize; 2] {
-    let header = match rawshim::decode_rendered::is_rendered(path) {
-        true => rawshim::header::read_rendered(path),
-        false => rawshim::header::read_path(path),
+    let header = match formats::rendered::is_rendered(path) {
+        true => formats::header::read_rendered(path),
+        false => formats::header::read_path(path),
     };
     header.map_or([0, 0], |h| [h.width as usize, h.height as usize])
 }

@@ -327,11 +327,11 @@ fn triple(text: &str) -> Option<(usize, usize, usize)> {
 /// Both forms, because these exist to be looked at and neither opens everywhere.
 ///
 /// Lossless enough to judge a seam by in each case: the AVIF is quantizer 0 with no chroma
-/// subsampling, the JPEG is quality 100 and `crate::jpeg` is 4:4:4 already, so what survives is
+/// subsampling, the JPEG is quality 100 and `formats::jpeg` is 4:4:4 already, so what survives is
 /// the 8-bit YCbCr rounding rather than anything either encoder chose to discard. A seam that only
 /// one of them shows is the encoder rather than the halo, which is worth being able to check.
 fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(rgb),
         width,
         height,
@@ -347,6 +347,6 @@ fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
         height,
         data: rgb,
     };
-    let jpeg = rawshim::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
+    let jpeg = formats::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
     std::fs::write(format!("{stem}.jpg"), jpeg).expect("the JPEG writes");
 }

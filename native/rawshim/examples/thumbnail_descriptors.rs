@@ -151,7 +151,7 @@ fn frame(gpu: &'static gpu::Gpu, scratch: &std::path::Path, path: &str) -> Optio
         .file_name()?
         .to_string_lossy()
         .into_owned();
-    let timestamp = rawshim::header::read_path(path)?.timestamp;
+    let timestamp = formats::header::read_path(path)?.timestamp;
     let original = upright_preview_jpeg(path, Preview::Largest)?;
     let tile = describe_jpeg(gpu, &original, TILE)?;
     let source = scratch.join(format!("{name}.jpg"));
@@ -182,7 +182,7 @@ fn frame(gpu: &'static gpu::Gpu, scratch: &std::path::Path, path: &str) -> Optio
 }
 
 fn describe_jpeg(gpu: &'static gpu::Gpu, jpeg: &[u8], long_edge: usize) -> Option<Vec<u8>> {
-    let rgb = rawshim::jpeg::decode_tile(jpeg, long_edge).ok()?;
+    let rgb = formats::jpeg::decode_tile(jpeg, long_edge).ok()?;
     describe(gpu, rgb.as_ref())
 }
 

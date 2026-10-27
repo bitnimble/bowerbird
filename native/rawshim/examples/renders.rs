@@ -21,7 +21,8 @@
 mod support;
 
 use rawshim::hdr;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use rawshim::image::Strengths;
 use units::light::Stops;
 
@@ -416,9 +417,9 @@ fn graded(
     // laid at the encoder's door or taken away from it. `max`'s settings: `lossless_quantizer`
     // and `avif_speed`, 4:2:0 as `hdr_still_full_chroma` defaults.
     if let (Domain::Pq, Some((quantizer, chroma))) = (stages.domain, stages.encode) {
-        let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
-        let still = rawshim::avif::StillOptions {
-            cicp: rawshim::avif::Cicp {
+        let (primaries, transfer, matrix) = formats::still::cicp();
+        let still = formats::avif::StillOptions {
+            cicp: formats::avif::Cicp {
                 primaries,
                 transfer,
                 matrix,
@@ -429,14 +430,14 @@ fn graded(
             light: None,
         };
         let started = std::time::Instant::now();
-        let file = rawshim::avif::encode_still(
+        let file = formats::avif::encode_still(
             std::borrow::Cow::Borrowed(&coded),
             cut.width,
             cut.height,
             &still,
         )
         .expect("the rendition encodes");
-        let (decoded, w, h) = rawshim::avif::decode_at(&file, 16).expect("the rendition decodes");
+        let (decoded, w, h) = formats::avif::decode_at(&file, 16).expect("the rendition decodes");
         assert_eq!((w, h), (cut.width, cut.height));
         eprintln!(
             "  encoded and decoded in {}ms, {} bytes",
@@ -758,7 +759,7 @@ fn main() {
             // taught on.
             let fitted = rawshim::hdr::match_preview(&path).expect("the match's preview");
             eprintln!("  match preview {}x{}", fitted.width, fitted.height);
-            let fitted = rawshim::image::resize(fitted.as_ref(), width, height);
+            let fitted = formats::resize::resize(fitted.as_ref(), width, height);
             for (x, y, side) in &crops {
                 let want = cut(whole, *x, *y, *side);
                 for (name, from) in [("camera", preview.as_ref()), ("fitted", fitted.as_ref())] {
@@ -766,7 +767,7 @@ fn main() {
                     let cut = greyscale(magnify(cut, crop_zoom()));
                     let path = format!("{dir}/{name}-{x}-{y}.jpg");
                     let bytes =
-                        rawshim::jpeg::encode(cut.as_ref(), 95).expect("the camera crop encodes");
+                        formats::jpeg::encode(cut.as_ref(), 95).expect("the camera crop encodes");
                     std::fs::write(&path, bytes).expect("the camera crop writes");
                     let [r, g, b] = channel_means(cut.as_ref());
                     let [cr, cb] = chroma_roughness(cut.as_ref());
@@ -820,7 +821,7 @@ fn main() {
         }
 
         if crops.is_empty() {
-            let small = rawshim::image::resize_to_fit(whole, 1600);
+            let small = formats::resize::resize_to_fit(whole, 1600);
             write(&format!("{out}/{name}.avif"), small.as_ref(), file);
             continue;
         }
@@ -1821,7 +1822,7 @@ fn sweep_grid(
     for (i, (x, y, _)) in crops.iter().enumerate() {
         let sheet = grid(&panels[i], columns);
         let at = format!("{out}/grid-{x}-{y}.jpg");
-        let bytes = rawshim::jpeg::encode(sheet.as_ref(), 95).expect("the grid encodes");
+        let bytes = formats::jpeg::encode(sheet.as_ref(), 95).expect("the grid encodes");
         std::fs::write(&at, bytes).expect("the grid writes");
         eprintln!("  wrote {at} ({}x{})", sheet.width, sheet.height);
     }
@@ -1895,9 +1896,9 @@ fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize
         .flat_map(|row| &codes[(row * width + x) * 3..(row * width + x + side) * 3])
         .copied()
         .collect();
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
-    let still = rawshim::avif::StillOptions {
-        cicp: rawshim::avif::Cicp {
+    let (primaries, transfer, matrix) = formats::still::cicp();
+    let still = formats::avif::StillOptions {
+        cicp: formats::avif::Cicp {
             primaries,
             transfer,
             matrix,
@@ -1907,14 +1908,14 @@ fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize
         speed: CROP_SPEED,
         light: None,
     };
-    let file = rawshim::avif::encode_still(std::borrow::Cow::Owned(cut), side, side, &still)
+    let file = formats::avif::encode_still(std::borrow::Cow::Owned(cut), side, side, &still)
         .expect("the crop encodes");
     std::fs::write(path, file).expect("the crop writes");
     eprintln!("    wrote {path}");
 }
 
 fn write(path: &str, image: units::rgb::RgbRef<'_>, file: File) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,
@@ -2100,7 +2101,7 @@ fn write(path: &str, image: units::rgb::RgbRef<'_>, file: File) {
         },
         false => std::fs::read(path)
             .ok()
-            .and_then(|bytes| rawshim::image::decode(&bytes, 0).ok())
+            .and_then(|bytes| formats::resize::decode(&bytes, 0).ok())
             .expect("the crop reads back"),
     };
     // **Beside, in one file.** Crops in separate files are compared by remembering the first one,
@@ -2112,7 +2113,7 @@ fn write(path: &str, image: units::rgb::RgbRef<'_>, file: File) {
         .filter(|p| !p.is_empty())
         .map(|p| {
             let bytes = std::fs::read(p).unwrap_or_else(|why| panic!("{p} reads: {why}"));
-            rawshim::image::decode(&bytes, 0).unwrap_or_else(|why| panic!("{p} decodes: {why}"))
+            formats::resize::decode(&bytes, 0).unwrap_or_else(|why| panic!("{p} decodes: {why}"))
         })
         .collect();
     let stored = match left.is_empty() {
@@ -2140,7 +2141,7 @@ fn write(path: &str, image: units::rgb::RgbRef<'_>, file: File) {
             }
         }
     };
-    match rawshim::jpeg::encode(stored.as_ref(), 95) {
+    match formats::jpeg::encode(stored.as_ref(), 95) {
         Ok(bytes) => {
             std::fs::write(&beside, bytes).expect("the crop writes");
             eprintln!("    wrote {beside}");

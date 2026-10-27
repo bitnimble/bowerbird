@@ -3,8 +3,8 @@
 //! own `stage.wgsl`, written as scRGB.
 
 use super::{CANVAS_FORMAT, Gpu, Texture};
-use crate::avif::Coded;
 use colour::sdr_match::CANVAS_WHITE_NITS;
+use formats::avif::Coded;
 use units::light::{DisplayNits, Gain, Light};
 use units::px::{At, Canvas, Extent, Output, Place, Rect, Size, Span};
 

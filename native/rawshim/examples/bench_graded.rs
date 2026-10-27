@@ -3,7 +3,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 use std::time::Instant;
 

@@ -17,7 +17,7 @@
 //! spelling its own author has superseded. Such a file shows its SDR base, which is what Ultra
 //! HDR's base is built to be.
 
-use crate::linearise::{GainMap, Reconstruction};
+use crate::gain_map::{GainMap, Reconstruction};
 
 /// The gain map beside a JPEG's primary picture, decoded and ready for the kernel.
 ///
@@ -49,7 +49,7 @@ fn terms_of(file: &[u8], exif: Option<&[u8]>) -> Option<Reconstruction> {
     let iso = second_image(file)
         .and_then(iso_segment)
         .or_else(|| iso_segment(file))
-        .and_then(crate::decode_rendered::iso_21496_terms);
+        .and_then(crate::rendered::iso_21496_terms);
     if let Some(iso) = iso {
         return Some(iso);
     }
@@ -183,7 +183,7 @@ fn decode(bytes: &[u8]) -> Option<crate::hevc::Coded> {
     };
     let (width, height) = (usize::from(info.width), usize::from(info.height));
     Some(crate::hevc::Coded {
-        samples: crate::decode_rendered::interleaved(&pixels, width * height, channels),
+        samples: crate::rendered::interleaved(&pixels, width * height, channels),
         width,
         height,
         depth: 8,

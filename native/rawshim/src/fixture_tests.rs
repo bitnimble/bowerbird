@@ -149,9 +149,9 @@ fn adapter() -> &'static gpu::Gpu {
 
 fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
     let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
-    let target = crate::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
+    let target = formats::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
         .expect("the injected target encodes");
-    let target = crate::jpeg::decode(&target, 0).expect("the injected target decodes");
+    let target = formats::jpeg::decode(&target, 0).expect("the injected target decodes");
     let frame = decode(&sony(), 3840);
     let resident = frame.on_device(adapter()).expect("a 16-bit decode");
     // Uncorrected skips the geometry search, so nothing but the falloff is in play.
@@ -293,7 +293,7 @@ fn rendition(
         job.adjust.clone(),
         base.as_shot,
     );
-    let size = crate::hdr_args::Size {
+    let size = formats::still::Size {
         width: base.width as u32,
         height: base.height as u32,
     };
@@ -408,7 +408,7 @@ mod decode_geometry {
     #[test]
     fn the_two_fuji_fixtures_are_four_stops_apart() {
         let iso = |path: &PathBuf| -> f32 {
-            crate::header::read_path(path.to_str().unwrap())
+            formats::header::read_path(path.to_str().unwrap())
                 .expect("header")
                 .iso
         };
@@ -431,7 +431,7 @@ mod decode_geometry {
     #[test]
     fn an_xtrans_frame_decodes_to_a_picture() {
         let frame = decode(&fuji(), 0);
-        let header = crate::header::read_path(fuji().to_str().unwrap()).expect("header");
+        let header = formats::header::read_path(fuji().to_str().unwrap()).expect("header");
         assert_eq!(frame.width, header.width as usize);
         assert_eq!(frame.height, header.height as usize);
 
@@ -499,7 +499,7 @@ mod decode_geometry {
     #[test]
     fn the_recorded_dimensions_are_the_dimensions_that_get_decoded() {
         for path in [sony(), canon()] {
-            let header = crate::header::read_path(path.to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(path.to_str().unwrap()).expect("header");
             let frame = decode(&path, 0);
             assert_eq!(frame.width, header.width as usize, "{}", path.display());
             assert_eq!(frame.height, header.height as usize, "{}", path.display());
@@ -534,8 +534,8 @@ mod decode_geometry {
     }
 
     /// A window of a photograph on disk, at the sensor's own resolution.
-    fn viewing(path: &str, tile: crate::Tile) -> crate::view::View {
-        let header = crate::header::read_path(path).expect("a header");
+    fn viewing(path: &str, tile: formats::orientation::Tile) -> crate::view::View {
+        let header = formats::header::read_path(path).expect("a header");
         crate::view::View::whole(units::px::Size::exact(
             header.width as usize,
             header.height as usize,
@@ -569,7 +569,7 @@ mod decode_geometry {
             (2001, 1401, 400, 401),
             (2001, 1401, 401, 401),
         ] {
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left,
                 top,
                 width,
@@ -623,7 +623,7 @@ mod decode_geometry {
 
         // Large enough that the region grown around it crosses 2048 on both axes.
         for span in [2200usize, 2202] {
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left: 700,
                 top: 900,
                 width: span,
@@ -993,7 +993,7 @@ mod decode_geometry {
         .expect("the frame reads back");
         let frame = whole.samples16().expect("16-bit");
 
-        let tile = crate::Tile {
+        let tile = formats::orientation::Tile {
             left: 703,
             top: 901,
             width: 512,
@@ -1292,7 +1292,7 @@ mod decode_geometry {
             if top + rows > whole.height {
                 break;
             }
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left: 0,
                 top,
                 width: whole.width,
@@ -1593,25 +1593,25 @@ mod decode_geometry {
             // None reaches the denoise's own tile: `galosh`'s
             // `tiling_the_denoise_does_not_move_a_sample` cuts it small.
             let regions = [
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 504,
                     top: 504,
                     width: 512,
                     height: 512,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 501,
                     top: 733,
                     width: 512,
                     height: 512,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 800,
                     top: 600,
                     width: width / 2,
                     height: height / 2,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: width - 900,
                     top: height - 700,
                     width: 896,
@@ -1682,13 +1682,13 @@ mod decode_geometry {
         );
 
         for region in [
-            crate::Tile {
+            formats::orientation::Tile {
                 left: 504,
                 top: 504,
                 width: 512,
                 height: 512,
             },
-            crate::Tile {
+            formats::orientation::Tile {
                 left: 2 * width - 1800,
                 top: 2 * height - 1400,
                 width: 1792,
@@ -1741,7 +1741,7 @@ mod decode_geometry {
             .and_then(|f| f.noise)
             .expect("the frame's fit");
 
-        let tile = crate::Tile {
+        let tile = formats::orientation::Tile {
             left: 2000,
             top: 1400,
             width: 512,
@@ -1857,7 +1857,7 @@ mod loupe_tile {
     /// A dark corner of the Sony fixture, which is where the difference is worth measuring: its
     /// own diffuse white is a third of the frame's, so a tile coded against it is lifted by that
     /// factor.
-    const DARK: crate::Tile = crate::Tile {
+    const DARK: formats::orientation::Tile = formats::orientation::Tile {
         left: 500,
         top: 4500,
         width: 512,
@@ -1886,7 +1886,7 @@ mod loupe_tile {
         for (path, bright) in [
             (
                 sony(),
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 1536,
                     top: 2048,
                     width: 512,
@@ -1895,7 +1895,7 @@ mod loupe_tile {
             ),
             (
                 canon(),
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 3072,
                     top: 5120,
                     width: 512,
@@ -1907,7 +1907,7 @@ mod loupe_tile {
         }
     }
 
-    fn a_tile_is_the_rendition(path: &str, bright: crate::Tile) {
+    fn a_tile_is_the_rendition(path: &str, bright: formats::orientation::Tile) {
         let mut fitted = tile_job(path, None, None);
         fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
@@ -2031,7 +2031,7 @@ mod loupe_tile {
     #[test]
     fn a_restricted_decode_at_half_is_the_whole_one_halved() {
         let path = sony();
-        let header = crate::header::read_path(path.to_str().unwrap()).expect("the header reads");
+        let header = formats::header::read_path(path.to_str().unwrap()).expect("the header reads");
         let half = (header.width.max(header.height) / 2) as u32;
         restricted_decode_is_the_whole_one(half);
     }
@@ -2089,7 +2089,7 @@ mod loupe_tile {
             match taken {
                 crate::job::Cutting::AlreadyCut(cut) => cut,
                 crate::job::Cutting::OnDevice(frame) => {
-                    let size = crate::hdr_args::Size {
+                    let size = formats::still::Size {
                         width: width as u32,
                         height: height as u32,
                     };
@@ -2753,7 +2753,7 @@ mod camera_match {
             as_shot: frame.as_shot,
         };
         let options = crate::hdr_args::EncodeOptions {
-            still_chroma: crate::hdr_args::Chroma::Yuv444,
+            still_chroma: formats::still::Chroma::Yuv444,
             output_path: String::new(),
             grade: crate::hdr::Grade {
                 reference_white_nits: units::light::Light::exactly(203.0),
@@ -2951,7 +2951,7 @@ mod camera_match {
         };
         let decoded = |file: &std::path::Path| {
             let bytes = std::fs::read(file).expect("the rendition was written");
-            crate::avif::decode_at(&bytes, 12)
+            formats::avif::decode_at(&bytes, 12)
                 .expect("the rendition decodes")
                 .0
         };
@@ -2980,7 +2980,7 @@ mod camera_match {
             crate::job::write_rendered(&client, &framed).expect("the frame is written");
 
             let exif = |file: &std::path::Path| {
-                crate::avif::exif(&std::fs::read(file).expect("a rendition"))
+                formats::avif::exif(&std::fs::read(file).expect("a rendition"))
             };
             let carried = exif(&served).expect("the server's rendition carries the camera's EXIF");
             assert_eq!(
@@ -3119,11 +3119,11 @@ mod camera_match {
         /// search what it needs; `lensdb`'s own suite pins what the search then answers.
         #[test]
         fn resolves_a_third_party_lens_name_against_the_lensfun_database() {
-            let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(canon().to_str().unwrap()).expect("header");
             let knots = lensdb::distortion_knots(
-                crate::header::name(&header.camera_make),
-                crate::header::name(&header.camera_model),
-                crate::header::name(&header.lens_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
+                formats::header::name(&header.lens_model),
                 header.focal,
                 header.aperture,
                 header.crop(),
@@ -3142,11 +3142,11 @@ mod camera_match {
         /// frame and the render gets warped by a curve from the wrong lens.
         #[test]
         fn refuses_a_lens_the_shot_could_not_have_been_taken_with() {
-            let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(canon().to_str().unwrap()).expect("header");
             let knots = lensdb::distortion_knots(
-                crate::header::name(&header.camera_make),
-                crate::header::name(&header.camera_model),
-                crate::header::name(&header.lens_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
+                formats::header::name(&header.lens_model),
                 24.0,
                 2.8,
                 header.crop(),
@@ -3209,7 +3209,7 @@ mod camera_match {
             // The JPEG-returning path has to agree, since the editor's open and the download
             // read that one and a viewer would show it lying down.
             let bytes =
-                crate::jpeg::decode(&stored, long_edge).expect("the stored preview decodes");
+                formats::jpeg::decode(&stored, long_edge).expect("the stored preview decodes");
             assert_eq!(
                 (bytes.width, bytes.height),
                 (upright.width, upright.height),
@@ -3311,9 +3311,9 @@ mod camera_match {
         // Scaled to fill, which is the half of the injection that makes it a picture a
         // camera could have produced: one that left the corners black would ask the fit
         // for a geometry it correctly refuses to consider.
-        let target = crate::jpeg::encode(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
+        let target = formats::jpeg::encode(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
             .expect("the injected target encodes");
-        let target = crate::jpeg::decode(&target, 0).expect("the injected target decodes");
+        let target = formats::jpeg::decode(&target, 0).expect("the injected target decodes");
 
         let frame = decode(&sony(), 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
@@ -3420,7 +3420,8 @@ mod camera_match {
 /// weighted - neither would fail an assertion about shape.
 mod hdr_grade {
     use super::*;
-    use crate::hdr_args::{Chroma, EncodeOptions};
+    use crate::hdr_args::EncodeOptions;
+    use formats::still::Chroma;
 
     const QUANTILE: f64 = 0.9;
     const REFERENCE: units::light::Light<units::light::SceneNits> =
@@ -3789,7 +3790,7 @@ mod hdr_grade {
             / graded.len() as f64;
 
         let encoded = std::fs::read(&path).expect("the still");
-        let decoded = crate::avif::decode(&encoded).expect("the still decodes");
+        let decoded = formats::avif::decode(&encoded).expect("the still decodes");
         let _ = std::fs::remove_dir_all(&dir);
         let mean = decoded
             .data
@@ -4269,8 +4270,8 @@ mod pictures {
             // The same photosites, in the orientation the file stored them in.
             let (left, top, width, height) = held.crop();
             let sensor = crops.map(|(x, y, side)| {
-                let stored = crate::orientation::unoriented_rect(
-                    crate::Tile {
+                let stored = formats::orientation::unoriented_rect(
+                    formats::orientation::Tile {
                         left: x,
                         top: y,
                         width: side,
@@ -4619,7 +4620,7 @@ mod tile_header {
             .expect("the tile job runs")
             .header
             .expect("a tile job asked for the header reports it");
-        let read = crate::header::read_path(&path.to_string_lossy()).expect("the header reads");
+        let read = formats::header::read_path(&path.to_string_lossy()).expect("the header reads");
 
         assert_eq!(reported, crate::job::HeaderFields::from(read));
     }
@@ -5305,5 +5306,33 @@ mod pmrid {
             );
         }
         denoise::pmrid::release_arenas();
+    }
+}
+
+mod exif {
+    use super::{canon, fuji, sony};
+    use formats::exif::{NON_IDENTIFYING, Recorded};
+    use formats::header::{name, read_path};
+
+    /// Each container keeps its EXIF somewhere different, and every one of them has to reach a block.
+    #[test]
+    fn every_fixture_writes_the_record_the_catalogue_reads() {
+        for path in [sony(), canon(), fuji()] {
+            let path = path.to_str().expect("a path");
+            let header = read_path(path).expect("the header");
+            let block = Recorded::read(path)
+                .and_then(|recorded| recorded.block(NON_IDENTIFYING))
+                .unwrap_or_else(|| panic!("{path} writes a block"));
+            let back = Recorded::parse(&block).expect("the block parses");
+
+            assert_eq!(back.model, name(&header.camera_model), "{path}");
+            let iso = back
+                .exif
+                .iso_speed
+                .or(back.exif.iso_speed_ratings.map(u32::from));
+            assert_eq!(iso.map(|iso| iso as f32), Some(header.iso), "{path}");
+            assert!(back.exif.date_time_original.is_some(), "{path}");
+            assert_eq!(back.exif.serial_number, None, "{path}");
+        }
     }
 }

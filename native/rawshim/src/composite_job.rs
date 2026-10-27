@@ -266,19 +266,19 @@ fn tile_of(
 /// these, so they have to outlive it in the caller's own frame.
 pub(crate) type Models = Vec<(Option<String>, Option<String>)>;
 
-pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<crate::header::BbHeader>>, Models) {
-    let headers: Vec<Option<crate::header::BbHeader>> = pano
+pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<formats::header::BbHeader>>, Models) {
+    let headers: Vec<Option<formats::header::BbHeader>> = pano
         .sources
         .iter()
         .map(
-            |source| match crate::decode_rendered::is_rendered(&source.raw_file_path) {
-                true => crate::header::read_rendered(&source.raw_file_path),
-                false => crate::header::read_path(&source.raw_file_path),
+            |source| match formats::rendered::is_rendered(&source.raw_file_path) {
+                true => formats::header::read_rendered(&source.raw_file_path),
+                false => formats::header::read_path(&source.raw_file_path),
             },
         )
         .collect();
     let named = |field: &[u8]| {
-        let text = crate::header::name(field);
+        let text = formats::header::name(field);
         (!text.is_empty()).then(|| text.to_string())
     };
     let models = headers
@@ -294,7 +294,7 @@ pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<crate::header::BbHe
 /// The sources of a search, as `composite_align` and `assembly_analysis` both want them.
 pub(crate) fn sources_of<'a>(
     pano: &'a CompositeJob,
-    headers: &'a [Option<crate::header::BbHeader>],
+    headers: &'a [Option<formats::header::BbHeader>],
     models: &'a Models,
 ) -> Result<Vec<crate::composite_align::AlignSource<'a>>, String> {
     let sources: Vec<crate::composite_align::AlignSource<'a>> = pano
@@ -778,12 +778,12 @@ fn union_match(
 ///
 /// None where the file records no focal length, or neither the file nor lensfun gives a crop
 /// factor, and the alignment then does what it can with an assumed field of view.
-pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<f64> {
+pub fn focal_in_pixels(header: &formats::header::BbHeader, model: &str) -> Option<f64> {
     if header.focal <= 0.0 {
         return None;
     }
     let crop = lensdb::crop_factor(
-        crate::header::name(&header.camera_make),
+        formats::header::name(&header.camera_make),
         model,
         header.crop(),
     )?;
@@ -921,7 +921,7 @@ pub(crate) fn base(
     let needs_colour = job.camera_match == crate::hdr_fit::CameraMatch::LensAndColour
         && files
             .iter()
-            .any(|file| !crate::decode_rendered::is_rendered(file.path))
+            .any(|file| !formats::rendered::is_rendered(file.path))
         && known
             .from_raw
             .matched
@@ -1299,7 +1299,7 @@ mod tests {
 
     #[test]
     fn a_full_frame_body_in_apsc_mode_has_the_apsc_focal() {
-        let mut header = crate::header::BbHeader::blank();
+        let mut header = formats::header::BbHeader::blank();
         header.camera_make[..4].copy_from_slice(b"Sony");
         (header.width, header.height, header.focal) = (6240, 4160, 45.0);
         let full = focal_in_pixels(&header, "ILCE-7CR").expect("the body's crop factor");
@@ -1314,7 +1314,7 @@ mod tests {
     /// 12mm across 3.34um photosites is 3593 of them, where the long edge over 36mm says 3456.
     #[test]
     fn a_four_thirds_focal_is_measured_on_the_diagonal() {
-        let mut header = crate::header::BbHeader::blank();
+        let mut header = formats::header::BbHeader::blank();
         header.camera_make[..7].copy_from_slice(b"OLYMPUS");
         (header.width, header.height, header.focal) = (5184, 3888, 12.0);
         let focal = focal_in_pixels(&header, "E-M1").expect("the body's crop factor");

@@ -263,11 +263,11 @@ impl Snapshot {
     pub fn encode(&self) -> Vec<u8> {
         match self.coding {
             Coding::Pq => {
-                crate::png_write::encode_hdr(&self.samples, self.width, self.height, None)
+                formats::png_write::encode_hdr(&self.samples, self.width, self.height, None)
             }
             Coding::Srgb => {
                 let bytes: Vec<u8> = self.samples.iter().map(|&v| (v / 257) as u8).collect();
-                crate::png_write::encode_sdr(&bytes, self.width, self.height, None)
+                formats::png_write::encode_sdr(&bytes, self.width, self.height, None)
             }
         }
         .expect("the snapshot encodes")
@@ -287,8 +287,8 @@ impl Snapshot {
             (points.color_primaries, points.transfer_function),
             info.bit_depth,
         ) {
-            (crate::png_write::HDR, png::BitDepth::Sixteen) => Coding::Pq,
-            (crate::png_write::SDR, png::BitDepth::Eight) => Coding::Srgb,
+            (formats::png_write::HDR, png::BitDepth::Sixteen) => Coding::Pq,
+            (formats::png_write::SDR, png::BitDepth::Eight) => Coding::Srgb,
             other => return Err(format!("not a snapshot's coding: {other:?}")),
         };
         let mut buffer = vec![0u8; reader.output_buffer_size().ok_or("an oversized PNG")?];
@@ -484,7 +484,7 @@ pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> 
             }
         }
     }
-    crate::png_write::encode_sdr(&out, out_w, out_h, None).expect("the side-by-side encodes")
+    formats::png_write::encode_sdr(&out, out_w, out_h, None).expect("the side-by-side encodes")
 }
 
 /// Eight-bit sRGB to show a snapshot as, with `white` at SDR white.

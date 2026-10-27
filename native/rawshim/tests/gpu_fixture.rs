@@ -2250,7 +2250,7 @@ const PANO_TALL: usize = 64;
 /// **PNG, not TIFF.** `rawler`'s `get_decoder` dispatches a TIFF purely by its `Make` tag or a
 /// known magic (`decoders/mod.rs`), and has no fallback for a bare RGB TIFF with neither - a
 /// synthetic file written by a minimal encoder would fail to decode at all, and `tiff_write.rs`
-/// exports only an 8-bit `encode`. `decode_rendered::is_rendered` already treats `.png` as a
+/// exports only an 8-bit `encode`. `formats::rendered::is_rendered` already treats `.png` as a
 /// finished picture, which both decodes a 16-bit source outright and is what puts a
 /// `From::Original` source through `Through::Corrected` at `composite_tile.rs`'s own check - the
 /// geometry this fixture wants, since there is no lens to undo. `png_write::encode_hdr` already
@@ -2280,7 +2280,7 @@ fn pano_of_two() -> (Composition, Vec<String>) {
                 }
             }
             let png =
-                rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
+                formats::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })
@@ -2394,7 +2394,7 @@ fn assembly_of_three() -> (Composition, Vec<String>) {
                 }
             }
             let png =
-                rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
+                formats::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })

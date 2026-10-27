@@ -35,7 +35,7 @@ fn main() {
     }
     let read = |path: &str| {
         let bytes = std::fs::read(path).unwrap_or_else(|why| panic!("{path}: {why}"));
-        rawshim::jpeg::decode(&bytes, long).unwrap_or_else(|why| panic!("{path}: {why}"))
+        formats::jpeg::decode(&bytes, long).unwrap_or_else(|why| panic!("{path}: {why}"))
     };
     let shrink = |image: units::rgb::Rgb| -> units::rgb::Rgb {
         if reduce <= 1 {

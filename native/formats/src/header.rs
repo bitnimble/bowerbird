@@ -59,7 +59,7 @@ pub const SEQUENCE_EXPOSURE_BRACKET: u32 = 2;
 pub const SEQUENCE_FOCUS_BRACKET: u32 = 3;
 
 impl BbHeader {
-    pub(crate) fn blank() -> BbHeader {
+    pub fn blank() -> BbHeader {
         BbHeader {
             width: 0,
             height: 0,
@@ -122,7 +122,7 @@ fn plausible(value: f32, max: f32) -> f32 {
 pub fn read_path(path: &str) -> Option<BbHeader> {
     // A finished picture is not rawler's to read, and asking anyway costs an open and a decoder
     // search per file on an import that may be entirely JPEGs.
-    if crate::decode_rendered::is_rendered(path) {
+    if crate::rendered::is_rendered(path) {
         return read_rendered(path);
     }
     // `new_lazy`, not `new`: the prefault in `new` reads the whole 25-60MB file, and everything
@@ -147,7 +147,7 @@ pub fn read_rendered(path: &str) -> Option<BbHeader> {
     // read: a HEIF's EXIF is an item located through `iloc` and can sit anywhere in `mdat`. A file
     // that fits inside the window and carried no tags carried none.
     let window = head(path, HEADER_WINDOW);
-    let probed = window.as_deref().and_then(crate::decode_rendered::probe);
+    let probed = window.as_deref().and_then(crate::rendered::probe);
     let whole;
     let probe = match probed {
         // A PNG's `eXIf` and a JPEG's `APP1` both sit in front of the pixels, so a probe that
@@ -157,7 +157,7 @@ pub fn read_rendered(path: &str) -> Option<BbHeader> {
         Some(probe) if probe.exif.is_some() || !probe.deferred => probe,
         _ => {
             whole = std::fs::read(path).ok()?;
-            crate::decode_rendered::probe(&whole)?
+            crate::rendered::probe(&whole)?
         }
     };
     Some(from_probe(probe))
@@ -165,15 +165,15 @@ pub fn read_rendered(path: &str) -> Option<BbHeader> {
 
 /// The header of a photograph a caller holds the whole of, which is a browser's only way to have one.
 pub fn read_bytes(bytes: &[u8]) -> Option<BbHeader> {
-    if crate::decode_rendered::is_rendered_bytes(bytes) {
-        return crate::decode_rendered::probe(bytes).map(from_probe);
+    if crate::rendered::is_rendered_bytes(bytes) {
+        return crate::rendered::probe(bytes).map(from_probe);
     }
     let source = rawler::rawsource::RawSource::new_from_slice(bytes);
     let decoder = rawler::get_decoder(&source).ok()?;
     read_with(&source, decoder.as_ref())
 }
 
-fn from_probe(probe: crate::decode_rendered::Probe) -> BbHeader {
+fn from_probe(probe: crate::rendered::Probe) -> BbHeader {
     let mut out = BbHeader::blank();
     let (mut width, mut height) = (probe.width as u32, probe.height as u32);
     if crate::orientation::transposes(probe.turn) {
@@ -466,7 +466,7 @@ fn seconds_since_epoch(stamp: &str) -> Option<i64> {
 }
 
 /// Writes a name into its fixed-width field, truncated and always NUL-terminated.
-pub(crate) fn write_name(field: &mut [u8], value: &str) {
+pub fn write_name(field: &mut [u8], value: &str) {
     let trimmed = value.trim().as_bytes();
     let room = field.len().saturating_sub(1);
     let taken = trimmed.len().min(room);

@@ -28,7 +28,7 @@ fn main() {
     };
 
     let bytes = std::fs::read(&path).expect("a readable image");
-    let picture = rawshim::image::decode(&bytes, 0).expect("a JPEG or an AVIF");
+    let picture = formats::resize::decode(&bytes, 0).expect("a JPEG or an AVIF");
     let (wide, tall) = (picture.width, picture.height);
     let left = (region[0] * wide as f64) as usize;
     let top = (region[1] * tall as f64) as usize;

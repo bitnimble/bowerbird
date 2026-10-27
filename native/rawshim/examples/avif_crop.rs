@@ -46,7 +46,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let bytes = std::fs::read(&path).expect("the avif");
-    let (codes, width, height) = rawshim::avif::decode_at(&bytes, 16).expect("decodes");
+    let (codes, width, height) = formats::avif::decode_at(&bytes, 16).expect("decodes");
     eprintln!("{width}x{height}");
 
     for (x, y, side) in crops {
@@ -92,7 +92,7 @@ fn main() {
                 zoom,
             );
             let file = format!("{out}/{name}-{x}-{y}.jpg");
-            let encoded = rawshim::jpeg::encode(image.as_ref(), 95).expect("encodes");
+            let encoded = formats::jpeg::encode(image.as_ref(), 95).expect("encodes");
             std::fs::write(&file, encoded).expect("writes");
             eprintln!("    wrote {file}");
         }

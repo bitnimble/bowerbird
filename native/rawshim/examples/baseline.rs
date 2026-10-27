@@ -15,7 +15,8 @@
 mod support;
 
 use rawler::imgop::{Dim2, Point, Rect};
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 
 /// Long edge of the whole-frame record. Small enough to keep the directory manageable, large
 /// enough that a colour shift is visible by eye.
@@ -75,7 +76,7 @@ fn main() {
             data: &bytes,
         };
 
-        let small = rawshim::image::resize_to_fit(whole, OVERVIEW);
+        let small = formats::resize::resize_to_fit(whole, OVERVIEW);
         write(&format!("{out}/{name}.avif"), small.as_ref());
 
         let cx = out_w.saturating_sub(CROP) / 2;
@@ -150,7 +151,7 @@ fn crop(image: units::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> units
 }
 
 fn write(path: &str, image: units::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,

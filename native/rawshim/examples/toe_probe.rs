@@ -28,7 +28,7 @@ const TOE: usize = 16;
 
 fn grey(path: &str, values: &[u8], width: usize, height: usize) {
     let rgb: Vec<u8> = values.iter().flat_map(|v| [*v, *v, *v]).collect();
-    let bytes = rawshim::jpeg::encode(
+    let bytes = formats::jpeg::encode(
         units::rgb::RgbRef {
             width,
             height,
@@ -91,7 +91,7 @@ fn main() {
         }
     }
     let preview = rawshim::hdr::match_preview(&path).expect("an embedded preview");
-    let theirs = rawshim::image::resize(preview.as_ref(), wide, tall);
+    let theirs = formats::resize::resize(preview.as_ref(), wide, tall);
 
     // The green channel, which is what the shared curve is read at when a toe is reported.
     let mut sum = vec![0.0f64; TOE];

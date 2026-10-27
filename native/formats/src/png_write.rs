@@ -11,9 +11,9 @@
 use png::{BitDepth, ColorType, Encoder};
 
 /// Rec.2020 primaries and PQ, which is what every HDR still here is coded in.
-pub(crate) const HDR: (u8, u8) = (9, 16);
+pub const HDR: (u8, u8) = (9, 16);
 /// sRGB primaries and transfer.
-pub(crate) const SDR: (u8, u8) = (1, 13);
+pub const SDR: (u8, u8) = (1, 13);
 
 /// A PNG's 8-byte signature followed by its IHDR chunk, which is always 25 bytes: the length,
 /// the type, thirteen of payload and the checksum. `cICP` goes directly after it.

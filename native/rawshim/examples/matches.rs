@@ -9,7 +9,7 @@
 
 mod support;
 
-use rawshim::image::resize;
+use formats::resize::resize;
 use std::env;
 
 /// Half-width of a tile, in wide-plane pixels. Wide enough to see what the patch sat on,
@@ -117,7 +117,7 @@ fn main() {
         );
         let tile = tile(&ours, &theirs, *x, *y, dx, dy);
         let name = format!("{out}/match-{x}-{y}-peak{:.2}-d{dx}_{dy}.avif", what.peak);
-        rawshim::avif::encode_rendition(
+        formats::avif::encode_rendition(
             std::borrow::Cow::Borrowed(tile.as_ref().data),
             tile.width,
             tile.height,

@@ -6,7 +6,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 
 fn main() {
@@ -84,7 +85,7 @@ fn main() {
             height,
             data: &data,
         };
-        let small = rawshim::image::resize_to_fit(full, 1600);
+        let small = formats::resize::resize_to_fit(full, 1600);
         write(&format!("{out}/full.avif"), small.as_ref());
         return;
     }
@@ -203,7 +204,7 @@ fn cut(
 
 /// Both forms, because this exists to be looked at and AVIF does not open everywhere.
 fn write(path: &str, image: units::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,
@@ -219,7 +220,7 @@ fn write(path: &str, image: units::rgb::RgbRef<'_>) {
         .map_or_else(|| format!("{path}.jpg"), |s| format!("{s}.jpg"));
     std::fs::write(
         &jpeg,
-        rawshim::jpeg::encode(image, 95).expect("the crop encodes as JPEG"),
+        formats::jpeg::encode(image, 95).expect("the crop encodes as JPEG"),
     )
     .expect("the JPEG writes");
     eprintln!("wrote {path} and {jpeg}");

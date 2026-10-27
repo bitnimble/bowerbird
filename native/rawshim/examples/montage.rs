@@ -24,7 +24,7 @@ fn main() {
             let region: Vec<f64> = parts.filter_map(|v| v.trim().parse().ok()).collect();
             let region = <[f64; 4]>::try_from(region).expect("l,t,r,b");
             let bytes = std::fs::read(&path).expect("a readable image");
-            let picture = rawshim::image::decode(&bytes, 0).expect("a JPEG or an AVIF");
+            let picture = formats::resize::decode(&bytes, 0).expect("a JPEG or an AVIF");
             cropped(&picture, region, height)
         })
         .collect();
@@ -48,7 +48,7 @@ fn main() {
         width: wide,
         height,
     };
-    let jpeg = rawshim::jpeg::encode(sheet, 94).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(sheet, 94).expect("a jpeg");
     std::fs::write(&out, jpeg).expect("a writable path");
     println!("wrote {out} ({wide}x{height}, {} panels)", panels.len());
 }
@@ -74,7 +74,7 @@ fn cropped(picture: &units::rgb::Rgb, region: [f64; 4], height: usize) -> units:
     }
     // A panel is a few thousand pixels down to a few hundred, which two taps an axis alias badly
     // enough to look like the rendering fault the comparison is meant to find.
-    rawshim::image::resize(
+    formats::resize::resize(
         units::rgb::RgbRef {
             data: &patch,
             width: span,

@@ -2,7 +2,7 @@
 //!
 //! The browser's `ImageDecoder` reads an AVIF this crate cannot in wasm (`decode_rendered::av1`),
 //! and hands back its planes rather than RGB; where there is none, `native/avif_planes` does. `planes.slang` is the conversion libavif does on the
-//! server, so what [`crate::linearise::Picture`] holds is the same either way.
+//! server, so what `rawshim::linearise::Picture` holds is the same either way.
 
 use gpu::dispatch::Whole;
 use serde::Deserialize;
@@ -27,12 +27,12 @@ pub struct Plane {
     pub stride: usize,
 }
 
-pub(crate) struct Kernel {
+pub struct Kernel {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -194,4 +194,4 @@ fn block(layout: &Layout) -> Vec<u8> {
 }
 
 /// What [`block`] writes, for `wgsl_layout` to hold against the shader's own struct.
-pub(crate) const BLOCK_BYTES: usize = 4 * 4 + 2 * 16;
+pub const BLOCK_BYTES: usize = 4 * 4 + 2 * 16;

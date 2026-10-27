@@ -65,7 +65,7 @@ fn main() {
     );
     let mut rows: Vec<(f32, f32, f32, f32, String)> = Vec::new();
     for path in &paths {
-        let Some(header) = rawshim::header::read_path(path) else {
+        let Some(header) = formats::header::read_path(path) else {
             continue;
         };
         // The fit rides along with a real decode, which is the only place the mosaic exists.

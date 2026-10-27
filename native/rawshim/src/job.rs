@@ -22,11 +22,12 @@
 
 use crate::decode::Source as Raw;
 use crate::hdr;
-use crate::hdr_args::{self, Chroma, EncodeOptions};
+use crate::hdr_args::{self, EncodeOptions};
 use crate::image::Strengths;
 #[cfg(feature = "renditions")]
 use crate::stacks;
 use colour::tone;
+use formats::still::Chroma;
 use serde::{Deserialize, Serialize};
 use units::light::{DisplayNits, Light, Stops};
 
@@ -302,7 +303,7 @@ impl Job {
         }
         let bytes = std::fs::read(&self.raw_file_path)
             .map_err(|error| format!("could not read {}: {error}", self.raw_file_path))?;
-        let picture = crate::decode_rendered::read_heif(&bytes)?.primary;
+        let picture = formats::rendered::read_heif(&bytes)?.primary;
         match picture.turn {
             heif::Orientation::Normal => Ok(0),
             heif::Orientation::Rotate90 => Ok(90),
@@ -401,11 +402,11 @@ pub struct CaptureSequence {
 }
 
 impl CaptureSequence {
-    fn of(header: &crate::header::BbHeader) -> Option<CaptureSequence> {
+    fn of(header: &formats::header::BbHeader) -> Option<CaptureSequence> {
         let kind = match header.sequence_kind {
-            crate::header::SEQUENCE_PIXEL_SHIFT => "pixelShift",
-            crate::header::SEQUENCE_EXPOSURE_BRACKET => "exposureBracket",
-            crate::header::SEQUENCE_FOCUS_BRACKET => "focusBracket",
+            formats::header::SEQUENCE_PIXEL_SHIFT => "pixelShift",
+            formats::header::SEQUENCE_EXPOSURE_BRACKET => "exposureBracket",
+            formats::header::SEQUENCE_FOCUS_BRACKET => "focusBracket",
             _ => return None,
         };
         let known = |value: u32| (value != 0).then_some(value);
@@ -418,13 +419,13 @@ impl CaptureSequence {
     }
 }
 
-impl From<crate::header::BbHeader> for HeaderFields {
-    fn from(header: crate::header::BbHeader) -> HeaderFields {
+impl From<formats::header::BbHeader> for HeaderFields {
+    fn from(header: formats::header::BbHeader) -> HeaderFields {
         let positive = |value: f32| (value > 0.0).then_some(value);
         let finite = |value: f64| value.is_finite().then_some(value);
         // Blank and all-dashes read as "unknown", which is `name`'s rule in `rawshim_ops.ts`.
         let named = |field: &[u8]| {
-            let text = crate::header::name(field);
+            let text = formats::header::name(field);
             (!text.is_empty() && !text.bytes().all(|b| b == b'-')).then(|| text.to_string())
         };
         HeaderFields {
@@ -491,7 +492,11 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
 /// The frame a target cuts from `photograph`, before the reader's geometry: `hdr_args::target_size`,
 /// shrunk until what the geometry writes of it still opens in every AVIF reader. A straighten's
 /// bounding box is larger than the frame it turns, so a frame at the limit can write past it.
-fn drawn_size(job: &Job, photograph: (usize, usize), options: &EncodeOptions) -> hdr_args::Size {
+fn drawn_size(
+    job: &Job,
+    photograph: (usize, usize),
+    options: &EncodeOptions,
+) -> formats::still::Size {
     let mut options = options.clone();
     loop {
         let size = hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options);
@@ -500,11 +505,11 @@ fn drawn_size(job: &Job, photograph: (usize, usize), options: &EncodeOptions) ->
             size.height as usize,
             job.pixel_geometry(),
         );
-        let written = hdr_args::Size {
+        let written = formats::still::Size {
             width: width as u32,
             height: height as u32,
         };
-        let fits = hdr_args::decodable(written);
+        let fits = formats::still::decodable(written);
         if fits == written {
             return size;
         }
@@ -723,10 +728,10 @@ fn fitting<'a>(job: &Job, raw: Raw<'a>) -> crate::open::Fitting<'a> {
     }
     match raw {
         #[cfg(feature = "renditions")]
-        Raw::Path(path) if !crate::decode_rendered::is_rendered(path) => {
+        Raw::Path(path) if !formats::rendered::is_rendered(path) => {
             crate::open::Fitting::Profiled(path)
         }
-        Raw::Bytes(bytes) if !crate::decode_rendered::is_rendered_bytes(bytes) => {
+        Raw::Bytes(bytes) if !formats::rendered::is_rendered_bytes(bytes) => {
             crate::open::Fitting::Preview(bytes)
         }
         _ => crate::open::Fitting::None,
@@ -980,8 +985,8 @@ impl Base {
             return None;
         }
         let header = match raw {
-            Raw::Path(path) => crate::header::read_path(path),
-            Raw::Bytes(bytes) => crate::header::read_bytes(bytes),
+            Raw::Path(path) => formats::header::read_path(path),
+            Raw::Bytes(bytes) => formats::header::read_bytes(bytes),
         }?;
         let photograph = (header.width as usize, header.height as usize);
         if photograph.0 == 0 || photograph.1 == 0 {
@@ -1193,7 +1198,7 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
 /// a page that decoded the frame itself has nothing else to say.
 #[cfg(feature = "renditions")]
 fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
-    let frame = crate::header::read_path(&job.raw_file_path).map_or([0, 0], |header| {
+    let frame = formats::header::read_path(&job.raw_file_path).map_or([0, 0], |header| {
         [header.width as usize, header.height as usize]
     });
     crate::tile::TileRequest {
@@ -1378,13 +1383,14 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         None => None,
     };
     if let (Some(source), Some(decoder)) = (source.as_ref(), decoder.as_ref()) {
-        outcome.header = crate::header::read_with(source, decoder.as_ref()).map(HeaderFields::from);
+        outcome.header =
+            formats::header::read_with(source, decoder.as_ref()).map(HeaderFields::from);
         lap("header");
-    } else if job.header && crate::decode_rendered::is_rendered(&job.raw_file_path) {
+    } else if job.header && formats::rendered::is_rendered(&job.raw_file_path) {
         // A finished picture is not rawler's, so the open above found no decoder for it and the
         // catalogue's fields come off its container instead. Still without decoding a pixel:
         // every one of the three states its size in its first few kilobytes.
-        outcome.header = crate::header::read_rendered(&job.raw_file_path).map(HeaderFields::from);
+        outcome.header = formats::header::read_rendered(&job.raw_file_path).map(HeaderFields::from);
         lap("header");
     }
 
@@ -1432,15 +1438,15 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                             decoder.as_ref(),
                             size,
                             want,
-                            crate::jpeg::decode_tile,
+                            formats::jpeg::decode_tile,
                         )
                     }
                     // A JPEG that arrived as itself *is* the camera's rendering, so the tile is a
                     // bounded decode of the file. Every other rendered format has no preview to
                     // lift and falls through to the render below, which is the same answer a RAW
                     // that embeds nothing gets.
-                    _ if crate::decode_rendered::is_rendered(&job.raw_file_path) => {
-                        crate::decode_rendered::preview_rgb(&job.raw_file_path, size)
+                    _ if formats::rendered::is_rendered(&job.raw_file_path) => {
+                        formats::rendered::preview_rgb(&job.raw_file_path, size)
                     }
                     _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want),
                 }
@@ -1546,7 +1552,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     Ok(outcome)
 }
 
-/// The EXIF every file this job writes carries (`crate::exif`), off the RAW `opened` where the job
+/// The EXIF every file this job writes carries (`formats::exif`), off the RAW `opened` where the job
 /// already has it open.
 #[cfg(feature = "renditions")]
 fn exif_block(
@@ -1557,13 +1563,13 @@ fn exif_block(
     )>,
 ) -> Option<Vec<u8>> {
     let recorded = match (opened, &job.composite) {
-        (Some((source, decoder)), _) => crate::exif::Recorded::opened(source, decoder),
+        (Some((source, decoder)), _) => formats::exif::Recorded::opened(source, decoder),
         (None, Some(composite)) => {
-            crate::exif::Recorded::read(&composite.sources.first()?.raw_file_path)
+            formats::exif::Recorded::read(&composite.sources.first()?.raw_file_path)
         }
-        (None, None) => crate::exif::Recorded::read(&job.raw_file_path),
+        (None, None) => formats::exif::Recorded::read(&job.raw_file_path),
     };
-    recorded?.block(crate::exif::NON_IDENTIFYING)
+    recorded?.block(formats::exif::NON_IDENTIFYING)
 }
 
 /// The long edge a photograph is measured at where only windows of it are wanted: the bands of a
@@ -1590,9 +1596,9 @@ fn is_banded(job: &Job, target: &Target) -> bool {
     if job.composite.is_some() {
         return false;
     }
-    let header = match crate::decode_rendered::is_rendered(&job.raw_file_path) {
-        true => crate::header::read_rendered(&job.raw_file_path),
-        false => crate::header::read_path(&job.raw_file_path),
+    let header = match formats::rendered::is_rendered(&job.raw_file_path) {
+        true => formats::header::read_rendered(&job.raw_file_path),
+        false => formats::header::read_path(&job.raw_file_path),
     };
     let Some(header) = header else {
         return false;
@@ -1677,7 +1683,7 @@ async fn bands(
             if target.describe_only {
                 return Ok(());
             }
-            crate::avif::save_rendition_bands(
+            formats::avif::save_rendition_bands(
                 bands,
                 width,
                 target.sdr_quantizer,
@@ -1699,7 +1705,7 @@ pub(crate) struct Graded {
     /// target is a PQ still that may be written 4:2:0.
     pub(crate) leak: f64,
     /// A PQ target's light over every band; nothing for an sRGB one.
-    pub(crate) light: crate::hdr_args::LightTally,
+    pub(crate) light: formats::still::LightTally,
 }
 
 /// [`bands`] up to the encode, in bands of about `pixels` output pixels.
@@ -1731,7 +1737,7 @@ pub(crate) async fn graded_bands(
     };
     let peak = crate::grade::device(gpu).given_peak(scene_peak.raw() as f32);
     let mut leak: f64 = 0.0;
-    let mut light = crate::hdr_args::LightTally::default();
+    let mut light = formats::still::LightTally::default();
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
@@ -1855,7 +1861,7 @@ pub(crate) async fn render(
 
     // Largest first, so every smaller rendition is a downscale of one already cut rather
     // than its own resize, its own warp table and its own dispatch over the colour transform.
-    let mut order: Vec<(&Target, hdr_args::Size)> = rendered
+    let mut order: Vec<(&Target, formats::still::Size)> = rendered
         .iter()
         .map(|target| {
             let options = encode_options(job, target, &target.output_path);
@@ -2130,7 +2136,7 @@ struct RenderedHeader {
     /// The chroma leak's verdict (`render`), which only the host holding the frame could measure.
     full_chroma: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    content_light: Option<crate::hdr_args::ContentLight>,
+    content_light: Option<formats::still::ContentLight>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     photo_analysis: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2238,11 +2244,11 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
     if target.size != 0 && header.width.max(header.height) > target.size as usize {
         return Err("this picture exceeds the requested rendition size".into());
     }
-    let size = hdr_args::Size {
+    let size = formats::still::Size {
         width: header.width as u32,
         height: header.height as u32,
     };
-    if hdr_args::decodable(size) != size {
+    if formats::still::decodable(size) != size {
         return Err("this picture is larger than an AVIF can hold".into());
     }
     let mut options = encode_options(job, target, &target.output_path);
@@ -2382,11 +2388,11 @@ mod tests {
             capped.height as usize,
             job.pixel_geometry(),
         );
-        let written = hdr_args::Size {
+        let written = formats::still::Size {
             width: width as u32,
             height: height as u32,
         };
-        assert_eq!(hdr_args::decodable(written), written);
+        assert_eq!(formats::still::decodable(written), written);
     }
 
     fn rendered(output: Output, width: usize, height: usize, samples: usize) -> Vec<u8> {
@@ -2400,7 +2406,7 @@ mod tests {
             output,
             rotation: 0,
             full_chroma: true,
-            content_light: Some(crate::hdr_args::ContentLight {
+            content_light: Some(formats::still::ContentLight {
                 max_cll: 1480,
                 max_fall: 90,
             }),
@@ -2442,7 +2448,7 @@ mod tests {
         assert!(header.full_chroma);
         assert_eq!(
             header.content_light,
-            Some(crate::hdr_args::ContentLight {
+            Some(formats::still::ContentLight {
                 max_cll: 1480,
                 max_fall: 90
             })
@@ -2576,7 +2582,7 @@ mod tests {
                 })
             })
             .collect();
-        let as_stored = crate::jpeg::encode(
+        let as_stored = formats::jpeg::encode(
             units::rgb::RgbRef {
                 width,
                 height,
@@ -2585,7 +2591,7 @@ mod tests {
             92,
         )
         .expect("the JPEG encodes");
-        let stored = crate::jpeg::decode_tile(&as_stored, 0).expect("the JPEG decodes");
+        let stored = formats::jpeg::decode_tile(&as_stored, 0).expect("the JPEG decodes");
         // EXIF 6: the upright frame's (u, v) is stored at (v, height - 1 - u).
         let upright: Vec<u8> = (0..stored.width)
             .flat_map(|v| (0..stored.height).map(move |u| (u, v)))
@@ -2603,7 +2609,7 @@ mod tests {
             },
         )
         .expect("the grids read back");
-        let turned = crate::jpeg::with_orientation(&as_stored, 6).expect("the JPEG takes a tag");
+        let turned = formats::jpeg::with_orientation(&as_stored, 6).expect("the JPEG takes a tag");
 
         let mut out = vec![0u8; stacks::DESCRIPTOR_BYTES];
         #[expect(unsafe_code)]
@@ -2658,5 +2664,81 @@ mod tests {
         });
         value["adjust"]["toneCurve"]["points"] = serde_json::json!([[0.5, 0.0], [0.4, 1.0]]);
         assert!(serde_json::from_value::<Job>(value).is_err());
+    }
+
+    #[test]
+    fn an_sdr_roll_keeps_hdr_source_orientation_and_builds_a_shareable_gain_map() {
+        if gpu::device().is_none() {
+            return;
+        }
+        let (width, height) = (64usize, 48usize);
+        let mut frame = vec![0u16; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let at = (y * width + x) * 3;
+                frame[at] = 20_000 + x as u16 * 300;
+                frame[at + 1] = 22_000 + y as u16 * 300;
+                frame[at + 2] = 24_000;
+            }
+        }
+        let source = formats::avif::encode_still_rotated(
+            frame.into(),
+            width,
+            height,
+            &formats::avif::StillOptions {
+                cicp: formats::avif::Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
+                format: formats::raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
+                quantizer: 10,
+                speed: 10,
+                light: None,
+            },
+            90,
+            None,
+        )
+        .expect("HDR still");
+        let dir = std::env::temp_dir().join(format!("bb-orientation-roll-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        let source_path = dir.join("source.avif");
+        let base_path = dir.join("base.avif");
+        std::fs::write(&source_path, &source).expect("HDR source");
+        let job: super::Job = serde_json::from_value(serde_json::json!({
+            "rawFilePath": source_path,
+            "cameraMatch": "none",
+            "preserveSourceOrientation": true,
+            "sharpen": 0,
+            "defringe": 0,
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "targets": [{
+                "rendition": "max",
+                "output": "srgb",
+                "outputPath": base_path,
+                "size": 0,
+                "source": "render",
+                "sdrQuantizer": 10,
+                "hdrQuantizer": 10,
+                "preset": 10,
+                "stillFullChroma": true,
+                "sdrFullChroma": true
+            }]
+        }))
+        .expect("SDR roll job");
+        super::run(&job).expect("SDR roll");
+        let base = std::fs::read(&base_path).expect("SDR still");
+        let hdr = heif::read(&source).expect("HDR container");
+        let sdr = heif::read(&base).expect("SDR container");
+        assert_eq!(
+            (sdr.primary.width, sdr.primary.height, sdr.primary.turn),
+            (hdr.primary.width, hdr.primary.height, hdr.primary.turn)
+        );
+        let shared = formats::jpeg_gain_write::combine(&base, &source, 90).expect("gain-map JPEG");
+        let probe = formats::rendered::probe(&shared).expect("shared JPEG header");
+        assert_eq!(probe.orientation, 6);
+        assert!(formats::jpeg_gain::read(&shared, probe.exif.as_deref()).is_some());
+        std::fs::remove_file(source_path).expect("remove HDR scratch");
+        std::fs::remove_file(base_path).expect("remove SDR scratch");
     }
 }

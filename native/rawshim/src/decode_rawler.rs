@@ -4,7 +4,7 @@
 //! coefficients rawler carries on its `RawImage`; the demosaic lives in `demosaic.rs`.
 
 use crate::frame::{Frame, Pixels};
-use crate::orientation::{code as orientation_code, unoriented_rect as as_sensor_rect};
+use formats::orientation::{code as orientation_code, unoriented_rect as as_sensor_rect};
 
 /// Which of a file's embedded JPEGs a caller wants.
 ///
@@ -53,7 +53,7 @@ fn chosen<'a>(previews: &[&'a [u8]], want: Preview) -> Option<&'a [u8]> {
     previews
         .iter()
         .filter_map(|jpeg| {
-            let (width, height) = crate::jpeg::dimensions(jpeg)?;
+            let (width, height) = formats::jpeg::dimensions(jpeg)?;
             (width.max(height) >= at_least).then_some((width.max(height), *jpeg))
         })
         .min_by_key(|(long, _)| *long)
@@ -104,7 +104,7 @@ pub fn upright_preview_rgb(path: &str, long_edge: usize, want: Preview) -> Optio
         decoder.as_ref(),
         long_edge,
         want,
-        crate::jpeg::decode,
+        formats::jpeg::decode,
     )
 }
 
@@ -122,7 +122,7 @@ pub fn upright_preview_tile(
         decoder.as_ref(),
         long_edge,
         want,
-        crate::jpeg::decode_tile,
+        formats::jpeg::decode_tile,
     )
 }
 
@@ -175,7 +175,7 @@ fn tagged(
         O::Rotate270 => 8,
         O::Normal | O::Unknown => return Some(std::borrow::Cow::Borrowed(jpeg)),
     };
-    crate::jpeg::with_orientation(jpeg, tag).map(std::borrow::Cow::Owned)
+    formats::jpeg::with_orientation(jpeg, tag).map(std::borrow::Cow::Owned)
 }
 
 /// One tile of a photograph, decoding only the part of the file the tile needs.
@@ -672,7 +672,7 @@ async fn region_mosaic(
 ) -> Option<Region> {
     // The window in the photograph's own pixels, which is the only space this function speaks.
     let window = view.window.raw();
-    let tile = crate::Tile {
+    let tile = formats::orientation::Tile {
         left: window.0,
         top: window.1,
         width: window.2,
@@ -1674,7 +1674,7 @@ fn warp_lens(
         .fold(0.0, f64::max);
     let [px, py, pw, ph] = photo;
     let half = (pw / 2.0).hypot(ph / 2.0);
-    let axis = crate::orientation::upright_offset(
+    let axis = formats::orientation::upright_offset(
         [
             (optical[0] - (px + pw / 2.0)) / half,
             (optical[1] - (py + ph / 2.0)) / half,
@@ -1811,7 +1811,7 @@ fn optics_of(
 /// two focal lengths do not give a crop factor.
 fn diagonal_mm_of(focal: f32, equivalent: f32) -> units::px::Extent<units::px::Millimetre> {
     let full = denoise::dust::FULL_FRAME_DIAGONAL_MM;
-    crate::header::crop_of(focal, equivalent).map_or(full, |crop| {
+    formats::header::crop_of(focal, equivalent).map_or(full, |crop| {
         units::px::Extent::exactly(full.raw() / f64::from(crop))
     })
 }
@@ -1931,7 +1931,7 @@ impl Held {
     /// loupe tile are one path and cannot come to disagree.
     pub async fn window(
         &self,
-        tile: crate::Tile,
+        tile: formats::orientation::Tile,
         scale: crate::view::Scale,
         detail: denoise::galosh::Detail,
         fit: denoise::galosh::Fit,
@@ -3464,12 +3464,12 @@ mod tests {
             height: 30,
             data: vec![128; 40 * 30 * 3],
         };
-        let jpeg = crate::jpeg::encode(stored.as_ref(), 90).expect("encoded");
-        let camera = crate::jpeg::with_orientation(&jpeg, 6).expect("tagged by its camera");
+        let jpeg = formats::jpeg::encode(stored.as_ref(), 90).expect("encoded");
+        let camera = formats::jpeg::with_orientation(&jpeg, 6).expect("tagged by its camera");
 
         let tagged =
             super::tagged(&camera, rawler::decoders::Orientation::Rotate90).expect("retagged");
-        let shown = crate::jpeg::decode(&tagged, 0).expect("decoded");
+        let shown = formats::jpeg::decode(&tagged, 0).expect("decoded");
 
         assert_eq!((shown.width, shown.height), (30, 40));
     }
@@ -3678,7 +3678,7 @@ mod tests {
             Orientation::Transverse,
         ] {
             let upright = |[x, y]: [f64; 2]| {
-                crate::orientation::upright_offset(
+                formats::orientation::upright_offset(
                     [(x - centre[0]) / half, (y - centre[1]) / half],
                     turn,
                 )

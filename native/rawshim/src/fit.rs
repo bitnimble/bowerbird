@@ -1883,7 +1883,7 @@ mod tests {
         };
         let source = textured(300, 200);
         let ours = reduced_on_device(gpu, source.as_ref(), (97, 65)).expect("the device reduces");
-        let theirs = crate::image::resize(source.as_ref(), 97, 65);
+        let theirs = formats::resize::resize(source.as_ref(), 97, 65);
         let off: Vec<i32> = ours
             .data
             .iter()

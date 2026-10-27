@@ -281,7 +281,7 @@ fn plane(data: &rust_h265::PixelData) -> Vec<u16> {
 ///
 /// BT.709 where nothing was said, which is what every HEIF profile defaults to and what a phone
 /// writes.
-pub(crate) fn coefficients(nclx: Option<Nclx>) -> (f32, f32) {
+pub fn coefficients(nclx: Option<Nclx>) -> (f32, f32) {
     match nclx.map_or(1, |it| it.matrix) {
         // BT.601, both spellings.
         5 | 6 => (0.299, 0.114),

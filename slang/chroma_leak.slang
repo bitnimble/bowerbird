@@ -32,7 +32,7 @@ struct Params {
 /// Per tile, how many of its blocks would leak.
 [vk::binding(2, 0)] RWStructuredBuffer<Atomic<uint> > tiles;
 
-/// BT.2020 non-constant luminance, matrix coefficients 9: what `hdr_args::cicp` writes the still
+/// BT.2020 non-constant luminance, matrix coefficients 9: what `formats::still::cicp` writes the still
 /// with, so the leak is measured through the matrix the decoder will actually invert.
 ///
 /// `prelude::LUMA` is that vector, and the one place it is written down: a second copy is how the

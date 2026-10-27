@@ -22,7 +22,7 @@ fn main() {
     // A `.ppm` sidecar is read raw: a JPEG's subsampled chroma rings at exactly the
     // scale this tool amplifies.
     let image = match path.ends_with(".ppm") {
-        false => rawshim::jpeg::decode(&bytes, 100_000).unwrap(),
+        false => formats::jpeg::decode(&bytes, 100_000).unwrap(),
         true => {
             let mut cuts = 0usize;
             let mut at = 0usize;
@@ -119,6 +119,6 @@ fn main() {
         height,
         data,
     };
-    std::fs::write(out, rawshim::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
+    std::fs::write(out, formats::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
     eprintln!("wrote {out}");
 }

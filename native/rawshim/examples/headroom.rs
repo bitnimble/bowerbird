@@ -14,7 +14,8 @@
 mod support;
 
 use rawshim::grade::Output;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use colour::resident::level_of_bits;
 
 const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =

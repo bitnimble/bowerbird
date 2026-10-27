@@ -439,7 +439,7 @@ mod tests {
         let (base, alternate) = arms_written(90, Some(&exif));
 
         let file = combine(&base, &alternate, 90).expect("the combine");
-        let probe = crate::decode_rendered::probe(&file).expect("the header");
+        let probe = crate::rendered::probe(&file).expect("the header");
         assert_eq!(probe.orientation, 6);
         let carried =
             crate::exif::Recorded::parse(&probe.exif.expect("an EXIF block")).expect("it parses");

@@ -15,7 +15,7 @@
 
 use crate::raw;
 
-pub(crate) const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
+pub const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
 // Flag set bits, for `avif.rs`'s reason: an enum's `.0` is `int` to MSVC.
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 const AVIF_TRANSFORM_IMIR: u32 = 1 << 3;
@@ -23,14 +23,14 @@ const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FOR
 const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat =
     raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
 /// Rec.2020 primaries, PQ, Rec.2020 non-constant luminance: what every HDR still here is.
-pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
+pub const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.
-pub(crate) const SDR_CICP: (u16, u16) = (1, 13);
+pub const SDR_CICP: (u16, u16) = (1, 13);
 /// The gain map's own primaries and transfer are unspecified by the standard.
-pub(crate) const UNSPECIFIED: u16 = 2;
+pub const UNSPECIFIED: u16 = 2;
 
 /// What libavif wrote into its diagnostics, which is where a refusal explains itself.
-pub(crate) fn said(diagnostics: &raw::avifDiagnostics) -> String {
+pub fn said(diagnostics: &raw::avifDiagnostics) -> String {
     let bytes = diagnostics
         .error
         .iter()
@@ -41,9 +41,9 @@ pub(crate) fn said(diagnostics: &raw::avifDiagnostics) -> String {
 }
 
 /// One decoded AVIF, held as interleaved 8-bit RGB with the image it came from.
-pub(crate) struct Decoded {
-    pub(crate) image: crate::avif::Image,
-    pub(crate) rgb: raw::avifRGBImage,
+pub struct Decoded {
+    pub image: crate::avif::Image,
+    pub rgb: raw::avifRGBImage,
 }
 
 impl Drop for Decoded {
@@ -58,10 +58,10 @@ impl Drop for Decoded {
 }
 
 /// libavif's gain map, freed when it leaves scope along with the image hung off it.
-pub(crate) struct GainMap(pub(crate) *mut raw::avifGainMap);
+pub struct GainMap(pub *mut raw::avifGainMap);
 
 impl GainMap {
-    pub(crate) fn new() -> Result<GainMap, String> {
+    pub fn new() -> Result<GainMap, String> {
         #[expect(unsafe_code)]
         let handle = unsafe { raw::avifGainMapCreate() };
         match handle.is_null() {
@@ -82,7 +82,7 @@ impl Drop for GainMap {
 }
 
 /// Decodes one AVIF and converts it to 8-bit RGB, which is what the gain map computation takes.
-pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, String> {
+pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     let decoder = crate::avif::Decoder::new()?;
     let image = crate::avif::Image::empty()?;
 
@@ -120,7 +120,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, String> {
 }
 
 #[expect(unsafe_code)]
-pub(crate) fn orientation_tag(image: &crate::avif::Image) -> Result<u16, String> {
+pub fn orientation_tag(image: &crate::avif::Image) -> Result<u16, String> {
     unsafe {
         let image = &*image.0;
         if image.transformFlags & AVIF_TRANSFORM_IMIR != 0 {

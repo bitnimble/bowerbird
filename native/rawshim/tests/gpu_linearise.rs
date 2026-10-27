@@ -12,8 +12,9 @@
 
 use colour::resident::stored_within;
 use colour::transfer::{Coding, Curve, Primaries};
+use formats::gain_map::{GainMap, Reconstruction};
 use rawler::decoders::Orientation;
-use rawshim::linearise::{GainMap, Picture, Reconstruction};
+use rawshim::linearise::Picture;
 use rawshim::view::Scale;
 use units::light::{Light, SceneNits};
 use units::px::{At, Photograph, Rect, Size};

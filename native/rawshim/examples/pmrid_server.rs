@@ -249,7 +249,7 @@ fn main() {
                     ))))
                 }),
             Ok(Request::Header { header }) => catch_unwind(AssertUnwindSafe(|| {
-                rawshim::header::read_path(&header)
+                formats::header::read_path(&header)
                     .map(|read| {
                         serde_json::json!({
                             "iso": read.iso,
@@ -400,7 +400,7 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         (Some(_), None) => vec![1.0],
     };
     let options = rawshim::hdr_args::EncodeOptions {
-        still_chroma: rawshim::hdr_args::Chroma::Yuv444,
+        still_chroma: formats::still::Chroma::Yuv444,
         output_path: String::new(),
         grade: support::GRADE,
         crf: 26,
@@ -612,7 +612,7 @@ fn sharpened(
                 Some(matrix),
             ))
             .ok_or_else(|| Failed::Error("the coding did not run".into()))?;
-            let size = rawshim::hdr_args::Size {
+            let size = formats::still::Size {
                 width: width as u32,
                 height: height as u32,
             };

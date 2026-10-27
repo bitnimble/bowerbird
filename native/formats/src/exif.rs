@@ -32,17 +32,17 @@ const SUB_DIRECTORIES: [u16; 2] = [0x8769, 0x8825];
 
 /// What the camera recorded about a photograph, whichever kind of file it arrived in.
 pub struct Recorded {
-    make: String,
-    model: String,
-    exif: Exif,
+    pub make: String,
+    pub model: String,
+    pub exif: Exif,
 }
 
 impl Recorded {
     /// A RAW through its decoder, a finished picture through the EXIF block it carries.
     pub fn read(path: &str) -> Option<Recorded> {
-        if crate::decode_rendered::is_rendered(path) {
+        if crate::rendered::is_rendered(path) {
             let bytes = std::fs::read(path).ok()?;
-            return Recorded::parse(&crate::decode_rendered::probe(&bytes)?.exif?);
+            return Recorded::parse(&crate::rendered::probe(&bytes)?.exif?);
         }
         let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
         let decoder = rawler::get_decoder(&source).ok()?;
@@ -250,42 +250,13 @@ pub fn copy_into<W: Write + Seek>(
     Ok(())
 }
 
-#[cfg(all(test, feature = "fixtures"))]
-mod fixtures {
-    use super::*;
-    use crate::fixture_tests::{canon, fuji, sony};
-    use crate::header::{name, read_path};
-
-    /// Each container keeps its EXIF somewhere different, and every one of them has to reach a block.
-    #[test]
-    fn every_fixture_writes_the_record_the_catalogue_reads() {
-        for path in [sony(), canon(), fuji()] {
-            let path = path.to_str().expect("a path");
-            let header = read_path(path).expect("the header");
-            let block = Recorded::read(path)
-                .and_then(|recorded| recorded.block(NON_IDENTIFYING))
-                .unwrap_or_else(|| panic!("{path} writes a block"));
-            let back = Recorded::parse(&block).expect("the block parses");
-
-            assert_eq!(back.model, name(&header.camera_model), "{path}");
-            let iso = back
-                .exif
-                .iso_speed
-                .or(back.exif.iso_speed_ratings.map(u32::from));
-            assert_eq!(iso.map(|iso| iso as f32), Some(header.iso), "{path}");
-            assert!(back.exif.date_time_original.is_some(), "{path}");
-            assert_eq!(back.exif.serial_number, None, "{path}");
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod tests {
+#[cfg(any(test, feature = "testing"))]
+pub mod tests {
     use super::*;
     use rawler::formats::tiff::{Rational, SRational};
 
     /// What a rendition of `recorded` carries, for the writers' own tests.
-    pub(crate) fn block() -> Vec<u8> {
+    pub fn block() -> Vec<u8> {
         recorded().block(NON_IDENTIFYING).expect("a block")
     }
 
@@ -327,6 +298,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(test)]
     fn read_back(block: &[u8]) -> Recorded {
         Recorded::parse(block).expect("the block parses")
     }

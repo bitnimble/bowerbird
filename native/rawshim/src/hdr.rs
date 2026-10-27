@@ -48,7 +48,7 @@ pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
         bytes,
         crate::decode_rawler::Preview::for_the_match(),
     )?;
-    crate::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
+    formats::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
 }
 
 /// How a scene-linear decode is anchored to a display (DESIGN 10.7).
@@ -574,7 +574,7 @@ impl Cut {
     pub fn from_base(
         frame: colour::resident::Resident,
         lens: Option<&crate::fit::Lens>,
-        size: hdr_args::Size,
+        size: formats::still::Size,
         sharpen: f64,
         sharpen_sigma: image::SharpenSigma,
         sharpen_noise: image::SharpenNoise,
@@ -681,7 +681,7 @@ impl Cut {
     /// Off the cut above it rather than off the base, so a job naming three sizes pays one warp and
     /// two small reductions instead of three of each - and on the device, off a frame that is
     /// already there.
-    pub fn downscale(&self, size: hdr_args::Size) -> Cut {
+    pub fn downscale(&self, size: formats::still::Size) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
         match &self.frame {
             CutFrame::Device(frame) => {
@@ -733,7 +733,7 @@ pub fn encode_frame(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still(
+    formats::avif::save_still(
         frame,
         width,
         height,
@@ -753,7 +753,7 @@ pub fn encode_bands(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still_bands(
+    formats::avif::save_still_bands(
         bands,
         width,
         &still_options(options),
@@ -764,13 +764,13 @@ pub fn encode_bands(
 }
 
 #[cfg(feature = "renditions")]
-fn still_options(options: &EncodeOptions) -> crate::avif::StillOptions {
+fn still_options(options: &EncodeOptions) -> formats::avif::StillOptions {
     // The transfer is already applied and PQ's output gamut is Rec.2020, which the grade
     // already works in, so all that is left between here and a file is the YCbCr matrix,
     // which libavif does.
-    let (primaries, transfer, matrix) = hdr_args::cicp();
-    crate::avif::StillOptions {
-        cicp: crate::avif::Cicp {
+    let (primaries, transfer, matrix) = formats::still::cicp();
+    formats::avif::StillOptions {
+        cicp: formats::avif::Cicp {
             primaries,
             transfer,
             matrix,

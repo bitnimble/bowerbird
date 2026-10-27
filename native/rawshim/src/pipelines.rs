@@ -14,7 +14,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     mosaic::highlight::device(gpu);
     crate::linearise::device(gpu);
     mosaic::lslcd::device(gpu);
-    crate::planes::kernel(gpu);
+    formats::planes::kernel(gpu);
     denoise::pmrid::device(gpu);
     crate::repair::averaging(gpu);
     crate::repair::repairing(gpu);

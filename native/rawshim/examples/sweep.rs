@@ -16,7 +16,8 @@
 mod support;
 
 use rawshim::grade::Intent;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 
 /// How close to grey the camera has to render a pixel for it to count, as a fraction of its

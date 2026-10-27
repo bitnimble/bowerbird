@@ -13,8 +13,9 @@
 
 mod support;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::avif;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use units::light::{DisplayNits, Gain, Light};
 
 fn options(edge: usize) -> EncodeOptions {
@@ -137,7 +138,7 @@ fn main() {
     println!("  pq   {}", span(&pq, 65535.0));
     println!("  srgb {}", span(&srgb, 255.0));
 
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     let still = |q: i32, chroma: Chroma| {
         avif::encode_still(
             std::borrow::Cow::Borrowed(&pq),

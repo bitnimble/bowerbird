@@ -31,20 +31,17 @@
 // Together they hold one invariant: the only things marked are those directly
 // performing an unsafe operation. A caller cannot be marked to cover a callee, and
 // a marker cannot outlive what it was for. `grep -rn "expect(unsafe_code)"
-// native/rawshim/src` is the audit.
+// native/*/src` is the audit.
 //
 // A marker counts one operation, not one block, so it measures the C surface rather
 // than how much code sits inside a brace - and a `Drop` of two lines carries as much
 // weight as a body of sixty. The number that has to keep falling is the calls
-// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/rawshim/src`.
+// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/*/src`. The other
+// crates hold the same three lints.
 //
-// Every C handle is owned by a Rust value whose `Drop` frees it - `avif::Image`,
-// `avif::Encoder`, `avif_gain_write::GainMap`, `jxl_write::Runner` - so the marked
-// calls are the one that creates and the one that frees, and no early return can leak
-// in between.
-//
-// What is left is the irreducible part: reading the one command buffer at an entry
-// point, and calling libavif and libjxl, which are C. Our own memory is
+// The C handles are `formats`', each owned by a Rust value whose `Drop` frees it. What is
+// left here is the irreducible part: reading the one command buffer at an entry
+// point. Our own memory is
 // marked nowhere - a `Frame` is an owned Rust value with a real lifetime, and the
 // handle API that needs raw pointers for it sits behind a lint fence, for tests.
 #![deny(unsafe_code)]
@@ -60,8 +57,6 @@ use std::os::raw::c_int;
 
 mod acr3;
 mod align;
-/// The headroom behind Apple's own gain map, which the two maker note tags state between them.
-pub mod apple_gain;
 /// A composition's geometry, and the tiles across it that each take one frame.
 pub mod assembly;
 /// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
@@ -91,11 +86,6 @@ pub mod assembly_tiles;
 pub mod assembly_volume;
 /// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
 pub mod assembly_weight;
-#[cfg(feature = "renditions")]
-pub mod avif;
-/// Writing a gain map beside a picture, which only an export asks for.
-#[cfg(feature = "renditions")]
-pub mod avif_gain_write;
 /// The stages between the demosaic and the grade, moving onto the GPU one at a time.
 pub mod base;
 pub mod burst;
@@ -138,7 +128,6 @@ pub mod dereflect;
 mod dng_rendering;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
-pub mod exif;
 #[cfg(feature = "renditions")]
 pub mod ffi;
 pub mod fit;
@@ -156,22 +145,8 @@ pub mod grade;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
-pub mod header;
-/// A HEIC as the viewer's stage decodes and draws it.
-pub mod heif_view;
-/// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
-pub mod hevc;
 pub mod image;
 pub mod job;
-pub mod jpeg;
-/// The gain map a JPEG carries as its second MPF image, in either spelling of the terms.
-pub mod jpeg_gain;
-/// The same, in the spelling a JPEG carries it.
-#[cfg(feature = "renditions")]
-pub mod jpeg_gain_write;
-/// JPEG XL, the same.
-#[cfg(feature = "renditions")]
-pub mod jxl_write;
 pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
@@ -179,8 +154,6 @@ pub mod linearise;
 pub mod merge;
 pub mod open;
 pub mod open_stage;
-/// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
-pub mod orientation;
 pub mod parallel;
 /// Where a patch of one frame lies in another, or elsewhere in its own.
 pub mod patch_search;
@@ -192,10 +165,6 @@ pub mod photo_analysis;
 #[cfg(feature = "renditions")]
 pub mod picture;
 pub mod pipelines;
-pub mod planes;
-/// PNG, which an export can ask for and nothing else writes.
-#[cfg(feature = "renditions")]
-pub mod png_write;
 pub mod print;
 pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
@@ -212,9 +181,6 @@ pub mod snapshot;
 pub mod stacks;
 pub mod tca;
 pub mod tca_device;
-/// TIFF, the same.
-#[cfg(feature = "renditions")]
-pub mod tiff_write;
 pub mod tile;
 pub mod tile_grid;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
@@ -226,20 +192,6 @@ pub mod view;
 pub mod wasm;
 #[cfg(test)]
 mod wgsl_layout;
-
-/// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
-/// no C at all and so has no bindings to declare.
-#[cfg(feature = "renditions")]
-mod raw {
-    #![allow(
-        non_upper_case_globals,
-        non_camel_case_types,
-        non_snake_case,
-        dead_code
-    )]
-    #![expect(unsafe_code)]
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 /// Hands over the library's held log lines (see [`trace::warn`]), and from the first call on holds
 /// them rather than printing them.
@@ -525,31 +477,6 @@ pub fn decode_tile(
     decode_frame_cropped(DecodeSource::Path(path), 0, detail, Some((view, halo)), fit)
 }
 
-/// A rectangle of the mosaic, in the raw image's own pixels.
-#[derive(Clone, Copy)]
-pub struct Tile {
-    pub left: usize,
-    pub top: usize,
-    pub width: usize,
-    pub height: usize,
-}
-
-impl Tile {
-    /// The window grown by `halo` on every side, which is what a tile needs.
-    ///
-    /// The denoise is local with a bounded reach, so a tile denoised on its own disagrees with its
-    /// neighbour along the seam unless both were computed with the context that reaches across
-    /// it. The halo is trimmed off by the demosaic's own crop.
-    pub fn with_halo(self, halo: usize) -> Tile {
-        Tile {
-            left: self.left.saturating_sub(halo),
-            top: self.top.saturating_sub(halo),
-            width: self.width + halo * 2,
-            height: self.height + halo * 2,
-        }
-    }
-}
-
 /// How much context a tile is given either side, where what a seam costs is worth more than what
 /// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
 /// GALOSH reads farther and raises it to its own ([`denoise::galosh::reach`]).
@@ -666,7 +593,7 @@ pub fn save_avif_frame(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    avif::encode_rendition_rotated(
+    formats::avif::encode_rendition_rotated(
         source.data.into(),
         source.width,
         source.height,
@@ -698,7 +625,7 @@ pub fn save_avif_frame(
 /// rendered format has none, and the caller renders (`decode_rendered`).
 #[cfg(feature = "renditions")]
 fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    if decode_rendered::is_rendered(path) {
+    if formats::rendered::is_rendered(path) {
         let bytes = std::fs::read(path).ok()?;
         return bytes.starts_with(&[0xFF, 0xD8]).then(|| use_bytes(&bytes));
     }
@@ -711,8 +638,8 @@ fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Opti
 /// picture; Some(None) when it has one this cannot turn.
 #[cfg(feature = "renditions")]
 fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
-    if !decode_rendered::is_rendered(path) {
-        return with_embedded_jpeg(path, |jpeg| jpeg::with_added_rotation(jpeg, rotate));
+    if !formats::rendered::is_rendered(path) {
+        return with_embedded_jpeg(path, |jpeg| formats::jpeg::with_added_rotation(jpeg, rotate));
     }
     let bytes = std::fs::read(path).ok()?;
     if heif::is_heif(&bytes) {
@@ -720,7 +647,7 @@ fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
     }
     bytes
         .starts_with(&[0xFF, 0xD8])
-        .then(|| jpeg::with_added_rotation(&bytes, rotate))
+        .then(|| formats::jpeg::with_added_rotation(&bytes, rotate))
 }
 
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
@@ -743,7 +670,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<units::rgb::R
 #[expect(unsafe_code)]
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
+pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut formats::header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
         return -1;
     }
@@ -751,7 +678,7 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
         return -1;
     };
     // Runs on every file of a scan, and parses maker notes off untrusted bytes.
-    match guard("bb_read_header", None, || header::read_path(path)) {
+    match guard("bb_read_header", None, || formats::header::read_path(path)) {
         Some(header) => {
             unsafe {
                 *out = header;
@@ -789,13 +716,13 @@ pub unsafe extern "C" fn bb_camera_names(
         return -1;
     };
     let Some((make, model)) = guard("bb_camera_names", None, || {
-        Some(header::camera_names(make, model))
+        Some(formats::header::camera_names(make, model))
     }) else {
         return -1;
     };
     unsafe {
-        header::write_name(std::slice::from_raw_parts_mut(out_make, 64), &make);
-        header::write_name(std::slice::from_raw_parts_mut(out_model, 64), &model);
+        formats::header::write_name(std::slice::from_raw_parts_mut(out_make, 64), &make);
+        formats::header::write_name(std::slice::from_raw_parts_mut(out_model, 64), &model);
     }
     0
 }
@@ -846,7 +773,7 @@ pub extern "C" fn bb_release_render_memory() {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_header_size() -> usize {
-    std::mem::size_of::<header::BbHeader>()
+    std::mem::size_of::<formats::header::BbHeader>()
 }
 
 /// How many bytes a stacking descriptor occupies, so the caller can size its

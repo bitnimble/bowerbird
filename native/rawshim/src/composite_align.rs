@@ -744,7 +744,7 @@ async fn preview_of(
     if let Some(plane) = source.preview_path {
         let bytes =
             std::fs::read(plane).map_err(|why| format!("{plane} could not be read: {why}"))?;
-        let picture = crate::image::decode(&bytes, wide)?;
+        let picture = formats::resize::decode(&bytes, wide)?;
         return Ok(crate::hdr_fit::Source {
             buffer: crate::hdr_fit::levelled_source(gpu, picture.as_ref()),
             width: picture.width,
@@ -753,7 +753,7 @@ async fn preview_of(
     }
 
     let path = source.path;
-    if !crate::decode_rendered::is_rendered(path) {
+    if !formats::rendered::is_rendered(path) {
         let preview = crate::decode_rawler::upright_preview_rgb(
             path,
             wide,

@@ -1024,7 +1024,7 @@ fn write_preview(scene: &[[f32; 3]], width: usize, height: usize, to: &str) {
         height,
         data: &data,
     };
-    let jpeg = rawshim::jpeg::encode(picture, 95).expect("the preview encodes");
+    let jpeg = formats::jpeg::encode(picture, 95).expect("the preview encodes");
     std::fs::write(to, jpeg).expect("a writable path");
     eprintln!("wrote {to}");
 }

@@ -12,6 +12,31 @@
 
 use rawler::decoders::Orientation as O;
 
+/// A rectangle of a raster, in its own pixels: a RAW's mosaic or a finished picture's codes.
+#[derive(Clone, Copy)]
+pub struct Tile {
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Tile {
+    /// The window grown by `halo` on every side, which is what a tile needs.
+    ///
+    /// The denoise is local with a bounded reach, so a tile denoised on its own disagrees with its
+    /// neighbour along the seam unless both were computed with the context that reaches across
+    /// it. The halo is trimmed off by the demosaic's own crop.
+    pub fn with_halo(self, halo: usize) -> Tile {
+        Tile {
+            left: self.left.saturating_sub(halo),
+            top: self.top.saturating_sub(halo),
+            width: self.width + halo * 2,
+            height: self.height + halo * 2,
+        }
+    }
+}
+
 /// The number `assemble.slang` and `linearise.slang` both switch on.
 pub fn code(orientation: rawler::decoders::Orientation) -> u32 {
     match orientation {
@@ -58,11 +83,11 @@ pub fn transposes(orientation: rawler::decoders::Orientation) -> bool {
 /// `width` and `height` are the *stored* picture's, before the turn - which is the space the
 /// shaders' `frame_width` and `frame_height` are in too.
 pub fn unoriented_rect(
-    tile: crate::Tile,
+    tile: Tile,
     width: usize,
     height: usize,
     orientation: rawler::decoders::Orientation,
-) -> crate::Tile {
+) -> Tile {
     // Inverse of the mapping in `orient`, applied to the corners: each of these is its own inverse
     // except the two rotations, which are each other's.
     let back = |x: usize, y: usize| -> (usize, usize) {
@@ -84,7 +109,7 @@ pub fn unoriented_rect(
     );
     let (ax, ay) = back(tile.left, tile.top);
     let (bx, by) = back(far.0, far.1);
-    crate::Tile {
+    Tile {
         left: ax.min(bx),
         top: ay.min(by),
         width: ax.abs_diff(bx) + 1,
@@ -109,7 +134,7 @@ pub fn upright_offset([x, y]: [f64; 2], orientation: rawler::decoders::Orientati
 
 /// Rewrites a frame upright on the host, returning it with whatever dimensions that left: the
 /// permutation the shaders' own writes are held against.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 fn orient<T: Copy + Default>(
     pixels: Vec<T>,
     width: usize,
@@ -147,8 +172,8 @@ fn orient<T: Copy + Default>(
 
 /// [`orient`] by the code the shaders take, for the test that holds a shader's inverse against
 /// this permutation.
-#[cfg(test)]
-pub(crate) fn orient_for_test(
+#[cfg(any(test, feature = "testing"))]
+pub fn orient_for_test(
     pixels: Vec<u16>,
     width: usize,
     height: usize,
@@ -195,7 +220,7 @@ mod tests {
 
             // One pixel of the upright picture, found in the stored raster by the corner walk.
             let (ox, oy) = (2usize, 1usize);
-            let window = crate::Tile {
+            let window = Tile {
                 left: ox,
                 top: oy,
                 width: 1,

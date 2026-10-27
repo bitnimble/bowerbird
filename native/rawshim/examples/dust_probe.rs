@@ -47,7 +47,7 @@ fn main() {
             eprintln!("{path}: could not be read");
             continue;
         };
-        let header = rawshim::header::read_path(&path);
+        let header = formats::header::read_path(&path);
         let aperture = header.as_ref().map_or(0.0, |header| header.aperture);
 
         let started = std::time::Instant::now();

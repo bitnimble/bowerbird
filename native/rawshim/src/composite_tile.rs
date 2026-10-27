@@ -1197,8 +1197,7 @@ async fn taken(
             // A camera's JPEG *is* the corrected picture, which is the geometry the recipe is
             // stated in, so there is no lens left to undo - the same reason a rendered source
             // has none.
-            through: match request.from == From::Camera
-                || crate::decode_rendered::is_rendered(file.path)
+            through: match request.from == From::Camera || formats::rendered::is_rendered(file.path)
             {
                 true => Through::Corrected,
                 false => Through::Lens,
@@ -1379,7 +1378,7 @@ pub(crate) async fn camera_picture(
     path: &str,
     at_least_long_edge: u32,
 ) -> Result<crate::frame::Frame, String> {
-    if crate::decode_rendered::is_rendered(path) {
+    if formats::rendered::is_rendered(path) {
         return crate::decode::frame_from_path(
             path,
             denoise::galosh::Detail::at(0.0, 0.0),
@@ -1392,8 +1391,8 @@ pub(crate) async fn camera_picture(
     }
     let preview = preview_of(path, at_least_long_edge)?;
     let (width, height) = (preview.width, preview.height);
-    let held = crate::decode_rendered::holding(crate::decode_rendered::Read {
-        codes: crate::decode_rendered::interleaved(&preview.data, width * height, 3),
+    let held = crate::decode_rendered::holding(formats::rendered::Read {
+        codes: formats::rendered::interleaved(&preview.data, width * height, 3),
         width,
         height,
         // What a camera writes its preview in, and what the JPEG path read off the absent profile:
@@ -1423,7 +1422,7 @@ pub(crate) async fn camera_picture(
 /// against.
 #[cfg(feature = "renditions")]
 pub(crate) fn camera_peak(path: &str) -> Result<units::light::Light<units::light::Level>, String> {
-    if crate::decode_rendered::is_rendered(path) {
+    if formats::rendered::is_rendered(path) {
         // ponytail: whole decode for a header answer; a header-only coding read if it shows. Never
         // assume sRGB here: three stops out on a gain-mapped JPEG.
         let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;

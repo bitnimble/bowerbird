@@ -24,7 +24,7 @@ fn main() {
     let mut frames: Vec<(u32, rawler::RawImage)> = paths
         .iter()
         .map(|path| {
-            let shot = rawshim::header::read_path(path).map_or(0, |header| header.sequence_index);
+            let shot = formats::header::read_path(path).map_or(0, |header| header.sequence_index);
             (shot, rawler::decode_file(path).expect("decodes"))
         })
         .collect();

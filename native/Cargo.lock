@@ -451,6 +451,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "formats"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "bytemuck",
+ "colour",
+ "crc32fast",
+ "fast_image_resize",
+ "gpu",
+ "heif",
+ "jpeg-decoder",
+ "jpeg-encoder",
+ "png",
+ "pollster",
+ "rawler",
+ "rayon",
+ "rust_h265",
+ "serde",
+ "serde_json",
+ "shaders",
+ "tiff",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1489,12 +1516,12 @@ name = "rawshim"
 version = "0.1.0"
 dependencies = [
  "ash",
- "bindgen",
  "bytemuck",
  "colour",
  "crc32fast",
  "denoise",
  "fast_image_resize",
+ "formats",
  "gpu",
  "half",
  "heif",

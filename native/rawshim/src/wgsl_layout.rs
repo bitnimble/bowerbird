@@ -126,12 +126,6 @@ mod tests {
                 shaders::LINEARISE.source,
                 crate::linearise::BLOCK_BYTES,
             ),
-            (
-                "planes.wgsl",
-                "Params",
-                shaders::PLANES.source,
-                crate::planes::BLOCK_BYTES,
-            ),
         ];
         shaders::layout::check(&cases);
     }

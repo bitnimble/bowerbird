@@ -69,7 +69,7 @@ fn main() {
                 eprintln!("{path}: unreadable");
                 continue;
             };
-            let Ok(decoded) = rawshim::image::decode(&bytes, 0) else {
+            let Ok(decoded) = formats::resize::decode(&bytes, 0) else {
                 eprintln!("{path}: would not decode");
                 continue;
             };
@@ -168,7 +168,7 @@ fn main() {
                 height: h,
                 data: &bytes,
             };
-            let jpeg = rawshim::jpeg::encode(image, 95).expect("the reconstruction encodes");
+            let jpeg = formats::jpeg::encode(image, 95).expect("the reconstruction encodes");
             std::fs::write(format!("{into}-{name}.jpg"), jpeg).expect("it writes");
             let flat: Vec<u8> = truth.data.clone();
             let image = units::rgb::RgbRef {
@@ -176,7 +176,7 @@ fn main() {
                 height: truth.height,
                 data: &flat,
             };
-            let jpeg = rawshim::jpeg::encode(image, 95).expect("the truth encodes");
+            let jpeg = formats::jpeg::encode(image, 95).expect("the truth encodes");
             std::fs::write(format!("{into}-{name}-truth.jpg"), jpeg).expect("it writes");
         }
         let db = psnr(&truth, &out, w, h);

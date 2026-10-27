@@ -568,7 +568,7 @@ pub async fn prepared_on_device(
 struct Grown {
     /// The part of the *uncorrected* frame to decode, which the lens decides. **In the photograph's
     /// pixels**, at the scale below.
-    decode: crate::Tile,
+    decode: formats::orientation::Tile,
     /// What the decode is asked to produce, which is what makes `decode` and the rest differ.
     scale: crate::view::Scale,
     /// The window of the corrected frame to produce: `(left, top, width, height)` in the *buffer's*
@@ -912,7 +912,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     let decode = decode.raw();
 
     Ok(Grown {
-        decode: crate::Tile {
+        decode: formats::orientation::Tile {
             left: decode.0,
             top: decode.1,
             width: decode.2,

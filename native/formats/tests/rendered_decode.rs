@@ -7,8 +7,8 @@
 //! and its gain map - are `hevc.rs`'s own tests and the suite behind `--features fixtures`.
 
 use colour::transfer::Curve;
+use formats::rendered;
 use rawler::decoders::Orientation;
-use rawshim::decode_rendered;
 
 /// A PNG of `width x height`, eight bits, with whatever the caller sets on the encoder.
 fn encode_png(
@@ -74,7 +74,7 @@ fn a_png_comes_back_at_its_own_code_values() {
     let pixels = ramp(width, height);
     let file = encode_png(width as u32, height as u32, &pixels, |_| {});
 
-    let read = decode_rendered::read(&file).expect("a readable PNG");
+    let read = rendered::read(&file).expect("a readable PNG");
     assert_eq!((read.width, read.height), (width, height));
     assert_eq!(read.coding.depth, 8);
     // No chunk said otherwise, so sRGB is what it is read as.
@@ -98,7 +98,7 @@ fn a_grey_png_and_an_alpha_png_both_come_back_as_three_channels() {
             .write_image_data(&[40, 200])
             .expect("the pixels write");
     }
-    let read = decode_rendered::read(&grey).expect("a readable PNG");
+    let read = rendered::read(&grey).expect("a readable PNG");
     assert_eq!(read.codes, vec![40, 40, 40, 200, 200, 200]);
 
     let mut alpha = Vec::new();
@@ -111,7 +111,7 @@ fn a_grey_png_and_an_alpha_png_both_come_back_as_three_channels() {
             .write_image_data(&[10, 20, 30, 128])
             .expect("the pixels write");
     }
-    let read = decode_rendered::read(&alpha).expect("a readable PNG");
+    let read = rendered::read(&alpha).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 20, 30]);
 }
 
@@ -134,7 +134,7 @@ fn a_grey_png_with_alpha_is_grey_rather_than_a_panic() {
             .write_image_data(&[10, 255, 20, 128])
             .expect("the pixels write");
     }
-    let read = decode_rendered::read(&with_alpha).expect("a readable PNG");
+    let read = rendered::read(&with_alpha).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 10, 10, 20, 20, 20]);
 
     // The same picture reached through `tRNS`, which is grey on the way in and grey-plus-alpha by
@@ -150,7 +150,7 @@ fn a_grey_png_with_alpha_is_grey_rather_than_a_panic() {
             .write_image_data(&[10, 20])
             .expect("the pixels write");
     }
-    let read = decode_rendered::read(&transparent).expect("a readable PNG");
+    let read = rendered::read(&transparent).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 10, 10, 20, 20, 20]);
 }
 
@@ -168,7 +168,7 @@ fn an_indexed_png_is_read_at_the_channels_the_buffer_actually_has() {
         let mut writer = encoder.write_header().expect("the header writes");
         writer.write_image_data(&[0, 1]).expect("the pixels write");
     }
-    let read = decode_rendered::read(&indexed).expect("a readable PNG");
+    let read = rendered::read(&indexed).expect("a readable PNG");
     assert_eq!((read.width, read.height), (2, 1));
     assert_eq!(read.codes, vec![10, 20, 30, 200, 210, 220]);
 }
@@ -187,7 +187,7 @@ fn a_sixteen_bit_png_is_read_at_sixteen_bits() {
             .write_image_data(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC])
             .expect("the pixels write");
     }
-    let read = decode_rendered::read(&deep).expect("a readable PNG");
+    let read = rendered::read(&deep).expect("a readable PNG");
     assert_eq!(read.coding.depth, 16);
     assert_eq!(read.codes, vec![0x1234, 0x5678, 0x9ABC]);
 }
@@ -198,7 +198,7 @@ fn a_pngs_cicp_chunk_decides_its_colour() {
     let pixels = ramp(4, 2);
     // Rec.2020 primaries, PQ, identity matrix, full range.
     let file = with_chunk(&encode_png(4, 2, &pixels, |_| {}), b"cICP", &[9, 16, 0, 1]);
-    let read = decode_rendered::read(&file).expect("a readable PNG");
+    let read = rendered::read(&file).expect("a readable PNG");
     assert_eq!(read.coding.curve, Curve::Pq);
     // Rec.2020 in and Rec.2020 out, so the conversion is the identity.
     for (row, cells) in read.coding.matrix.iter().enumerate() {
@@ -220,7 +220,7 @@ fn a_pngs_gamma_chunk_is_the_encoding_exponent() {
     let file = encode_png(2, 2, &pixels, |encoder| {
         encoder.set_source_gamma(png::ScaledFloat::new(1.0 / 1.8));
     });
-    let read = decode_rendered::read(&file).expect("a readable PNG");
+    let read = rendered::read(&file).expect("a readable PNG");
     let Curve::Gamma(exponent) = read.coding.curve else {
         panic!("expected a power law, got {:?}", read.coding.curve);
     };
@@ -244,7 +244,7 @@ fn a_jpeg_comes_back_at_the_size_it_was_written() {
         )
         .expect("the JPEG encodes");
 
-    let read = decode_rendered::read(&file).expect("a readable JPEG");
+    let read = rendered::read(&file).expect("a readable JPEG");
     assert_eq!((read.width, read.height), (width, height));
     assert_eq!(read.coding.depth, 8);
     assert_eq!(read.codes.len(), width * height * 3);
@@ -276,8 +276,8 @@ fn the_probe_and_the_decode_agree_about_every_file() {
         .expect("the JPEG encodes");
 
     for file in [png, jpeg] {
-        let probe = decode_rendered::probe(&file).expect("a probe");
-        let read = decode_rendered::read(&file).expect("a decode");
+        let probe = rendered::probe(&file).expect("a probe");
+        let read = rendered::read(&file).expect("a decode");
         assert_eq!((probe.width, probe.height), (read.width, read.height));
         assert_eq!(probe.turn, read.turn);
     }
@@ -292,8 +292,8 @@ fn a_cr3_is_not_read_as_a_finished_picture() {
     cr3.extend_from_slice(b"ftypcrx ");
     cr3.extend_from_slice(&0u32.to_be_bytes());
     cr3.extend_from_slice(b"crx isom");
-    assert!(!decode_rendered::is_rendered_bytes(&cr3));
-    assert!(!decode_rendered::is_rendered("IMG_0001.CR3"));
+    assert!(!rendered::is_rendered_bytes(&cr3));
+    assert!(!rendered::is_rendered("IMG_0001.CR3"));
 }
 
 /// The catalogue's row, which is what an import writes fifty thousand of - and the one thing on
@@ -305,7 +305,7 @@ fn the_catalogues_header_comes_off_a_finished_pictures_container() {
     let at = dir.join("wide.png");
     std::fs::write(&at, encode_png(40, 25, &ramp(40, 25), |_| {})).expect("the file writes");
 
-    let header = rawshim::header::read_rendered(at.to_str().unwrap()).expect("a header");
+    let header = formats::header::read_rendered(at.to_str().unwrap()).expect("a header");
     assert_eq!((header.width, header.height), (40, 25));
     assert_eq!(header.orientation, 1, "a PNG with no EXIF is upright");
     // Nothing was recorded, and an unrecorded reading is 0 rather than a guess (`plausible`).
@@ -314,7 +314,7 @@ fn the_catalogues_header_comes_off_a_finished_pictures_container() {
     assert!(header.latitude.is_nan());
 
     // And `read_path` routes to it, which is what every caller actually goes through.
-    let routed = rawshim::header::read_path(at.to_str().unwrap()).expect("a header");
+    let routed = formats::header::read_path(at.to_str().unwrap()).expect("a header");
     assert_eq!((routed.width, routed.height), (40, 25));
 
     std::fs::remove_dir_all(&dir).ok();
@@ -322,10 +322,10 @@ fn the_catalogues_header_comes_off_a_finished_pictures_container() {
 
 #[test]
 fn something_that_is_none_of_the_four_is_refused_by_name() {
-    let why = match decode_rendered::read(b"II*\0 a TIFF, which is not one of these") {
+    let why = match rendered::read(b"II*\0 a TIFF, which is not one of these") {
         Err(why) => why,
         Ok(_) => panic!("a TIFF is not one of these"),
     };
     assert!(why.contains("PNG"), "{why}");
-    assert!(decode_rendered::probe(b"II*\0").is_none());
+    assert!(rendered::probe(b"II*\0").is_none());
 }

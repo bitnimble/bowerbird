@@ -66,15 +66,15 @@ fn main() {
         // Every stage's idea of which way up this photograph is, in one line: the catalogue's,
         // the search plane's, and what the region decode would produce. A panorama solved on one
         // and composited through another is a wrong focal and nothing saying so.
-        let header = rawshim::header::read_path(path);
+        let header = formats::header::read_path(path);
         let (turn, wide, tall) = header
             .as_ref()
             .map_or((0, 0, 0), |h| (h.orientation, h.width, h.height));
         if let Some(header) = header.as_ref() {
             println!(
                 "  {} {}, {:.0}mm f/{:.1} {:.4}s ISO {:.0}",
-                rawshim::header::name(&header.camera_make),
-                rawshim::header::name(&header.camera_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
                 header.focal,
                 header.aperture,
                 header.shutter,
@@ -435,8 +435,8 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
     match rawshim::job::run(&job) {
         Ok(_) => {
             let bytes = std::fs::read(&avif).expect("the render was written");
-            let decoded = rawshim::image::decode(&bytes, 0).expect("the render decodes");
-            let jpeg = rawshim::jpeg::encode(decoded.as_ref(), 88).expect("a jpeg");
+            let decoded = formats::resize::decode(&bytes, 0).expect("the render decodes");
+            let jpeg = formats::jpeg::encode(decoded.as_ref(), 88).expect("a jpeg");
             std::fs::write(to, jpeg).expect("a writable path");
             println!("  wrote {to}");
             outlined(
@@ -509,7 +509,7 @@ fn outlined(
         width: wide,
         height: tall,
     };
-    let jpeg = rawshim::jpeg::encode(drawn, 92).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(drawn, 92).expect("a jpeg");
     std::fs::write(to, jpeg).expect("a writable path");
     println!("  wrote {to}");
 }
@@ -748,7 +748,7 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
         height,
         data: &out,
     };
-    let jpeg = rawshim::jpeg::encode(picture, 90).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(picture, 90).expect("a jpeg");
     std::fs::write(to, jpeg).expect("a writable path");
     println!("  wrote {to}");
 }
@@ -837,8 +837,8 @@ fn plane_for(path: &str) -> Option<String> {
 
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
-    let header = rawshim::header::read_path(path)?;
-    rawshim::composite_job::focal_in_pixels(&header, rawshim::header::name(&header.camera_model))
+    let header = formats::header::read_path(path)?;
+    rawshim::composite_job::focal_in_pixels(&header, formats::header::name(&header.camera_model))
 }
 
 /// How far the frames' own centres climb across the canvas, in degrees.
@@ -905,9 +905,9 @@ fn analysis_for(path: &str) -> Option<Vec<u8>> {
 
 /// The photograph's own size, as the catalogue would have it.
 fn size_of(path: &str) -> [usize; 2] {
-    let header = match rawshim::decode_rendered::is_rendered(path) {
-        true => rawshim::header::read_rendered(path),
-        false => rawshim::header::read_path(path),
+    let header = match formats::rendered::is_rendered(path) {
+        true => formats::header::read_rendered(path),
+        false => formats::header::read_path(path),
     };
     header.map_or([0, 0], |h| [h.width as usize, h.height as usize])
 }

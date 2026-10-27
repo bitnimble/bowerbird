@@ -112,7 +112,7 @@ impl<'a> Open<'a> {
             grade: GRADE,
             strengths: self.strengths,
             stored: &stored,
-            fitting: match rawshim::decode_rendered::is_rendered(self.path) {
+            fitting: match formats::rendered::is_rendered(self.path) {
                 true => rawshim::open::Fitting::None,
                 false => rawshim::open::Fitting::Profiled(self.path),
             },

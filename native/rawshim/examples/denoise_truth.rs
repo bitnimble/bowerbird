@@ -349,7 +349,7 @@ fn write_png(
         .iter()
         .map(|channel| ((channel * lift).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8)
         .collect();
-    let png = rawshim::png_write::encode_sdr(&rgb8, side, side, None).expect("a png");
+    let png = formats::png_write::encode_sdr(&rgb8, side, side, None).expect("a png");
     std::fs::write(to, png).expect("wrote");
 }
 

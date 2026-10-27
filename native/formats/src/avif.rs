@@ -15,7 +15,7 @@
 use crate::raw;
 use units::rgb::Rgb;
 
-/// CICP, the only signalling that matters (`hdr_args::cicp`).
+/// CICP, the only signalling that matters (`still::cicp`).
 pub struct Cicp {
     pub primaries: u16,
     pub transfer: u16,
@@ -24,14 +24,14 @@ pub struct Cicp {
 
 pub struct StillOptions {
     pub cicp: Cicp,
-    /// From the still's chroma setting (`hdr_args::Chroma`).
+    /// From the still's chroma setting (`still::Chroma`).
     pub format: raw::avifPixelFormat,
     /// libaom's quantizer.
     pub quantizer: i32,
     /// libavif's encoder speed, 0 slowest and 10 fastest.
     pub speed: i32,
     /// The still's `clli`.
-    pub light: Option<crate::hdr_args::ContentLight>,
+    pub light: Option<crate::still::ContentLight>,
 }
 
 const AVIF_RANGE_LIMITED: raw::avifRange = raw::avifRange::AVIF_RANGE_LIMITED;
@@ -89,10 +89,10 @@ fn max_threads() -> i32 {
 }
 
 /// libavif's decoder, freed when it leaves scope.
-pub(crate) struct Decoder(pub(crate) *mut raw::avifDecoder);
+pub struct Decoder(pub *mut raw::avifDecoder);
 
 impl Decoder {
-    pub(crate) fn new() -> Result<Decoder, String> {
+    pub fn new() -> Result<Decoder, String> {
         #[expect(unsafe_code)]
         let handle = unsafe { raw::avifDecoderCreate() };
         match handle.is_null() {
@@ -113,18 +113,18 @@ impl Drop for Decoder {
 }
 
 /// One libavif image, freed when it leaves scope.
-pub(crate) struct Image(pub(crate) *mut raw::avifImage);
+pub struct Image(pub *mut raw::avifImage);
 
 impl Image {
     /// The shape a decode fills in for itself.
-    pub(crate) fn empty() -> Result<Image, String> {
+    pub fn empty() -> Result<Image, String> {
         #[expect(unsafe_code)]
         let handle = unsafe { raw::avifImageCreateEmpty() };
         Image::owning(handle)
     }
 
     /// Room for a frame an encode is about to write.
-    pub(crate) fn sized(
+    pub fn sized(
         width: u32,
         height: u32,
         depth: u32,
@@ -154,10 +154,10 @@ impl Drop for Image {
 }
 
 /// libavif's encoder, freed when it leaves scope.
-pub(crate) struct Encoder(pub(crate) *mut raw::avifEncoder);
+pub struct Encoder(pub *mut raw::avifEncoder);
 
 impl Encoder {
-    pub(crate) fn new() -> Result<Encoder, String> {
+    pub fn new() -> Result<Encoder, String> {
         #[expect(unsafe_code)]
         let handle = unsafe { raw::avifEncoderCreate() };
         match handle.is_null() {
@@ -178,10 +178,10 @@ impl Drop for Encoder {
 }
 
 /// The buffer libavif builds a file in.
-pub(crate) struct Output(pub(crate) raw::avifRWData);
+pub struct Output(pub raw::avifRWData);
 
 impl Output {
-    pub(crate) fn empty() -> Output {
+    pub fn empty() -> Output {
         // SAFETY: `avifRWData` is a pointer and a length, and all-zero is the empty one libavif
         // documents as the starting state.
         #[expect(unsafe_code)]
@@ -190,7 +190,7 @@ impl Output {
     }
 
     /// What libavif wrote, copied out.
-    pub(crate) fn bytes(&self) -> Option<Vec<u8>> {
+    pub fn bytes(&self) -> Option<Vec<u8>> {
         if self.0.data.is_null() {
             return None;
         }
@@ -261,10 +261,7 @@ pub fn decode_at(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), S
     decode_at_with_rotation(bytes, depth, true)
 }
 
-pub(crate) fn decode_at_unturned(
-    bytes: &[u8],
-    depth: u32,
-) -> Result<(Vec<u16>, usize, usize), String> {
+pub fn decode_at_unturned(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), String> {
     decode_at_with_rotation(bytes, depth, false)
 }
 
@@ -282,7 +279,7 @@ fn decode_at_with_rotation(
 struct Tags {
     cicp: Cicp,
     range: raw::avifRange,
-    light: Option<crate::hdr_args::ContentLight>,
+    light: Option<crate::still::ContentLight>,
     /// `irot`'s anticlockwise quarter turns, 0 where the file has none.
     irot: u8,
 }
@@ -296,7 +293,7 @@ impl Tags {
                 matrix: image.matrixCoefficients,
             },
             range: image.yuvRange,
-            light: (image.clli.maxCLL != 0).then_some(crate::hdr_args::ContentLight {
+            light: (image.clli.maxCLL != 0).then_some(crate::still::ContentLight {
                 max_cll: image.clli.maxCLL,
                 max_fall: image.clli.maxPALL,
             }),
@@ -484,7 +481,7 @@ pub fn ten_bit_copy(
                     .of_still(units::light::Light::exactly(f64::from(nits)))
                     .raw()
             };
-            let light = tags.light.map(|light| crate::hdr_args::ContentLight {
+            let light = tags.light.map(|light| crate::still::ContentLight {
                 max_cll: shown(light.max_cll).ceil() as u16,
                 max_fall: shown(light.max_fall).round() as u16,
             });
@@ -549,13 +546,7 @@ fn rotate_samples(
 /// nothing here re-derives them. None where the file carries no map, which is most AVIFs.
 pub fn gain_map(
     bytes: &[u8],
-) -> Option<(
-    Vec<u16>,
-    usize,
-    usize,
-    u32,
-    crate::linearise::Reconstruction,
-)> {
+) -> Option<(Vec<u16>, usize, usize, u32, crate::gain_map::Reconstruction)> {
     let decoder = Decoder::new().ok()?;
     let image = Image::empty().ok()?;
 
@@ -610,7 +601,7 @@ pub fn gain_map(
             width,
             height,
             16u32,
-            crate::linearise::Reconstruction::Iso {
+            crate::gain_map::Reconstruction::Iso {
                 min: triple((*map).gainMapMin),
                 max: triple((*map).gainMapMax),
                 gamma: (*map).gainMapGamma.map(unsigned),
@@ -651,7 +642,7 @@ pub fn encode_still(
 }
 
 /// `exif` is a TIFF block (`crate::exif`).
-pub(crate) fn encode_still_rotated(
+pub fn encode_still_rotated(
     pq: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
@@ -778,7 +769,7 @@ pub fn encode_rgb8(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_rgb8_rotated(
+pub fn encode_rgb8_rotated(
     rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
     height: usize,
@@ -1001,7 +992,7 @@ fn encode_avif<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
-    light: Option<crate::hdr_args::ContentLight>,
+    light: Option<crate::still::ContentLight>,
     quantizer: i32,
     speed: i32,
     rotate: u16,
@@ -1030,7 +1021,7 @@ fn encode_grid<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
-    light: Option<crate::hdr_args::ContentLight>,
+    light: Option<crate::still::ContentLight>,
     quantizer: i32,
     speed: i32,
     rotate: u16,
@@ -1097,7 +1088,7 @@ fn converted<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
-    light: Option<crate::hdr_args::ContentLight>,
+    light: Option<crate::still::ContentLight>,
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<Image, String> {
@@ -1186,7 +1177,7 @@ fn written(status: raw::avifResult, output: &Output) -> Result<Vec<u8>, String> 
 
 /// libavif's own words for a failure, rather than a number.
 #[expect(unsafe_code)]
-pub(crate) unsafe fn message(status: raw::avifResult) -> String {
+pub unsafe fn message(status: raw::avifResult) -> String {
     let text = unsafe { raw::avifResultToString(status) };
     if text.is_null() {
         return format!("result {}", status.0);
@@ -1424,7 +1415,7 @@ mod tests {
             format: AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 0,
             speed: 10,
-            light: Some(crate::hdr_args::ContentLight {
+            light: Some(crate::still::ContentLight {
                 max_cll: 1000,
                 max_fall: 400,
             }),
@@ -1494,7 +1485,7 @@ mod tests {
             format: AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 0,
             speed: 10,
-            light: Some(crate::hdr_args::ContentLight {
+            light: Some(crate::still::ContentLight {
                 max_cll: 1015,
                 max_fall: 406,
             }),
@@ -1579,7 +1570,7 @@ mod tests {
                 turn,
                 "container orientation at {rotate}"
             );
-            let rendered = crate::decode_rendered::read(&encoded).expect("rendered AVIF decode");
+            let rendered = crate::rendered::read(&encoded).expect("rendered AVIF decode");
             let raw = decode_at_unturned(&encoded, 16).expect("unturned AVIF decode");
             assert_eq!(
                 (rendered.codes, rendered.width, rendered.height),
@@ -1596,82 +1587,6 @@ mod tests {
                 rotate_samples(samples.clone(), width, height, angle)
             );
         }
-    }
-
-    #[test]
-    fn an_sdr_roll_keeps_hdr_source_orientation_and_builds_a_shareable_gain_map() {
-        if gpu::device().is_none() {
-            return;
-        }
-        let (width, height) = (64usize, 48usize);
-        let mut frame = vec![0u16; width * height * 3];
-        for y in 0..height {
-            for x in 0..width {
-                let at = (y * width + x) * 3;
-                frame[at] = 20_000 + x as u16 * 300;
-                frame[at + 1] = 22_000 + y as u16 * 300;
-                frame[at + 2] = 24_000;
-            }
-        }
-        let source = encode_still_rotated(
-            frame.into(),
-            width,
-            height,
-            &StillOptions {
-                cicp: Cicp {
-                    primaries: 9,
-                    transfer: 16,
-                    matrix: 9,
-                },
-                format: AVIF_PIXEL_FORMAT_YUV444,
-                quantizer: 10,
-                speed: 10,
-                light: None,
-            },
-            90,
-            None,
-        )
-        .expect("HDR still");
-        let dir = std::env::temp_dir().join(format!("bb-orientation-roll-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("scratch directory");
-        let source_path = dir.join("source.avif");
-        let base_path = dir.join("base.avif");
-        std::fs::write(&source_path, &source).expect("HDR source");
-        let job: crate::job::Job = serde_json::from_value(serde_json::json!({
-            "rawFilePath": source_path,
-            "cameraMatch": "none",
-            "preserveSourceOrientation": true,
-            "sharpen": 0,
-            "defringe": 0,
-            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
-            "targets": [{
-                "rendition": "max",
-                "output": "srgb",
-                "outputPath": base_path,
-                "size": 0,
-                "source": "render",
-                "sdrQuantizer": 10,
-                "hdrQuantizer": 10,
-                "preset": 10,
-                "stillFullChroma": true,
-                "sdrFullChroma": true
-            }]
-        }))
-        .expect("SDR roll job");
-        crate::job::run(&job).expect("SDR roll");
-        let base = std::fs::read(&base_path).expect("SDR still");
-        let hdr = heif::read(&source).expect("HDR container");
-        let sdr = heif::read(&base).expect("SDR container");
-        assert_eq!(
-            (sdr.primary.width, sdr.primary.height, sdr.primary.turn),
-            (hdr.primary.width, hdr.primary.height, hdr.primary.turn)
-        );
-        let shared = crate::jpeg_gain_write::combine(&base, &source, 90).expect("gain-map JPEG");
-        let probe = crate::decode_rendered::probe(&shared).expect("shared JPEG header");
-        assert_eq!(probe.orientation, 6);
-        assert!(crate::jpeg_gain::read(&shared, probe.exif.as_deref()).is_some());
-        std::fs::remove_file(source_path).expect("remove HDR scratch");
-        std::fs::remove_file(base_path).expect("remove SDR scratch");
     }
 
     #[test]
@@ -1763,7 +1678,7 @@ mod tests {
             format: AVIF_PIXEL_FORMAT_YUV420,
             quantizer: 0,
             speed: 10,
-            light: Some(crate::hdr_args::ContentLight {
+            light: Some(crate::still::ContentLight {
                 max_cll: 1480,
                 max_fall: 90,
             }),

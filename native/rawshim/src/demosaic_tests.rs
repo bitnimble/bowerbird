@@ -335,7 +335,7 @@ fn every_orientation_lands_where_the_host_permutation_did() {
             .expect("it reads back");
 
         let (want, want_w, want_h) =
-            crate::orientation::orient_for_test(unturned.clone(), crop.2, crop.3, orientation);
+            formats::orientation::orient_for_test(unturned.clone(), crop.2, crop.3, orientation);
         assert_eq!(
             (out_w, out_h),
             (want_w, want_h),

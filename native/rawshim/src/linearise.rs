@@ -10,6 +10,7 @@
 //! re-prepares a photograph a band at a time, a loupe asks for tile after tile of one open, and a
 //! rendition job asks for every size in turn. Each of those is this pass over a rectangle.
 
+use formats::gain_map::{GainMap, Reconstruction};
 use gpu::dispatch::Whole;
 use units::px::{At, Photograph, Rect, Size};
 
@@ -68,86 +69,6 @@ impl Linearise {
             cache: None,
         });
         Linearise { layout, pipeline }
-    }
-}
-
-/// The auxiliary picture that carries a photograph's highlights, and the terms that apply it.
-///
-/// **An SDR base plus a gain map is how a phone stores an HDR photograph**, and it is the only way
-/// a picture in a transfer with no headroom can have any: the base renders correctly on a display
-/// that knows nothing about this, and the map says what each pixel would have been. ISO 21496-1 is
-/// the spelling; `heif::gain_map` and `jpeg_gain::read` are where each container's is found.
-pub struct GainMap {
-    /// Three channels interleaved at the map's own resolution - which is usually half the
-    /// picture's and legally anything - and at its own coded depth, which [`GainMap::last`]
-    /// carries. A single-channel map is replicated on the way in, which costs a plane and removes
-    /// a branch from every pixel of the kernel.
-    pub samples: Vec<u16>,
-    pub width: usize,
-    pub height: usize,
-    /// The code value meaning a recovery of one, which is the map's depth and not the picture's.
-    pub last: f32,
-    pub terms: Reconstruction,
-}
-
-/// How a map's recovery values become the gain applied to the base.
-///
-/// **Two spellings, and they are different curves rather than different constants.** ISO's gain is
-/// exponential in the recovery and Apple's is linear in it, so at half recovery a headroom of 8
-/// means 2.83x under one and 4.5x under the other - which is a stop and a half through every
-/// highlight. Named apart so a reader cannot be handed one arm's terms under the other's rule.
-pub enum Reconstruction {
-    /// ISO 21496-1, per channel: `(base + offset_base) * 2^lerp(min, max, r^(1/gamma))` less
-    /// `offset_alternate`.
-    Iso {
-        /// log2 of the gain at recovery 0 and at recovery 1.
-        min: [f32; 3],
-        max: [f32; 3],
-        gamma: [f32; 3],
-        offset_base: [f32; 3],
-        offset_alternate: [f32; 3],
-    },
-    /// Apple's own, from `apple_gain`: `base * (1 + (headroom - 1) * r)`, one headroom for all
-    /// three channels because the map itself is monochrome.
-    Apple { headroom: f32 },
-}
-
-impl GainMap {
-    /// Whether this map would change anything, which a map with no range to lerp across would not.
-    fn does_anything(&self) -> bool {
-        let reaches = match &self.terms {
-            Reconstruction::Iso { min, max, .. } => (0..3).any(|c| min[c] != 0.0 || max[c] != 0.0),
-            Reconstruction::Apple { headroom } => *headroom > 1.0,
-        };
-        self.width > 0
-            && self.height > 0
-            && self.samples.len() >= self.width * self.height * 3
-            && reaches
-    }
-
-    fn brightest(&self, base: f64) -> f64 {
-        self.terms.brightest(base)
-    }
-}
-
-impl Reconstruction {
-    /// The brightest any channel at `base` can come out, in units of diffuse white.
-    pub(crate) fn brightest(&self, base: f64) -> f64 {
-        match self {
-            Reconstruction::Iso {
-                min,
-                max,
-                offset_base,
-                offset_alternate,
-                ..
-            } => (0..3)
-                .map(|c| {
-                    let gain = f64::from(min[c].max(max[c])).exp2();
-                    (base + f64::from(offset_base[c])) * gain - f64::from(offset_alternate[c])
-                })
-                .fold(base, f64::max),
-            Reconstruction::Apple { headroom } => base * f64::from(*headroom).max(1.0),
-        }
     }
 }
 
@@ -249,8 +170,12 @@ impl Samples {
 
     /// The raster's `rect` where a dispatch can bind it, and the rectangle the binding holds: all of
     /// it for a raster on the device, `rect` alone for one on the host.
-    fn strip(&self, gpu: &'static gpu::Gpu, rect: crate::Tile) -> (gpu::Buffer, crate::Tile) {
-        let whole = crate::Tile {
+    fn strip(
+        &self,
+        gpu: &'static gpu::Gpu,
+        rect: formats::orientation::Tile,
+    ) -> (gpu::Buffer, formats::orientation::Tile) {
+        let whole = formats::orientation::Tile {
             left: 0,
             top: 0,
             width: self.width,
@@ -271,7 +196,7 @@ impl Samples {
         }
     }
 
-    fn rows_of<T: Copy>(samples: &[T], width: usize, rect: crate::Tile) -> Vec<T> {
+    fn rows_of<T: Copy>(samples: &[T], width: usize, rect: formats::orientation::Tile) -> Vec<T> {
         let mut out = Vec::with_capacity(rect.width * rect.height * 3);
         for row in rect.top..rect.top + rect.height {
             let at = (row * width + rect.left) * 3;
@@ -423,7 +348,7 @@ impl Picture {
     /// The picture's size the way a reader sees it, which is the stored size with a quarter turn
     /// applied where the file asked for one.
     pub fn upright_size(&self) -> Size<Photograph> {
-        match crate::orientation::transposes(self.upright) {
+        match formats::orientation::transposes(self.upright) {
             true => Size::exact(self.stored.height.raw(), self.stored.width.raw()),
             false => self.stored,
         }
@@ -457,14 +382,14 @@ impl Picture {
             return None;
         }
         // The rectangle back through the turn, so it names the stored raster the codes are in.
-        let upright_rows = |top: usize, rows: usize| crate::Tile {
+        let upright_rows = |top: usize, rows: usize| formats::orientation::Tile {
             left: window.at.x.raw(),
             top: window.at.y.raw() + top * step,
             width: out_w * step,
             height: rows * step,
         };
-        let unoriented = |upright: crate::Tile| {
-            crate::orientation::unoriented_rect(
+        let unoriented = |upright: formats::orientation::Tile| {
+            formats::orientation::unoriented_rect(
                 upright,
                 self.stored.width.raw(),
                 self.stored.height.raw(),
@@ -474,7 +399,7 @@ impl Picture {
         let stored = unoriented(upright_rows(0, out_h));
         // The unoriented output, which is what the kernel's turn is defined against: a quarter
         // turn swaps the two, and the halving applies to both the same way.
-        let (frame_w, frame_h) = match crate::orientation::transposes(self.upright) {
+        let (frame_w, frame_h) = match formats::orientation::transposes(self.upright) {
             true => (out_h, out_w),
             false => (out_w, out_h),
         };
@@ -485,7 +410,7 @@ impl Picture {
             let rows = band.min(out_h - top);
             let (origin_x, origin_y) = self.origin.raw();
             let read = unoriented(upright_rows(top, rows));
-            let read = crate::Tile {
+            let read = formats::orientation::Tile {
                 left: origin_x + read.left,
                 top: origin_y + read.top,
                 ..read
@@ -585,11 +510,11 @@ impl Picture {
     /// held together by a test rather than by care.
     fn block(
         &self,
-        stored: crate::Tile,
+        stored: formats::orientation::Tile,
         step: usize,
         frame: (usize, usize),
         out: (usize, usize),
-        strip: crate::Tile,
+        strip: formats::orientation::Tile,
         words: (usize, usize),
     ) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_BYTES);
@@ -603,7 +528,7 @@ impl Picture {
             step as u32,
             frame.0 as u32,
             frame.1 as u32,
-            crate::orientation::code(self.upright),
+            formats::orientation::code(self.upright),
             out.0 as u32,
             out.1 as u32,
             self.gain_size.0 as u32,

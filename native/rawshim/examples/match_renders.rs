@@ -10,7 +10,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use rawshim::snapshot::{Frame, Snapshot};
 
 /// The long edge the snapshot is downscaled to, as the grade fixtures take theirs.

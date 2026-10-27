@@ -21,7 +21,7 @@ fn whole(job: &Job) -> Result<(usize, usize), String> {
         let canvas = recipe.composition().canvas;
         return Ok((canvas[0], canvas[1]));
     }
-    let header = crate::header::read_path(&job.raw_file_path)
+    let header = formats::header::read_path(&job.raw_file_path)
         .ok_or_else(|| format!("{} could not be read", job.raw_file_path))?;
     Ok((header.width as usize, header.height as usize))
 }
@@ -120,7 +120,7 @@ pub fn prepared(
             } else {
                 shape
             };
-            let size = crate::hdr_args::Size {
+            let size = formats::still::Size {
                 width: width as u32,
                 height: height as u32,
             };
@@ -202,8 +202,7 @@ pub fn prepared(
             matched: matched.is_some(),
             // A client moving a Detail or dust setting asks for a new prepare at it, so a RAW's
             // panels stay open though its mosaic stayed here. A composite's assembly takes no dust.
-            mosaic: job.composite.is_none()
-                && !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            mosaic: job.composite.is_none() && !formats::rendered::is_rendered(&job.raw_file_path),
             as_shot,
             detail: job.detail().resolved(noise_fit),
             camera_curve,
@@ -286,7 +285,7 @@ fn windowed(
             strengths: job.strengths(),
             camera_match: job.camera_match,
             matched: prepared.matched.is_some(),
-            mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            mosaic: !formats::rendered::is_rendered(&job.raw_file_path),
             as_shot: prepared.as_shot,
             detail: job.detail().resolved(noise_fit),
             camera_curve,

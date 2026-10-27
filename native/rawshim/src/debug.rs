@@ -394,8 +394,8 @@ impl GradeSpec {
     fn options(&self) -> crate::hdr_args::EncodeOptions {
         crate::hdr_args::EncodeOptions {
             still_chroma: match self.still_full_chroma {
-                true => crate::hdr_args::Chroma::Yuv444,
-                false => crate::hdr_args::Chroma::Yuv420,
+                true => formats::still::Chroma::Yuv444,
+                false => formats::still::Chroma::Yuv420,
             },
             output_path: self.output_path.clone(),
             grade: self.grade(),
@@ -570,7 +570,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 .map(|path| {
                     let encoded =
                         std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-                    crate::image::decode(&encoded, 0)
+                    formats::resize::decode(&encoded, 0)
                         .map_err(|e| format!("could not decode {path}: {e}"))
                 })
                 .collect::<Result<_, String>>()?;
@@ -668,7 +668,8 @@ fn tile_crops(
         .iter()
         .map(|path| {
             let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-            crate::image::decode(&encoded, 0).map_err(|e| format!("could not decode {path}: {e}"))
+            formats::resize::decode(&encoded, 0)
+                .map_err(|e| format!("could not decode {path}: {e}"))
         })
         .collect::<Result<_, String>>()?;
     let first = images.first().ok_or("no images to tile")?;
@@ -719,7 +720,7 @@ fn tile_crops(
             }
         }
     }
-    crate::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Owned(out),
         width,
         side,

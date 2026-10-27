@@ -27,7 +27,7 @@ pub unsafe extern "C" fn bb_stage_picture(
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
     let picture = crate::guard("bb_stage_picture", None, || {
         let gpu = gpu::device()?;
-        crate::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
+        formats::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
             .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()??
     });

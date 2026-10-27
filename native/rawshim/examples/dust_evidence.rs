@@ -16,7 +16,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 
 fn options() -> EncodeOptions {
     EncodeOptions {
@@ -133,7 +134,7 @@ fn main() {
 
     if whole {
         let (frame, width, height) = rendered(&path, denoise::dust::Wanted::Off);
-        let small = rawshim::image::resize_to_fit(
+        let small = formats::resize::resize_to_fit(
             units::rgb::RgbRef {
                 width,
                 height,
@@ -293,7 +294,7 @@ fn circle(data: &mut [u8], width: usize, centre: (f32, f32), radius: f32) {
 /// Lossless, because the whole point of the pair is a correction that moves a few hundred pixels by
 /// a few percent, and a quantizer that smoothed them would be answering a different question.
 fn write(path: &str, image: units::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,

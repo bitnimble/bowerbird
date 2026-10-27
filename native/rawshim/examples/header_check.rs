@@ -11,7 +11,7 @@ fn main() {
         let name = std::path::Path::new(&path)
             .file_name()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let Some(header) = rawshim::header::read_path(&path) else {
+        let Some(header) = formats::header::read_path(&path) else {
             println!("{name}: no header");
             continue;
         };
@@ -37,9 +37,9 @@ fn main() {
         );
         println!(
             "   {} {} / {}",
-            rawshim::header::name(&header.camera_make),
-            rawshim::header::name(&header.camera_model),
-            rawshim::header::name(&header.lens_model)
+            formats::header::name(&header.camera_make),
+            formats::header::name(&header.camera_model),
+            formats::header::name(&header.lens_model)
         );
     }
 }

@@ -18,8 +18,9 @@ use std::time::Instant;
 
 mod support;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::avif;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use units::light::{DisplayNits, Gain, Light};
 
 const HDR_QUANTIZERS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 26, 32, 40];
@@ -112,7 +113,7 @@ fn speckle(a: &[u16], b: &[u16]) -> f64 {
 }
 
 fn still(pq: &[u16], w: usize, h: usize, q: i32) -> (Vec<u8>, f64) {
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     let started = Instant::now();
     let bytes = avif::encode_still(
         Cow::Borrowed(pq),

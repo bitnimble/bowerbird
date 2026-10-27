@@ -129,7 +129,7 @@ fn main() {
         let name = std::path::Path::new(path)
             .file_name()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let Some(header) = rawshim::header::read_path(path) else {
+        let Some(header) = formats::header::read_path(path) else {
             println!("{name:<16} unreadable header");
             continue;
         };

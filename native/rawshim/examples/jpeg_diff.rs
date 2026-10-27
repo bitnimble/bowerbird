@@ -25,7 +25,7 @@ fn main() {
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("could not read {path}: {e}"));
         // Far past any crop these write, so nothing is scaled on the way in - a resample would
         // invent differences of its own.
-        rawshim::jpeg::decode(&bytes, 1 << 20).unwrap_or_else(|e| panic!("{path}: {e}"))
+        formats::jpeg::decode(&bytes, 1 << 20).unwrap_or_else(|e| panic!("{path}: {e}"))
     };
     let (left, right) = (read(&a), read(&b));
     assert_eq!(
@@ -54,7 +54,7 @@ fn main() {
         height: left.height,
         data: &data,
     };
-    std::fs::write(&out, rawshim::jpeg::encode(image, 100).expect("encodes"))
+    std::fs::write(&out, formats::jpeg::encode(image, 100).expect("encodes"))
         .expect("the difference writes");
     eprintln!("wrote {out}");
 }

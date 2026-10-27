@@ -168,7 +168,7 @@ fn main() {
             .iter()
             .map(|channel| ((channel * lift).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8)
             .collect();
-        let png = rawshim::png_write::encode_sdr(&rgb8, w, h, None).expect("a png");
+        let png = formats::png_write::encode_sdr(&rgb8, w, h, None).expect("a png");
         let at = format!("{out}/{name}.png");
         std::fs::write(&at, png).expect("wrote");
         eprintln!("wrote {at}");

@@ -20,13 +20,13 @@ fn main() {
     };
     let numbers: Vec<usize> = args.filter_map(|a| a.parse().ok()).collect();
     let tile = match numbers.as_slice() {
-        [left, top, width, height] => rawshim::Tile {
+        [left, top, width, height] => formats::orientation::Tile {
             left: *left,
             top: *top,
             width: *width,
             height: *height,
         },
-        _ => rawshim::Tile {
+        _ => formats::orientation::Tile {
             left: 2000,
             top: 1400,
             width: 512,

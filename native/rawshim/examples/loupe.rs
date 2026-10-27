@@ -149,7 +149,7 @@ fn main() {
         height: edge,
         data: stitched,
     };
-    std::fs::write(out, rawshim::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
+    std::fs::write(out, formats::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
     // Lossless twin beside it: the comparison tooling reads this one, since a JPEG's
     // subsampled chroma rings at exactly the scale the diffs are amplified to.
     let ppm = format!("{out}.ppm");

@@ -22,7 +22,7 @@ fn one_source_recipe(name: &str) -> (Composition, String) {
         path.display(),
     );
     let path = path.to_str().expect("a printable path").to_string();
-    let header = rawshim::header::read_path(&path).expect("the fixture's header");
+    let header = formats::header::read_path(&path).expect("the fixture's header");
     let size = [header.width as usize, header.height as usize];
     (Composition::of_one(size, LensSpec::none()), path)
 }

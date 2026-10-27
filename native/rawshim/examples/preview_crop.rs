@@ -82,7 +82,7 @@ fn main() {
         width: pw,
         height: ph,
     };
-    let encoded = rawshim::jpeg::encode(cropped.as_ref(), 95).expect("the crop encodes");
+    let encoded = formats::jpeg::encode(cropped.as_ref(), 95).expect("the crop encodes");
     std::fs::write(&out, encoded).unwrap_or_else(|why| panic!("{out}: {why}"));
     println!("wrote {out}");
 }

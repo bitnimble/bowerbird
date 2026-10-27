@@ -107,7 +107,7 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     // a 60MP portrait preview that ordering is most of the cost of the call. Both stages
     // take the frame by value and hand back the same one when there is nothing to do,
     // because an unbounded decode of that preview is 170MB per copy avoided.
-    Ok(turn.applied(crate::image::fitted(decoded, long_edge)))
+    Ok(turn.applied(crate::resize::fitted(decoded, long_edge)))
 }
 
 /// [`decode`] for a grid tile, through libjpeg-turbo.
@@ -201,7 +201,7 @@ fn turbo_tile(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
         height,
         data,
     };
-    Ok(turn.applied(crate::image::fitted(decoded, long_edge)))
+    Ok(turn.applied(crate::resize::fitted(decoded, long_edge)))
 }
 
 #[cfg(feature = "renditions")]
@@ -305,7 +305,7 @@ pub fn with_added_rotation(jpeg: &[u8], rotate: u16) -> Option<Vec<u8>> {
 /// The byte past the Exif APP1, or past the SOI where there is none: where the segments that
 /// follow EXIF go.
 #[cfg(feature = "renditions")]
-pub(crate) fn after_exif(jpeg: &[u8]) -> usize {
+pub fn after_exif(jpeg: &[u8]) -> usize {
     exif_app1(jpeg).map_or(2, |(_, tiff)| tiff.end)
 }
 

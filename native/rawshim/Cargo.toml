@@ -15,7 +15,7 @@ default = ["renditions"]
 # than the database, and the display transform is the client's GPU rather than an AVIF encoder.
 # That is what lets the desktop and mobile shells ship without a native library to resolve at
 # all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
-renditions = ["dep:lensdb"]
+renditions = ["dep:lensdb", "formats/renditions"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -177,6 +177,7 @@ lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 colour = { path = "../colour" }
 denoise = { path = "../denoise" }
+formats = { path = "../formats" }
 gpu = { path = "../gpu" }
 linalg = { path = "../linalg" }
 mosaic = { path = "../mosaic" }
@@ -251,10 +252,8 @@ web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 # so `openGpuDevice` is a promise.
 wasm-bindgen-futures = "0.4.58"
 
-[build-dependencies]
-bindgen = "0.72"
-
 [dev-dependencies]
+formats = { path = "../formats", features = ["testing"] }
 shaders = { path = "../shaders", features = ["layout"] }
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,
 # and a synthetic burst with no embedded JPEG is a burst `composite_align` cannot open at all -

@@ -11,8 +11,8 @@
 
 use std::borrow::Cow;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, ContentLight};
+use formats::avif;
+use formats::still::{Chroma, ContentLight};
 use units::light::{DisplayNits, Light};
 
 const LADDER_NITS: [f64; 12] = [
@@ -52,7 +52,7 @@ fn main() {
         ),
         ("undeclared.avif", None),
     ];
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     for (name, light) in files {
         let options = avif::StillOptions {
             cicp: avif::Cicp {

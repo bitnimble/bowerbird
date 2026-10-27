@@ -18,7 +18,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 
 fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
@@ -196,7 +197,7 @@ fn cut(image: units::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> units:
 }
 
 fn write(path: &str, image: units::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         image.data.into(),
         image.width,
         image.height,
@@ -209,14 +210,14 @@ fn write(path: &str, image: units::rgb::RgbRef<'_>) {
     // A crop exists to be looked at, and not everything that opens a picture opens an AVIF. 98
     // rather than the download's 92: this one is read next to its pair at 1:1, so the encoder must
     // not be a third thing between them.
-    let jpeg = rawshim::jpeg::encode(image, 98).expect("the jpeg");
+    let jpeg = formats::jpeg::encode(image, 98).expect("the jpeg");
     std::fs::write(path.replace(".avif", ".jpg"), jpeg).expect("the write");
 }
 
 /// At the quantizer the SDR rendition ships, since what survives a reduction has to be paid for.
 fn shipped_bytes(image: units::rgb::RgbRef<'_>) -> f64 {
     let file =
-        rawshim::avif::encode_rgb8(image.data.into(), image.width, image.height, 13, 10, false)
+        formats::avif::encode_rgb8(image.data.into(), image.width, image.height, 13, 10, false)
             .expect("the encode");
     file.len() as f64 / 1024.0
 }
@@ -251,7 +252,7 @@ fn main() {
     let cut_whole = started.elapsed().as_millis();
 
     // Onto the other's exact grid, so the two are comparable pixel for pixel rather than nearly.
-    let reduced = rawshim::image::resize(
+    let reduced = formats::resize::resize(
         units::rgb::RgbRef {
             width: ww,
             height: wh,

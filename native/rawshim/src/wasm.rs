@@ -309,7 +309,7 @@ enum Reading<'a> {
 pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
-    let rendered = crate::decode_rendered::is_rendered_bytes(bytes);
+    let rendered = formats::rendered::is_rendered_bytes(bytes);
     let report = reporting(report);
     report(crate::open_stage::Stage::Decoding);
     let held = crate::decode::hold_bytes(bytes)
@@ -343,12 +343,12 @@ pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<
 /// what the samples it hands back mean.
 #[wasm_bindgen(js_name = heifView)]
 pub fn heif_view(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
-    crate::heif_view::framed(bytes).map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))
+    formats::heif_view::framed(bytes).map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))
 }
 
 /// Opens an AVIF rendition the page decoded with its own `ImageDecoder`, which this build has no
 /// decoder for: `avif` is the file, for its colour and its turn, and `planes` what `copyTo` wrote
-/// as `layout` ([`crate::planes::Layout`] as JSON) describes it.
+/// as `layout` ([`formats::planes::Layout`] as JSON) describes it.
 #[wasm_bindgen(js_name = holdPlanes)]
 pub async fn hold_planes(
     avif: &[u8],
@@ -358,7 +358,7 @@ pub async fn hold_planes(
 ) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
-    let layout: crate::planes::Layout = serde_json::from_str(layout).map_err(|e| {
+    let layout: formats::planes::Layout = serde_json::from_str(layout).map_err(|e| {
         JsValue::from_str(&format!("rawshim: these planes are described wrongly: {e}"))
     })?;
     let held = crate::decode_rendered::hold_planes(avif, planes, &layout)

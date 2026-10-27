@@ -366,7 +366,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
     from_frame(
         frame,
         bytes,
-        !crate::decode_rendered::is_rendered_bytes(bytes),
+        !formats::rendered::is_rendered_bytes(bytes),
         request,
         sharpen,
         &crate::open_stage::quiet,

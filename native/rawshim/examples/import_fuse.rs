@@ -18,7 +18,8 @@
 //! It reads what it maps, so point it at fixtures rather than at a corpus something else is
 //! about to measure.
 
-use rawshim::{header, job};
+use formats::header;
+use rawshim::job;
 use std::path::Path;
 
 /// `grid_rendition_size`, and `grid_rendition_quality`'s 80 through `encoderQuality('avif-sdr')`.

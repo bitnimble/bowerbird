@@ -8,7 +8,7 @@
 
 mod support;
 
-use rawshim::image::resize;
+use formats::resize::resize;
 use rawshim::{fit, hdr_fit};
 
 const BINS: usize = 8;
@@ -47,9 +47,9 @@ fn probe(path: &str) -> Result<(), String> {
         pollster::block_on(hdr_fit::preview_planes(gpu, &preview)).ok_or("no preview planes")?;
     let sampled = resize(render.as_ref(), searched.width, searched.height);
 
-    let header = rawshim::header::read_path(path);
+    let header = formats::header::read_path(path);
     let lens = header.as_ref().map_or(String::new(), |h| {
-        rawshim::header::name(&h.lens_model).to_string()
+        formats::header::name(&h.lens_model).to_string()
     });
     let focal = header.as_ref().map_or(0.0, |h| h.focal);
     println!("== {path}");

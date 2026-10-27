@@ -24,7 +24,7 @@ pub enum Held {
 
 /// Opens whatever these bytes are, as far as the device.
 pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
-    match crate::decode_rendered::is_rendered_bytes(bytes) {
+    match formats::rendered::is_rendered_bytes(bytes) {
         true => crate::decode_rendered::hold(bytes).map(Held::Rendered),
         false => crate::decode_rawler::open_bytes(bytes).await,
     }
@@ -33,7 +33,7 @@ pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
 /// Opens the photograph at `path`, as far as the device.
 #[cfg(feature = "renditions")]
 pub async fn hold_path(path: &str) -> Result<Held, String> {
-    if !crate::decode_rendered::is_rendered(path) {
+    if !formats::rendered::is_rendered(path) {
         return crate::decode_rawler::open_path(path).await;
     }
     let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
@@ -51,7 +51,7 @@ pub async fn frame_from_bytes(
     fit: denoise::galosh::Fit,
     dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
-    match crate::decode_rendered::is_rendered_bytes(bytes) {
+    match formats::rendered::is_rendered_bytes(bytes) {
         true => {
             whole(
                 &crate::decode_rendered::hold(bytes).ok()?,
@@ -79,7 +79,7 @@ pub fn frame_from_path(
     fit: denoise::galosh::Fit,
     dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
-    if !crate::decode_rendered::is_rendered(path) {
+    if !formats::rendered::is_rendered(path) {
         return crate::decode_rawler::decode_fitted(
             path,
             detail,
@@ -112,7 +112,7 @@ pub fn hold_path_unturned(path: &str) -> Result<Held, String> {
 #[cfg(feature = "renditions")]
 fn held_unturned(path: &str) -> Result<crate::decode_rendered::Held, String> {
     let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
-    let mut read = crate::decode_rendered::read(&bytes)?;
+    let mut read = formats::rendered::read(&bytes)?;
     read.turn = rawler::decoders::Orientation::Normal;
     crate::decode_rendered::holding(read)
 }
@@ -155,11 +155,11 @@ pub async fn tile_from(
 ) -> Option<crate::frame::Frame> {
     let bytes;
     let rendered = match source {
-        Source::Path(path) if crate::decode_rendered::is_rendered(path) => {
+        Source::Path(path) if formats::rendered::is_rendered(path) => {
             bytes = std::fs::read(path).ok()?;
             Some(bytes.as_slice())
         }
-        Source::Bytes(it) if crate::decode_rendered::is_rendered_bytes(it) => Some(it),
+        Source::Bytes(it) if formats::rendered::is_rendered_bytes(it) => Some(it),
         _ => None,
     };
     if let Some(bytes) = rendered {
@@ -191,7 +191,7 @@ pub async fn merged_tile_from(
 ) -> Option<crate::frame::Frame> {
     if paths
         .iter()
-        .any(|path| crate::decode_rendered::is_rendered(path))
+        .any(|path| formats::rendered::is_rendered(path))
     {
         return None;
     }
@@ -231,7 +231,7 @@ impl Held {
         match self {
             Held::Mosaic(held) => {
                 let (_, _, width, height) = held.crop();
-                match crate::orientation::transposes(held.upright()) {
+                match formats::orientation::transposes(held.upright()) {
                     true => Size::exact(height, width),
                     false => Size::exact(width, height),
                 }
@@ -302,7 +302,7 @@ impl Held {
     ) -> Option<crate::frame::Frame> {
         match self {
             Held::Mosaic(held) => {
-                let tile = crate::Tile {
+                let tile = formats::orientation::Tile {
                     left: window.at.x.raw(),
                     top: window.at.y.raw(),
                     width: window.size.width.raw(),

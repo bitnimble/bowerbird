@@ -74,7 +74,7 @@ pub struct Span {
 /// The view, framed: a little-endian `u32` length, that much JSON, padding to a word, then the
 /// payload its spans point into.
 pub fn framed(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let file = crate::decode_rendered::read_heif(bytes)?;
+    let file = crate::rendered::read_heif(bytes)?;
     let mut payload = Vec::new();
     let view = view_of(&file, &mut payload)?;
     framing(&view, &payload)
@@ -95,7 +95,7 @@ fn view_of(file: &heif::File, payload: &mut Vec<u8>) -> Result<View, String> {
     if picture.codec != heif::Codec::Hevc {
         return Err("this HEIF holds no HEVC picture".to_string());
     }
-    let coding = crate::decode_rendered::coding_of(picture, depth_of(picture));
+    let coding = crate::rendered::coding_of(picture, depth_of(picture));
     let table = coding.table();
     // The base's brightest code, which is above diffuse white for a PQ or HLG one.
     let peak = table.get(table.len().saturating_sub(3)).copied().unwrap_or(1.0);
@@ -104,11 +104,11 @@ fn view_of(file: &heif::File, payload: &mut Vec<u8>) -> Result<View, String> {
         if map.picture.codec != heif::Codec::Hevc {
             return None;
         }
-        let terms = crate::decode_rendered::heif_terms(map, file.exif.as_deref())?;
+        let terms = crate::rendered::heif_terms(map, file.exif.as_deref())?;
         let brightest = terms.brightest(f64::from(peak)) as f32;
         let map_coded = coded(&map.picture, payload);
         Some(match terms {
-            crate::linearise::Reconstruction::Iso {
+            crate::gain_map::Reconstruction::Iso {
                 min,
                 max,
                 gamma,
@@ -123,7 +123,7 @@ fn view_of(file: &heif::File, payload: &mut Vec<u8>) -> Result<View, String> {
                 offset_alternate,
                 brightest,
             },
-            crate::linearise::Reconstruction::Apple { headroom } => Gain::Apple {
+            crate::gain_map::Reconstruction::Apple { headroom } => Gain::Apple {
                 map: map_coded,
                 headroom,
                 brightest,
