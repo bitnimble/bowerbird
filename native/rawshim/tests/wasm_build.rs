@@ -10,7 +10,7 @@
 //! `docs/client-side-editing-plan.md`: that the device `gpu::page_device` opens in a tab drives
 //! these shaders, and that a wasm decode of a real RAW completes inside a tab's memory.
 
-use rawshim::clock::Mark;
+use trace::clock::Mark;
 
 /// The clock reads and returns on both targets, which on wasm32 is the whole point.
 ///
@@ -43,12 +43,12 @@ fn the_clock_reads_rather_than_panicking() {
 /// The laps run with the switch off and with it on, since the switch is read once at the start.
 #[test]
 fn the_laps_run_either_way() {
-    let mut lap = rawshim::clock::laps("  test ");
+    let mut lap = trace::clock::laps("  test ");
     lap("first");
     lap("second");
 }
 
-/// Every module the wasm build compiles reaches the clock through `clock::Mark`.
+/// Every module the wasm build compiles reaches the clock through `trace::clock::Mark`.
 ///
 /// A source scan rather than a compile, because the failure it guards against is a *new*
 /// `Instant::now()` on the decode path, and that compiles perfectly well on both targets and then
@@ -62,9 +62,6 @@ fn the_wasm_modules_read_the_clock_through_the_shim() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found: Vec<String> = Vec::new();
     for name in wasm_modules() {
-        if name == "clock.rs" {
-            continue;
-        }
         let text =
             std::fs::read_to_string(src.join(&name)).unwrap_or_else(|e| panic!("{name}: {e}"));
         if text.contains("Instant::now") {
@@ -76,7 +73,7 @@ fn the_wasm_modules_read_the_clock_through_the_shim() {
     assert_eq!(
         found, known,
         "a module the wasm build compiles reads `std::time::Instant` directly. `Instant::now` \
-         panics on wasm32-unknown-unknown; route it through `clock::Mark` or `clock::laps`. If \
+         panics on wasm32-unknown-unknown; route it through `trace::clock::Mark` or `trace::clock::laps`. If \
          one of the known sites was just fixed, drop it from the list here."
     );
 }

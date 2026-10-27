@@ -42,7 +42,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       no `#[cfg]` fork.
 
       **Every fall-through warns.** Frame shape cannot distinguish RCD from CPU PPG, or GALOSH
-      filtering from its absence. wasm32 drops `eprintln!` without stderr; `crate::warn` routes
+      filtering from its absence. wasm32 drops `eprintln!` without stderr; `trace::warn` routes
       to `console.warn`, and `local_decode.spec.ts` asserts nothing declined.
 
       Native, 61MP, quiet box: condition + fit 1022-1072ms to 757-778ms, the whole decode

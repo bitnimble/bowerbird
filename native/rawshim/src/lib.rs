@@ -103,8 +103,6 @@ pub mod burst;
 mod burst_scene;
 /// Which colour each photosite carries, as a period rather than as a 2x2.
 pub mod cfa;
-/// The monotonic clock the timed paths read, which `wasm32` has none of.
-pub mod clock;
 /// A set of photographs into a recipe: what overlaps what, and where each one points.
 pub mod composite_align;
 /// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
@@ -270,146 +268,7 @@ mod raw {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-/// A line about something the pipeline declined to do, where the reader will actually see it.
-///
-/// **`eprintln!` is dropped on `wasm32-unknown-unknown`**, whose std has no stderr behind it - so
-/// the announcements that exist to stop a fall-through being silent were silent in the one host
-/// that has the most to fall through to. The console is where a page's are.
-///
-/// Held for [`bb_take_log`] once the server has asked for them, so they reach its log; stderr
-/// until then, which is where a test or an example reads them.
-pub(crate) fn warn(message: &str) {
-    #[cfg(target_arch = "wasm32")]
-    console::warn(message);
-    #[cfg(not(target_arch = "wasm32"))]
-    log::keep(log::Level::Warn, message);
-}
-
-/// A line worth knowing that is not a problem, on the same terms as [`warn`].
-pub(crate) fn info(message: &str) {
-    #[cfg(target_arch = "wasm32")]
-    console::info(message);
-    #[cfg(not(target_arch = "wasm32"))]
-    log::keep(log::Level::Info, message);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-mod log {
-    use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    const LINES_HELD: usize = 1000;
-
-    static HELD: Held = Held::new();
-
-    /// Held as the line's first character, which `rawshim.ts` reads back off.
-    #[derive(Clone, Copy)]
-    pub(crate) enum Level {
-        Info,
-        Warn,
-    }
-
-    pub(crate) fn keep(level: Level, message: &str) {
-        HELD.keep(level, message);
-    }
-
-    pub(crate) fn take(out: &mut [u8]) -> usize {
-        HELD.take(out)
-    }
-
-    struct Held {
-        claimed: AtomicBool,
-        lines: Mutex<Vec<String>>,
-    }
-
-    impl Held {
-        const fn new() -> Self {
-            Self {
-                claimed: AtomicBool::new(false),
-                lines: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn keep(&self, level: Level, message: &str) {
-            if !self.claimed.load(Ordering::Relaxed) {
-                eprintln!("{message}");
-                return;
-            }
-            let Ok(mut lines) = self.lines.lock() else {
-                return;
-            };
-            if lines.len() < LINES_HELD {
-                let marker = match level {
-                    Level::Info => 'I',
-                    Level::Warn => 'W',
-                };
-                // One line each: the reader splits on newlines and reads each one's marker.
-                lines.push(format!("{marker}{}", message.replace('\n', " ")));
-            }
-        }
-
-        /// Moves as many whole lines as fit into `out`, newline-separated, and returns the bytes
-        /// written; one line longer than `out` is cut to fit.
-        fn take(&self, out: &mut [u8]) -> usize {
-            self.claimed.store(true, Ordering::Relaxed);
-            if out.is_empty() {
-                return 0;
-            }
-            let Ok(mut lines) = self.lines.lock() else {
-                return 0;
-            };
-            let mut written = 0;
-            let mut taken = 0;
-            for line in lines.iter() {
-                let separator = usize::from(written > 0);
-                if separator + line.len() > out.len() - written {
-                    if taken == 0 {
-                        let cut = (0..=out.len())
-                            .rev()
-                            .find(|&at| line.is_char_boundary(at))
-                            .unwrap_or(0);
-                        out[..cut].copy_from_slice(&line.as_bytes()[..cut]);
-                        written = cut;
-                        taken = 1;
-                    }
-                    break;
-                }
-                if separator == 1 {
-                    out[written] = b'\n';
-                }
-                out[written + separator..written + separator + line.len()]
-                    .copy_from_slice(line.as_bytes());
-                written += separator + line.len();
-                taken += 1;
-            }
-            lines.drain(..taken);
-            written
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::{Held, Level};
-
-        #[test]
-        fn held_lines_come_out_whole_and_in_order() {
-            let held = Held::new();
-            held.keep(Level::Warn, "before the claim goes to stderr");
-            let mut out = [0u8; 14];
-            assert_eq!(held.take(&mut out), 0);
-            held.keep(Level::Info, "first");
-            held.keep(Level::Warn, "second");
-            held.keep(Level::Warn, "a line longer\nthan the buffer");
-            let written = held.take(&mut out);
-            assert_eq!(&out[..written], b"Ifirst\nWsecond");
-            let written = held.take(&mut out);
-            assert_eq!(&out[..written], b"Wa line longer");
-            assert_eq!(held.take(&mut out), 0);
-        }
-    }
-}
-
-/// Hands over the library's held log lines (see [`warn`]), and from the first call on holds
+/// Hands over the library's held log lines (see [`trace::warn`]), and from the first call on holds
 /// them rather than printing them.
 ///
 /// # Safety
@@ -422,36 +281,25 @@ pub unsafe extern "C" fn bb_take_log(out: *mut u8, cap: usize) -> usize {
         return 0;
     }
     let out = unsafe { std::slice::from_raw_parts_mut(out, cap) };
-    log::take(out)
+    trace::take_log(out)
 }
 
 /// Whether every stage lap goes to the held log as an info line, for a server logging at debug.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_log_laps(on: i32) {
-    clock::log_laps(on != 0);
+    trace::clock::log_laps(on != 0);
 }
 
-#[cfg(target_arch = "wasm32")]
-mod console {
-    #[wasm_bindgen::prelude::wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_namespace = console)]
-        pub fn warn(message: &str);
-        #[wasm_bindgen(js_namespace = console)]
-        pub fn info(message: &str);
-    }
-}
-
-/// A panic's message, for the same reason: without one the page is told `unreachable` and nothing
-/// else - not the assertion, not the file, not the line, only the trap the panic ends in.
+/// A panic's message, for [`trace::warn`]'s reason: without one the page is told `unreachable` and
+/// nothing else - not the assertion, not the file, not the line, only the trap the panic ends in.
 ///
 /// At module init, so it covers every entry point rather than the one that remembered to ask.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn announce_panics() {
     std::panic::set_hook(Box::new(|panicked| {
-        console::warn(&format!("rawshim: {panicked}"))
+        trace::warn(&format!("rawshim: {panicked}"))
     }));
 }
 
@@ -500,7 +348,7 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnMut() -> T) -> T {
                 .copied()
                 .or_else(|| panicked.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("no message");
-            warn(&format!(
+            trace::warn(&format!(
                 "rawshim: {what} panicked ({why}); reporting failure rather than aborting the process"
             ));
             fallback
@@ -523,7 +371,7 @@ fn rerun_on_loss<T>(
         let Some(wait) = (losses() != before).then(|| waits.next()).flatten() else {
             return outcome;
         };
-        warn(&format!(
+        trace::warn(&format!(
             "rawshim: {what} lost the GPU; running it again in {}s",
             wait.as_secs()
         ));

@@ -630,12 +630,12 @@ fn taken(costs: &Costs, timed: &Timed, ms: f64) {
     let at = timed.at;
     match &timed.kind {
         Kind::Band { kernel, workgroups } => costs.learn(kernel, ms / f64::from(*workgroups)),
-        Kind::Whole(because) if ms > WHOLE_MS => crate::warn(&format!(
+        Kind::Whole(because) if ms > WHOLE_MS => trace::warn(&format!(
             "rawshim gpu: a dispatch run whole ({because:?}) took {ms:.0}ms: {}:{}",
             at.file(),
             at.line()
         )),
-        Kind::Indirect if ms > WHOLE_MS => crate::warn(&format!(
+        Kind::Indirect if ms > WHOLE_MS => trace::warn(&format!(
             "rawshim gpu: an indirect dispatch took {ms:.0}ms: {}:{}",
             at.file(),
             at.line()

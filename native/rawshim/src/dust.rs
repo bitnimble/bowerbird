@@ -521,7 +521,7 @@ pub async fn detect(
     if !sensor.worth_reading() {
         return Some(Vec::new());
     }
-    let mut lap = crate::clock::laps("  dust ");
+    let mut lap = trace::clock::laps("  dust ");
     let kernels = crate::dust_find::device(gpu)?;
     let shrink = sensor.shrink();
     let (ox, oy, _, _) = sensor.picture();

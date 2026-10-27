@@ -247,7 +247,7 @@ pub async fn align(
     let planes = previews_at(gpu, sources, kind.plane_long()).await?;
     let sizes: Vec<[usize; 2]> = planes.iter().map(|p| [p.width, p.height]).collect();
     let pyramids: Vec<Pyramid> = planes.iter().map(|plane| Pyramid::of(gpu, plane)).collect();
-    let mut lap = crate::clock::laps("  align ");
+    let mut lap = trace::clock::laps("  align ");
     let (pairs, chosen) = match kind {
         Kind::Pan => (panned(gpu, &pyramids, &mut lap).await?, None),
         Kind::Stack(reference) => {
@@ -407,7 +407,7 @@ async fn panned(
     let mut pairs = Vec::new();
     for a in 0..pyramids.len() {
         for b in a + 1..pyramids.len() {
-            let at = crate::clock::Mark::now();
+            let at = trace::clock::Mark::now();
             let found = crate::composite_pairs::coarse(
                 gpu,
                 pyramids[a].coarse(),
@@ -454,7 +454,7 @@ async fn panned(
             // `PANO_CLEARLY` moves the bar, for sweeping how wide the band is that still answers
             // correctly. A margin is a thing to measure, not to assume.
             let vouched = clearly >= clearly_bar;
-            let at = crate::clock::Mark::now();
+            let at = trace::clock::Mark::now();
             let refine =
                 crate::composite_pairs::refined(gpu, &pyramids[a], &pyramids[b], found).await;
             let (matches, sampled) = (refine.found, refine.sampled);

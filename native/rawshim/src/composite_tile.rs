@@ -923,7 +923,7 @@ async fn prepared_with(
     let mut wb_gains = None;
     let mut noise = None;
 
-    let mut lap = crate::clock::laps("    pano source ");
+    let mut lap = trace::clock::laps("    pano source ");
     let mut blending = Blending::over(gpu, base, request.window);
     for i in order_of(spec) {
         let Some(taken) = taken(gpu, base, spec, request, i, levels, merging, &mut lap).await?
@@ -1265,7 +1265,7 @@ pub async fn layers_of(
     }
     let mut levels: Option<crate::tone::Anchored> =
         request.levels.or_else(|| whole_anchor(spec, request));
-    let mut lap = crate::clock::laps("    pano source ");
+    let mut lap = trace::clock::laps("    pano source ");
     for i in order_of(spec) {
         let Some(taken) = taken(gpu, base, spec, request, i, levels, None, &mut lap).await? else {
             continue;

@@ -537,7 +537,7 @@ fn describe_if_grid(image: units::rgb::RgbRef<'_>, target: &Target, outcome: &mu
         return;
     }
     let Some(gpu) = crate::gpu::device() else {
-        crate::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
+        trace::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
         return;
     };
     if let Some(descriptor) = stacks::describe(gpu, image) {
@@ -740,7 +740,7 @@ impl Base {
     }
 
     async fn built(job: &Job, raw: Raw<'_>, size: u32) -> Result<Base, String> {
-        let mut lap = crate::clock::laps("  base ");
+        let mut lap = trace::clock::laps("  base ");
         let stored = job.stored();
         // Denoised inside the decode, on the mosaic, which is the only place the noise is
         // still one photosite's own (`crate::galosh`).
@@ -1322,7 +1322,7 @@ fn keep_only(
 /// which were two of the three ways the old shape could leak a 366MB frame.
 #[cfg(feature = "renditions")]
 pub fn run(job: &Job) -> Result<Outcome, String> {
-    let mut lap = crate::clock::laps("  job ");
+    let mut lap = trace::clock::laps("  job ");
     let mut outcome = Outcome::default();
 
     // A search renders nothing and reads no rendition setting: it is a pass over the sources, and
@@ -1819,7 +1819,7 @@ pub(crate) async fn render(
     rendered: &[&Target],
     mut wrote: impl FnMut(&Target, Coded, usize, usize, &EncodeOptions) -> Result<(), String>,
 ) -> Result<Rendered, String> {
-    let mut lap = crate::clock::laps("  job ");
+    let mut lap = trace::clock::laps("  job ");
     let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
 
     // No `width`/`height`: a cut carries its own now, whichever arm below produced it.
@@ -2021,7 +2021,7 @@ pub(crate) async fn render(
             if leak > CHROMA_LEAK_TILE_FRACTION {
                 options.still_chroma = Chroma::Yuv444;
             }
-            if crate::clock::watched() {
+            if trace::clock::watched() {
                 eprintln!("  chroma leak {leak:.4}, {:?}", options.still_chroma);
             }
             lap("chroma leak");

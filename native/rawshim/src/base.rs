@@ -2414,7 +2414,7 @@ pub async fn chroma_leak(
         })
         .collect();
     fractions.sort_by(|a, b| b.0.total_cmp(&a.0));
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         let top: Vec<String> = fractions
             .iter()
             .take(6)

@@ -1104,7 +1104,7 @@ pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
             return tried;
         }
         let made = Upscaler::fastest(gpu, held.manifest, held.weights?)
-            .map_err(|why| crate::warn(&format!("rawshim: the upscaler did not build: {why}")))
+            .map_err(|why| trace::warn(&format!("rawshim: the upscaler did not build: {why}")))
             .ok()
             .map(|made| &*Box::leak(Box::new(made)));
         held.built = Some(made);

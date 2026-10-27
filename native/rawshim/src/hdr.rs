@@ -171,9 +171,9 @@ pub async fn fit_all(
     }
     // One decode, read by both halves: the geometry fit takes it below and the colour fit
     // takes it again for the plane.
-    let mut lap = crate::clock::laps("  match ");
+    let mut lap = trace::clock::laps("  match ");
     let preview = match_preview(raw_path)?;
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         eprintln!("  match preview {}x{}", preview.width, preview.height);
     }
     let lateral = crate::ffi::recorded_lateral(raw_path);
@@ -205,13 +205,13 @@ pub async fn fit_all_from_preview(
     if camera_match == CameraMatch::None {
         return None;
     }
-    let mut lap = crate::clock::laps("  match ");
+    let mut lap = trace::clock::laps("  match ");
     let (tw, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
     // The body's own anchor where its rendering carries one, and the caller's quantile where it
     // does not. Here rather than at the callers because this is the one place holding both the
     // frame and the picture the body made of it, and both arms of `open::measure` reach it.
     let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         eprintln!("  match anchor at quantile {quantile:.5}");
     }
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;

@@ -325,7 +325,7 @@ pub fn record(
     }
     let basis = Basis::of(cfa)?;
 
-    let mut lap = crate::clock::laps("    lslcd ");
+    let mut lap = trace::clock::laps("    lslcd ");
 
     let pixels = width * height;
     let plane_bytes = (pixels * std::mem::size_of::<f32>()) as u64;

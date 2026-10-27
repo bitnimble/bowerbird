@@ -308,7 +308,7 @@ pub(crate) async fn decode_merged_tile(
         crate::galosh::Fit::Given(fit) => Some(fit),
         _ => None,
     };
-    let mut lap = crate::clock::laps("  merge ");
+    let mut lap = trace::clock::laps("  merge ");
     let reference_extra = crate::align::REFERENCE_MARGIN
         .raw()
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
@@ -691,7 +691,7 @@ async fn region_mosaic(
     if is_linear(&shape) {
         let held = linear(decoder.as_ref(), shape, upright).await;
         let held = held
-            .map_err(|why| crate::warn(&format!("rawshim: {why}")))
+            .map_err(|why| trace::warn(&format!("rawshim: {why}")))
             .ok()?;
         return held.window(view.window, view.scale).map(Region::Linear);
     }
@@ -923,7 +923,7 @@ pub fn decode_fitted(
     fit: crate::galosh::Fit,
     dust: crate::dust::Wanted<'_>,
 ) -> Option<Frame> {
-    let mut lap = crate::clock::laps("  decode ");
+    let mut lap = trace::clock::laps("  decode ");
     let path = std::path::Path::new(path);
     let source = match uncached(path) {
         // `new_from_slice` takes its own copy, so the aligned buffer goes at the end of this arm
@@ -1133,7 +1133,7 @@ pub async fn open_path(path: &str) -> Result<crate::decode::Held, String> {
 
 /// The mosaic, or for a linear DNG the picture, which has no mosaic to stop at.
 async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::Held, String> {
-    let mut lap = crate::clock::laps("  decode ");
+    let mut lap = trace::clock::laps("  decode ");
 
     let decoder = rawler::get_decoder(source).map_err(|why| why.to_string())?;
     let params = rawler::decoders::RawDecodeParams::default();
@@ -1505,14 +1505,14 @@ fn gain_maps(decoder: &dyn rawler::decoders::Decoder) -> Vec<crate::condition::G
             .filter_map(|opcode| {
                 gain_map(opcode.body)
                     .inspect_err(|why| {
-                        crate::warn(&format!("rawshim: {why}, so that map is not applied"))
+                        trace::warn(&format!("rawshim: {why}, so that map is not applied"))
                     })
                     .ok()
                     .flatten()
             })
             .collect(),
         Err(why) => {
-            crate::warn(&format!(
+            trace::warn(&format!(
                 "rawshim: {why}, so its lens shading is not applied"
             ));
             Vec::new()
@@ -1592,7 +1592,7 @@ pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<crate
     let decoder = rawler::get_decoder(source).ok()?;
     let bytes = opcode_list_of(decoder.as_ref(), DngTag::OpcodeList3)?;
     let warp = opcodes(&bytes)
-        .inspect_err(|why| crate::warn(&format!("rawshim: {why}, so its lens is not corrected")))
+        .inspect_err(|why| trace::warn(&format!("rawshim: {why}, so its lens is not corrected")))
         .ok()?
         .into_iter()
         .find(|opcode| opcode.id == WARP_RECTILINEAR)?;
@@ -1633,7 +1633,7 @@ pub(crate) fn stated_lens(source: &rawler::rawsource::RawSource) -> Option<crate
         &rawler::decoders::RawDecodeParams::default(),
     );
     warp_lens(warp.body, active, photo, upright)
-        .inspect_err(|why| crate::warn(&format!("rawshim: {why}, so its lens is not corrected")))
+        .inspect_err(|why| trace::warn(&format!("rawshim: {why}, so its lens is not corrected")))
         .ok()
 }
 
@@ -1653,7 +1653,7 @@ fn warp_lens(
         .map(|k| body.double(4 + ((k / 2) * 6 + 4 + k % 2) * 8))
         .collect::<Result<Vec<_>, _>>()?;
     if tangential.iter().any(|kt| *kt != 0.0) {
-        crate::warn(
+        trace::warn(
             "rawshim: this DNG's lens states a tangential distortion, which is not applied",
         );
     }
@@ -1718,7 +1718,7 @@ async fn hold(
     image: rawler::RawImage,
     upright: rawler::decoders::Orientation,
 ) -> Option<Held> {
-    let mut lap = crate::clock::laps("  decode ");
+    let mut lap = trace::clock::laps("  decode ");
     let (width, height) = (image.width, image.height);
 
     let cfa = cfa_of(&image)?;
@@ -1827,7 +1827,7 @@ async fn decode_source(
 ) -> Option<Frame> {
     let opened = open(source)
         .await
-        .map_err(|why| crate::warn(&format!("rawshim: {why}")));
+        .map_err(|why| trace::warn(&format!("rawshim: {why}")));
     match opened.ok()? {
         crate::decode::Held::Mosaic(held) => {
             held.into_frame(
@@ -2083,7 +2083,7 @@ impl Held {
         dust: crate::dust::Wanted<'_>,
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
-        let mut lap = crate::clock::laps("  decode ");
+        let mut lap = trace::clock::laps("  decode ");
         let gpu = crate::gpu::device();
         let glass = self.sensor.glass();
         let Sensor {
@@ -2192,7 +2192,7 @@ impl Held {
                                                 true
                                             }
                                             None => {
-                                                crate::warn(
+                                                trace::warn(
                                                     "rawshim: PMRID's weights have not been handed over, \
                                                  so this frame was not denoised",
                                                 );
@@ -2222,7 +2222,7 @@ impl Held {
                                 Some(measured)
                             }
                             false => {
-                                crate::warn(&format!(
+                                trace::warn(&format!(
                                     "rawshim: this frame's noise fit is not one to filter with, so it is not denoised: {measured:?}"
                                 ));
                                 None
@@ -2380,7 +2380,7 @@ async fn denoise_over(
                 // fail - it renders, confidently, in the wrong colours. An undenoised photograph is
                 // a photograph.
                 (Some(fit), _) if !brought && !fit.usable() => {
-                    crate::warn(&format!(
+                    trace::warn(&format!(
                         "rawshim: this frame's noise fit is not one to filter with, so it is not denoised: {fit:?}"
                     ));
                     (None, false)
@@ -2399,7 +2399,7 @@ async fn denoise_over(
                     // here rather than left to the line below, which would name GALOSH and send a
                     // reader looking at the wrong filter.
                     None => {
-                        crate::warn(
+                        trace::warn(
                             "rawshim: PMRID's weights have not been handed over, so this frame was \
                              not denoised",
                         );
@@ -2447,10 +2447,10 @@ fn declined_galosh(
     // GALOSH has no colour to separate is the documented answer for that sensor, and saying so in
     // the same words would teach a reader - and that spec - to ignore the one that matters.
     match crate::galosh::filters(cfa) {
-        true => crate::warn(
+        true => trace::warn(
             "rawshim: no GPU for GALOSH, so this frame carries no noise fit and was not denoised",
         ),
-        false => crate::warn(
+        false => trace::warn(
             "rawshim: this sensor's pattern is not one GALOSH filters, so the frame carries no \
              noise fit and was not denoised",
         ),
@@ -2620,11 +2620,11 @@ async fn demosaic_detailed(
             (Some(upscaler), Some(fit)) => upscaler
                 .photo(colour.ceiling, cfa, fit.model(), detail.resolved(Some(fit)))
                 .map_err(|why| {
-                    crate::warn(&format!("rawshim: {why}, so this frame was not denoised"))
+                    trace::warn(&format!("rawshim: {why}, so this frame was not denoised"))
                 })
                 .ok(),
             (None, _) => {
-                crate::warn(
+                trace::warn(
                     "rawshim: the upscaler is not available, so this frame was not denoised",
                 );
                 None
@@ -2863,7 +2863,7 @@ async fn upscaled_in_tiles(
                         photo,
                         None,
                     )
-                    .map_err(|why| crate::warn(&format!("rawshim: the upscale failed: {why}")))
+                    .map_err(|why| trace::warn(&format!("rawshim: the upscale failed: {why}")))
                     .ok()?;
                 drop(window);
                 let native = mosaic.window(gpu, left, top, width, height);

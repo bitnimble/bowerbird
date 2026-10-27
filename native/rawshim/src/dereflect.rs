@@ -565,7 +565,7 @@ pub fn removal(
         return None;
     }
     let Some(remover) = device(gpu) else {
-        crate::warn("rawshim: reflection removal is on, and no model has been downloaded");
+        trace::warn("rawshim: reflection removal is on, and no model has been downloaded");
         return None;
     };
     let none = crate::fit::Lens::none();
@@ -1048,7 +1048,7 @@ fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
         let cells = Cells::of(gpu.describing().features());
         let made = Remover::built(gpu, held.unpacked.take()?, cells)
             .map_err(|why| {
-                crate::warn(&format!(
+                trace::warn(&format!(
                     "rawshim: the reflection remover did not build: {why}"
                 ))
             })

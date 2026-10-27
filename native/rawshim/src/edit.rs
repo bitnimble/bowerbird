@@ -276,7 +276,7 @@ pub fn prepare_bytes(
 /// too. A permit count would let that through; nothing today has two.
 fn admit() -> Turn {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let asked = crate::clock::Mark::now();
+    let asked = trace::clock::Mark::now();
     // A poisoned lock means a previous open panicked. That was reported to its own caller and
     // left nothing shared behind - the guard owns no data - so refusing every open after it
     // would turn one failure into a permanent one.
@@ -289,7 +289,7 @@ fn admit() -> Turn {
     // somebody else's decode is the queue working, where a reader waiting alone is the decode
     // being slow. Only mentioned when it actually waited, so an idle server stays quiet.
     if waited > std::time::Duration::from_millis(50) {
-        crate::info(&format!(
+        trace::info(&format!(
             "rawshim: an open waited {}ms for the one before it",
             waited.as_millis()
         ));
@@ -305,9 +305,9 @@ fn admit() -> Turn {
 /// `Instant` cannot be shared as a number, and a wall clock can step backwards. This only has
 /// to order events inside one process.
 fn elapsed_micros() -> u64 {
-    static START: std::sync::OnceLock<crate::clock::Mark> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<trace::clock::Mark> = std::sync::OnceLock::new();
     START
-        .get_or_init(crate::clock::Mark::now)
+        .get_or_init(trace::clock::Mark::now)
         .elapsed()
         .as_micros() as u64
 }
@@ -400,7 +400,7 @@ pub async fn from_frame(
     {
         // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
-        let mut lap = crate::clock::laps("  open ");
+        let mut lap = trace::clock::laps("  open ");
         let noise_fit = frame.noise;
         let stored = request.stored();
         let as_shot = frame.as_shot;

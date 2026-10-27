@@ -834,7 +834,7 @@ pub(crate) fn base(
     // `composite_tile::CompositeRequest::parts` says what they buy.
     parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<Base, String> {
-    let mut lap = crate::clock::laps("  panorama ");
+    let mut lap = trace::clock::laps("  panorama ");
     let spec = wanted.composition();
     if spec.sources.len() != sources.len() {
         return Err("the recipe and the files it names disagree".into());

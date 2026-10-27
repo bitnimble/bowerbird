@@ -1204,7 +1204,7 @@ async fn run(
     // The same switch the decode and the open report through, because what this splits out is
     // the part of a call that does not scale with the region: a run over tiles pays it per tile,
     // and at a few hundred tiles that decides whether tiling is worth anything at all.
-    let mut lap = crate::clock::laps("    galosh ");
+    let mut lap = trace::clock::laps("    galosh ");
 
     let (w, h) = (width as i32, height as i32);
     let npix = width * height;
@@ -1555,7 +1555,7 @@ async fn run(
         let done = std::cell::Cell::new(false);
         let stop_after = STOP_AFTER.load(std::sync::atomic::Ordering::Relaxed);
         let recorded = std::cell::Cell::new(0usize);
-        let naming = stop_after == usize::MAX && crate::clock::watched();
+        let naming = stop_after == usize::MAX && trace::clock::watched();
         if naming {
             DISPATCHED
                 .lock()

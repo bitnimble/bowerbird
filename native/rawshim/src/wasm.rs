@@ -323,11 +323,11 @@ pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<
     // denoised and nothing on the page reports why. A finished picture has no mosaic to fit and
     // nothing to denoise, so its `None` is the answer rather than a failure.
     match fit {
-        Some(fit) if !fit.usable() => crate::warn(&format!(
+        Some(fit) if !fit.usable() => trace::warn(&format!(
             "rawshim: this frame's noise fit is not one to filter with, so it is not denoised: {fit:?}"
         )),
         None if !rendered => {
-            crate::warn("rawshim: no noise fit was measured, so nothing will be denoised");
+            trace::warn("rawshim: no noise fit was measured, so nothing will be denoised");
         }
         _ => {}
     }

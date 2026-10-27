@@ -253,7 +253,7 @@ impl Held {
 /// is rendered.
 #[cfg(feature = "renditions")]
 pub fn preview_rgb(path: &str, long_edge: usize) -> Option<units::rgb::Rgb> {
-    let mut lap = crate::clock::laps("  rendered ");
+    let mut lap = trace::clock::laps("  rendered ");
     let bytes = std::fs::read(path).ok()?;
     lap("read");
     if !bytes.starts_with(&[0xFF, 0xD8]) {
@@ -366,7 +366,7 @@ pub fn read(bytes: &[u8]) -> Result<Read, String> {
 pub fn read_heif(bytes: &[u8]) -> Result<heif::File, String> {
     let file = heif::read(bytes)?;
     if let Some(unhandled) = &file.primary.unhandled {
-        crate::warn(&format!("rawshim: {unhandled}"));
+        trace::warn(&format!("rawshim: {unhandled}"));
     }
     Ok(file)
 }
@@ -620,7 +620,7 @@ fn gain_map_of(
     let coded = match crate::hevc::decode(&map.picture) {
         Ok(coded) => coded,
         Err(why) => {
-            crate::warn(&format!(
+            trace::warn(&format!(
                 "rawshim: this photograph's gain map would not decode, so its standard-range base \
                  image is what is shown: {why}",
             ));
@@ -654,7 +654,7 @@ pub(crate) fn heif_terms(
         .and_then(crate::apple_gain::headroom)
         .filter(|it| *it > 1.0);
     if headroom.is_none() {
-        crate::warn(
+        trace::warn(
             "rawshim: this HEIC carries Apple's own gain map but states no headroom for it; \
              showing its standard-range base image",
         );

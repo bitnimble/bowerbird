@@ -988,7 +988,7 @@ fn record_rcd(
         return None;
     }
 
-    let mut lap = crate::clock::laps("    rcd ");
+    let mut lap = trace::clock::laps("    rcd ");
 
     let pixels = width * height;
     let plane_bytes = (pixels * std::mem::size_of::<f32>()) as u64;

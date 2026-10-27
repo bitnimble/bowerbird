@@ -1406,7 +1406,7 @@ pub async fn fit_from_preview(
     preview: &crate::hdr_fit::Source,
     geometry: Geometry,
 ) -> Result<Option<Profile>, String> {
-    let mut lap = crate::clock::laps("  geometry ");
+    let mut lap = trace::clock::laps("  geometry ");
     let Some((grids, sampled)) = grids_from_preview(gpu, render, preview).await else {
         return Ok(None);
     };
@@ -1530,7 +1530,7 @@ async fn fit_grids(
     render: &crate::hdr_fit::Source,
     preview: &crate::hdr_fit::Source,
 ) -> Result<Option<Profile>, String> {
-    let mut lap = crate::clock::laps("  geometry ");
+    let mut lap = trace::clock::laps("  geometry ");
     // The uncorrected frame has the most pairs of any geometry, so a baseline that cannot be
     // measured is a frame nothing can be measured on - or a device that did not answer - and
     // not a reason to accept whatever candidate does score.

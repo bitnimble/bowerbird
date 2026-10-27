@@ -417,7 +417,7 @@ const LOSSES_TOLERATED: usize = 3;
 const LOSS_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 #[cfg(not(target_arch = "wasm32"))]
-static REOPENED: std::sync::Mutex<Vec<crate::clock::Mark>> = std::sync::Mutex::new(Vec::new());
+static REOPENED: std::sync::Mutex<Vec<trace::clock::Mark>> = std::sync::Mutex::new(Vec::new());
 
 /// The device, or None where no adapter of any kind answered.
 ///
@@ -453,13 +453,13 @@ fn reopened(lost: &'static Gpu) -> Opened {
     let mut reopened = REOPENED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     reopened.retain(|at| at.elapsed() < LOSS_WINDOW);
     if reopened.len() >= LOSSES_TOLERATED {
-        crate::warn("rawshim gpu: the device was lost too often; no other is opened yet");
+        trace::warn("rawshim gpu: the device was lost too often; no other is opened yet");
         return Opened::Lost(lost);
     }
     let Some(mut next) = Gpu::new() else {
         return Opened::Lost(lost);
     };
-    reopened.push(crate::clock::Mark::now());
+    reopened.push(trace::clock::Mark::now());
     lost.succeeded_by(&mut next);
     Opened::Open(Box::leak(Box::new(next)))
 }
@@ -615,7 +615,7 @@ pub async fn page_device() -> Option<&'static Gpu> {
     // more than a tab that has stopped.
     device.on_uncaptured_error(std::sync::Arc::new(|error| {
         let said = format!("rawshim gpu: the browser refused a command: {error}");
-        crate::warn(&said);
+        trace::warn(&said);
         // Kept as well as logged, so the next tick can hand it to the page. A console line is
         // the only symptom otherwise, and the reader is looking at a canvas that is told `live`.
         REFUSED.with(|held| {
@@ -664,7 +664,7 @@ pub async fn read_back<T>(
     take: impl FnOnce(&[u8]) -> T,
 ) -> Option<T> {
     let Some(()) = mapped(gpu, buffer).await else {
-        crate::warn(
+        trace::warn(
             "rawshim: the device did not map a buffer for reading; the stage that asked declines",
         );
         return None;
@@ -1471,7 +1471,7 @@ impl Gpu {
         // Every site, not the last: the device runs behind the submissions, so the one that hung
         // may be several back.
         for at in self.queue.recent_sites() {
-            crate::warn(&format!(
+            trace::warn(&format!(
                 "rawshim gpu: the device was lost after a submission from {}:{}",
                 at.file(),
                 at.line()
@@ -1854,7 +1854,7 @@ impl Gpu {
                 .into_iter()
                 .find(|a| a.get_info().name.contains("SwiftShader"));
             if found.is_none() {
-                crate::warn(
+                trace::warn(
                     "rawshim gpu: no hardware adapter and no SwiftShader; `bun run get:swiftshader` \
                      fetches it, and VK_ADD_DRIVER_FILES=native/rawshim/.swiftshader/vk_swiftshader_icd.json \
                      points Vulkan at it",
@@ -1890,13 +1890,13 @@ impl Gpu {
             // identical from the chosen adapter alone, and they want opposite fixes.
             for offered in pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())) {
                 let info = offered.get_info();
-                crate::info(&format!(
+                trace::info(&format!(
                     "rawshim gpu offered: {} ({:?}, {:?}) via {}",
                     info.name, info.device_type, info.backend, info.driver,
                 ));
             }
             let info = adapter.get_info();
-            crate::info(&format!(
+            trace::info(&format!(
                 "rawshim gpu: {} ({:?}, {:?}) via {}",
                 info.name, info.device_type, info.backend, info.driver,
             ));
@@ -1922,7 +1922,7 @@ impl Gpu {
                 experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
                 ..Default::default()
             }))
-        .inspect_err(|refused| crate::warn(&format!("rawshim gpu: no device: {refused}")))
+        .inspect_err(|refused| trace::warn(&format!("rawshim gpu: no device: {refused}")))
         .ok()?;
         // A validation error here is a bug in the shader or in what is bound to it, and
         // both are ours. Left to the default handler it would print and continue, and the
@@ -2241,7 +2241,7 @@ impl Gpu {
     /// hundred milliseconds of real work sat under the wrong name and every attempt to find it went
     /// looking inside the grade's shader.
     pub fn settle(&self) {
-        if !crate::clock::watched() {
+        if !trace::clock::watched() {
             return;
         }
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());

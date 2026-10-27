@@ -28,7 +28,7 @@ pub unsafe extern "C" fn bb_stage_picture(
     let picture = crate::guard("bb_stage_picture", None, || {
         let gpu = crate::gpu::device()?;
         crate::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
-            .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
+            .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()??
     });
     unsafe { handed(picture, width, height) }
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn bb_stage_attach(
         let size = Size::measured(width as usize, height as usize);
         // SAFETY: the caller's.
         unsafe { SurfaceStage::attach(gpu, window, size) }
-            .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
+            .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()
     });
     stage.map_or(std::ptr::null_mut(), |stage| Box::into_raw(Box::new(stage)))
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn bb_stage_present(
         match stage.present(gpu, picture, fit, display) {
             Ok(()) => 0,
             Err(refused) => {
-                crate::warn(&format!("rawshim stage: {refused}"));
+                trace::warn(&format!("rawshim stage: {refused}"));
                 -1
             }
         }

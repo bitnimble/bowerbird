@@ -67,7 +67,7 @@ fn main() {
         eprintln!("bench_stages [--denoiser galosh|pmrid|upscaler] <raw>... [--burst <frame>...]");
         std::process::exit(2);
     }
-    rawshim::clock::record();
+    trace::clock::record();
     let out_dir = std::env::temp_dir().join("bowerbird-bench-stages");
     if let Err(why) = std::fs::create_dir_all(&out_dir) {
         eprintln!("nowhere to write the renditions: {why}");
@@ -113,7 +113,7 @@ fn measure(path: &str, output: &str, denoiser: &str) {
         let total = began.elapsed().as_secs_f64() * 1000.0;
         // Taken whether or not the round is kept, so a discarded round's laps cannot land in the
         // next one's.
-        let laps = rawshim::clock::taken();
+        let laps = trace::clock::taken();
         if let Err(why) = outcome {
             eprintln!("{}: {why}", name(path));
             return;
@@ -180,7 +180,7 @@ fn timed(command: &rawshim::job::Job) -> Option<(rawshim::job::Outcome, f64)> {
     for round in 0..=REPEATS {
         let began = Instant::now();
         let outcome = rawshim::job::run(command);
-        let encoded: f64 = rawshim::clock::taken()
+        let encoded: f64 = trace::clock::taken()
             .iter()
             .filter(|(prefix, name, _)| *prefix == "  job " && name.as_str() == "encode, write")
             .map(|(_, _, ms)| ms)

@@ -175,6 +175,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 # so the Android and wasm builds link neither it nor its ~3.6MB of XML.
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
+trace = { path = "../trace" }
 units = { path = "../units" }
 fast_image_resize = "6.1.0"
 # The f16 the detail and neighbourhood textures and the jacobian readback are held in. Conversion

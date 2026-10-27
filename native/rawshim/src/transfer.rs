@@ -300,7 +300,7 @@ impl Coding {
             9 => Primaries::REC2020,
             11 | 12 => Primaries::DISPLAY_P3,
             other => {
-                crate::warn(&format!(
+                trace::warn(&format!(
                     "rawshim: this picture states colour primaries {other}, which this build does \
                      not know; reading it as Rec.709",
                 ));
@@ -316,7 +316,7 @@ impl Coding {
             18 => Curve::Hlg,
             13 | 2 | 0 => Curve::Srgb,
             other => {
-                crate::warn(&format!(
+                trace::warn(&format!(
                     "rawshim: this picture states transfer characteristics {other}, which this \
                      build does not know; reading it as sRGB",
                 ));

@@ -198,7 +198,7 @@ pub unsafe extern "C" fn bb_hold_dereflect_model(
     match crate::dereflect::hold_model(&manifest, &weights) {
         Ok(()) => 0,
         Err(why) => {
-            crate::warn(&format!("rawshim: the reflection model was refused: {why}"));
+            trace::warn(&format!("rawshim: the reflection model was refused: {why}"));
             -3
         }
     }
@@ -633,7 +633,7 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
     match written {
         Ok(()) => 0,
         Err(why) => {
-            crate::warn(&format!("rawshim: no 10-bit copy of {source}: {why}"));
+            trace::warn(&format!("rawshim: no 10-bit copy of {source}: {why}"));
             -1
         }
     }

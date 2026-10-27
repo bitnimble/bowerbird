@@ -93,7 +93,7 @@ pub struct Measured {
 /// compares our render against a JPEG the camera has already defringed, so a fringe left on is a
 /// difference between the two that has nothing to do with the colour being fitted.
 pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, String> {
-    let mut lap = crate::clock::laps("  open ");
+    let mut lap = trace::clock::laps("  open ");
     let (width, height) = frame.size();
     let strengths = how.strengths.before_the_fit();
     let stored = how.stored;

@@ -158,7 +158,7 @@ pub fn solve(sizes: &[[usize; 2]], pairs: &[Pair], focal0: f64, leash: Leash) ->
     // while every step of it is a fit, so the whole search pays for the difference. Measured on a
     // twenty-six frame pan: 104k correspondences over 83 pairs, and the growth was two minutes of
     // the two minutes the align took.
-    let mut lap = crate::clock::laps("  solve ");
+    let mut lap = trace::clock::laps("  solve ");
     let sampled: Vec<Pair> = offered.iter().map(thinned).collect();
     // The growth's own answer stands until the loop below refits: it was fitted on the sample, which
     // places every frame to well inside the several pixels an outlier is, and the round that follows

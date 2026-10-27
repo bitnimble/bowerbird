@@ -840,7 +840,7 @@ fn fit_curve(binned: &crate::fit_curve::Binned) -> (Vec<f64>, isize) {
         .filter(|b| count[*b] >= MIN_BIN_SAMPLES && weight[*b] > 0.0)
         .map(|b| (b, srgb_eotf_f(sum[b] / weight[b]), weight[b]))
         .collect();
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         let raw: Vec<String> = measured
             .iter()
             .take_while(|(bin, _, _)| *bin < 16)
@@ -853,7 +853,7 @@ fn fit_curve(binned: &crate::fit_curve::Binned) -> (Vec<f64>, isize) {
     let Some(&(reach, _, _)) = measured.last() else {
         return (vec![0.0; BINS], -1);
     };
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         let toe: Vec<String> = measured
             .iter()
             .take_while(|(bin, _, _)| *bin < 16)
@@ -2669,7 +2669,7 @@ async fn fitted_matrix_for(
     let scoring = samples.scoring[1].over(gpu, &frame_toned.buffer, 0, frame.at.len());
     let frame_scored = scored_on_matrices(frame, scoring, &candidates).await?;
     let unmatched = [&scored[0], &frame_scored[0]];
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         let names = std::iter::once("identity".to_string())
             .chain(RIDGE_CANDIDATES.iter().map(|r| r.to_string()));
         let ridges: Vec<String> = names
@@ -4674,7 +4674,7 @@ async fn wide_samples(
         return Vec::new();
     }
     let (width, height) = (wide.width.min(target.width), wide.height.min(target.height));
-    let mut lap = crate::clock::laps("  wide ");
+    let mut lap = trace::clock::laps("  wide ");
     // **The gates first, then one search for everything that passed them.** The tests are pure
     // reads of the camera's plane, so they run before anything is corresponded - and the search,
     // which is what costs, then goes to the device as a single batch.
@@ -5210,7 +5210,7 @@ async fn fit_colour(
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
     let (width, height) = (planes.width, planes.height);
-    let mut lap = crate::clock::laps("  colour ");
+    let mut lap = trace::clock::laps("  colour ");
     let selected =
         crate::fit_pairs::select(gpu, &planes.render, &planes.jpeg, width, height).await?;
     if selected.at.len() < MIN_PAIRS {
@@ -5353,7 +5353,7 @@ async fn fit_colour(
         }
     }
     lap("wide samples");
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         eprintln!(
             "  colour grid {width}x{height}: {} pairs, {} wide samples",
             pairs.at.len(),
@@ -5623,7 +5623,7 @@ async fn strongest(
     }
     let mut least: Option<(f64, f64, Score)> = None;
     for (spent, strength, score) in judged {
-        if crate::clock::watched() {
+        if trace::clock::watched() {
             eprintln!("  chroma at {strength:.3}: {spent:.3} against {bare:.3} bare");
         }
         if spent < least.as_ref().map_or(bare, |(held, _, _)| *held) {
@@ -5669,7 +5669,7 @@ impl Pricing {
             + judged.frame.flat
             + judged.wide
             + HARM_WEIGHT * harms.iter().sum::<f64>();
-        if crate::clock::watched() {
+        if trace::clock::watched() {
             eprintln!(
                 "  held {:.3} frame {:.3} wide {:.3} harm {:.3?}",
                 judged.held.flat, judged.frame.flat, judged.wide, harms,
@@ -5691,7 +5691,7 @@ async fn refined_lattice(
     fitted: &FittedLattice,
     cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
 ) -> Option<Option<(f64, ChromaMap, Score)>> {
-    let mut lap = crate::clock::laps("  refine ");
+    let mut lap = trace::clock::laps("  refine ");
     let shape = GridShape::FINE;
     let taught = Taught::on(gpu, colour, on, &fitted.axes.grid(shape), true).await?;
     lap("moments");
@@ -5711,7 +5711,7 @@ async fn refined_lattice(
     let whole = mapped(at(1.0)).await?;
     let chosen = strongest(at, whole, fitted.spent, &mut mapped).await?;
     lap("strength");
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         eprintln!(
             "  refine: {} kernels, {:?}",
             fine.kernels().len(),
@@ -5753,7 +5753,7 @@ async fn fitted_lattice(
     // free to diverge tinted every neutral at a level by up to 27 counts with this term
     // running the whole time. That one needed the model constrained (`fit_curves`), not
     // measured better.
-    let mut lap = crate::clock::laps("  lattice ");
+    let mut lap = trace::clock::laps("  lattice ");
     let looked_up = sharp.evaluated(gpu, colour, &on.lifted);
     let axes = LutAxes::of(
         colour,
@@ -5781,7 +5781,7 @@ async fn fitted_lattice(
         };
         let map = grid.map(None);
         let (spent, score) = mapped(map.clone()).await?;
-        if crate::clock::watched() {
+        if trace::clock::watched() {
             eprintln!("  ladder rung {wide_weight}: {spent:.3}");
         }
         if rungs.as_ref().is_none_or(|(held, ..)| spent < *held) {
@@ -5837,7 +5837,7 @@ async fn fit_model(
     [pairs, frame]: [&Pairs; 2],
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
-    let mut lap = crate::clock::laps("  model ");
+    let mut lap = trace::clock::laps("  model ");
     let (curves, anchor) = fit_curves(gpu, evidence, balance, ceiling, None).await?;
     let mut colour = HdrColour {
         curves,
@@ -6318,7 +6318,7 @@ async fn prepared_planes(
     wide_jpeg: Source,
     lens: &crate::fit::Lens,
 ) -> Option<FitPlanes> {
-    let mut lap = crate::clock::laps("  planes ");
+    let mut lap = trace::clock::laps("  planes ");
     let (wide, tall) = (source.width, source.height);
     // The fit itself runs at half this.
     let (fit_wide, fit_tall) = ((wide_jpeg.width / 2).max(1), (wide_jpeg.height / 2).max(1));
@@ -6432,7 +6432,7 @@ async fn fit_model_planes(
     lens: &crate::fit::Lens,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
-    let mut lap = crate::clock::laps("  colour ");
+    let mut lap = trace::clock::laps("  colour ");
     let planes = prepared_planes(gpu, source, scale, wide_jpeg, lens).await?;
     lap("prepared planes");
     let corresponded = registered(gpu, &planes).await?;
