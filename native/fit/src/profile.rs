@@ -26,7 +26,7 @@ use units::rgb::RgbRef;
 /// nothing measurable, and every candidate warp is O(pixels), so this is the
 /// biggest lever on how long a fit takes. 640 still leaves well over a hundred
 /// thousand usable pairs, far more than 256-bin curves need.
-pub(crate) const FIT_LONG_EDGE: usize = 640;
+pub const FIT_LONG_EDGE: usize = 640;
 
 /// The falloff's pairs are blurred before pairing: the camera's sharpening and noise
 /// reduction are not reproducible and must not leak into what is fitted from them. Only
@@ -35,10 +35,10 @@ const FIT_BLUR_SIGMA: f64 = 3.0;
 
 /// A pair from a steep gradient is worthless: a fraction of a pixel of
 /// misalignment there swamps the colour difference being measured.
-pub(crate) const MAX_PAIR_GRADIENT: i32 = 24;
+pub const MAX_PAIR_GRADIENT: i32 = 24;
 
 const MIN_PAIRS: usize = 2000;
-pub(crate) const MIN_BIN_SAMPLES: f64 = 8.0;
+pub const MIN_BIN_SAMPLES: f64 = 8.0;
 
 const REFINE_FLOOR: f64 = 0.0005;
 const REFINE_MARGIN: f64 = 0.002;
@@ -73,7 +73,7 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub(crate) fn held_out(self) -> Phase {
+    pub fn held_out(self) -> Phase {
         match self {
             Phase::Train => Phase::Test,
             Phase::Test => Phase::Train,
@@ -138,14 +138,14 @@ struct Grid {
     jpeg: Sampled,
     /// The objective's buffers for a single candidate, kept because the refine asks about fifty of
     /// them one at a time and allocating the set per step costs more than the dispatches do.
-    alone: std::cell::OnceCell<crate::fit_objective::Paired>,
+    alone: std::cell::OnceCell<crate::objective::Paired>,
 }
 
 impl Grid {
     /// The render through each candidate, at the JPEG's size, in one round trip.
     fn warped(&self, gpu: &'static gpu::Gpu, lenses: &[Lens]) -> Vec<gpu::Buffer> {
         let size = (self.jpeg.width, self.jpeg.height);
-        crate::hdr_fit::warped_planes(gpu, &self.source, self.source_size, lenses, size)
+        crate::hdr::warped_planes(gpu, &self.source, self.source_size, lenses, size)
     }
 
     fn size(&self) -> (usize, usize) {
@@ -153,9 +153,9 @@ impl Grid {
     }
 
     /// Room for one candidate's pairs, made once and asked about many times.
-    fn alone(&self, gpu: &'static gpu::Gpu) -> &crate::fit_objective::Paired {
+    fn alone(&self, gpu: &'static gpu::Gpu) -> &crate::objective::Paired {
         self.alone
-            .get_or_init(|| crate::fit_objective::paired(gpu, 1, &self.jpeg.buffer, self.size()))
+            .get_or_init(|| crate::objective::paired(gpu, 1, &self.jpeg.buffer, self.size()))
     }
 }
 
@@ -182,7 +182,7 @@ struct Grids {
 // ------------------------------------------------------------------ the grids, on the device
 
 /// `fit_grids.slang`'s two resamplers, built once for the process.
-pub(crate) struct Resamplers {
+pub struct Resamplers {
     layout: wgpu::BindGroupLayout,
     lanczos: wgpu::ComputePipeline,
     blur: wgpu::ComputePipeline,
@@ -190,7 +190,7 @@ pub(crate) struct Resamplers {
     box_blur_windowed: wgpu::ComputePipeline,
 }
 
-pub(crate) fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
+pub fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
     static BUILT: gpu::Cache<Resamplers> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -245,12 +245,12 @@ pub(crate) fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
 
 /// A plane a pass reads or wrote: interleaved f32 RGB in 0..1, or the bytes an 8-bit plane was
 /// uploaded as.
-pub(crate) struct Sampled {
-    pub(crate) buffer: gpu::Buffer,
-    pub(crate) width: usize,
-    pub(crate) height: usize,
+pub struct Sampled {
+    pub buffer: gpu::Buffer,
+    pub width: usize,
+    pub height: usize,
     /// 8-bit, four samples to a word, which the shader reads through 1/255.
-    pub(crate) packed: bool,
+    pub packed: bool,
 }
 
 impl Sampled {
@@ -266,7 +266,7 @@ impl Sampled {
 
 /// One `fit_grids.slang` pass.
 #[track_caller]
-pub(crate) fn pass(
+pub fn pass(
     gpu: &'static gpu::Gpu,
     recording: &mut gpu::Recording<'_>,
     pipeline: &wgpu::ComputePipeline,
@@ -422,7 +422,7 @@ const BOX_PASSES: usize = 3;
 
 /// The colour fit's prefilter: three passes of a truncated box an axis, over a plane whose values
 /// may run past one.
-pub(crate) fn box_blurred(
+pub fn box_blurred(
     gpu: &'static gpu::Gpu,
     recording: &mut gpu::Recording<'_>,
     source: &Sampled,
@@ -465,13 +465,13 @@ pub(crate) fn box_blurred(
 /// `fit_grids.slang`'s windowed box workgroup: the pixels of a line it writes, and the widest
 /// window it holds.
 const BOX_SEGMENT: u32 = 256;
-pub(crate) const BOX_MOST_RADIUS: usize = BOX_SEGMENT as usize / 2;
+pub const BOX_MOST_RADIUS: usize = BOX_SEGMENT as usize / 2;
 const BOX_WINDOWED_FROM: usize = 16;
 
 /// An 8-bit plane on the device as its own bytes, and a grid back off it.
 ///
 /// Only the tests that look at a resampled grid want either: the fit uploads its preview once,
-/// through `hdr_fit::preview_planes`, and reads no grid back at all.
+/// through `crate::hdr::preview_planes`, and reads no grid back at all.
 #[cfg(test)]
 fn uploaded(recording: &mut gpu::Recording<'_>, label: &str, plane: RgbRef<'_>) -> Sampled {
     Sampled {
@@ -505,7 +505,7 @@ async fn read_rgb(
     staging: &gpu::Buffer,
     plane: &Sampled,
 ) -> Option<units::rgb::Rgb> {
-    use crate::parallel::*;
+    use rayon::prelude::*;
     let data: Vec<u8> = gpu::read_back(gpu, staging, |mapped| {
         mapped
             .par_chunks_exact(4)
@@ -598,13 +598,13 @@ pub struct Gain {
 
 impl Gain {
     /// The 256x256 level table as the objective's kernel reads it, four levels to a word.
-    pub(crate) fn table(&self) -> &[u8] {
+    pub fn table(&self) -> &[u8] {
         &self.lut
     }
 
     /// Tabulated rather than left to be evaluated, because the geometry search reads it
     /// per pair and evaluating it is a `powf` for the transfer.
-    pub(crate) fn from_poly(a: f64, b: f64) -> Self {
+    pub fn from_poly(a: f64, b: f64) -> Self {
         let linear = linear_table();
         let mut lut = vec![0u8; 256 * 256];
         for radius in 0..256 {
@@ -624,13 +624,12 @@ impl Gain {
     /// A falloff correction is a multiplication in linear light, so unlike the curves
     /// - whose domain stops at display white - it means the same thing in any linear
     /// domain and lifts to the grade exactly as the geometry does (10.8.1).
-    pub(crate) fn coefficients(&self) -> (f64, f64) {
+    pub fn coefficients(&self) -> (f64, f64) {
         self.coefficients
     }
 
     /// The level `level` becomes at this radius, which is what `table` hands the objective and
     /// what `fit_objective.slang` indexes for itself.
-    #[cfg(all(test, feature = "fixtures"))]
     fn of(&self, radius: u8, level: u8) -> u8 {
         self.lut[radius as usize * 256 + level as usize]
     }
@@ -638,8 +637,7 @@ impl Gain {
     /// What this gain does to a corner pixel of mid grey, as a ratio - the one number
     /// that says how much falloff was corrected, and the one the tests assert on
     /// because `(a, b)` trade off against each other and it does not.
-    #[cfg(all(test, feature = "fixtures"))]
-    pub(crate) fn corner(&self) -> f64 {
+    pub fn corner(&self) -> f64 {
         let linear = linear_table();
         linear[self.of(255, 128) as usize] / linear[128]
     }
@@ -666,7 +664,7 @@ fn to_srgb8(linear: f64) -> u8 {
 /// frames the arms disagreed most about, the two land within a few percent of each other
 /// and both far inside no correction at all.
 async fn refit_gain(
-    paired: &crate::fit_objective::Paired,
+    paired: &crate::objective::Paired,
     admitted: usize,
     phase: Phase,
     curve: &[u8; 256],
@@ -677,7 +675,7 @@ async fn refit_gain(
     // coming back, rather than the whole admitted pair list coming down.
     let binned = paired.falloff(admitted, phase, &back, &linear).await?;
 
-    const BINS: usize = crate::fit_objective::FALLOFF_BINS;
+    const BINS: usize = crate::objective::FALLOFF_BINS;
     /// A bin backed by a handful of pixels states a ratio, not a measurement, and the
     /// bins most likely to be that thin are the outer ones - `pairs` drops near-black
     /// samples, and the corners of a frame that needs this correction are exactly
@@ -739,7 +737,7 @@ const GAIN_REVERSAL: f64 = 0.05;
 /// `GAIN_MARGIN` nor the held-out score can object, because that gain genuinely does predict that
 /// frame's luma better; only the shape gives it away.
 ///
-/// What it costs is not confined to the falloff. `hdr_fit` multiplies this into the render before
+/// What it costs is not confined to the falloff. `crate::hdr` multiplies this into the render before
 /// pairing it against the camera's rendering, so a radial gain spanning 7.6x stops the pairs being
 /// a function of level at all - one render level arrives carrying whatever the camera printed
 /// anywhere on its ring. The tone curve's binned means come out non-monotone, `pool_violators`
@@ -798,7 +796,7 @@ const GAIN_MARGIN: f64 = 0.04;
 /// believed in, and asking each of them for another 4% would stop the refinement that
 /// exists because the first round's curve still had some of the falloff in it.
 async fn fit_gain(
-    paired: &crate::fit_objective::Paired,
+    paired: &crate::objective::Paired,
     warped: &[gpu::Buffer],
     phase: Phase,
     admitted: usize,
@@ -881,7 +879,7 @@ fn to_linear(value: f64) -> f64 {
 
 /// The scoring loop only ever linearises 8-bit levels, and the transfer's pow() is
 /// the most expensive arithmetic in the fit.
-pub(crate) fn linear_table() -> [f64; 256] {
+pub fn linear_table() -> [f64; 256] {
     let mut table = [0.0f64; 256];
     for (level, slot) in table.iter_mut().enumerate() {
         *slot = to_linear(level as f64);
@@ -913,7 +911,7 @@ pub(crate) fn linear_table() -> [f64; 256] {
 /// Each candidate's held-out residual: the curve fitted on one half of its pairs, scored on the
 /// other. `INFINITY` where a candidate kept too few pairs to be believed at all.
 async fn residuals(
-    paired: &crate::fit_objective::Paired,
+    paired: &crate::objective::Paired,
     grid: &Grid,
     lenses: &[Lens],
 ) -> Option<Vec<f64>> {
@@ -987,7 +985,7 @@ async fn scan<T: Send + Sync + Copy>(
         .iter()
         .map(|c| candidate(&knots_of(*c), crop_of(*c)))
         .collect();
-    let paired = crate::fit_objective::paired(gpu, lenses.len(), &grid.jpeg.buffer, grid.size());
+    let paired = crate::objective::paired(gpu, lenses.len(), &grid.jpeg.buffer, grid.size());
     let scored = residuals(&paired, grid, &lenses).await?;
     candidates
         .iter()
@@ -1115,8 +1113,8 @@ const SETTLE_RIDGE: f64 = 1e-6;
 /// search settled on: the family picks the neighbourhood, the measurement picks the curve.
 async fn settled_on_registration(
     gpu: &'static gpu::Gpu,
-    render: &crate::hdr_fit::Source,
-    preview: &crate::hdr_fit::Source,
+    render: &crate::hdr::Source,
+    preview: &crate::hdr::Source,
     knots: &[f64],
     crop: f64,
 ) -> Option<(Vec<f64>, f64)> {
@@ -1125,14 +1123,14 @@ async fn settled_on_registration(
         (((render.width * render.height) as f64 / SETTLE_POINTS as f64).sqrt() as usize).max(1);
     // **Everything the rounds share, uploaded once.** Only the lens moves between them; the plane
     // it warps, the plane it is matched against, and the grid it is asked about do not.
-    let settling = crate::hdr_fit::Settling::new(gpu, render, preview, stride);
+    let settling = crate::hdr::Settling::new(gpu, render, preview, stride);
     let measure = async |knots: &[f64]| {
-        crate::hdr_fit::registration(gpu, &settling, &lens_of(knots), SETTLE_BINS).await
+        crate::hdr::registration(gpu, &settling, &lens_of(knots), SETTLE_BINS).await
     };
 
     let half =
         ((preview.width as f64 / 2.0).powi(2) + (preview.height as f64 / 2.0).powi(2)).sqrt();
-    let resolved = |measured: &crate::hdr_fit::Registration| {
+    let resolved = |measured: &crate::hdr::Registration| {
         measured
             .radial
             .iter()
@@ -1182,7 +1180,7 @@ fn on_knot_grid(knots: &[f64]) -> Vec<f64> {
 /// the curvature term alone places it: held at what it was, a lens whose correction is already
 /// several hundred at the first knot reads as a kink, and the penalty flattens the magnification
 /// it actually has.
-fn nudged(knots: &[f64], measured: &crate::hdr_fit::Registration, feedback: f64) -> Vec<f64> {
+fn nudged(knots: &[f64], measured: &crate::hdr::Registration, feedback: f64) -> Vec<f64> {
     let n = knots.len();
     let total: f64 = measured
         .radial
@@ -1303,8 +1301,8 @@ fn chosen(
 /// a properly filtered resize down to its own 640 rather than a DCT approximation of one.
 pub async fn fit_from_preview(
     gpu: &'static gpu::Gpu,
-    render: &crate::fit_source::Rendered,
-    preview: &crate::hdr_fit::Source,
+    render: &crate::source::Rendered,
+    preview: &crate::hdr::Source,
     geometry: Geometry,
 ) -> Result<Option<Profile>, String> {
     let mut lap = trace::clock::laps("  geometry ");
@@ -1327,9 +1325,9 @@ pub async fn fit_from_preview(
 /// other way.
 async fn grids_from_preview(
     gpu: &'static gpu::Gpu,
-    render: &crate::fit_source::Rendered,
-    preview: &crate::hdr_fit::Source,
-) -> Option<(Grids, crate::hdr_fit::Source)> {
+    render: &crate::source::Rendered,
+    preview: &crate::hdr::Source,
+) -> Option<(Grids, crate::hdr::Source)> {
     // Already f32 and already on the device, where `fit_render` wrote it, so this is the buffer
     // itself rather than a copy of one.
     let render = Sampled {
@@ -1392,7 +1390,7 @@ async fn grids_from_preview(
     // Nothing comes back. The three grids the search compares against stay where they were
     // reduced, and so does the 1:1 plane the settle warps.
     recording.submit();
-    let sampled = crate::hdr_fit::Source {
+    let sampled = crate::hdr::Source {
         buffer: sampled.buffer,
         width: sampled.width,
         height: sampled.height,
@@ -1428,8 +1426,8 @@ async fn fit_grids(
     gpu: &'static gpu::Gpu,
     grids: Grids,
     geometry: Geometry,
-    render: &crate::hdr_fit::Source,
-    preview: &crate::hdr_fit::Source,
+    render: &crate::hdr::Source,
+    preview: &crate::hdr::Source,
 ) -> Result<Option<Profile>, String> {
     let mut lap = trace::clock::laps("  geometry ");
     // The uncorrected frame has the most pairs of any geometry, so a baseline that cannot be
@@ -1547,7 +1545,7 @@ async fn fit_grids(
 pub async fn with_lateral(
     gpu: &'static gpu::Gpu,
     profile: &mut Profile,
-    render: &crate::fit_source::Rendered,
+    render: &crate::source::Rendered,
     recorded: Option<[Vec<f64>; 2]>,
 ) {
     let Some(frame) = crate::tca_device::frame(gpu, render).await else {
@@ -1844,7 +1842,7 @@ mod tests {
         // and well under `MAX_SCALE`, so `plausible` accepts it, and `improves` cannot
         // refuse it on a frame with no point sources to check against.
         let recorded = crate::tca::flat(1.006, 1.0);
-        let render = crate::fit_source::uploaded_render(gpu, render.as_ref());
+        let render = crate::source::uploaded_render(gpu, render.as_ref());
         pollster::block_on(with_lateral(gpu, &mut profile, &render, Some(recorded)));
 
         let tca = profile
@@ -1946,7 +1944,7 @@ mod tests {
             return;
         };
         let (ours, theirs, size) = mapped_grids(gpu, tone_mapped);
-        let paired = crate::fit_objective::paired(gpu, 1, &theirs, size);
+        let paired = crate::objective::paired(gpu, 1, &theirs, size);
         let scored = pollster::block_on(paired.scored(&[ours], Phase::Train, None))
             .expect("the device scored");
         assert!(
@@ -2071,7 +2069,7 @@ mod tests {
             let (second, _) = noisy_grids(size, 5);
             let empty = vec![0.0f32; first.len()];
             let planes = [&first, &second, &empty];
-            let paired = crate::fit_objective::paired(gpu, 3, &upload("theirs", &theirs), size);
+            let paired = crate::objective::paired(gpu, 3, &upload("theirs", &theirs), size);
             let warped: Vec<gpu::Buffer> =
                 planes.iter().map(|plane| upload("ours", plane)).collect();
             let scored = pollster::block_on(paired.scored(&warped, Phase::Train, None))
@@ -2116,21 +2114,16 @@ mod tests {
         };
         let size = (160, 120);
         let render = textured(size.0, size.1);
-        let source = crate::hdr_fit::levelled_source(gpu, render.as_ref());
+        let source = crate::hdr::levelled_source(gpu, render.as_ref());
         let knots = |strength: f64| -> Vec<f64> {
             (0..16)
                 .map(|i| strength * (i as f64 / 15.0).powi(2) * geometry::lens::SPLINE_UNIT)
                 .collect()
         };
-        let jpeg = crate::hdr_fit::warped_planes(
-            gpu,
-            &source,
-            size,
-            &[candidate(&knots(0.01), 1.0)],
-            size,
-        )
-        .remove(0);
-        let paired = crate::fit_objective::paired(gpu, 3, &jpeg, size);
+        let jpeg =
+            crate::hdr::warped_planes(gpu, &source, size, &[candidate(&knots(0.01), 1.0)], size)
+                .remove(0);
+        let paired = crate::objective::paired(gpu, 3, &jpeg, size);
         let first = [
             candidate(&knots(0.0), 1.0),
             candidate(&knots(0.01), 1.0),
@@ -2140,7 +2133,7 @@ mod tests {
         for lenses in [&first[..], &second[..], &first[..]] {
             let through = pollster::block_on(paired.scored_through(&source, size, lenses))
                 .expect("scored through");
-            let warped = crate::hdr_fit::warped_planes(gpu, &source, size, lenses, size);
+            let warped = crate::hdr::warped_planes(gpu, &source, size, lenses, size);
             let direct =
                 pollster::block_on(paired.scored(&warped, Phase::Train, None)).expect("scored");
             for (k, (a, b)) in through.iter().zip(&direct).take(lenses.len()).enumerate() {
@@ -2244,19 +2237,19 @@ mod tests {
         let start: Vec<f64> = truth.iter().map(|knot| knot * 0.5).collect();
 
         let gpu = gpu::device().expect("an adapter for the fit's search");
-        let source = crate::hdr_fit::Source {
-            buffer: crate::hdr_fit::levelled_source(gpu, render.as_ref()),
+        let source = crate::hdr::Source {
+            buffer: crate::hdr::levelled_source(gpu, render.as_ref()),
             width,
             height,
         };
-        let warped = crate::hdr_fit::warped_planes(
+        let warped = crate::hdr::warped_planes(
             gpu,
             &source.buffer,
             (width, height),
             &[candidate(&truth, 1.0)],
             (width, height),
         );
-        let preview = crate::hdr_fit::Source {
+        let preview = crate::hdr::Source {
             buffer: warped
                 .into_iter()
                 .next()

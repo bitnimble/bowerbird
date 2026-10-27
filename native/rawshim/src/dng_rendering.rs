@@ -98,7 +98,7 @@ impl Stated {
             stated: true,
             ..HdrColour::identity()
         };
-        let (exposure, curve, _) = crate::hdr_fit::camera_curve(gpu, &colour).await?;
+        let (exposure, curve, _) = fit::hdr::camera_curve(gpu, &colour).await?;
         colour.exposure = exposure;
         colour.curve = curve;
         Some(colour)

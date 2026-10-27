@@ -434,6 +434,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
 
 [[package]]
+name = "fit"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "colour",
+ "denoise",
+ "formats",
+ "geometry",
+ "gpu",
+ "half",
+ "linalg",
+ "pollster",
+ "rayon",
+ "render",
+ "serde",
+ "serde_json",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1530,6 +1553,7 @@ dependencies = [
  "crc32fast",
  "denoise",
  "fast_image_resize",
+ "fit",
  "formats",
  "geometry",
  "gpu",

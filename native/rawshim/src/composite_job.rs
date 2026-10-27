@@ -465,7 +465,7 @@ fn whole_levels(
         let resident = frame
             .on_device(gpu)
             .ok_or("a source could not be read onto the device")?;
-        let levels = pollster::block_on(crate::fit_source::levels(
+        let levels = pollster::block_on(fit::source::levels(
             gpu,
             &resident,
             job.grade.white_quantile,
@@ -557,7 +557,7 @@ thread_local! {
 /// canvas is gathered, so what is measured here is a quantile of the set as the bodies exposed it
 /// rather than of the set as it is blended - an approximation, and a close one for the gains an
 /// alignment produces, which sit within a stop of each other because the frames are of one scene.
-/// Carrying them would mean a gain per row of the stack, in `fit_source::levels`, which is where
+/// Carrying them would mean a gain per row of the stack, in `fit::source::levels`, which is where
 /// this would go if a set ever arrived metered far enough apart to see it.
 ///
 /// Stacked rather than laid out where each source falls on the canvas, because neither a quantile
@@ -677,11 +677,7 @@ fn union_levels(
     job: &Job,
     stacked: &colour::resident::Resident,
 ) -> Option<colour::tone::Anchored> {
-    let levels = pollster::block_on(crate::fit_source::levels(
-        gpu,
-        stacked,
-        job.grade.white_quantile,
-    ))?;
+    let levels = pollster::block_on(fit::source::levels(gpu, stacked, job.grade.white_quantile))?;
     Some(levels.anchored())
 }
 
@@ -708,8 +704,8 @@ fn union_match(
     files: &[crate::composite_tile::SourceFile<'_>],
     stacked: &colour::resident::Resident,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<crate::hdr_fit::HdrMatch> {
-    if job.camera_match != crate::hdr_fit::CameraMatch::LensAndColour {
+) -> Option<fit::hdr::HdrMatch> {
+    if job.camera_match != fit::hdr::CameraMatch::LensAndColour {
         return None;
     }
     const FITTED_ON: usize = 1024;
@@ -726,7 +722,7 @@ fn union_match(
     }
     // Each stack has to be square, so a set whose cameras embed previews of different widths
     // declines rather than stacking a ragged one. The two stacks need not match *each other* -
-    // `fit_source::prepared` resizes ours to whatever the preview's own fitted width is.
+    // `fit::source::prepared` resizes ours to whatever the preview's own fitted width is.
     let across = theirs.first()?.width;
     if across == 0 || theirs.iter().any(|camera| camera.width != across) {
         return None;
@@ -752,15 +748,15 @@ fn union_match(
         height: deep,
     };
 
-    let (tw, _) = crate::hdr_fit::fitted_preview_size(preview.width, preview.height);
-    let prepared = pollster::block_on(crate::fit_source::prepared(
+    let (tw, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
+    let prepared = pollster::block_on(fit::source::prepared(
         gpu,
         stacked,
         tw,
         job.grade.white_quantile,
     ))?;
-    let (wide_jpeg, _) = pollster::block_on(crate::hdr_fit::preview_planes(gpu, &preview))?;
-    let matched = pollster::block_on(crate::hdr_fit::fit_linearised(
+    let (wide_jpeg, _) = pollster::block_on(fit::hdr::preview_planes(gpu, &preview))?;
+    let matched = pollster::block_on(fit::hdr::fit_linearised(
         gpu,
         &prepared.plane,
         prepared.levels,
@@ -768,7 +764,7 @@ fn union_match(
         geometry::lens::Lens::none(),
         as_shot,
     ))?;
-    Some(crate::hdr_fit::HdrMatch {
+    Some(fit::hdr::HdrMatch {
         lens: geometry::lens::Lens::none(),
         colour: matched.colour,
     })
@@ -862,13 +858,13 @@ pub(crate) fn base(
             "a window is asked for in even columns, and this one is {width} wide at {window_left}",
         ));
     }
-    let analyses: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = sources
+    let analyses: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = sources
         .iter()
         .map(|source| {
             source
                 .photo_analysis
                 .as_deref()
-                .and_then(crate::photo_analysis::decode)
+                .and_then(fit::photo_analysis::decode)
         })
         .collect();
     let files: Vec<crate::composite_tile::SourceFile<'_>> = sources
@@ -918,7 +914,7 @@ pub(crate) fn base(
     // **The set's samples, once, for both measures that read them**, and not at all for an answer
     // already on file: this is a reduced decode of every source, so it is the expensive half of a
     // composite and the half a pan pays on every render and every open of it.
-    let needs_colour = job.camera_match == crate::hdr_fit::CameraMatch::LensAndColour
+    let needs_colour = job.camera_match == fit::hdr::CameraMatch::LensAndColour
         && files
             .iter()
             .any(|file| !formats::rendered::is_rendered(file.path))
@@ -958,7 +954,7 @@ pub(crate) fn base(
     if known.from_render.set == Some(stamp) {
         fits[spec.reference] = fits[spec.reference].or(known.from_raw.noise);
     }
-    let refitted: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = files
+    let refitted: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = files
         .iter()
         .zip(&fits)
         .map(|(file, fit)| {
@@ -1114,7 +1110,7 @@ pub(crate) fn base(
             // Only where the composite's own fit declined: `union_match` is the colour this picture
             // is graded through, and the reference's is the fallback.
             fallback_match = fallback_match.or_else(|| {
-                prepared.matched.map(|m| crate::hdr_fit::HdrMatch {
+                prepared.matched.map(|m| fit::hdr::HdrMatch {
                     lens: geometry::lens::Lens::none(),
                     colour: m.colour,
                 })
@@ -1135,7 +1131,7 @@ pub(crate) fn base(
             .get(spec.reference)
             .and_then(|a| a.clone())
             .unwrap_or_default(),
-        crate::composite_tile::From::Camera => crate::photo_analysis::PhotoAnalysis::default(),
+        crate::composite_tile::From::Camera => fit::photo_analysis::PhotoAnalysis::default(),
     };
     let anchored = levels.ok_or("this composite has no levels to grade against")?;
     // **The reference frame's balance, from whichever tile reached it, or from what the last pass
@@ -1148,7 +1144,7 @@ pub(crate) fn base(
     // absent illuminant stand in for one the file does name.
     let as_shot = as_shot.or_else(|| known.from_raw.balance.and_then(|kept| kept.as_shot));
     let wb_gains = wb_gains.or_else(|| known.from_raw.balance.map(|kept| kept.wb_gains));
-    let balance = wb_gains.map(|wb_gains| crate::photo_analysis::Balance { wb_gains, as_shot });
+    let balance = wb_gains.map(|wb_gains| fit::photo_analysis::Balance { wb_gains, as_shot });
     // A reference never rendered alone has no fit on file, and without one the sharpen reads the
     // canvas as noiseless and deconvolves its grain at full strength.
     let noise = fits[spec.reference].or(decoded_noise);
@@ -1163,9 +1159,9 @@ pub(crate) fn base(
     // this row would be read back by the next composite *of the photographs* as its own.
     let matched = job.camera_match.apply(matched.or(fallback_match));
     let analysis = match from {
-        crate::composite_tile::From::Camera => crate::photo_analysis::PhotoAnalysis::default(),
-        crate::composite_tile::From::Original => crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        crate::composite_tile::From::Camera => fit::photo_analysis::PhotoAnalysis::default(),
+        crate::composite_tile::From::Original => fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 // The reference's: no single fit describes a blend.
                 noise,
@@ -1175,8 +1171,8 @@ pub(crate) fn base(
                 capture_sigma: reference.from_raw.capture_sigma,
                 balance,
             },
-            from_render: crate::photo_analysis::FromRender {
-                levels: Some(crate::photo_analysis::MeasuredLevels {
+            from_render: fit::photo_analysis::FromRender {
+                levels: Some(fit::photo_analysis::MeasuredLevels {
                     // The pre-anchor pair, which is what the store holds: `anchored` only floors a
                     // white below one count, and this picture's is orders above it.
                     levels: *anchored,
@@ -1368,9 +1364,9 @@ mod tests {
         };
         // With a match kept about it, which is the case the composite has to ignore: the whole set
         // is these pictures, and a match belongs to a render of the RAW behind one of them.
-        let analysis = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
-                matched: Some(crate::photo_analysis::tests::a_match()),
+        let analysis = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
+                matched: Some(fit::photo_analysis::testing::a_match()),
                 ..Default::default()
             },
             ..Default::default()
@@ -1843,27 +1839,24 @@ mod tests {
         );
         assert_eq!(
             second.header.camera_match,
-            crate::hdr_fit::CameraMatch::LensAndColour
+            fit::hdr::CameraMatch::LensAndColour
         );
 
         let mut lens_only = job(&paths, recipe.clone(), "render");
-        lens_only.camera_match = crate::hdr_fit::CameraMatch::Lens;
+        lens_only.camera_match = fit::hdr::CameraMatch::Lens;
         let measured =
             crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        let mut richer = crate::photo_analysis::decode(
+        let mut richer = fit::photo_analysis::decode(
             measured.header.photo_analysis.as_deref().expect("analysis"),
         )
         .expect("stored analysis");
-        richer.from_raw.matched = Some(crate::photo_analysis::tests::a_match());
-        lens_only.photo_analysis = Some(crate::photo_analysis::encode(&richer));
+        richer.from_raw.matched = Some(fit::photo_analysis::testing::a_match());
+        lens_only.photo_analysis = Some(fit::photo_analysis::encode(&richer));
         let prepared =
             crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        assert_eq!(
-            prepared.header.camera_match,
-            crate::hdr_fit::CameraMatch::Lens
-        );
+        assert_eq!(prepared.header.camera_match, fit::hdr::CameraMatch::Lens);
         assert!(
-            crate::photo_analysis::decode(
+            fit::photo_analysis::decode(
                 prepared.header.photo_analysis.as_deref().expect("analysis")
             )
             .and_then(|analysis| analysis.from_raw.matched)
@@ -1935,20 +1928,20 @@ mod tests {
         // not RAWs - balance from: a window that never decodes the reference has to read the
         // *file's*, and a filed value equal to the frame's could not tell a read from a coincidence.
         const WARM: f64 = 5240.0;
-        let mut filed = crate::photo_analysis::decode(&kept).expect("the blob reads back");
+        let mut filed = fit::photo_analysis::decode(&kept).expect("the blob reads back");
         let gains = filed
             .from_raw
             .balance
             .expect("the level filed its gains")
             .wb_gains;
-        filed.from_raw.balance = Some(crate::photo_analysis::Balance {
+        filed.from_raw.balance = Some(fit::photo_analysis::Balance {
             wb_gains: gains,
             as_shot: Some(colour::white_balance::Illuminant {
                 temperature: WARM,
                 tint: 1.5,
             }),
         });
-        let kept = crate::photo_analysis::encode(&filed);
+        let kept = fit::photo_analysis::encode(&filed);
 
         // A rectangle inside it, on even columns, and not at the origin: an origin of zero would
         // pass even with the buffer's coordinate handed to the gather.
@@ -2231,15 +2224,15 @@ mod tests {
 
         // Every source with an analysis of the kind a library keeps: the match a render of the RAW
         // was fitted, and the blur that decode carried.
-        let analysis = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
-                matched: Some(crate::photo_analysis::tests::a_match()),
+        let analysis = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
+                matched: Some(fit::photo_analysis::testing::a_match()),
                 capture_sigma: Some(1.25),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let kept = crate::photo_analysis::encode(&analysis);
+        let kept = fit::photo_analysis::encode(&analysis);
         let mut rendering = job(&paths, recipe, "render");
         let pano = rendering.composite.as_mut().expect("a panorama");
         for source in &mut pano.sources {
@@ -2298,10 +2291,7 @@ mod tests {
             "the sources' own white is measured, and came back {}",
             ours.levels.white.raw(),
         );
-        for mode in [
-            crate::hdr_fit::CameraMatch::Lens,
-            crate::hdr_fit::CameraMatch::None,
-        ] {
+        for mode in [fit::hdr::CameraMatch::Lens, fit::hdr::CameraMatch::None] {
             rendering.camera_match = mode;
             let composite = rendering.composite.as_ref().expect("composite");
             let Want::Render { recipe } = &composite.want else {
@@ -2319,7 +2309,7 @@ mod tests {
             .expect("selected camera stages");
             assert_eq!(
                 selected.matched.is_some(),
-                mode == crate::hdr_fit::CameraMatch::Lens
+                mode == fit::hdr::CameraMatch::Lens
             );
             assert!(
                 selected

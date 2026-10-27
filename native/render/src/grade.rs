@@ -2247,7 +2247,7 @@ impl Grader {
     ///
     /// The number itself, for a caller that has to hand it to a frame holding a piece of the same
     /// photograph: a loupe tile, and the analysis a job keeps beside the photograph so no later
-    /// render measures it again (`crate::photo_analysis`). The renditions of one job never ask -
+    /// render measures it again (`fit::photo_analysis`). The renditions of one job never ask -
     /// they pass the buffer along and the CPU stays out of it.
     pub fn read_peak(&self, peak: &ScenePeak) -> f32 {
         pollster::block_on(self.peak_of(peak)).expect("the readback mapped")

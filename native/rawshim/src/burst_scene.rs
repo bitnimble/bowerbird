@@ -313,7 +313,7 @@ mod tests {
     };
 
     fn read(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, count: usize) -> Vec<f32> {
-        pollster::block_on(align::read_floats(gpu, buffer, count)).expect("read back")
+        pollster::block_on(gpu::read_floats(gpu, buffer, count)).expect("read back")
     }
 
     struct Accuracy {

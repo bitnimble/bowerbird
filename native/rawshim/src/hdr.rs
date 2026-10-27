@@ -13,15 +13,15 @@
 // the one that composites HDR (§10.7.2).
 
 use crate::hdr_args::{self, EncodeOptions};
-use crate::hdr_fit::{self, CameraMatch, HdrMatch};
 use colour::tone;
+use fit::hdr::{CameraMatch, HdrMatch};
 use render::detail;
 use serde::{Deserialize, Serialize};
 
 /// The long edge the camera match decodes its preview to, which is all of it (`jpeg::decode`
 /// reads 0 as whole).
 ///
-/// Whole rather than the fit's own grid, because `hdr_fit::preview_planes` averages it down in
+/// Whole rather than the fit's own grid, because `fit::hdr::preview_planes` averages it down in
 /// linear light and anything here is a coded-domain filter underneath that. Measured on the
 /// Canon fixture: stopping at the coarsest DCT scale that still covers the grid saves 90ms of
 /// the decode and costs every crop against the camera's own rendering - 2.62 to 3.26 counts of
@@ -103,14 +103,14 @@ pub async fn fit_match_from(
     lens: geometry::lens::Lens,
     as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
-    let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (tw, th) = fit::hdr::fitted_preview_size(preview.width, preview.height);
     let (width, height) = frame.size();
     if width < tw || height < th {
         return None;
     }
     let quantile = colour::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
-    let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
-    let matched = hdr_fit::fit(
+    let prepared = fit::source::prepared(gpu, frame, tw, quantile).await?;
+    let matched = fit::hdr::fit(
         gpu,
         &prepared.plane,
         prepared.levels,
@@ -127,7 +127,7 @@ pub async fn fit_match_from(
 ///
 /// Both halves want the same three things: the frame's levels, the camera's preview, and
 /// the decode box-averaged to the width the preview is fitted at
-/// (`hdr_fit::fitted_preview_size`). Asked for as two calls they each measured the levels,
+/// (`fit::hdr::fitted_preview_size`). Asked for as two calls they each measured the levels,
 /// each pulled the 5-14MB preview back out of the file, and each walked the whole frame to
 /// build the same average.
 ///
@@ -150,8 +150,8 @@ pub async fn fit_match_from(
 /// The colour half still reads `plane`, which is scene-linear and cannot be finished in the
 /// same way: the denoise takes a difference against a blur, and a difference taken in
 /// linear light follows absolute luminance rather than what the eye reads. What makes that
-/// tolerable is `fit_source::prepared` itself - it box-averages the
-/// decode down to the width the preview is fitted at (`hdr_fit::fitted_preview_size`),
+/// tolerable is `fit::source::prepared` itself - it box-averages the
+/// decode down to the width the preview is fitted at (`fit::hdr::fitted_preview_size`),
 /// which already removes most of the chroma noise a denoise would have.
 ///
 /// None when the file embeds no preview, when the fit found nothing worth applying, or
@@ -162,10 +162,10 @@ pub async fn fit_all(
     raw_path: &str,
     frame: &colour::resident::Resident,
     quantile: f64,
-    geometry: crate::fit::Geometry,
+    geometry: fit::profile::Geometry,
     camera_match: CameraMatch,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+) -> Option<(fit::profile::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
     }
@@ -196,17 +196,17 @@ pub async fn fit_all_from_preview(
     gpu: &'static gpu::Gpu,
     frame: &colour::resident::Resident,
     quantile: f64,
-    geometry: crate::fit::Geometry,
+    geometry: fit::profile::Geometry,
     preview: &units::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
     camera_match: CameraMatch,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+) -> Option<(fit::profile::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
     }
     let mut lap = trace::clock::laps("  match ");
-    let (tw, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (tw, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
     // The body's own anchor where its rendering carries one, and the caller's quantile where it
     // does not. Here rather than at the callers because this is the one place holding both the
     // frame and the picture the body made of it, and both arms of `open::measure` reach it.
@@ -214,20 +214,20 @@ pub async fn fit_all_from_preview(
     if trace::clock::watched() {
         eprintln!("  match anchor at quantile {quantile:.5}");
     }
-    let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
+    let prepared = fit::source::prepared(gpu, frame, tw, quantile).await?;
     let (plane, rendered, levels) = (prepared.plane, prepared.rendered, prepared.levels);
     lap("plane, levels, render");
     if !(levels.white > units::light::Light::ZERO) {
         return None;
     }
-    let (wide_jpeg, searched) = hdr_fit::preview_planes(gpu, preview).await?;
+    let (wide_jpeg, searched) = fit::hdr::preview_planes(gpu, preview).await?;
     lap("planes");
-    let mut profile = crate::fit::fit_from_preview(gpu, &rendered, &searched, geometry)
+    let mut profile = fit::profile::fit_from_preview(gpu, &rendered, &searched, geometry)
         .await
         .ok()
         .flatten()?;
     lap("geometry");
-    crate::fit::with_lateral(gpu, &mut profile, &rendered, lateral).await;
+    fit::profile::with_lateral(gpu, &mut profile, &rendered, lateral).await;
     lap("lateral");
     if camera_match == CameraMatch::Lens {
         let matched = HdrMatch {
@@ -236,7 +236,7 @@ pub async fn fit_all_from_preview(
         };
         return Some((profile, matched, levels));
     }
-    let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens(), as_shot)
+    let matched = fit::hdr::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens(), as_shot)
         .await
         .unwrap_or_else(|| HdrMatch {
             lens: profile.lens(),
@@ -278,7 +278,7 @@ pub fn levels_of(
     quantile: f64,
 ) -> Option<tone::Levels> {
     let frame = colour::resident::Resident::upload(gpu, samples, width, height);
-    let levels = pollster::block_on(crate::fit_source::levels(gpu, &frame, quantile));
+    let levels = pollster::block_on(fit::source::levels(gpu, &frame, quantile));
     frame.reclaim();
     levels
 }

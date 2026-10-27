@@ -185,7 +185,7 @@ pub fn prepared(
         .from_render
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
-    let keep = crate::photo_analysis::encode(&filled);
+    let keep = fit::photo_analysis::encode(&filled);
     let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
 
@@ -252,7 +252,7 @@ fn windowed(
         capture_sigma: None,
         sensor_long: None,
         defocus: render::base::Defringe::Measure,
-        photo_analysis: Some(crate::photo_analysis::encode(&known)),
+        photo_analysis: Some(fit::photo_analysis::encode(&known)),
         scale: crate::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
         // No repairs: the client draws them over whatever level and tiles it holds
         // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
@@ -294,7 +294,7 @@ fn windowed(
             camera_balance,
             noise_fit,
             defocus,
-            photo_analysis: Some(crate::photo_analysis::encode(&known)),
+            photo_analysis: Some(fit::photo_analysis::encode(&known)),
             window: Some(crate::edit::PreparedWindow {
                 canvas: shape,
                 origin: (x, y),
@@ -309,7 +309,7 @@ fn windowed(
 
 /// What a window of this photograph is corrected and graded against, which a window cannot measure:
 /// what the job was handed, or else what a small render of the whole photograph measures.
-fn known(job: &Job) -> Result<crate::photo_analysis::PhotoAnalysis, String> {
+fn known(job: &Job) -> Result<fit::photo_analysis::PhotoAnalysis, String> {
     let stored = job.stored();
     let complete = stored
         .from_render

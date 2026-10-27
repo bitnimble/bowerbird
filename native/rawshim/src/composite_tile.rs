@@ -611,7 +611,7 @@ const WARP_BYTES: u64 = std::mem::size_of::<crate::assembly_weight::TileWarp>() 
 #[derive(Clone, Copy)]
 pub struct SourceFile<'a> {
     pub path: &'a str,
-    pub analysis: Option<&'a crate::photo_analysis::PhotoAnalysis>,
+    pub analysis: Option<&'a fit::photo_analysis::PhotoAnalysis>,
 }
 
 /// Which picture of each source a window is composited from.
@@ -1137,7 +1137,7 @@ async fn taken(
     let mut levels = anchor;
     if i == spec.reference && levels.is_none() {
         levels = Some(
-            crate::fit_source::levels(gpu, &resident, request.white_quantile)
+            fit::source::levels(gpu, &resident, request.white_quantile)
                 .await
                 .ok_or("the reference's levels could not be measured")?
                 .anchored(),

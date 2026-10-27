@@ -249,7 +249,7 @@ public Colour<D> in_gamut<D : ILinear>(Colour<D> colour)
     return measured<D>(pulled * (luma / max(achieved, 1e-12)));
 }
 
-/// Where `in_gamut` holds the lowest channel, as a fraction of the colour's luma. `hdr_fit.rs`
+/// Where `in_gamut` holds the lowest channel, as a fraction of the colour's luma. `fit::hdr`
 /// states the same number for the fit's objective, and a test holds the two together.
 public static const float GAMUT_FLOOR = 0.02;
 

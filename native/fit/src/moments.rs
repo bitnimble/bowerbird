@@ -8,14 +8,14 @@
 use gpu::dispatch::Whole;
 
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
-pub(crate) const MOMENT_WORDS: usize = 36;
+pub const MOMENT_WORDS: usize = 36;
 
-pub(crate) struct Kernel {
+pub struct Kernel {
     layout: wgpu::BindGroupLayout,
     moments: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -68,7 +68,7 @@ pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
 ///
 /// Returned rather than folded here so the caller sums them in the order it chose, which is what
 /// makes the answer the same on every adapter.
-pub(crate) async fn partials(
+pub async fn partials(
     gpu: &'static gpu::Gpu,
     below: &gpu::Buffer,
     target: &gpu::Buffer,
@@ -110,7 +110,7 @@ pub(crate) async fn partials(
         (pairs as i32).to_ne_bytes(),
         (blocks as i32).to_ne_bytes(),
         (block as i32).to_ne_bytes(),
-        (crate::hdr_fit::CAMERA_CRUSHED as f32).to_ne_bytes(),
+        (crate::hdr::CAMERA_CRUSHED as f32).to_ne_bytes(),
         (matrices.len() as i32).to_ne_bytes(),
         [0; 4],
         [0; 4],

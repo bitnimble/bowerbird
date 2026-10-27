@@ -361,7 +361,7 @@ pub struct Placed {
 impl Field {
     /// The tiles a search placed itself, leaving out those that took their neighbours' answer.
     pub async fn placed(&self, gpu: &'static Gpu) -> Option<Vec<Placed>> {
-        let values = read_floats(gpu, &self.buffer, self.width * self.height * 4).await?;
+        let values = gpu::read_floats(gpu, &self.buffer, self.width * self.height * 4).await?;
         let tile = TILE.raw() as f64;
         Some(
             values
@@ -436,34 +436,13 @@ pub async fn sharpness(gpu: &'static Gpu, luma: &Mosaic) -> Option<f64> {
             pass.set_bind_group(0, &group, &[]);
         },
     );
-    let tiles = read_floats(gpu, &output, across * down * 2).await?;
+    let tiles = gpu::read_floats(gpu, &output, across * down * 2).await?;
     let (fine, contrast) = tiles
         .chunks_exact(2)
         .fold((0.0, 0.0), |(fine, contrast), tile| {
             (fine + f64::from(tile[0]), contrast + f64::from(tile[1]))
         });
     (contrast > 0.0).then(|| fine / contrast)
-}
-
-pub(crate) async fn read_floats(
-    gpu: &'static Gpu,
-    buffer: &Buffer,
-    count: usize,
-) -> Option<Vec<f32>> {
-    let bytes = (count * 4) as u64;
-    let mut recording = gpu.record();
-    let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("align readback"),
-        size: bytes,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
-    recording.submit();
-    gpu::read_back(gpu, &readback, |mapped| {
-        bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
-    })
-    .await
 }
 
 pub fn measure(

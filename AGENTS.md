@@ -26,7 +26,7 @@ forces it for tests; other processes use
 `VK_ADD_DRIVER_FILES=native/rawshim/.swiftshader/vk_swiftshader_icd.json`. Docker installs it
 and deletes lavapipe's manifest.
 
-CPU-only algorithms remain valid: solvers (`fit.rs`, `hdr_fit.rs`, `tca.rs`: least squares,
+CPU-only algorithms remain valid: solvers (`fit::profile`, `fit::hdr`, `tca.rs`: least squares,
 golden section), shader input tables, dust blob flood fill (`dust.rs`, surrounded by
 `slang/dust_find.slang`). Restriction covers pixel arithmetic.
 

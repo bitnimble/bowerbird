@@ -130,9 +130,9 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
         .collect();
     // Only for the stored noise fit, which saves GALOSH measuring the same mosaic twice. §3.0's
     // colour fit never runs on this path and the lens comes off the recipe.
-    let stored: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = placed
+    let stored: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = placed
         .iter()
-        .map(|from| from.analysis.and_then(crate::photo_analysis::decode))
+        .map(|from| from.analysis.and_then(fit::photo_analysis::decode))
         .collect();
     let files: Vec<crate::composite_tile::SourceFile<'_>> = placed
         .iter()

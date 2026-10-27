@@ -345,6 +345,26 @@ pub async fn read_back<T>(
     Some(out)
 }
 
+/// A mappable buffer's contents as words.
+pub async fn read_words(gpu: &Gpu, staging: &wgpu::Buffer) -> Option<Vec<u32>> {
+    read_back(gpu, staging, bytemuck::pod_collect_to_vec).await
+}
+
+/// The first `count` floats of a storage buffer, copied out through a readback of their own.
+pub async fn read_floats(gpu: &'static Gpu, buffer: &Buffer, count: usize) -> Option<Vec<f32>> {
+    let bytes = (count * 4) as u64;
+    let mut recording = gpu.record();
+    let readback = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("float readback"),
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+    recording.submit();
+    read_back(gpu, &readback, bytemuck::pod_collect_to_vec).await
+}
+
 /// **wgpu frees nothing in a browser, so this crate holds no bare `wgpu` resource.**
 ///
 /// `WebBuffer::drop` and `WebTexture::drop` are both `// no-op`, so a handle going out of scope

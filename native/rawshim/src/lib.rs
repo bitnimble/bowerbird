@@ -130,20 +130,9 @@ mod dng_rendering;
 pub mod edit;
 #[cfg(feature = "renditions")]
 pub mod ffi;
-pub mod fit;
-mod fit_curve;
-mod fit_lattice;
-mod fit_moments;
-mod fit_objective;
-mod fit_pairs;
-pub mod fit_score;
-pub mod fit_source;
-mod fit_span;
-mod fit_wide;
 pub mod frame;
 pub mod hdr;
 pub mod hdr_args;
-pub mod hdr_fit;
 pub mod job;
 pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
@@ -152,10 +141,8 @@ pub mod linearise;
 pub mod merge;
 pub mod open;
 pub mod open_stage;
-pub mod parallel;
 /// Where a patch of one frame lies in another, or elsewhere in its own.
 pub mod patch_search;
-pub mod photo_analysis;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are
@@ -175,8 +162,6 @@ pub mod scrub;
 pub mod snapshot;
 #[cfg(feature = "renditions")]
 pub mod stacks;
-pub mod tca;
-pub mod tca_device;
 pub mod tile;
 pub mod tile_grid;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
@@ -346,7 +331,7 @@ pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<frame::Frame>
 ///
 /// `fit` is whose statistics it filters with: [`denoise::galosh::Fit::Given`] where the caller has the
 /// photograph's already, which is a quarter of a second of whole-frame reductions it does not pay
-/// again (`crate::photo_analysis`).
+/// again (`fit::photo_analysis`).
 pub fn decode_frame_denoised(
     path: &str,
     at_least_long_edge: u32,
@@ -536,12 +521,12 @@ pub fn fit_hdr_for(
     raw_path: &str,
     quantile: f64,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<hdr_fit::HdrMatch> {
+) -> Option<fit::hdr::HdrMatch> {
     fit_hdr_measured(
         frame,
         raw_path,
         quantile,
-        hdr_fit::CameraMatch::LensAndColour,
+        fit::hdr::CameraMatch::LensAndColour,
         as_shot,
     )
     .map(|(matched, _)| matched)
@@ -554,9 +539,9 @@ pub fn fit_hdr_measured(
     frame: &colour::resident::Resident,
     raw_path: &str,
     quantile: f64,
-    camera_match: hdr_fit::CameraMatch,
+    camera_match: fit::hdr::CameraMatch,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<(hdr_fit::HdrMatch, colour::tone::Levels)> {
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
         let geometry = ffi::geometry_for(raw_path)?;
@@ -914,8 +899,8 @@ mod tests {
                         .as_ref()
                         .map_or(0, |pair| pair[0].len() + pair[1].len())
                     + 3;
-                let blob = photo_analysis::encode(&photo_analysis::PhotoAnalysis {
-                    from_raw: photo_analysis::FromRaw {
+                let blob = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         matched: Some(fitted),
                         ..Default::default()
                     },

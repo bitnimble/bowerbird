@@ -220,11 +220,11 @@ fn graded(
                 [x, x, x, 0.0]
             })
             .collect();
-        let toned = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let toned = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &bins,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         let shape: Vec<String> = toned
@@ -241,11 +241,11 @@ fn graded(
                 [x, x, x, 0.0]
             })
             .collect();
-        let over = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let over = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &whole,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         let full: Vec<String> = over

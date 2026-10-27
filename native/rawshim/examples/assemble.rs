@@ -131,7 +131,7 @@ fn auto(
         },
     );
 
-    let stored: Vec<Option<rawshim::photo_analysis::PhotoAnalysis>> = spec
+    let stored: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = spec
         .sources
         .iter()
         .map(|held| {
@@ -139,7 +139,7 @@ fn auto(
                 .iter()
                 .find(|offered| offered.photo_id == held.photo_id)
                 .and_then(|offered| offered.analysis)
-                .and_then(rawshim::photo_analysis::decode)
+                .and_then(fit::photo_analysis::decode)
         })
         .collect();
     let files: Vec<SourceFile<'_>> = spec
@@ -496,25 +496,25 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
     let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()
         .and_then(|opened| Some((opened.measured.matched?, opened.measured.levels)));
-    let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
+    let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
     match measured {
         Some((matched, levels)) => {
             println!("lens: fitted off {}", name_of(path));
             analysis.from_raw.matched = Some(matched);
-            analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
+            analysis.from_render.levels = Some(fit::photo_analysis::MeasuredLevels {
                 levels,
                 white_quantile: support::GRADE.white_quantile,
             });
         }
         None => {
             println!("lens: {} matches nothing, so the identity", name_of(path));
-            analysis.from_raw.matched = Some(rawshim::hdr_fit::HdrMatch {
+            analysis.from_raw.matched = Some(fit::hdr::HdrMatch {
                 lens: geometry::lens::Lens::none(),
                 colour: None,
             });
         }
     }
-    Some(rawshim::photo_analysis::encode(&analysis))
+    Some(fit::photo_analysis::encode(&analysis))
 }
 
 fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {

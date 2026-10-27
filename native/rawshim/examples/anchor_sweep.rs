@@ -25,7 +25,7 @@ mod support;
 /// toe at an input of a thousandth is saying near-black renders as grey. Measured that way the
 /// church interior reads 0.55 where a healthy frame reads a few hundredths, and the difference is
 /// visible as flat milky shadows with no separation in them.
-fn toe(gpu: &'static gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) -> f64 {
+fn toe(gpu: &'static gpu::Gpu, matched: &fit::hdr::HdrMatch) -> f64 {
     let colour = matched.colour.as_ref().expect("colour");
     let bins: Vec<[f32; 4]> = [1.0f64, 15.0]
         .iter()
@@ -34,11 +34,11 @@ fn toe(gpu: &'static gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) -> f64 {
             [x, x, x, 0.0]
         })
         .collect();
-    let Some(read) = pollster::block_on(rawshim::hdr_fit::evaluated(
+    let Some(read) = pollster::block_on(fit::hdr::evaluated(
         gpu,
         colour,
         &bins,
-        rawshim::hdr_fit::Stage::Tone,
+        fit::hdr::Stage::Tone,
     )) else {
         return f64::NAN;
     };
@@ -86,7 +86,7 @@ fn main() {
                 &resident,
                 path,
                 support::GRADE.white_quantile,
-                rawshim::hdr_fit::CameraMatch::LensAndColour,
+                fit::hdr::CameraMatch::LensAndColour,
                 frame.as_shot,
             )
             .map(|(matched, levels)| {

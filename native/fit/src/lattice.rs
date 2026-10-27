@@ -10,9 +10,9 @@
 use gpu::dispatch::Whole;
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
-pub(crate) const NODE_WORDS: usize = 35;
+pub const NODE_WORDS: usize = 35;
 /// Where the residual-weighted offsets a kernel's reach is sized from start among them.
-pub(crate) const REACH_WORDS: usize = 26;
+pub const REACH_WORDS: usize = 26;
 /// Words a landing occupies on the device.
 const LANDING_WORDS: usize = 12;
 /// Corners of a cell, which is how many cells a node is a corner of.
@@ -21,10 +21,10 @@ const CORNERS: usize = 16;
 const SLICE: usize = 256;
 /// Pairs one workgroup of the count and the write takes.
 const BLOCK: usize = 512;
-/// Cells the count's workgroup tally holds, which `hdr_fit::GridShape::FINE` fills.
+/// Cells the count's workgroup tally holds, which `crate::hdr::GridShape::FINE` fills.
 const MOST_CELLS: usize = 3072;
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     land: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
@@ -36,7 +36,7 @@ pub(crate) struct Kernels {
     fold: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -101,7 +101,7 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 }
 
 /// The grid a landing is made on, as the shader reads it.
-pub(crate) struct Grid {
+pub struct Grid {
     /// Nodes along hue, chroma, lightness and neighbourhood.
     pub nodes: [usize; 4],
     /// Node gaps per unit of chroma, lightness and neighbourhood, and where lightness starts.
@@ -127,7 +127,7 @@ impl Grid {
 ///
 /// `indexed` is the colour each pair is landed by and `through` what the operator acts on: the
 /// same buffer, except where the lattice is fitted on what an earlier one left.
-pub(crate) async fn moments(
+pub async fn moments(
     gpu: &'static gpu::Gpu,
     through: &gpu::Buffer,
     indexed: &gpu::Buffer,
@@ -298,7 +298,7 @@ fn params(pairs: usize, blocks: usize, grid: &Grid) -> Vec<u8> {
 }
 
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     let grid = Grid {
         nodes: [2; 4],
         chroma_scale: 1.0,

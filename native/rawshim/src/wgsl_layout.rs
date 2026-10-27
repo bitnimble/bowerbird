@@ -58,12 +58,6 @@ mod tests {
                 crate::merge::block(),
             ),
             (
-                "fit_wide.wgsl",
-                "Params",
-                shaders::FIT_WIDE.source,
-                crate::fit_wide::params_block(),
-            ),
-            (
                 "repair.wgsl",
                 "Params",
                 shaders::REPAIR.source,
@@ -74,18 +68,6 @@ mod tests {
                 "Params",
                 shaders::COPY_RECT.source,
                 crate::retouched_frame::params_block(),
-            ),
-            (
-                "fit_pairs.wgsl",
-                "Params",
-                shaders::FIT_PAIRS.source,
-                crate::fit_pairs::params_block(),
-            ),
-            (
-                "fit_lattice.wgsl",
-                "Params",
-                shaders::FIT_LATTICE.source,
-                crate::fit_lattice::params_block(),
             ),
             (
                 "linearise.wgsl",

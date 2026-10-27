@@ -16,7 +16,7 @@
 //! "nothing stored" rather than an error: everything in it is then measured the slow way, which is
 //! what happened before any of this existed.
 
-use crate::hdr_fit::HdrMatch;
+use crate::hdr::HdrMatch;
 use colour::lattice::ChromaMap;
 use colour::matched::HdrColour;
 use colour::tone::Levels;
@@ -53,7 +53,7 @@ const SECTION_MAX: usize = 1 << 22;
 
 /// A stored lattice longer than this many kernel words is corrupt: a fit emits a few thousand
 /// kernels at most, which is the coarse grid's and the fine grid's nodes together.
-pub(crate) const MAX_KERNEL_WORDS: usize = colour::lattice::KERNEL_WORDS * 16384;
+pub const MAX_KERNEL_WORDS: usize = colour::lattice::KERNEL_WORDS * 16384;
 
 #[derive(Clone, Default)]
 pub struct PhotoAnalysis {
@@ -68,7 +68,7 @@ pub struct PhotoAnalysis {
 #[derive(Clone, Default)]
 pub struct FromRaw {
     /// The colour the body would have rendered and the lens it was shot through. Half a second to
-    /// fit, from the embedded JPEG (`crate::hdr_fit`).
+    /// fit, from the embedded JPEG (`crate::hdr`).
     pub matched: Option<HdrMatch>,
     /// The sensor's noise, as GALOSH Phase 0 fits it off the mosaic: 246ms of whole-frame
     /// reductions, and a property of the photosites rather than of any filtering of them.
@@ -179,7 +179,7 @@ impl SetStamp {
     }
 }
 
-/// The frame's own diffuse white and top end, in input levels, as `fit_source::levels` reads them.
+/// The frame's own diffuse white and top end, in input levels, as `crate::source::levels` reads them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeasuredLevels {
     pub levels: Levels,
@@ -972,12 +972,11 @@ impl Reader<'_> {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
     use super::*;
-    use units::light::Light;
 
-    pub(crate) fn a_match() -> HdrMatch {
+    pub fn a_match() -> HdrMatch {
         // Values that are not round, so a field read out of the wrong offset shows up as a
         // mismatch rather than as a coincidence.
         let curve = |base: f64| {
@@ -985,7 +984,7 @@ pub(crate) mod tests {
                 .map(|i| base + f64::from(i) * 0.0031)
                 .collect::<Vec<_>>()
         };
-        // As many as a fit keeps on a typical frame (`hdr_fit::FINE_CARRIED`).
+        // As many as a fit keeps on a typical frame (`crate::hdr::FINE_CARRIED`).
         let kernels = (0..1900)
             .map(|k| {
                 let v = f64::from(k % 97) * 0.0071;
@@ -1050,6 +1049,13 @@ pub(crate) mod tests {
             }),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::a_match;
+    use super::*;
+    use units::light::Light;
 
     fn a_noise() -> NoiseFit {
         NoiseFit {

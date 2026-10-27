@@ -12,7 +12,7 @@
 //! something everywhere; this finds nothing where there is nothing, so a pair over thin content
 //! comes back with no opinion rather than a wrong one.
 
-use crate::hdr_fit::DevicePlane;
+use fit::hdr::DevicePlane;
 use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel};
 use gpu::dispatch::Whole;
 

@@ -22,12 +22,12 @@
 //! they release while the device is up does not move it, and `fit_bench` and `bench_stages` share
 //! every one of these calls and exit cleanly. Read the numbers; the exit code is not about them.
 
-use rawshim::fit_score::{Probe, Scoring, Shape};
+use fit::score::{Probe, Scoring, Shape};
 
 /// Calls per measurement. The first is discarded: it builds the pipeline.
 const REPEATS: usize = 40;
 
-/// `hdr_fit::SCORE_BLOCK`.
+/// `fit::hdr::SCORE_BLOCK`.
 const BLOCK: usize = 256;
 
 fn main() {
@@ -85,7 +85,7 @@ fn scoring(gpu: &'static gpu::Gpu, pairs: usize) -> Scoring {
     let balance: Vec<f64> = (0..pairs).map(|k| 1.0 + (k % 5) as f64 * 0.25).collect();
     Scoring::new(
         gpu,
-        rawshim::fit_score::below_buffer(gpu, &below),
+        fit::score::below_buffer(gpu, &below),
         &target,
         &balance,
         &colour::space::rec2020_to_srgb(),

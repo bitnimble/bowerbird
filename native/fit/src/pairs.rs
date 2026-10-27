@@ -1,15 +1,15 @@
 //! What the colour fit selects off its two planes, taken where `fit_register.slang` left them.
 //!
 //! `slang/fit_pairs.slang` is the arithmetic. This side is the two halves the shader cannot do:
-//! stating the thresholds it gates on - they are `hdr_fit`'s, and a shader restating one would be a
+//! stating the thresholds it gates on - they are `crate::hdr`'s, and a shader restating one would be a
 //! second place to change it - and turning what comes back into the shapes the fit already reads.
 //!
 //! Two round trips rather than one, because the pair list's length is not known until the blocks have
 //! been counted and scanned: sizing it for every pixel instead would put an eight megabyte map at
 //! the end of a pass whose answer is a third of that.
 
-use crate::parallel::*;
 use gpu::dispatch::Whole;
+use rayon::prelude::*;
 
 /// Buckets each half of the selection counts into.
 const HALF_BINS: usize = 65536;
@@ -29,18 +29,8 @@ const CEILING: usize = 4;
 const TOTAL: usize = 5;
 const HUES: usize = 6;
 
-async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
-    gpu::read_back(gpu, staging, |mapped| {
-        mapped
-            .par_chunks_exact(4)
-            .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<u32>>()
-    })
-    .await
-}
-
 /// What the colour fit selects off its two planes.
-pub(crate) struct Selected {
+pub struct Selected {
     /// Where the fit's domain has to end for this frame, so the exposure gap between the two
     /// sides does not censor what the camera can still teach.
     ///
@@ -72,13 +62,13 @@ pub(crate) struct Selected {
     pub grey_target: [f64; 3],
     /// The picture every candidate is scored on beside the pairs, and the camera's colour across
     /// it: one pixel in `FRAME_STRIDE` along each axis, gated on nothing but the warp's black
-    /// margin - a target the camera clipped is kept, and `hdr_fit` marks it for the gamut term
+    /// margin - a target the camera clipped is kept, and `crate::hdr` marks it for the gamut term
     /// alone. `FRAME` in `fit_pairs.slang` says why the picture cannot be read off the pairs.
     pub frame_at: Vec<usize>,
     pub frame_target: Vec<[f64; 3]>,
 }
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     extent_high: wgpu::ComputePipeline,
     extent_pick: wgpu::ComputePipeline,
@@ -92,7 +82,7 @@ pub(crate) struct Kernels {
     frame_write: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -159,7 +149,7 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 /// `Params` in `fit_pairs.slang`, word for word in the order it declares them.
 ///
 /// Its own function so `every_uniform_is_the_size_its_shader_reads` can take the length, which is
-/// the whole of what the host promises about this block: every threshold in it is `hdr_fit`'s, and
+/// the whole of what the host promises about this block: every threshold in it is `crate::hdr`'s, and
 /// a field added or reordered moves the tail on one side only.
 fn params_bytes(width: usize, height: usize, blocks: usize) -> Vec<u8> {
     let mut block = [
@@ -167,18 +157,18 @@ fn params_bytes(width: usize, height: usize, blocks: usize) -> Vec<u8> {
         (height as i32).to_ne_bytes(),
         (BLOCK as i32).to_ne_bytes(),
         (blocks as i32).to_ne_bytes(),
-        (crate::hdr_fit::HUE_BINS as i32).to_ne_bytes(),
-        (crate::hdr_fit::MIN_CEILING_PIXELS as i32).to_ne_bytes(),
-        (crate::hdr_fit::MARGIN_DARK as f32).to_ne_bytes(),
-        (crate::hdr_fit::CAMERA_CLIPPING as f32).to_ne_bytes(),
-        (crate::hdr_fit::CAMERA_CRUSHED as f32).to_ne_bytes(),
+        (crate::hdr::HUE_BINS as i32).to_ne_bytes(),
+        (crate::hdr::MIN_CEILING_PIXELS as i32).to_ne_bytes(),
+        (crate::hdr::MARGIN_DARK as f32).to_ne_bytes(),
+        (crate::hdr::CAMERA_CLIPPING as f32).to_ne_bytes(),
+        (crate::hdr::CAMERA_CRUSHED as f32).to_ne_bytes(),
         (colour::matched::TRUST_CEILING as f32).to_ne_bytes(),
-        ((crate::hdr_fit::OUR_CLIPPING / colour::matched::TRUST_CEILING) as f32).to_ne_bytes(),
-        (crate::hdr_fit::PAIR_GRADIENT as f32).to_ne_bytes(),
-        (crate::hdr_fit::GREY_CHROMA as f32).to_ne_bytes(),
-        (crate::hdr_fit::GREY_FLOOR as f32).to_ne_bytes(),
-        (crate::hdr_fit::HUE_CHROMA as f32).to_ne_bytes(),
-        (crate::hdr_fit::FRAME_STRIDE as i32).to_ne_bytes(),
+        ((crate::hdr::OUR_CLIPPING / colour::matched::TRUST_CEILING) as f32).to_ne_bytes(),
+        (crate::hdr::PAIR_GRADIENT as f32).to_ne_bytes(),
+        (crate::hdr::GREY_CHROMA as f32).to_ne_bytes(),
+        (crate::hdr::GREY_FLOOR as f32).to_ne_bytes(),
+        (crate::hdr::HUE_CHROMA as f32).to_ne_bytes(),
+        (crate::hdr::FRAME_STRIDE as i32).to_ne_bytes(),
     ]
     .concat();
     // WGSL rounds a uniform struct up to sixteen bytes, and wgpu rejects a buffer shorter than
@@ -189,11 +179,11 @@ fn params_bytes(width: usize, height: usize, blocks: usize) -> Vec<u8> {
 
 /// The block's length, for the layout test.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     params_bytes(1, 1, 1).len()
 }
 
-pub(crate) async fn select(
+pub async fn select(
     gpu: &'static gpu::Gpu,
     render: &gpu::Buffer,
     jpeg: &gpu::Buffer,
@@ -203,7 +193,7 @@ pub(crate) async fn select(
     let pixels = width * height;
     let blocks = pixels.div_ceil(BLOCK).max(1);
     assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
-    let hue_slots = crate::hdr_fit::HUE_SLOTS;
+    let hue_slots = crate::hdr::HUE_SLOTS;
     let marks_words = HUES + hue_slots;
 
     let held = |label, words: usize, usage| {
@@ -310,8 +300,8 @@ pub(crate) async fn select(
     let marks_out = staging(&mut recording, &marks, marks_words);
     recording.submit();
 
-    let words = read_words(gpu, &bits_out).await?;
-    let read = read_words(gpu, &marks_out).await?;
+    let words = gpu::read_words(gpu, &bits_out).await?;
+    let read = gpu::read_words(gpu, &marks_out).await?;
     drop((bits_out, marks_out, recording));
 
     let ceiling = f64::from(f32::from_bits(read[CEILING]));
@@ -320,7 +310,7 @@ pub(crate) async fn select(
     let bits: Vec<u8> = words.par_iter().map(|w| *w as u8).collect();
     let hues: Vec<u8> = words
         .par_iter()
-        .map(|w| (*w >> crate::hdr_fit::HUE_SHIFT) as u8)
+        .map(|w| (*w >> crate::hdr::HUE_SHIFT) as u8)
         .collect();
     let counted: Vec<usize> = (0..hue_slots)
         .map(|bucket| read[HUES + bucket] as usize)
@@ -336,7 +326,7 @@ pub(crate) async fn select(
     });
     let pairs_out = staging(&mut recording, &pairs, total_pairs * PAIR_WORDS);
     recording.submit();
-    let placed = read_words(gpu, &pairs_out).await?;
+    let placed = gpu::read_words(gpu, &pairs_out).await?;
 
     let mut at = Vec::with_capacity(total_pairs);
     let mut target = Vec::with_capacity(total_pairs);
@@ -366,7 +356,7 @@ pub(crate) async fn select(
     });
     let frame_marks = staging(&mut recording, &marks, marks_words);
     recording.submit();
-    let total_frame = read_words(gpu, &frame_marks).await?[TOTAL] as usize;
+    let total_frame = gpu::read_words(gpu, &frame_marks).await?[TOTAL] as usize;
     drop((frame_marks, recording));
 
     let mut recording = gpu.record();
@@ -378,7 +368,7 @@ pub(crate) async fn select(
     });
     let frame_out = staging(&mut recording, &frame, total_frame * PAIR_WORDS);
     recording.submit();
-    let framed = read_words(gpu, &frame_out).await?;
+    let framed = gpu::read_words(gpu, &frame_out).await?;
 
     let mut frame_at = Vec::with_capacity(total_frame);
     let mut frame_target = Vec::with_capacity(total_frame);
@@ -434,7 +424,7 @@ mod tests {
     #[test]
     fn the_shader_packs_the_word_the_host_takes_apart() {
         for (name, value) in [
-            ("HUE_SHIFT", crate::hdr_fit::HUE_SHIFT),
+            ("HUE_SHIFT", crate::hdr::HUE_SHIFT),
             ("PAIR_WORDS", super::PAIR_WORDS as u32),
         ] {
             let line = format!("static const uint {name} = {value};");
@@ -456,7 +446,7 @@ mod tests {
                 .parse()
                 .expect("a bit");
             assert!(
-                bit < 1 << crate::hdr_fit::HUE_SHIFT,
+                bit < 1 << crate::hdr::HUE_SHIFT,
                 "{name} collides with the hue"
             );
         }

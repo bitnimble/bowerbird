@@ -8,7 +8,7 @@ use crate::space::IDENTITY;
 ///
 /// Half the 1616px preview Sony embeds, which is what every match fits against where a body
 /// offers it (`decode_rawler::Preview::for_the_match`); a body that offers only its full JPEG
-/// is box-averaged to the same grid in linear light by `hdr_fit::fitted_preview_size`, so the
+/// is box-averaged to the same grid in linear light by `fit::hdr::fitted_preview_size`, so the
 /// grade's supervision footprint (`grade::mean_block`) is one number for every body. Measured on
 /// the Canon fixture against fitting its 6000px JPEG at 1280: the fit halves, and against the
 /// camera's own crops the render moves by 0.15 to 0.47 of a count in 255.
@@ -90,7 +90,7 @@ pub struct HdrColour {
     /// camera renders it unclipped - and a domain ending at 0.9 then censors exactly the
     /// region where the two disagree: the curves cannot learn it, its pairs are gated out
     /// of every chroma stage, and the fitted-versus-held boundary crosses the subject as
-    /// a band. Sized by `fit_pairs::Selected::ceiling` so it ends where the camera's data does.
+    /// a band. Sized by `fit::pairs::Selected::ceiling` so it ends where the camera's data does.
     pub ceiling: f64,
     /// Where `colour.slang`'s `curves_at` reads a highlight's colour, from `chroma_anchor`.
     ///

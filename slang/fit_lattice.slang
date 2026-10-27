@@ -8,7 +8,7 @@
 // cell's run is as long as its share of the frame, and a dark frame puts most of its pairs in one
 // shadow cell, so no thread walks a whole run.
 //
-// The grid is polar (`hdr_fit::GridShape`): hue wraps, so it has as many cells as nodes, and its
+// The grid is polar (`fit::hdr::GridShape`): hue wraps, so it has as many cells as nodes, and its
 // first chroma ring is grey, which the host merges across hues before solving.
 
 import prelude;
@@ -75,7 +75,7 @@ static const int SLICE = 256;
 /// Pairs a workgroup of the count and the write takes, and the threads sharing them.
 static const int BLOCK = 512;
 static const int LANES = 64;
-/// The most cells a grid has: `hdr_fit::GridShape::FINE`'s.
+/// The most cells a grid has: `fit::hdr::GridShape::FINE`'s.
 static const int MOST_CELLS = 3072;
 groupshared int round_cells[LANES];
 groupshared uint tally[MOST_CELLS];

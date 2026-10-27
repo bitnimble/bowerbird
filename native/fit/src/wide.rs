@@ -1,7 +1,7 @@
 //! The wide pass's two walks over the sharp planes, taken where the planes are.
 //!
 //! `slang/fit_wide.slang` is the arithmetic. This side states the gates' thresholds - they are
-//! `hdr_fit`'s, and a shader restating one would be a second place to change it - and holds the
+//! `crate::hdr`'s, and a shader restating one would be a second place to change it - and holds the
 //! tiling between the two walks, which is index bookkeeping over a few thousand probes rather than
 //! work on a picture.
 
@@ -16,9 +16,9 @@ const _: () = assert!(BLOCK <= 64 * 64);
 const SAMPLE_WORDS: usize = 7;
 
 /// The two planes the pass reads, with what the lens did to ours.
-pub(crate) struct Planes<'a> {
-    pub ours: &'a crate::hdr_fit::Source,
-    pub theirs: &'a crate::hdr_fit::Source,
+pub struct Planes<'a> {
+    pub ours: &'a crate::hdr::Source,
+    pub theirs: &'a crate::hdr::Source,
     pub falloff: Option<(f64, f64)>,
     /// The top of our own domain, which a sample may not reach.
     pub ceiling: f64,
@@ -34,7 +34,7 @@ impl Planes<'_> {
     }
 }
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     count: wgpu::ComputePipeline,
     offsets: wgpu::ComputePipeline,
@@ -42,7 +42,7 @@ pub(crate) struct Kernels {
     gather: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -102,7 +102,7 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 
 /// The positions the gate admitted, in row-major order, on both sides: the host tiles them and the
 /// gather reads them where they are.
-pub(crate) struct Admitted {
+pub struct Admitted {
     pub at: Vec<[i32; 2]>,
     on_device: gpu::Buffer,
 }
@@ -110,7 +110,7 @@ pub(crate) struct Admitted {
 /// What `block` writes, for `wgsl_layout`, which holds it against the struct its own shader
 /// declares.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Block>()
 }
 
@@ -152,18 +152,18 @@ fn block(planes: &Planes<'_>, blocks: usize, count: usize) -> Block {
         target_width: planes.theirs.width as i32,
         our_width: planes.ours.width as i32,
         our_height: planes.ours.height as i32,
-        stride: crate::hdr_fit::WIDE_STRIDE as i32,
+        stride: crate::hdr::WIDE_STRIDE as i32,
         block: BLOCK as i32,
         blocks: blocks as i32,
         rows: rows(planes) as i32,
         count: count as i32,
-        edge: (crate::hdr_fit::PATCH + crate::hdr_fit::SEARCH) as i32,
-        sample: crate::hdr_fit::SAMPLE as i32,
-        sample_range: crate::hdr_fit::SAMPLE_RANGE as f32,
-        min_chroma: crate::hdr_fit::WIDE_MIN_CHROMA as f32,
-        camera_clipping: crate::hdr_fit::CAMERA_CLIPPING as f32,
-        margin_dark: crate::hdr_fit::MARGIN_DARK as f32,
-        flat_enough: crate::hdr_fit::FLAT_ENOUGH as f32,
+        edge: (crate::hdr::PATCH + crate::hdr::SEARCH) as i32,
+        sample: crate::hdr::SAMPLE as i32,
+        sample_range: crate::hdr::SAMPLE_RANGE as f32,
+        min_chroma: crate::hdr::WIDE_MIN_CHROMA as f32,
+        camera_clipping: crate::hdr::CAMERA_CLIPPING as f32,
+        margin_dark: crate::hdr::MARGIN_DARK as f32,
+        flat_enough: crate::hdr::FLAT_ENOUGH as f32,
         ceiling: planes.ceiling as f32,
         has_falloff: i32::from(planes.falloff.is_some()),
         half_diagonal: (cx * cx + cy * cy).sqrt().max(1.0) as f32,
@@ -176,7 +176,7 @@ fn rows(planes: &Planes<'_>) -> usize {
         .grid()
         .1
         .saturating_sub(2)
-        .div_ceil(crate::hdr_fit::WIDE_STRIDE)
+        .div_ceil(crate::hdr::WIDE_STRIDE)
 }
 
 fn columns(planes: &Planes<'_>) -> usize {
@@ -184,7 +184,7 @@ fn columns(planes: &Planes<'_>) -> usize {
         .grid()
         .0
         .saturating_sub(2)
-        .div_ceil(crate::hdr_fit::WIDE_STRIDE)
+        .div_ceil(crate::hdr::WIDE_STRIDE)
 }
 
 fn gains_of(gpu: &'static gpu::Gpu, falloff: Option<(f64, f64)>) -> gpu::Buffer {
@@ -252,7 +252,7 @@ fn bound(
 }
 
 /// Which positions the pass will teach the lattice from.
-pub(crate) async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
+pub async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
     let stepped = rows(planes) * columns(planes);
     let blocks = stepped.div_ceil(BLOCK).max(1);
     assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
@@ -307,7 +307,7 @@ pub(crate) async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option
     );
     recording.copy_buffer_to_buffer(&counts, 0, &out, 0, ((blocks + 1) * 4) as u64);
     recording.submit();
-    let scanned = read_words(gpu, &out).await?;
+    let scanned = gpu::read_words(gpu, &out).await?;
     let count = scanned[blocks] as usize;
 
     let at = held("fit wide at", (count * 2).max(1), readable);
@@ -325,7 +325,7 @@ pub(crate) async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option
     let bytes = (count * 2 * 4).max(4) as u64;
     recording.copy_buffer_to_buffer(&at, 0, &positions, 0, bytes);
     recording.submit();
-    let read = read_words(gpu, &positions).await?;
+    let read = gpu::read_words(gpu, &positions).await?;
     Some(Admitted {
         at: (0..count)
             .map(|k| [read[k * 2] as i32, read[k * 2 + 1] as i32])
@@ -338,7 +338,7 @@ pub(crate) async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option
 ///
 /// `None` where the position did not survive the gather's own re-tests, which are asked of the
 /// pixel the search landed on rather than the one the gate looked at.
-pub(crate) async fn gather(
+pub async fn gather(
     gpu: &'static gpu::Gpu,
     planes: &Planes<'_>,
     admitted: &Admitted,
@@ -413,16 +413,6 @@ pub(crate) async fn gather(
             })
             .collect(),
     )
-}
-
-async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
-    gpu::read_back(gpu, staging, |mapped| {
-        mapped
-            .chunks_exact(4)
-            .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<u32>>()
-    })
-    .await
 }
 
 #[cfg(test)]

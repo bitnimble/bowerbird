@@ -11,7 +11,7 @@
 // pass of its own: both are radial maps about the frame centre, so the warp multiplies
 // its ratio by this channel's scale and resamples once (`geometry::lens::ratio_tables`, `warp.slang`).
 //
-// **Three sources, in this order** (`fit.rs`), because they are not equally trustworthy:
+// **Three sources, in this order** (`profile.rs`), because they are not equally trustworthy:
 //
 // 1. `supplied_curve` - the curve the body recorded for this shot, where the file carries
 //    one. Sony writes it in the SubIFD `lens.rs` walks. Scored on the fringe left around
@@ -45,7 +45,7 @@
 
 /// A gradient worth regressing against. Below this the projection is mostly noise and
 /// the sample earns nothing but variance.
-pub(crate) const MIN_EDGE: f64 = 40.0;
+pub const MIN_EDGE: f64 = 40.0;
 
 /// How far the frame is averaged down before anything is measured.
 ///
@@ -68,7 +68,7 @@ pub(crate) const MIN_EDGE: f64 = 40.0;
 /// in them rather than by what aberration they carry. Re-measured on a second frame the
 /// climb is 0.86px, 1.24, 1.83 at 4, 8 and 12 - still no plateau, and the 4 here rests on
 /// one frame's calibration rather than on a converged quantity.
-pub(crate) const REDUCE: usize = 4;
+pub const REDUCE: usize = 4;
 
 /// Every second pixel in each direction, of the reduced frame.
 const STRIDE: usize = 2;
@@ -103,31 +103,31 @@ const MAX_SCALE: f64 = 0.01;
 /// nothing - which reads as a perfect result. Measured: a 6x overshoot displaces red about
 /// 6.7px and was waved through. At 5px a real fringe has already died away, so a correct
 /// correction is not penalised for it, and a gross one has nowhere to hide.
-pub(crate) const HALO_OFFSETS: [f64; 2] = [2.0, 5.0];
+pub const HALO_OFFSETS: [f64; 2] = [2.0, 5.0];
 
 /// Samples taken either side of each reading, perpendicular to the radius.
 ///
 /// Free precision: a radial displacement moves nothing along the perpendicular, so
 /// averaging across it adds samples without blurring what is being measured. Cuts the
 /// standard error of the split by about a third.
-pub(crate) const HALO_ACROSS: i32 = 2;
+pub const HALO_ACROSS: i32 = 2;
 
 /// Point sources needed before the verification will believe its own answer.
-pub(crate) const MIN_POINTS: usize = 30;
+pub const MIN_POINTS: usize = 30;
 
 /// Where the scan starts looking, as a fraction of the half-diagonal.
 ///
 /// The innermost radius anything here reads at, so one scan serves every split and each of them
 /// names the band it wants instead. A scan's floor only decides which points it admits, so
 /// scanning twice would be the same walk over the same picture for a subset of the same answer.
-pub(crate) const SCAN_FROM: f64 = MEASURE_BINS[0];
+pub const SCAN_FROM: f64 = MEASURE_BINS[0];
 
 /// Where the verification reads, as a fraction of the half-diagonal. A lateral fringe is legible
 /// in the outer frame and almost nowhere else.
-pub(crate) const POINT_FROM: f64 = 0.7;
+pub const POINT_FROM: f64 = 0.7;
 
 /// A band that excludes nothing. A radius is a fraction of the half-diagonal, so 1 is the corner.
-pub(crate) const ANY_RADIUS: (f64, f64) = (0.0, 2.0);
+pub const ANY_RADIUS: (f64, f64) = (0.0, 2.0);
 
 /// The fraction of the fringe a correction has to actually remove to be kept.
 ///
@@ -221,7 +221,7 @@ pub fn widest(tca: Option<&[Vec<f64>; 2]>) -> f64 {
 const MEASURE_BINS: [f64; 5] = [0.15, 0.35, 0.55, 0.75, 0.95];
 
 /// Point sources a bin needs before its nulling is believed.
-pub(crate) const MIN_PER_BIN: usize = 40;
+pub const MIN_PER_BIN: usize = 40;
 
 /// Bins that must resolve before a slope is fitted through them. Two points define a line
 /// through the origin exactly and prove nothing about whether the profile is a line.
@@ -607,7 +607,7 @@ mod tests {
     }
 
     fn framed(gpu: &'static gpu::Gpu, image: &Rgb) -> crate::tca_device::Frame {
-        let render = crate::fit_source::uploaded_render(gpu, image.as_ref());
+        let render = crate::source::uploaded_render(gpu, image.as_ref());
         pollster::block_on(crate::tca_device::frame(gpu, &render)).expect("a frame")
     }
 

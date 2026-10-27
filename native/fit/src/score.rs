@@ -2,17 +2,17 @@
 //!
 //! `slang/fit_score.slang` is the arithmetic. This side is the two halves the shader cannot do:
 //! uploading the pairs once for a stage that will ask many probes, and folding the per-block
-//! partials in block order (`hdr_fit::folded`).
+//! partials in block order (`crate::hdr::folded`).
 
 use gpu::dispatch::Whole;
 
-/// `hdr_fit::BIAS_BUCKETS`, which the shader states for itself and
+/// `crate::hdr::BIAS_BUCKETS`, which the shader states for itself and
 /// `the_shader_pools_the_buckets_the_host_folds` holds the two together - a count that differed
 /// would pool the bias over a different number of buckets on each side.
-const BIAS_BUCKETS: usize = super::hdr_fit::BIAS_BUCKETS;
+const BIAS_BUCKETS: usize = crate::hdr::BIAS_BUCKETS;
 
-/// `hdr_fit::COLOUR_CLASSES`, held to the shader's the same way.
-const COLOUR_CLASSES: usize = super::hdr_fit::COLOUR_CLASSES;
+/// `crate::hdr::COLOUR_CLASSES`, held to the shader's the same way.
+const COLOUR_CLASSES: usize = crate::hdr::COLOUR_CLASSES;
 
 /// Per block: the trusted balance summed, every balance's magnitude summed, the trusted pairs
 /// counted, the pairs counted, then the tally per bucket and per class.
@@ -59,13 +59,13 @@ pub struct Partial {
     pub class_seen: [f64; COLOUR_CLASSES],
 }
 
-pub(crate) struct Kernel {
+pub struct Kernel {
     layout: wgpu::BindGroupLayout,
     target: wgpu::ComputePipeline,
     score: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -131,7 +131,7 @@ fn words(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
 /// probes it exists to serve: `Resident::of` records the same lesson, where the same shape was
 /// most of what a call cost.
 fn packed(count: usize, fill: impl Fn(usize) -> [u8; 4] + Sync + Send) -> Vec<u8> {
-    use crate::parallel::*;
+    use rayon::prelude::*;
     let mut bytes = vec![0u8; count * 4];
     bytes.par_chunks_mut(4).enumerate().for_each(|(k, word)| {
         word.copy_from_slice(&fill(k));
@@ -192,7 +192,7 @@ pub struct Scoring {
 
 impl Scoring {
     /// `below` is each pair's colour beneath whatever the probes vary and the luma a saturation
-    /// blend rotates about, already on the device (`hdr_fit::evaluate`, or [`below_buffer`]);
+    /// blend rotates about, already on the device (`crate::hdr::evaluate`, or [`below_buffer`]);
     /// `target` is the camera's rendering in the render's own linear Rec.2020, which `to_srgb`
     /// and `fit_target` put on the JPEG's own grid, and `balance` the hue weight beside it.
     /// `probes` is the most one call will ask about, which the held buffers are sized for.

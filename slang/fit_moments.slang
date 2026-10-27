@@ -26,9 +26,9 @@ import times;
 struct Params {
     int pairs;
     int blocks;
-    /// Pairs one workgroup walks. `hdr_fit::MEASURE_BLOCK`.
+    /// Pairs one workgroup walks. `fit::hdr::MEASURE_BLOCK`.
     int block;
-    /// `hdr_fit::CAMERA_CRUSHED`.
+    /// `fit::hdr::CAMERA_CRUSHED`.
     float crushed;
     /// Matrices in `matrices`.
     int probes;
@@ -47,7 +47,7 @@ struct Params {
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
 static const int MOMENT_WORDS = 36;
 
-/// `hdr_fit::trust`: nothing at the floor, all of it by twice `crushed`, smoothly between.
+/// `fit::hdr::trust`: nothing at the floor, all of it by twice `crushed`, smoothly between.
 float trust(float level)
 {
     let x = clamp(level / (2.0 * pc.crushed), 0.0, 1.0);

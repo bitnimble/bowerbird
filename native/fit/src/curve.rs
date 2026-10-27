@@ -4,8 +4,8 @@
 //! block's partials summed in block order, in `f64` - and the solve the fold feeds, which is a
 //! pass over 256 bins rather than over a picture.
 
-use crate::parallel::*;
 use gpu::dispatch::Whole;
+use rayon::prelude::*;
 
 /// Workgroups the binning is split across, which is also how many partials come back.
 ///
@@ -21,20 +21,20 @@ const PER_BIN: usize = 3;
 
 /// What the curve is drawn through: each bin's weighted sum of the camera's coded answer, the
 /// weight behind it, and how many entries reached it.
-pub(crate) struct Binned {
+pub struct Binned {
     pub sum: Vec<f64>,
     pub weight: Vec<f64>,
     pub count: Vec<usize>,
 }
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     levels: wgpu::ComputePipeline,
     weights: wgpu::ComputePipeline,
     bins: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -92,14 +92,14 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 }
 
 /// The planes and the mask the binning reads, uploaded once and asked about every round.
-pub(crate) struct Evidence {
+pub struct Evidence {
     pub render: gpu::Buffer,
     pub jpeg: gpu::Buffer,
     pub bits: gpu::Buffer,
     pub pixels: usize,
 }
 
-pub(crate) async fn binned(
+pub async fn binned(
     gpu: &'static gpu::Gpu,
     evidence: &Evidence,
     hue_weights: &[f64],
@@ -107,7 +107,7 @@ pub(crate) async fn binned(
     inverse: Option<&[[f64; 3]; 3]>,
 ) -> Option<Binned> {
     let bins = colour::matched::BINS;
-    let level_bins = crate::hdr_fit::LEVEL_BINS;
+    let level_bins = crate::hdr::LEVEL_BINS;
     assert!(bins <= LANES * OWNED && level_bins <= LANES);
     let mut recording = gpu.record();
     recording.holding(&evidence.render);
@@ -153,9 +153,9 @@ pub(crate) async fn binned(
         (bins as i32).to_ne_bytes(),
         (level_bins as i32).to_ne_bytes(),
         (ceiling as f32).to_ne_bytes(),
-        (crate::hdr_fit::LEVEL_BALANCE_LIMIT as f32).to_ne_bytes(),
+        (crate::hdr::LEVEL_BALANCE_LIMIT as f32).to_ne_bytes(),
         i32::from(inverse.is_some()).to_ne_bytes(),
-        (crate::hdr_fit::HUE_SHIFT as i32).to_ne_bytes(),
+        (crate::hdr::HUE_SHIFT as i32).to_ne_bytes(),
     ]
     .concat();
     // The matrix starts on a 16-byte boundary and takes one per row, which is what `float4[3]` is
@@ -261,10 +261,7 @@ mod tests {
     #[test]
     fn the_binning_reads_the_hue_where_the_selection_wrote_it() {
         const SOURCE: &str = include_str!("../../../slang/fit_pairs.slang");
-        let line = format!(
-            "static const uint HUE_SHIFT = {};",
-            crate::hdr_fit::HUE_SHIFT
-        );
+        let line = format!("static const uint HUE_SHIFT = {};", crate::hdr::HUE_SHIFT);
         assert!(
             SOURCE.contains(&line),
             "fit_pairs.slang does not say `{line}`"
@@ -276,7 +273,7 @@ mod tests {
     /// serial walk of every usable (pixel, channel) gives it, with the matrix undone and without.
     #[test]
     fn the_bins_hold_what_a_serial_walk_does() {
-        use crate::hdr_fit::{HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS};
+        use crate::hdr::{HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS};
         use colour::matched::BINS;
         use colour::space::srgb_oetf;
         let Some(gpu) = gpu::device() else {

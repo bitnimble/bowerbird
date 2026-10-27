@@ -1,6 +1,6 @@
 // The camera's colour treatment, fitted for the HDR grade (DESIGN 10.8).
 //
-// The geometry comes from `fit.rs` - it is a property of the lens, not of a colour space -
+// The geometry comes from `profile.rs` - it is a property of the lens, not of a colour space -
 // and the colour is fitted here, in the domain the grade actually works in: Rec.2020
 // linear, normalised so diffuse white is 1.0. A fit in 8-bit sRGB could not be lifted to
 // HDR: its domain stops at display white, so it has nothing to say about the scene above
@@ -8,7 +8,6 @@
 // curve extrapolable, which is what lets the camera's rendering stop at diffuse white and
 // BT.2390 take over above it (10.7.1).
 
-use crate::parallel::*;
 use colour::lattice::{ChromaMap, LutAxes};
 use colour::matched::{BINS, HdrColour, NeighbourhoodThumb, chroma_anchor};
 use colour::matched::{FIT_LONG_EDGE, sample_long_edge};
@@ -18,6 +17,7 @@ use colour::space::{
 };
 use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel, kernel_layout};
 use gpu::dispatch::{Banded, Whole};
+use rayon::prelude::*;
 use units::light::Light;
 use units::px::TUNED_ON;
 
@@ -40,7 +40,7 @@ const FIT_BLUR_RADIUS: usize = 2;
 /// crosses first, so a cautious gate censors red's brightest teachers while green and
 /// blue keep theirs, and the shared curve's top end is then taught by less-red content -
 /// a green tinge on the brightest skin, from a transform with no local knob at all.
-pub(crate) const CAMERA_CLIPPING: f64 = 0.98;
+pub const CAMERA_CLIPPING: f64 = 0.98;
 
 /// The same thing at the other end, and only the global stages discount it.
 ///
@@ -63,14 +63,14 @@ pub(crate) const CAMERA_CLIPPING: f64 = 0.98;
 /// and a curve is the one part of the model that can say so.
 ///
 /// The level `GREY_FLOOR` already calls enough light to read a pixel's chroma at.
-pub(crate) const CAMERA_CRUSHED: f64 = 0.02;
+pub const CAMERA_CRUSHED: f64 = 0.02;
 
 /// The same level again, where the pair list asks whether either side rendered a pixel neutral.
 ///
 /// Named apart from `CAMERA_CRUSHED` on purpose: that one is a statement about what a body's
 /// output means at the bottom of its range, and this is a floor under a chroma *ratio*, which is
 /// noise taken between small numbers whoever produced them. Ours is tested against it too.
-pub(crate) const GREY_FLOOR: f64 = 0.02;
+pub const GREY_FLOOR: f64 = 0.02;
 
 /// Hues around the coarse grid's circle.
 ///
@@ -183,9 +183,9 @@ impl GridShape {
         ]
     }
 
-    fn grid(&self, axes: &LutAxes) -> crate::fit_lattice::Grid {
+    fn grid(&self, axes: &LutAxes) -> crate::lattice::Grid {
         let gaps = self.gaps(axes);
-        crate::fit_lattice::Grid {
+        crate::lattice::Grid {
             nodes: [self.hue, self.rings + 1, self.level, self.neighbourhood],
             chroma_scale: 1.0 / gaps[1],
             level_low: axes.level_low,
@@ -542,7 +542,7 @@ mod camera_match_tests {
 
     #[test]
     fn camera_match_applies_only_the_requested_parts() {
-        let matched = crate::photo_analysis::tests::a_match();
+        let matched = crate::photo_analysis::testing::a_match();
         assert!(CameraMatch::None.apply(Some(matched.clone())).is_none());
         let lens = CameraMatch::Lens
             .apply(Some(matched.clone()))
@@ -576,7 +576,7 @@ mod camera_match_tests {
         use crate::photo_analysis::{self, FromRaw, PhotoAnalysis};
         let full = PhotoAnalysis {
             from_raw: FromRaw {
-                matched: Some(photo_analysis::tests::a_match()),
+                matched: Some(photo_analysis::testing::a_match()),
                 ..Default::default()
             },
             ..Default::default()
@@ -622,25 +622,25 @@ pub struct Plane {
 ///
 /// The mask is the low byte and the hue is the one above it, which is what leaves the shader's
 /// `ALL` and `COLOUR` room to sit beside the three channel bits without colliding with a bucket.
-pub(crate) const HUE_SHIFT: u32 = 8;
+pub const HUE_SHIFT: u32 = 8;
 
 /// How much square-root luma may change across a pixel before a small misregistration could
 /// change its colour, which is what disqualifies it as a pair.
-pub(crate) const PAIR_GRADIENT: f64 = 0.03;
+pub const PAIR_GRADIENT: f64 = 0.03;
 
 /// Below this much chroma a pixel has no hue worth censusing: a ratio taken between crushed
 /// codes is noise, and a pixel the camera rendered 2/1/3 would land in a bin on nothing.
-pub(crate) const HUE_CHROMA: f64 = 0.1;
+pub const HUE_CHROMA: f64 = 0.1;
 
 /// Below this many usable pixels a frame does not get to move its own ceiling.
-pub(crate) const MIN_CEILING_PIXELS: usize = 16;
+pub const MIN_CEILING_PIXELS: usize = 16;
 
 /// How far up our own render a pair still carries colour, as a fraction of diffuse white.
 ///
 /// Only our clipping, unlike `TRUST_CEILING`. Above this the channel is at or against the
 /// top of its container and the objective clamps it to the gamut (`fit_score.slang`), so the
 /// comparison would be against a white we invented rather than one we rendered.
-pub(crate) const OUR_CLIPPING: f64 = 0.99;
+pub const OUR_CLIPPING: f64 = 0.99;
 
 // ------------------------------------------------------------------- the model
 
@@ -651,8 +651,8 @@ pub(crate) const OUR_CLIPPING: f64 = 0.99;
 /// for whichever colour happens to fill it (`hue_balance`). The count floor stays on
 /// the pairs themselves: a bin filled by pixels the weight discounts is thin evidence,
 /// not absent evidence, and dropping it would shorten the curve.
-fn fit_curve(binned: &crate::fit_curve::Binned) -> (Vec<f64>, isize) {
-    let crate::fit_curve::Binned { sum, weight, count } = binned;
+fn fit_curve(binned: &crate::curve::Binned) -> (Vec<f64>, isize) {
+    let crate::curve::Binned { sum, weight, count } = binned;
     // Made monotone here, where the bins still carry the weight behind them, rather than left
     // to the running maximum in `make_monotone` further down.
     let mut measured: Vec<(usize, f64, f64)> = (0..BINS)
@@ -958,7 +958,7 @@ impl Evaluated {
 }
 
 /// `fit_model.slang`'s bindings: `colour.slang`'s model, and the samples in and out.
-pub(crate) fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -1189,7 +1189,7 @@ pub async fn evaluated(
     evaluate(gpu, colour, samples, stage).read(gpu).await
 }
 
-pub(crate) fn gather_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn gather_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -1592,7 +1592,7 @@ fn harm(score: &Score, reference: &Score) -> f64 {
 const HARM_SOFTNESS: f64 = 0.25;
 
 /// `fit_score.slang`'s `class_of`.
-pub(crate) const COLOUR_CLASSES: usize = 37;
+pub const COLOUR_CLASSES: usize = 37;
 
 /// Pairs a class needs for its excess to count half.
 const CLASS_CONFIDENCE: f64 = 32.0;
@@ -1603,7 +1603,7 @@ const HARM_WEIGHT: f64 = BIAS_WEIGHT;
 ///
 /// The fold is `blocks` additions per probe - nothing beside the 150k evaluations behind it on
 /// the device - and it is where the bias pooling and the two weightings live, which want `f64`.
-fn folded(blocks: impl IntoIterator<Item = crate::fit_score::Partial>) -> Score {
+fn folded(blocks: impl IntoIterator<Item = crate::score::Partial>) -> Score {
     let (mut balanced, mut flat, mut n, mut counted) = (0.0, 0.0, 0.0f64, 0.0f64);
     let (mut gamut_balanced, mut gamut_flat, mut n_all, mut counted_all) =
         (0.0, 0.0, 0.0f64, 0.0f64);
@@ -1654,7 +1654,7 @@ fn folded(blocks: impl IntoIterator<Item = crate::fit_score::Partial>) -> Score 
 }
 
 /// Three bands of the camera's chroma against three of its lightness.
-pub(crate) const BIAS_BUCKETS: usize = 9;
+pub const BIAS_BUCKETS: usize = 9;
 
 /// How much a unit of systematic bias counts against a unit of average error.
 const BIAS_WEIGHT: f64 = 3.0;
@@ -1775,19 +1775,19 @@ impl Judges {
     /// the one that wants both wants them for the same matrix.
     async fn judge(&self, gpu: &'static gpu::Gpu, colour: &HdrColour) -> Option<Judged> {
         let evaluated = evaluate_over(gpu, colour, &self.samples, self.count, Stage::Full);
-        let neutral = [crate::fit_score::Probe::neutral()];
-        let scorings: Vec<&crate::fit_score::Scoring> = self
+        let neutral = [crate::score::Probe::neutral()];
+        let scorings: Vec<&crate::score::Scoring> = self
             .parts
             .iter()
             .map(|(from, n, rescored)| rescored.over(gpu, &evaluated.buffer, *from, *n))
             .collect();
-        crate::fit_score::Scoring::ask(&scorings, &crate::fit_score::Shape::Saturation, &neutral);
+        crate::score::Scoring::ask(&scorings, &crate::score::Shape::Saturation, &neutral);
         let mut scored = Vec::with_capacity(3);
         for scoring in scorings {
             let mut partials = scoring.answer(neutral.len()).await?;
             scored.push(partials.remove(0));
         }
-        let [held, frame, wide]: [Vec<crate::fit_score::Partial>; 3] = scored.try_into().ok()?;
+        let [held, frame, wide]: [Vec<crate::score::Partial>; 3] = scored.try_into().ok()?;
         let (sum, weight) = wide
             .iter()
             .fold((0.0, 0.0), |a, b| (a.0 + b.balanced, a.1 + b.weight));
@@ -1806,10 +1806,10 @@ const MEASURE_BLOCK: usize = 4096;
 
 /// Hues the frame is divided into before its pairs are counted, plus one bucket for
 /// everything too close to grey to have a hue at all.
-pub(crate) const HUE_BINS: usize = 12;
+pub const HUE_BINS: usize = 12;
 
 /// Each hue bin muted and vivid, then the one grey bucket.
-pub(crate) const HUE_SLOTS: usize = 2 * HUE_BINS + 1;
+pub const HUE_SLOTS: usize = 2 * HUE_BINS + 1;
 
 /// How far a bin's weight may be pushed from parity, either way.
 ///
@@ -1825,8 +1825,8 @@ const BALANCE_LIMIT: f64 = 4.0;
 
 /// Levels the curve fit's pairs are counted over, and how far parity may push one, on the
 /// square root of a level's share of the ceiling (`fit_curve.slang`'s `level_of`).
-pub(crate) const LEVEL_BINS: usize = 12;
-pub(crate) const LEVEL_BALANCE_LIMIT: f64 = 2.0;
+pub const LEVEL_BINS: usize = 12;
+pub const LEVEL_BALANCE_LIMIT: f64 = 2.0;
 
 /// The same bound for the chroma lattice, which can afford far more of it.
 ///
@@ -1853,7 +1853,7 @@ struct Moments {
 /// How much a camera channel at `level` says about the colour: nothing at the floor, where it
 /// reports what it was clipped to, all of it by twice `CAMERA_CRUSHED`, and smoothly between.
 /// `fit_moments.slang` has its own copy.
-pub(crate) fn trust(level: f64) -> f64 {
+pub fn trust(level: f64) -> f64 {
     let x = (level / (2.0 * CAMERA_CRUSHED)).clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
 }
@@ -1897,7 +1897,7 @@ impl Moments {
         }
     }
 
-    fn folded(blocks: &[[f64; crate::fit_moments::MOMENT_WORDS]]) -> Moments {
+    fn folded(blocks: &[[f64; crate::moments::MOMENT_WORDS]]) -> Moments {
         let mut moments = Moments::default();
         for block in blocks {
             for o in 0..3 {
@@ -1952,7 +1952,7 @@ const RIDGE_CANDIDATES: [f64; 6] = [0.15, 0.05, 0.02, 0.008, 0.002, 0.0005];
 /// One pixel in this many along each axis carries `FRAME`, which is the set every candidate is
 /// scored on beside the pairs. A sixteenth of the plane, enough to say what a candidate does to a
 /// picture and cheap enough to ask of seven candidates a round.
-pub(crate) const FRAME_STRIDE: usize = 4;
+pub const FRAME_STRIDE: usize = 4;
 
 /// The matrix, at the least damping this frame can support.
 ///
@@ -2005,7 +2005,7 @@ async fn ridge_candidates(
     };
     let mut ridged = last.unwrap_or([IDENTITY; RIDGE_CANDIDATES.len()]);
     for _ in 0..rounds {
-        let blocks = crate::fit_moments::partials(
+        let blocks = crate::moments::partials(
             gpu,
             toned,
             pairs.linear_on(gpu),
@@ -2114,7 +2114,7 @@ fn hue_balance(census: &HueCensus, limit: f64) -> Vec<f64> {
 
 /// How many times at most the curves and the matrix are fitted against each other.
 ///
-/// Three, matching the falloff's alternation in `fit.rs`: the second round is where the
+/// Three, matching the falloff's alternation in `profile.rs`: the second round is where the
 /// cross-channel part moves out of the curves and into the matrix, and the third
 /// settles it.
 const FIT_ROUNDS: usize = 3;
@@ -2152,12 +2152,12 @@ const MATRIX_SETTLED: f64 = 0.02;
 /// level - is `slang/fit_curve.slang`. `LEVEL_BALANCE_LIMIT` has why the second weighting exists.
 async fn fit_curves(
     gpu: &'static gpu::Gpu,
-    evidence: &crate::fit_curve::Evidence,
+    evidence: &crate::curve::Evidence,
     hue_weights: &[f64],
     ceiling: f64,
     inverse: Option<&[[f64; 3]; 3]>,
 ) -> Option<([Vec<f64>; 3], f64)> {
-    let binned = crate::fit_curve::binned(gpu, evidence, hue_weights, ceiling, inverse).await?;
+    let binned = crate::curve::binned(gpu, evidence, hue_weights, ceiling, inverse).await?;
     let (mut curve, last) = fit_curve(&binned);
     if let Ok(last) = usize::try_from(last) {
         extend_alone(&mut curve, last);
@@ -2168,7 +2168,7 @@ async fn fit_curves(
 
 /// How close to grey the camera has to render a pixel for it to count as neutral, and
 /// how many such pixels are needed before their average is worth acting on.
-pub(crate) const GREY_CHROMA: f64 = 0.06;
+pub const GREY_CHROMA: f64 = 0.06;
 const MIN_GREY: u64 = 200;
 const NEUTRAL_PULL_LEAST: units::light::Gain = units::light::Gain::of_ratio(0.9);
 const NEUTRAL_PULL_MOST: units::light::Gain = units::light::Gain::of_ratio(1.1);
@@ -2231,7 +2231,7 @@ struct Gathered {
 /// A scoring held across candidates that each evaluate `below` afresh.
 struct Rescored {
     below: gpu::Buffer,
-    scoring: crate::fit_score::Scoring,
+    scoring: crate::score::Scoring,
 }
 
 impl Rescored {
@@ -2249,7 +2249,7 @@ impl Rescored {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let scoring = crate::fit_score::Scoring::new(
+        let scoring = crate::score::Scoring::new(
             gpu,
             below.clone(),
             target,
@@ -2284,7 +2284,7 @@ impl Rescored {
         evaluated: &gpu::Buffer,
         from: usize,
         count: usize,
-    ) -> &crate::fit_score::Scoring {
+    ) -> &crate::score::Scoring {
         if count > 0 {
             let mut recording = gpu.record();
             recording.holding(evaluated);
@@ -2356,18 +2356,18 @@ async fn fitted_matrix_for(
 /// rather than two.
 async fn scored_on_matrices(
     pairs: &Pairs,
-    scoring: &crate::fit_score::Scoring,
+    scoring: &crate::score::Scoring,
     candidates: &[[[f64; 3]; 3]],
 ) -> Option<Vec<Score>> {
-    let probes: Vec<crate::fit_score::Probe> = candidates
+    let probes: Vec<crate::score::Probe> = candidates
         .iter()
-        .map(|matrix| crate::fit_score::Probe {
+        .map(|matrix| crate::score::Probe {
             matrix: multiply(&pairs.to_srgb, matrix),
             saturation: 1.0,
         })
         .collect();
     let partials = scoring
-        .partials(&crate::fit_score::Shape::Matrix, &probes)
+        .partials(&crate::score::Shape::Matrix, &probes)
         .await?;
     Some(partials.into_iter().map(folded).collect())
 }
@@ -2563,16 +2563,16 @@ impl<'a> SaturationPairs<'a> {
 const SCORE_BLOCK: usize = 4096;
 
 /// Each probe's mean at the pairs' own weights, folded from the blocks the device summed.
-async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option<Vec<f64>> {
-    let probes: Vec<crate::fit_score::Probe> = sweep
+async fn scored_on(scoring: &crate::score::Scoring, sweep: &[f64]) -> Option<Vec<f64>> {
+    let probes: Vec<crate::score::Probe> = sweep
         .iter()
-        .map(|s| crate::fit_score::Probe {
+        .map(|s| crate::score::Probe {
             matrix: [[0.0; 3]; 3],
             saturation: *s,
         })
         .collect();
     let partials = scoring
-        .partials(&crate::fit_score::Shape::Saturation, &probes)
+        .partials(&crate::score::Shape::Saturation, &probes)
         .await?;
     Some(
         partials
@@ -2640,7 +2640,7 @@ const MAP_RIDGE: f64 = 0.05;
 /// those colours from nowhere and a smooth shoulder bands at precisely the levels both
 /// admissions declined. Neutrals outvoting the pairs in shared cells is the weight
 /// ladder's job to prevent, not this bar's.
-pub(crate) const WIDE_MIN_CHROMA: f64 = 0.005;
+pub const WIDE_MIN_CHROMA: f64 = 0.005;
 
 /// Wide-plane pixels one correspondence is shared across.
 ///
@@ -2691,7 +2691,7 @@ const WIDE_REFINE: i32 = 1;
 /// `MAP_CONFIDENCE` asks for. Measured against one on the three fixtures: the held-out pair
 /// deltaE moves by two hundredths either way, and a 1:1 crop of the frame the lattice moved most
 /// on by 0.6 of a count in 255, worst pixel 9.
-pub(crate) const WIDE_STRIDE: usize = 2;
+pub const WIDE_STRIDE: usize = 2;
 
 /// What one admitted pixel counts for: the ones the stride passed over.
 const WIDE_STANDS_FOR: f64 = (WIDE_STRIDE * WIDE_STRIDE) as f64;
@@ -2847,7 +2847,7 @@ impl Reach {
 }
 
 /// Half-width of the patch a correspondence is judged on, in wide-plane pixels.
-pub(crate) const PATCH: isize = 3;
+pub const PATCH: isize = 3;
 
 /// How far a pair is allowed to have moved, in wide-plane pixels.
 ///
@@ -2855,7 +2855,7 @@ pub(crate) const PATCH: isize = 3;
 /// is that fit's own residual - a pixel or two at this scale, not a search across the
 /// frame. Widening it costs the square and invites a confident match onto a repeating
 /// texture that happens to sit nearby.
-pub(crate) const SEARCH: isize = 4;
+pub const SEARCH: isize = 4;
 
 /// How much of a patch's structure has to agree before its match is believed.
 ///
@@ -2875,7 +2875,7 @@ const FLAT_PATCH: f64 = 0.02;
 /// Small on purpose. Correspondence is what makes a sharp read safe, so this is left with
 /// only the job a match cannot do: one pixel carries sensor noise, and a node fitted from
 /// a noisy sample lands as far from the truth as a misregistered one does.
-pub(crate) const SAMPLE: isize = 1;
+pub const SAMPLE: isize = 1;
 
 /// How far a neighbour may sit from the centre, per channel, and still be averaged into it.
 ///
@@ -2894,7 +2894,7 @@ pub(crate) const SAMPLE: isize = 1;
 /// *bias* from mixing two surfaces, and every count of slack here is more of it. At this
 /// threshold it averages only neighbours that are the same colour to within the sensor's
 /// own noise, which is the case it was wanted for and no other.
-pub(crate) const SAMPLE_RANGE: f64 = 0.008;
+pub const SAMPLE_RANGE: f64 = 0.008;
 
 /// Half-width of the window a registered pair is read through on both planes, in wide-plane
 /// pixels: its box mean, or its centre's half where it holds two colours (`fit_register.slang`). The reads reach `SEARCH` plus this past a grid position, and the host
@@ -2979,14 +2979,14 @@ const SHAPING_WGSL: &str = shaders::FIT_WARP.source;
 const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
-pub(crate) fn warp_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn warp_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[])
     })
 }
 
-pub(crate) fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[])
@@ -2996,7 +2996,7 @@ pub(crate) fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
 const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(2, WRITE), (3, READ), (4, READ), (20, UNIFORM)];
 
-pub(crate) fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -3009,7 +3009,7 @@ pub(crate) fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     })
 }
 
-pub(crate) fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -3030,7 +3030,7 @@ pub(crate) fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     })
 }
 
-pub(crate) fn stats_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub fn stats_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -3335,12 +3335,12 @@ impl Shaping {
 /// several more. The camera's plane never changes across a settle's rounds, so it is uploaded once
 /// and held here.
 pub struct DevicePlane {
-    pub(crate) buffer: gpu::Buffer,
+    pub buffer: gpu::Buffer,
     /// `patch_stats` over this plane, where a caller asked for it. Only ever the plane being
     /// searched *into*, and only where the search is dense enough to reuse a window.
     stats: Option<Tabulated>,
-    pub(crate) width: usize,
-    pub(crate) height: usize,
+    pub width: usize,
+    pub height: usize,
 }
 
 /// A plane's patch statistics.
@@ -3365,8 +3365,8 @@ impl DevicePlane {
     }
 
     /// A plane the host already holds, for a test that wants to say what the search will read.
-    #[cfg(test)]
-    pub(crate) fn from_luma(
+    #[cfg(any(test, feature = "testing"))]
+    pub fn from_luma(
         gpu: &'static gpu::Gpu,
         luma: &[f32],
         width: usize,
@@ -3404,7 +3404,7 @@ impl DevicePlane {
     ///
     /// So the plane arrives from `levelled_source` still coded, on purpose. Anything that wants the
     /// light those samples carried wants `linear_source` and a different function from this one.
-    pub(crate) fn reduced_luma(
+    pub fn reduced_luma(
         gpu: &'static gpu::Gpu,
         source: &Source,
         width: usize,
@@ -3447,7 +3447,7 @@ impl DevicePlane {
     /// The plane carrying the statistics of every window a search will read. `reach` has to be the
     /// one that search will use, since the statistics are of its window and no other.
     #[track_caller]
-    pub(crate) fn tabulated(mut self, gpu: &'static gpu::Gpu, reach: Reach) -> DevicePlane {
+    pub fn tabulated(mut self, gpu: &'static gpu::Gpu, reach: Reach) -> DevicePlane {
         let mut recording = gpu.record();
         self.tabulate(gpu, &mut recording, reach);
         recording.submit();
@@ -3721,7 +3721,7 @@ fn dispatch_span(points: usize, per_group: usize) -> usize {
 /// One correspondence dispatch's own buffers, so a caller can record it beside whatever else it
 /// wanted done in the same round trip - the settle builds the plane it searches there too.
 struct Asking {
-    pub(crate) found: gpu::Buffer,
+    pub found: gpu::Buffer,
     staging: gpu::Buffer,
     /// Held rather than read, as `Tabulated`'s is and for the same reason. `filler` is bound at
     /// the stats slot for an untabulated plane, so it is one of these too.
@@ -4136,7 +4136,7 @@ async fn chroma_span(
         return Some(widest.sqrt());
     }
     let quantile = |q: f64| ((samples as f64 * q) as usize).min(samples - 1);
-    let picked = crate::fit_span::ranked_chroma(gpu, evaluated, sharp, quantile(0.999)).await?;
+    let picked = crate::span::ranked_chroma(gpu, evaluated, sharp, quantile(0.999)).await?;
     Some(picked.clamp(widest / 16.0, widest).sqrt())
 }
 
@@ -4166,7 +4166,7 @@ async fn neighbourhood_plane(
     height: usize,
 ) -> Option<Neighbourhood> {
     let mut recording = gpu.record();
-    let source = crate::fit::Sampled {
+    let source = crate::profile::Sampled {
         buffer: render.buffer.clone(),
         width,
         height,
@@ -4174,8 +4174,8 @@ async fn neighbourhood_plane(
     };
     // Blurred and then reduced, where the host took the luma first. Both are linear, so the two
     // orders are the same arithmetic, and this way the blur is the only pass that has to exist.
-    const _: () = assert!(FIT_LONG_EDGE / 10 <= crate::fit::BOX_MOST_RADIUS);
-    let blurred = crate::fit::box_blurred(gpu, &mut recording, &source, width / 10);
+    const _: () = assert!(FIT_LONG_EDGE / 10 <= crate::profile::BOX_MOST_RADIUS);
+    let blurred = crate::profile::box_blurred(gpu, &mut recording, &source, width / 10);
     let plane = DevicePlane::luma_of(gpu, &mut recording, &blurred.buffer, width, height);
     let out = staged(&mut recording, &plane.buffer, width * height);
     recording.submit();
@@ -4194,7 +4194,7 @@ async fn neighbourhood_plane(
 
 /// How far the four neighbours two pixels out may sit from the centre, in luma and
 /// relative to it, for a shift of a pixel or two to be unable to change the colour.
-pub(crate) const FLAT_ENOUGH: f64 = 0.04;
+pub const FLAT_ENOUGH: f64 = 0.04;
 
 /// A registered wide-plane sample: ours with the falloff on, the camera's answer, and
 /// the lattice's hue weight for it.
@@ -4242,13 +4242,13 @@ async fn wide_samples(
     // **The gates first, then one search for everything that passed them.** The tests are pure
     // reads of the camera's plane, so they run before anything is corresponded - and the search,
     // which is what costs, then goes to the device as a single batch.
-    let planes = crate::fit_wide::Planes {
+    let planes = crate::wide::Planes {
         ours: wide,
         theirs: target,
         falloff: sharp.falloff,
         ceiling,
     };
-    let Some(admitted) = crate::fit_wide::admit(gpu, &planes).await else {
+    let Some(admitted) = crate::wide::admit(gpu, &planes).await else {
         return Vec::new();
     };
     if admitted.at.is_empty() {
@@ -4324,7 +4324,7 @@ async fn wide_samples(
         WIDE_REFINE,
     );
     lap("refine search");
-    let Some(taken) = crate::fit_wide::gather(gpu, &planes, &admitted, &refined.found).await else {
+    let Some(taken) = crate::wide::gather(gpu, &planes, &admitted, &refined.found).await else {
         return Vec::new();
     };
     // The hue weight the pairs carry and the neighbourhood the lattice reads, looked up on the
@@ -4491,7 +4491,7 @@ impl Landed {
         &self,
         gpu: &'static gpu::Gpu,
         colour: &HdrColour,
-        grid: &crate::fit_lattice::Grid,
+        grid: &crate::lattice::Grid,
         on_what_is_left: bool,
     ) -> Option<ChromaMoments> {
         if self.count == 0 {
@@ -4538,9 +4538,9 @@ async fn lattice_moments(
     neighbourhood: &gpu::Buffer,
     weights: &gpu::Buffer,
     count: usize,
-    grid: &crate::fit_lattice::Grid,
+    grid: &crate::lattice::Grid,
 ) -> Option<ChromaMoments> {
-    let nodes = crate::fit_lattice::moments(
+    let nodes = crate::lattice::moments(
         gpu,
         through,
         indexed,
@@ -4571,7 +4571,7 @@ async fn lattice_moments(
         moments.lta[node] = sums[21];
         moments.ltb[node] = sums[22];
         moments.seen[node] = sums[25];
-        moments.reach[node] = std::array::from_fn(|k| sums[crate::fit_lattice::REACH_WORDS + k]);
+        moments.reach[node] = std::array::from_fn(|k| sums[crate::lattice::REACH_WORDS + k]);
     }
     Some(moments)
 }
@@ -4748,7 +4748,7 @@ struct Sharp {
 impl Sharp {
     /// Every pixel of `wide` as a sample the colour model reads, the falloff lifted in.
     fn lifted(&self, gpu: &'static gpu::Gpu) -> gpu::Buffer {
-        crate::fit_span::lifted(gpu, &self.wide, self.falloff)
+        crate::span::lifted(gpu, &self.wide, self.falloff)
     }
 
     /// [`Sharp::lifted`] through `colour`'s tone stage and matrix, which is what the lattice is
@@ -4775,12 +4775,11 @@ async fn fit_colour(
 ) -> Option<HdrColour> {
     let (width, height) = (planes.width, planes.height);
     let mut lap = trace::clock::laps("  colour ");
-    let selected =
-        crate::fit_pairs::select(gpu, &planes.render, &planes.jpeg, width, height).await?;
+    let selected = crate::pairs::select(gpu, &planes.render, &planes.jpeg, width, height).await?;
     if selected.at.len() < MIN_PAIRS {
         return None;
     }
-    let crate::fit_pairs::Selected {
+    let crate::pairs::Selected {
         ceiling,
         hues,
         counted,
@@ -4856,7 +4855,7 @@ async fn fit_colour(
         width,
         height,
     };
-    let evidence = crate::fit_curve::Evidence {
+    let evidence = crate::curve::Evidence {
         render: planes.render.clone(),
         jpeg: planes.jpeg.clone(),
         bits: words,
@@ -5106,7 +5105,7 @@ impl Taught {
         gpu: &'static gpu::Gpu,
         colour: &HdrColour,
         on: &Lattice<'_>,
-        grid: &crate::fit_lattice::Grid,
+        grid: &crate::lattice::Grid,
         on_what_is_left: bool,
     ) -> Option<Taught> {
         let pairs = on.train.moments(gpu, colour, grid, on_what_is_left).await?;
@@ -5386,12 +5385,12 @@ const WIDE_WEIGHTS: [f64; 3] = [0.0, 0.01, 0.25];
 /// camera has content over it. Two orders below a real shadow, and one-sided: a Sony puts
 /// true black at code 0-1, under this bar, over our signal - on a night frame that is half
 /// the pairs, and refusing them left the fitted toe a pedestal at code 16.
-pub(crate) const MARGIN_DARK: f64 = 0.004;
+pub const MARGIN_DARK: f64 = 0.004;
 
 async fn fit_model(
     gpu: &'static gpu::Gpu,
     source: &Source,
-    evidence: &crate::fit_curve::Evidence,
+    evidence: &crate::curve::Evidence,
     balance: &[f64],
     ceiling: f64,
     [pairs, frame]: [&Pairs; 2],
@@ -5421,7 +5420,7 @@ async fn fit_model(
     // green scaled 0.884 on grass and 0.690 on a brown - is booked into a per-channel
     // curve that cannot express it and cannot be corrected by the matrix afterwards.
     // Undoing the matrix from the target and refitting the curves against what is left gives each
-    // stage only the part it can represent. `fit.rs` alternates its falloff against the colour
+    // stage only the part it can represent. `profile.rs` alternates its falloff against the colour
     // for the same reason, and lands within 0.1 after three rounds.
     let gather = |plane: &Source| Gathered {
         pairs: gathered(gpu, plane, &pairs.indices, pairs.at.len(), None),
@@ -5451,7 +5450,7 @@ async fn fit_model(
             break;
         };
         let plane = lit.as_ref().unwrap_or(source);
-        let evidence = crate::fit_curve::Evidence {
+        let evidence = crate::curve::Evidence {
             render: plane.buffer.clone(),
             jpeg: evidence.jpeg.clone(),
             bits: evidence.bits.clone(),
@@ -5725,7 +5724,7 @@ pub async fn camera_curve_error(gpu: &'static gpu::Gpu, colour: &HdrColour) -> O
     Some(camera_curve(gpu, colour).await?.2)
 }
 
-pub(crate) async fn camera_curve(
+pub async fn camera_curve(
     gpu: &'static gpu::Gpu,
     colour: &HdrColour,
 ) -> Option<(units::light::Stops, Vec<[f64; 2]>, f64)> {
@@ -5858,8 +5857,8 @@ fn fitted_camera_curve(target: &[[f64; 2]], pivot: f64) -> (Vec<[f64; 2]>, f64) 
 /// The fit-grid pair stays on the device because `registered` rewrites it there; the wide planes
 /// are on both sides, the host's copies being what the wide pass and the chroma span still read.
 struct FitPlanes {
-    render: crate::fit::Sampled,
-    jpeg: crate::fit::Sampled,
+    render: crate::profile::Sampled,
+    jpeg: crate::profile::Sampled,
     sharp: Sharp,
     resident: Wide,
 }
@@ -5941,13 +5940,13 @@ async fn prepared_planes(
         shaping.dispatch(&mut recording, Whole::Fixed);
     }
     let prefiltered = |recording: &mut gpu::Recording<'_>, plane: &gpu::Buffer| {
-        let held = crate::fit::Sampled {
+        let held = crate::profile::Sampled {
             buffer: plane.clone(),
             width: fit_wide,
             height: fit_tall,
             packed: false,
         };
-        crate::fit::box_blurred(gpu, recording, &held, FIT_BLUR_RADIUS)
+        crate::profile::box_blurred(gpu, recording, &held, FIT_BLUR_RADIUS)
     };
     let render_blurred = prefiltered(&mut recording, &render_out);
     let jpeg_blurred = prefiltered(&mut recording, &jpeg_out);
@@ -6041,7 +6040,7 @@ pub fn levelled_source(gpu: &'static gpu::Gpu, plane: units::rgb::RgbRef<'_>) ->
 ///
 /// The planes stay on the device because the objective that reads them is
 /// `slang/fit_objective.slang`.
-pub(crate) fn warped_planes(
+pub fn warped_planes(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     (sw, sh): (usize, usize),
@@ -6070,7 +6069,7 @@ pub(crate) fn warped_planes(
 }
 
 /// [`warped_planes`], recorded into planes the caller holds, in the caller's recording.
-pub(crate) fn warped_into(
+pub fn warped_into(
     gpu: &'static gpu::Gpu,
     recording: &mut gpu::Recording<'_>,
     source: &gpu::Buffer,
@@ -6109,7 +6108,7 @@ pub(crate) fn warped_into(
 /// Only the tests that look at a warped plane want this - the search reads the buffers where they
 /// are, and a candidate's plane is 820KB.
 #[cfg(test)]
-pub(crate) async fn warped_levels(
+pub async fn warped_levels(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     source_size: (usize, usize),
@@ -6499,16 +6498,12 @@ mod tests {
 
     /// The selection over two planes flat enough that its own ceiling lands on `TRUST_CEILING`,
     /// so the only thing varying is the pair.
-    fn selection(ours: [f64; 3], theirs: [f64; 3]) -> crate::fit_pairs::Selected {
+    fn selection(ours: [f64; 3], theirs: [f64; 3]) -> crate::pairs::Selected {
         selection_across(5, ours, theirs)
     }
 
     /// The same over a square of `side`, for the tests that need a pixel the border does not eat.
-    fn selection_across(
-        side: usize,
-        ours: [f64; 3],
-        theirs: [f64; 3],
-    ) -> crate::fit_pairs::Selected {
+    fn selection_across(side: usize, ours: [f64; 3], theirs: [f64; 3]) -> crate::pairs::Selected {
         let gpu = searching();
         let flat = |level: [f64; 3]| {
             let data: Vec<f64> = (0..side * side).flat_map(|_| level).collect();
@@ -6518,7 +6513,7 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE,
             })
         };
-        pollster::block_on(crate::fit_pairs::select(
+        pollster::block_on(crate::pairs::select(
             gpu,
             &flat(ours),
             &flat(theirs),
@@ -6571,7 +6566,7 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE,
             })
         };
-        let selected = pollster::block_on(crate::fit_pairs::select(
+        let selected = pollster::block_on(crate::pairs::select(
             gpu,
             &upload(&ours),
             &upload(&theirs),
@@ -6767,7 +6762,7 @@ mod tests {
             "test target",
             pairs.iter().flat_map(|(_, t, w)| [t[0], t[1], t[2], *w]),
         );
-        let blocks = pollster::block_on(crate::fit_moments::partials(
+        let blocks = pollster::block_on(crate::moments::partials(
             gpu,
             &below,
             &target,
@@ -6849,7 +6844,7 @@ mod tests {
     fn the_frame_set_keeps_the_pixels_the_pairs_reject() {
         const INSIDE: usize = 4 * 9 + 4;
         // The camera's own clipping is no level to be measured against, so no pair, and it is
-        // still the picture: `hdr_fit` marks its balance negative and the objective reads it for
+        // still the picture: `crate::hdr` marks its balance negative and the objective reads it for
         // the gamut alone.
         let clipped = selection_across(9, [0.4, 0.2, 0.05], [0.99, 0.99, 0.99]);
         assert!(
@@ -7000,12 +6995,11 @@ mod tests {
 
     fn perceptual_score(target: [f64; 3], ours: [f64; 3]) -> (Score, f64) {
         let gpu = searching();
-        let below = crate::fit_score::below_buffer(gpu, &[(ours, 0.0)]);
-        let scoring =
-            crate::fit_score::Scoring::new(gpu, below, &[target], &[1.0], &IDENTITY, 2, 1);
+        let below = crate::score::below_buffer(gpu, &[(ours, 0.0)]);
+        let scoring = crate::score::Scoring::new(gpu, below, &[target], &[1.0], &IDENTITY, 2, 1);
         let blocks = pollster::block_on(scoring.partials(
-            &crate::fit_score::Shape::Saturation,
-            &[crate::fit_score::Probe::neutral()],
+            &crate::score::Shape::Saturation,
+            &[crate::score::Probe::neutral()],
         ))
         .unwrap()
         .remove(0);
@@ -7603,7 +7597,7 @@ mod tests {
             (40, 9, 4, false),
             (13, 41, 20, false),
             (64, 48, 6, false),
-            (600, 3, crate::fit::BOX_MOST_RADIUS, false),
+            (600, 3, crate::profile::BOX_MOST_RADIUS, false),
             (3, 700, 90, false),
             (400, 2, 54, true),
         ] {
@@ -7615,7 +7609,7 @@ mod tests {
                 })
                 .collect();
             let mut recording = gpu.record();
-            let held = crate::fit::Sampled {
+            let held = crate::profile::Sampled {
                 buffer: rgb_source(
                     &mut recording,
                     "prefilter source",
@@ -7625,7 +7619,7 @@ mod tests {
                 height: h,
                 packed: false,
             };
-            let blurred = crate::fit::box_blurred(gpu, &mut recording, &held, radius);
+            let blurred = crate::profile::box_blurred(gpu, &mut recording, &held, radius);
             let out = staged(&mut recording, &blurred.buffer, w * h * 3);
             recording.submit();
             let got =
@@ -7838,7 +7832,7 @@ mod tests {
         for patch in [3isize, 8, 9] {
             let reach = Reach { patch, search: 0 };
             let tabulated = DevicePlane::from_luma(gpu, &plane, w, h).tabulated(gpu, reach);
-            let stats = pollster::block_on(crate::align::read_floats(
+            let stats = pollster::block_on(gpu::read_floats(
                 gpu,
                 &tabulated.stats.as_ref().expect("tabulated").buffer,
                 w * h * 2,
@@ -8128,8 +8122,8 @@ mod tests {
 
     /// What `fit_curve_bins` writes, built on the host: the fixture the tests below want, whose
     /// subject is the solve over the bins rather than the binning that filled them.
-    fn binned_by_hand(xs: &[f64], ys: &[f64], ws: &[f64]) -> crate::fit_curve::Binned {
-        let mut binned = crate::fit_curve::Binned {
+    fn binned_by_hand(xs: &[f64], ys: &[f64], ws: &[f64]) -> crate::curve::Binned {
+        let mut binned = crate::curve::Binned {
             sum: vec![0.0; BINS],
             weight: vec![0.0; BINS],
             count: vec![0usize; BINS],
@@ -8531,7 +8525,7 @@ mod tests {
         let evaluated = evaluate_over(
             gpu,
             &HdrColour::identity(),
-            &crate::fit_span::lifted(gpu, &plane, None),
+            &crate::span::lifted(gpu, &plane, None),
             plane.pixels(),
             Stage::ToneMatrix,
         );
@@ -8548,7 +8542,7 @@ mod tests {
             .collect();
         chroma.sort_by(f64::total_cmp);
         for at in ranks {
-            let picked = pollster::block_on(crate::fit_span::ranked_chroma(
+            let picked = pollster::block_on(crate::span::ranked_chroma(
                 gpu,
                 &evaluated.buffer,
                 &plane,

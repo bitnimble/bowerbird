@@ -8,6 +8,7 @@ const manifests = [
   'native/render/Cargo.toml',
   'native/colour/Cargo.toml',
   'native/denoise/Cargo.toml',
+  'native/fit/Cargo.toml',
   'native/formats/Cargo.toml',
   'native/geometry/Cargo.toml',
   'native/gpu/Cargo.toml',

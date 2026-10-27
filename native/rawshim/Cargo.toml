@@ -177,6 +177,7 @@ lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 colour = { path = "../colour" }
 denoise = { path = "../denoise" }
+fit = { path = "../fit" }
 formats = { path = "../formats" }
 geometry = { path = "../geometry" }
 gpu = { path = "../gpu" }
@@ -255,6 +256,7 @@ web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 wasm-bindgen-futures = "0.4.58"
 
 [dev-dependencies]
+fit = { path = "../fit", features = ["testing"] }
 formats = { path = "../formats", features = ["testing"] }
 shaders = { path = "../shaders", features = ["layout"] }
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,

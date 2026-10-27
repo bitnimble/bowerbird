@@ -382,7 +382,7 @@ mod tests {
     ///
     /// **They are literals, and a literal is a copy of something.** `XYZ_TO_CONE` is Bradford,
     /// which the test states; `R2020_TO_CONE` is Bradford times the Rec.2020 primaries, and those
-    /// primaries live at `hdr_fit::REC2020_TO_XYZ` and are pinned by `the_primaries_match_the_host`
+    /// primaries live at `fit::hdr::REC2020_TO_XYZ` and are pinned by `the_primaries_match_the_host`
     /// separately - so without this the primaries could move on the host, that test would fail
     /// loudly, and this one would go on quietly using the old ones. `CONE_TO_R2020` is written out
     /// as an inverse and nothing else checks that it inverts anything.

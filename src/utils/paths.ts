@@ -116,7 +116,7 @@ export function draftVolumePath(dataPath: string, layerKey: string): string {
 }
 
 /**
- * Where this photo's measurements are kept (`native/rawshim/src/photo_analysis.rs`).
+ * Where this photo's measurements are kept (`native/fit/src/photo_analysis.rs`).
  *
  * **Beside `renditions/` rather than inside it, and that is the whole point of the directory.**
  * A rendition is a cache: it can be deleted at any moment and the next request rebuilds it, and

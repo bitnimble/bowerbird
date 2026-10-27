@@ -109,7 +109,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
 
     let stored = analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode)
+        .and_then(fit::photo_analysis::decode)
         .unwrap_or_default();
     let mut request = request(analysis);
     for (luminance, colour) in [(40.0, 40.0), (20.0, 30.0)] {

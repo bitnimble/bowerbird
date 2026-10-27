@@ -468,7 +468,7 @@ fn hdr_match(
     path: &str,
     linear: &Frame,
     spec: &GradeSpec,
-) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
+) -> Result<Option<fit::hdr::HdrMatch>, String> {
     let gpu = gpu::device().ok_or("the fit needs an adapter")?;
     let frame = linear.on_device(gpu).ok_or("the frame could not be read")?;
     Ok(crate::fit_hdr_for(
@@ -603,9 +603,9 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
             let mut mean_delta_e = Vec::with_capacity(images.len());
             for below in &ours {
-                let scoring = crate::fit_score::Scoring::new(
+                let scoring = fit::score::Scoring::new(
                     gpu,
-                    crate::fit_score::below_buffer(gpu, below),
+                    fit::score::below_buffer(gpu, below),
                     &targets,
                     &vec![1.0; counted],
                     &identity,
@@ -613,8 +613,8 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     1,
                 );
                 let blocks = pollster::block_on(scoring.partials(
-                    &crate::fit_score::Shape::Saturation,
-                    &[crate::fit_score::Probe::neutral()],
+                    &fit::score::Shape::Saturation,
+                    &[fit::score::Probe::neutral()],
                 ))
                 .ok_or("the colour distance could not be read back")?
                 .remove(0);

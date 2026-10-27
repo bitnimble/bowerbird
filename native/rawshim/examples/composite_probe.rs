@@ -621,7 +621,7 @@ impl Sheet<'_> {
 /// whether the points a pair rests on are the same piece of the world, or the same *kind* of piece
 /// in two places, which is what a scene that repeats offers and what every measure in the table has
 /// to be argued about.
-fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usize, to: &str) {
+fn draw(paths: &[String], planes: &[fit::hdr::Source], a: usize, b: usize, to: &str) {
     let gpu = gpu::device().expect("a Vulkan adapter");
     let long = |at: usize| planes[at].width.max(planes[at].height);
     let Some(left) = rawshim::decode_rawler::upright_preview_rgb(
@@ -782,8 +782,8 @@ fn deviations(matches: &[rawshim::composite_pairs::Match]) -> (Vec<f64>, [f64; 6
 /// scene that repeats produces - one feature meeting the wrong instance of itself.
 fn covered(
     matches: &[rawshim::composite_pairs::Match],
-    a: &rawshim::hdr_fit::Source,
-    b: &rawshim::hdr_fit::Source,
+    a: &fit::hdr::Source,
+    b: &fit::hdr::Source,
     found: rawshim::composite_pairs::Coarse,
     // The coarse translation is stated on the smallest level of the pyramid; the matches are on the
     // largest, which is the preview itself.
@@ -894,13 +894,13 @@ fn analysis_for(path: &str) -> Option<Vec<u8>> {
     let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()?
         .measured;
-    let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
+    let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
     analysis.from_raw.matched = Some(measured.matched?);
-    analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
+    analysis.from_render.levels = Some(fit::photo_analysis::MeasuredLevels {
         levels: measured.levels,
         white_quantile: support::GRADE.white_quantile,
     });
-    Some(rawshim::photo_analysis::encode(&analysis))
+    Some(fit::photo_analysis::encode(&analysis))
 }
 
 /// The photograph's own size, as the catalogue would have it.

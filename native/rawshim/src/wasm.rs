@@ -233,7 +233,7 @@ struct Drawing {
     /// Held so the peak `quantile` wrote survives every tick that reads it.
     _peak: render::grade::ScenePeak,
     levels: colour::tone::Levels,
-    matched: Option<crate::hdr_fit::HdrMatch>,
+    matched: Option<fit::hdr::HdrMatch>,
     as_shot: Option<colour::white_balance::Illuminant>,
     width: usize,
     height: usize,
@@ -1691,7 +1691,7 @@ impl HeldRaw {
             .analysis
             .borrow()
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default();
         let header: crate::edit::PreparedHeader = serde_json::from_str(&self.header.borrow())
             .map_err(|e| JsValue::from_str(&format!("rawshim: this open has no header: {e}")))?;
@@ -2558,8 +2558,8 @@ impl HeldRaw {
         let Some(spots) = held.dust().await else {
             return;
         };
-        let found = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        let found = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 dust: Some(spots),
                 ..Default::default()
             },
@@ -2567,7 +2567,7 @@ impl HeldRaw {
         };
         let merged = found.filled_from(&self.opened_as().stored());
         self.analysis
-            .replace(Some(crate::photo_analysis::encode(&merged)));
+            .replace(Some(fit::photo_analysis::encode(&merged)));
     }
 
     /// What this photograph has had measured, for a page that has to hand it on.

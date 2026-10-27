@@ -14,7 +14,7 @@ const log = new Logger('processing');
  * rebuild, an editor open and every loupe tile were all paying for the same answers. Measured on a
  * 24MP CR3: a 400px tile is 660ms measuring them and 105ms handed them.
  *
- * Tens of kilobytes a photo (`native/rawshim/src/photo_analysis.rs` says what is in it and why the
+ * Tens of kilobytes a photo (`native/fit/src/photo_analysis.rs` says what is in it and why the
  * chroma lattice is `f16`), against a RAW that is fifty megabytes.
  *
  * **Neither read nor write is allowed to fail a render.** A missing file is the ordinary state of a

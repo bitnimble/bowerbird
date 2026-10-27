@@ -14,7 +14,7 @@
 
 mod support;
 
-use rawshim::photo_analysis::{FromRaw, PhotoAnalysis};
+use fit::photo_analysis::{FromRaw, PhotoAnalysis};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -66,7 +66,7 @@ fn main() {
         },
         ..Default::default()
     };
-    let sidecar = rawshim::photo_analysis::encode(&analysis);
+    let sidecar = fit::photo_analysis::encode(&analysis);
     let request = rawshim::tile::TileRequest {
         tile: [x, y, side, side],
         frame: [frame.width, frame.height],

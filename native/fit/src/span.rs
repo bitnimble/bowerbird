@@ -12,7 +12,7 @@ const HALF_BINS: usize = 65536;
 const MARKS: usize = 3;
 const PICKED: usize = 2;
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     gather: wgpu::ComputePipeline,
     high: wgpu::ComputePipeline,
@@ -21,7 +21,7 @@ pub(crate) struct Kernels {
     finish: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -81,9 +81,9 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 
 /// Every pixel of `plane` as a sample the colour model reads, with the lens's falloff the plane
 /// does not carry lifted in.
-pub(crate) fn lifted(
+pub fn lifted(
     gpu: &'static gpu::Gpu,
-    plane: &crate::hdr_fit::Source,
+    plane: &crate::hdr::Source,
     falloff: Option<(f64, f64)>,
 ) -> gpu::Buffer {
     let storage = wgpu::BufferUsages::STORAGE;
@@ -161,7 +161,7 @@ pub(crate) fn lifted(
 
 fn describing(
     gpu: &'static gpu::Gpu,
-    plane: &crate::hdr_fit::Source,
+    plane: &crate::hdr::Source,
     falloff: bool,
     rank: usize,
 ) -> gpu::Buffer {
@@ -187,10 +187,10 @@ fn describing(
 
 /// The ZCAM chroma of the sample at `rank`, over `evaluated`, which is the model's output over
 /// every pixel of `plane` as [`lifted`].
-pub(crate) async fn ranked_chroma(
+pub async fn ranked_chroma(
     gpu: &'static gpu::Gpu,
     evaluated: &gpu::Buffer,
-    plane: &crate::hdr_fit::Source,
+    plane: &crate::hdr::Source,
     rank: usize,
 ) -> Option<f64> {
     let pixels = plane.width * plane.height;

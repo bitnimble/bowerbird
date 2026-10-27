@@ -1539,9 +1539,9 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
     recipe.base = 1;
     recipe.spec.reference = 0;
 
-    let matched = rawshim::photo_analysis::PhotoAnalysis {
-        from_raw: rawshim::photo_analysis::FromRaw {
-            matched: Some(rawshim::hdr_fit::HdrMatch {
+    let matched = fit::photo_analysis::PhotoAnalysis {
+        from_raw: fit::photo_analysis::FromRaw {
+            matched: Some(fit::hdr::HdrMatch {
                 lens: geometry::lens::Lens::none(),
                 colour: Some(colour::matched::HdrColour::identity()),
             }),

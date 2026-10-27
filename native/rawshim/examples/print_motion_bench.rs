@@ -52,7 +52,7 @@ fn main() -> Result<(), String> {
     let analysis = header
         .photo_analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode);
+        .and_then(fit::photo_analysis::decode);
     let pyramid =
         render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("source pyramid")?;

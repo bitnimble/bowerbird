@@ -223,11 +223,11 @@ fn main() {
             .iter()
             .map(|s| [s[0] as f32, s[1] as f32, s[2] as f32, 0.0])
             .collect();
-        let outs = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let outs = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &samples,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         for ((over, scene), out) in overs.iter().zip(&scenes).zip(outs) {

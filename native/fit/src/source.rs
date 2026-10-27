@@ -6,16 +6,16 @@
 //! levels; the plane and the render stay where they were written, and every reader binds them
 //! there.
 
-use crate::parallel::*;
 use colour::resident::Resident;
 use gpu::dispatch::Whole;
+use rayon::prelude::*;
 
 /// The three floats `fit_scan` writes, which is all of the histogram that crosses to the host.
 const LEVEL_BYTES: u64 = 12;
 
 /// Everything the fit needs off the frame, in one round trip.
 pub struct Prepared {
-    pub plane: crate::hdr_fit::Source,
+    pub plane: crate::hdr::Source,
     pub rendered: Rendered,
     pub levels: colour::tone::Levels,
 }
@@ -28,7 +28,7 @@ pub struct Rendered {
     pub height: usize,
 }
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     resize: wgpu::ComputePipeline,
     levels: wgpu::ComputePipeline,
@@ -36,7 +36,7 @@ pub(crate) struct Kernels {
     render: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -124,7 +124,7 @@ pub async fn levels(
 }
 
 struct Taken {
-    plane: Option<crate::hdr_fit::Source>,
+    plane: Option<crate::hdr::Source>,
     rendered: Option<Rendered>,
     levels: colour::tone::Levels,
 }
@@ -306,7 +306,7 @@ async fn run(
 
     let plane = match wanted {
         false => None,
-        true => Some(crate::hdr_fit::Source {
+        true => Some(crate::hdr::Source {
             buffer: plane,
             width: wide,
             height: tall,
@@ -331,8 +331,8 @@ async fn run(
 #[cfg(test)]
 async fn read_plane(
     gpu: &'static gpu::Gpu,
-    plane: &crate::hdr_fit::Source,
-) -> Option<crate::hdr_fit::Plane> {
+    plane: &crate::hdr::Source,
+) -> Option<crate::hdr::Plane> {
     let bytes = (plane.width * plane.height * 3 * 4) as u64;
     let mut recording = gpu.record();
     let out = recording.buffer(&wgpu::BufferDescriptor {
@@ -350,7 +350,7 @@ async fn read_plane(
             .collect::<Vec<f64>>()
     })
     .await?;
-    Some(crate::hdr_fit::Plane {
+    Some(crate::hdr::Plane {
         width: plane.width,
         height: plane.height,
         data,
@@ -359,7 +359,7 @@ async fn read_plane(
 
 /// A render assembled from codes, for the tests that measure one rather than produce one.
 #[cfg(test)]
-pub(crate) fn uploaded_render(gpu: &'static gpu::Gpu, image: units::rgb::RgbRef<'_>) -> Rendered {
+pub fn uploaded_render(gpu: &'static gpu::Gpu, image: units::rgb::RgbRef<'_>) -> Rendered {
     let words: Vec<u8> = image
         .data
         .iter()
@@ -529,7 +529,7 @@ mod tests {
 
         let plane =
             pollster::block_on(super::read_plane(gpu, &prepared.plane)).expect("the plane back");
-        let want = crate::hdr_fit::render_srgb8(&plane, prepared.levels.white);
+        let want = crate::hdr::render_srgb8(&plane, prepared.levels.white);
         let got =
             pollster::block_on(super::read_render(gpu, &prepared.rendered)).expect("the render");
         assert_eq!((got.width, got.height), (want.width, want.height));

@@ -32,7 +32,7 @@ pub struct EditRequest {
     /// The camera match is half a second, the noise fit a quarter of one, and neither depends on
     /// anything the reader can move - so an open that is handed them skips both. A blob this build
     /// cannot read is ignored and everything is measured as it always was
-    /// (`crate::photo_analysis`).
+    /// (`fit::photo_analysis`).
     #[serde(default)]
     pub photo_analysis: Option<Vec<u8>>,
     /// The Detail sliders, which the open denoises the mosaic at exactly as a rendition does.
@@ -85,10 +85,10 @@ impl EditRequest {
     }
 
     /// What the caller already knows about this photograph, as far as this build can read it.
-    pub fn stored(&self) -> crate::photo_analysis::PhotoAnalysis {
+    pub fn stored(&self) -> fit::photo_analysis::PhotoAnalysis {
         self.photo_analysis
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default()
     }
 }
@@ -112,7 +112,7 @@ pub struct PreparedHeader {
     pub floor: Option<units::light::Light<units::light::Level>>,
     pub grade: hdr::Grade,
     pub strengths: Strengths,
-    pub camera_match: crate::hdr_fit::CameraMatch,
+    pub camera_match: fit::hdr::CameraMatch,
     /// False where the file embeds no preview or the fit found too few pairs, in which
     /// case the client grades the neutral arm exactly as a rendition does.
     pub matched: bool,
@@ -433,7 +433,7 @@ pub async fn from_frame(
             _ => None,
         };
         let opening = crate::open::Opening {
-            camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             grade: request.grade,
             strengths,
             stored: &stored,
@@ -514,8 +514,8 @@ pub async fn from_frame(
         // The match this open may have just fitted travels down as the analysis, because that is
         // where the window reads its lens from - handing it separately would be the same value
         // arriving two ways.
-        let handed = crate::photo_analysis::encode(&crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        let handed = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 noise: noise_fit,
                 dust: dust.clone(),
@@ -615,7 +615,7 @@ pub struct Opened {
     pub header: PreparedHeader,
     /// What the frame was coded against, which the tick's uniform anchors to.
     pub levels: colour::tone::Levels,
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
     pub as_shot: Option<colour::white_balance::Illuminant>,
     /// What the open took out, kept by a host that opens this photograph again.
     pub removal: Option<crate::dereflect::Removal>,
@@ -669,13 +669,13 @@ struct Framed {
 
 async fn payload(
     prepared: Framed,
-    matched: Option<&crate::hdr_fit::HdrMatch>,
+    matched: Option<&fit::hdr::HdrMatch>,
     as_shot: Option<colour::white_balance::Illuminant>,
     request: &EditRequest,
     // What the frame was actually filtered at, which the request only half decides.
     strengths: Strengths,
     // What the request arrived carrying, so what this open measured can be reported as new.
-    stored: &crate::photo_analysis::PhotoAnalysis,
+    stored: &fit::photo_analysis::PhotoAnalysis,
     noise_fit: Option<denoise::galosh::NoiseFit>,
     capture_sigma: Option<f32>,
     defocus: (f32, f32),
@@ -684,8 +684,8 @@ async fn payload(
 ) -> PreparedHeader {
     // Everything this open now knows, against everything it was told. Reported only where it says
     // something new, so its presence means "keep this" rather than "here is what you gave me".
-    let measured = crate::photo_analysis::PhotoAnalysis {
-        from_raw: crate::photo_analysis::FromRaw {
+    let measured = fit::photo_analysis::PhotoAnalysis {
+        from_raw: fit::photo_analysis::FromRaw {
             matched: matched.cloned(),
             noise: noise_fit,
             dust,
@@ -694,8 +694,8 @@ async fn payload(
             // filing it would be storing what this side already has.
             balance: None,
         },
-        from_render: crate::photo_analysis::FromRender {
-            levels: Some(crate::photo_analysis::MeasuredLevels {
+        from_render: fit::photo_analysis::FromRender {
+            levels: Some(fit::photo_analysis::MeasuredLevels {
                 levels: prepared.levels,
                 white_quantile: request.grade.white_quantile,
             }),
@@ -703,7 +703,7 @@ async fn payload(
             // `peak.slang` over the frame below and keeps the candidates a tick remeasures. What it
             // finds comes back through the API rather than out of this call.
             scene_peak: None,
-            defocus: Some(crate::photo_analysis::MeasuredDefocus {
+            defocus: Some(fit::photo_analysis::MeasuredDefocus {
                 red: defocus.0,
                 blue: defocus.1,
                 defringe: request.defringe,
@@ -714,7 +714,7 @@ async fn payload(
         },
     };
     let photo_analysis = match measured.adds_to(stored) {
-        true => Some(crate::photo_analysis::encode(&measured.filled_from(stored))),
+        true => Some(fit::photo_analysis::encode(&measured.filled_from(stored))),
         false => None,
     };
 
@@ -728,7 +728,7 @@ async fn payload(
         floor: prepared.levels.floor,
         grade: request.grade,
         strengths,
-        camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
+        camera_match: fit::hdr::CameraMatch::LensAndColour,
         matched: matched.is_some(),
         mosaic,
         as_shot,

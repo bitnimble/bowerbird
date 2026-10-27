@@ -1,7 +1,7 @@
 // The colour fit's ceiling, its mask, the hue census beside it, and the pair list they select -
 // over the two fit-grid planes, where `fit_register.slang` left them.
 //
-// Every threshold arrives through the uniform. They are the same numbers `hdr_fit.rs` gates on and
+// Every threshold arrives through the uniform. They are the same numbers `fit::hdr` gates on and
 // documents at length, and a shader restating one would be a second place to change it. What is
 // stated here rather than passed is the word's own layout, which
 // `the_shader_packs_the_word_the_host_takes_apart` holds against the host's reading of it.
@@ -27,7 +27,7 @@ struct Params {
     int hue_bins;
     /// Below this many usable pixels the frame does not get to move its own ceiling.
     int min_counted;
-    /// `hdr_fit::MARGIN_DARK`.
+    /// `fit::hdr::MARGIN_DARK`.
     float margin_dark;
     float camera_clipping;
     float camera_crushed;
@@ -75,7 +75,7 @@ static const uint ALL = 8;
 
 /// All three of our channels carry colour, which is a weaker test than `ALL` and a different one.
 /// However dark the camera's pixel, it is a pair: the stages that read one weigh it by how much its
-/// channels say (`hdr_fit::trust`), so a dark olive teaches the shadow's nodes a little rather than
+/// channels say (`fit::hdr::trust`), so a dark olive teaches the shadow's nodes a little rather than
 /// leaving them to extrapolate.
 ///
 /// `ALL` requires our side below the ceiling, because the stage it gates is a per-channel curve and

@@ -559,7 +559,7 @@ pub fn removal(
     looked: &Resident,
     full: Size<Drawn>,
     settings: &Settings,
-    matched: Option<&crate::hdr_fit::HdrMatch>,
+    matched: Option<&fit::hdr::HdrMatch>,
 ) -> Option<Removal> {
     if !settings.takes_out() {
         return None;

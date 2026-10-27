@@ -80,7 +80,7 @@ fn measure(path: &str) {
             &resident,
             quantile,
             geometry,
-            rawshim::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             opened.frame.as_shot,
         ));
         taken.push(began.elapsed().as_secs_f64() * 1000.0);
@@ -117,8 +117,8 @@ fn measure(path: &str) {
             // The whole match as the sidecar would store it, hashed: the lattice is too large to
             // print, and this is the form every later render reads.
             let encoded =
-                rawshim::photo_analysis::encode(&rawshim::photo_analysis::PhotoAnalysis {
-                    from_raw: rawshim::photo_analysis::FromRaw {
+                fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         matched: Some(matched.clone()),
                         ..Default::default()
                     },

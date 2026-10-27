@@ -119,7 +119,7 @@ const INJECTED_CORNER: f64 = 0.65;
 ///   (the same fit scores 1.844 under the old metric). CIEDE2000 is not a rescaling of
 ///   deltaE76: `S_H` drops below one wherever `T` does and `R_T` rotates blue error into
 ///   chroma, so a chromatic frame can read higher while being no worse.
-/// - Then the planes stopped being blurred (`hdr_fit::registered`). Scoring against sharp
+/// - Then the planes stopped being blurred (`fit::hdr::registered`). Scoring against sharp
 ///   corresponded samples is a harder test than scoring against smeared ones, so the same
 ///   quality of fit reads 4.315 and 4.551 where it read 2.460 and 2.806.
 ///
@@ -147,7 +147,7 @@ fn adapter() -> &'static gpu::Gpu {
     gpu::device().expect("an adapter for the fit's search")
 }
 
-fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
+fn injected_falloff() -> (fit::profile::Profile, fit::hdr::HdrMatch) {
     let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
     let target = formats::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
         .expect("the injected target encodes");
@@ -159,10 +159,10 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
         adapter(),
         &resident,
         0.9,
-        crate::fit::Geometry::Uncorrected,
+        fit::profile::Geometry::Uncorrected,
         &target,
         None,
-        crate::hdr_fit::CameraMatch::LensAndColour,
+        fit::hdr::CameraMatch::LensAndColour,
         frame.as_shot,
     ))
     .expect("the fit finds something worth applying");
@@ -223,7 +223,7 @@ fn tile_job(
     crate::job::Job {
         raw_file_path: path.to_string(),
         // A crop cannot fit one, and the point here is the coding rather than the colour.
-        camera_match: crate::hdr_fit::CameraMatch::None,
+        camera_match: fit::hdr::CameraMatch::None,
         half_size: false,
         header: false,
         composite: None,
@@ -1056,9 +1056,9 @@ mod decode_geometry {
             // f/2.8, where the pupil spreads a speck's shadow into nothing. Arriving this way is
             // also the ordinary case: a photograph that has been opened before carries its spots
             // in the sidecar, and this is the route by which a band ever sees them.
-            photo_analysis: Some(crate::photo_analysis::encode(
-                &crate::photo_analysis::PhotoAnalysis {
-                    from_raw: crate::photo_analysis::FromRaw {
+            photo_analysis: Some(fit::photo_analysis::encode(
+                &fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         dust: Some(particles()),
                         ..Default::default()
                     },
@@ -1909,10 +1909,10 @@ mod loupe_tile {
 
     fn a_tile_is_the_rendition(path: &str, bright: formats::orientation::Tile) {
         let mut fitted = tile_job(path, None, None);
-        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        fitted.camera_match = fit::hdr::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
-        let kept = crate::photo_analysis::encode(&base.analysis);
+        let kept = fit::photo_analysis::encode(&base.analysis);
         drop(base);
 
         let edits: [(&str, fn(&mut crate::job::Job)); 4] = [
@@ -1950,7 +1950,7 @@ mod loupe_tile {
         for (what, edit) in edits {
             let built = |tile: Option<[usize; 4]>, levels: Option<colour::tone::Levels>| {
                 let mut job = tile_job(path, tile, levels);
-                job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+                job.camera_match = fit::hdr::CameraMatch::LensAndColour;
                 job.photo_analysis = Some(kept.clone());
                 edit(&mut job);
                 job
@@ -2068,7 +2068,7 @@ mod loupe_tile {
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
-        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        job.camera_match = fit::hdr::CameraMatch::LensAndColour;
         job.geometry = geometry;
         job.sharpen = 1.0;
         job.defringe = 1.0;
@@ -2155,7 +2155,7 @@ mod loupe_tile {
         // through the file, and the chroma lattice is kept at the `f16` its texture holds: that is
         // a fifth of a percent of colour on every pixel, which is a real difference about storage
         // and nothing to do with how much of the sensor was decoded.
-        job.photo_analysis = Some(crate::photo_analysis::encode(
+        job.photo_analysis = Some(fit::photo_analysis::encode(
             // At the size the restricted route will ask for, not at the sensor's: the whole-frame
             // decode halves itself for the same floor, and the aberration it measures is keyed on
             // the resolution it was measured at.
@@ -2163,7 +2163,7 @@ mod loupe_tile {
                 .expect("the frame")
                 .analysis,
         ));
-        let stored = crate::photo_analysis::decode(job.photo_analysis.as_ref().unwrap())
+        let stored = fit::photo_analysis::decode(job.photo_analysis.as_ref().unwrap())
             .expect("it reads back");
         let mut whole = crate::job::Base::build(&job, size).expect("the frame");
         let mut cropped = crate::job::Base::cropped(&job, &[&job.targets[0]], &stored)
@@ -2269,7 +2269,7 @@ mod loupe_tile {
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
-        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        job.camera_match = fit::hdr::CameraMatch::LensAndColour;
         job.geometry = geometry::warp::Geometry {
             crop: [0.12, 0.08, 0.93, 0.9],
             angle_degrees: -2.25,
@@ -2281,7 +2281,7 @@ mod loupe_tile {
         job.adjust.clarity = 40.0;
         job.targets = vec![target];
         // Measured once and handed to both, as `restricted_decode_is_the_whole_one` says why.
-        job.photo_analysis = Some(crate::photo_analysis::encode(
+        job.photo_analysis = Some(fit::photo_analysis::encode(
             &crate::job::Base::build(&job, 4800)
                 .expect("the frame")
                 .analysis,
@@ -2416,18 +2416,18 @@ mod loupe_tile {
         let path = sony();
         let path = path.to_str().unwrap();
         let mut fitted = tile_job(path, None, None);
-        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        fitted.camera_match = fit::hdr::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
-        let kept = crate::photo_analysis::encode(&base.analysis);
+        let kept = fit::photo_analysis::encode(&base.analysis);
         drop(base);
 
         // The camera match and the noise fit, with nothing a render measured: what is being asked
         // here is what a tile left to read its own levels does, and a stored analysis would answer
         // that question for it - which is the whole point of storing one, and not this test's
         // subject.
-        let from_raw = crate::photo_analysis::encode(&crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::decode(&kept)
+        let from_raw = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::decode(&kept)
                 .expect("it reads back")
                 .from_raw,
             ..Default::default()
@@ -2438,7 +2438,7 @@ mod loupe_tile {
                 Some([DARK.left, DARK.top, DARK.width, DARK.height]),
                 levels,
             );
-            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+            job.camera_match = fit::hdr::CameraMatch::LensAndColour;
             job.photo_analysis = Some(from_raw.clone());
             job
         };
@@ -2681,15 +2681,15 @@ mod camera_match {
 
     #[test]
     fn lens_only_is_measured_and_completed_with_colour_through_the_same_geometry() {
-        use crate::hdr_fit::CameraMatch;
+        use fit::hdr::CameraMatch;
         let path = sony();
         let mut job = tile_job(path.to_str().unwrap(), None, None);
         job.camera_match = CameraMatch::Lens;
         let lens = crate::job::Base::build(&job, 3840).expect("lens render");
         assert!(lens.matched.as_ref().expect("lens").colour.is_none());
-        let stored = crate::photo_analysis::encode(&lens.analysis);
+        let stored = fit::photo_analysis::encode(&lens.analysis);
         drop(lens);
-        let kept = crate::photo_analysis::decode(&stored).expect("stored lens");
+        let kept = fit::photo_analysis::decode(&stored).expect("stored lens");
         let known = &kept.from_raw.matched.as_ref().expect("lens").lens;
         job.photo_analysis = Some(stored);
         job.camera_match = CameraMatch::LensAndColour;
@@ -2700,7 +2700,7 @@ mod camera_match {
         assert_eq!(matched.lens.distortion, known.distortion);
         assert_eq!(matched.lens.falloff, known.falloff);
         assert!(full.analysis.adds_to(&kept));
-        job.photo_analysis = Some(crate::photo_analysis::encode(&full.analysis));
+        job.photo_analysis = Some(fit::photo_analysis::encode(&full.analysis));
         drop(full);
         job.camera_match = CameraMatch::None;
         let neutral = crate::job::Base::build(&job, 3840).expect("neutral render");
@@ -2710,7 +2710,7 @@ mod camera_match {
     /// The lens and the match, fitted the way a job fits them off the linear decode. Not
     /// cached: one of the assertions below is that fitting twice agrees, and a cache would
     /// answer it with the same object and prove nothing.
-    fn fitted(path: &PathBuf) -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
+    fn fitted(path: &PathBuf) -> (fit::profile::Profile, fit::hdr::HdrMatch) {
         let frame = decode(path, 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
         let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
@@ -2720,7 +2720,7 @@ mod camera_match {
             &resident,
             0.9,
             geometry,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
@@ -2897,7 +2897,7 @@ mod camera_match {
         let bytes = outcome
             .photo_analysis
             .expect("a measure job answers an analysis to keep");
-        let analysis = crate::photo_analysis::decode(&bytes).expect("the analysis parses");
+        let analysis = fit::photo_analysis::decode(&bytes).expect("the analysis parses");
         // The match is the whole point of asking: its lens is the table a panorama's RAW gather
         // reaches each sensor through, and a canvas stitched without one doubles every seam. What
         // that lens *contains* is the fit's own business, pinned by the tests beside this one.
@@ -3167,7 +3167,7 @@ mod camera_match {
         /// database being consulted behind the body's back.
         #[test]
         fn never_takes_the_database_over_a_spline_the_body_recorded() {
-            assert_ne!(fitted(&sony()).0.source, crate::fit::SOURCE_LENSFUN);
+            assert_ne!(fitted(&sony()).0.source, fit::profile::SOURCE_LENSFUN);
         }
     }
 
@@ -3323,14 +3323,14 @@ mod camera_match {
             adapter(),
             &resident,
             0.9,
-            crate::fit::Geometry::Unstated,
+            fit::profile::Geometry::Unstated,
             &target,
             None,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
-        assert_eq!(fitted.source, crate::fit::SOURCE_FITTED);
+        assert_eq!(fitted.source, fit::profile::SOURCE_FITTED);
 
         // The target samples outward, so the map from target back to render carries the
         // same sign as the injected coefficient. Compare centre-to-corner displacement
@@ -3462,7 +3462,7 @@ mod hdr_grade {
     }
 
     /// The camera match, fitted the way a job fits it (§10.8.1).
-    fn matched(frame: &crate::frame::Frame) -> Option<crate::hdr_fit::HdrMatch> {
+    fn matched(frame: &crate::frame::Frame) -> Option<fit::hdr::HdrMatch> {
         let resident = frame.on_device(adapter())?;
         crate::fit_hdr_for(&resident, sony().to_str().unwrap(), QUANTILE, frame.as_shot)
     }
@@ -3547,7 +3547,7 @@ mod hdr_grade {
             &resident,
             QUANTILE,
             geometry,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the linear fit");
@@ -3598,7 +3598,7 @@ mod hdr_grade {
     fn graded(
         frame: &crate::frame::Frame,
         options: &EncodeOptions,
-        m: Option<&crate::hdr_fit::HdrMatch>,
+        m: Option<&fit::hdr::HdrMatch>,
     ) -> (Vec<u16>, usize, usize) {
         crate::hdr::graded(&source(frame), options, m)
     }
@@ -3674,7 +3674,7 @@ mod hdr_grade {
         // At a rendition's size, not the frame's: what is compared is whether two
         // grades agree, which no amount of resolution makes truer.
         let frame = linear();
-        let digest = |m: Option<&crate::hdr_fit::HdrMatch>| {
+        let digest = |m: Option<&fit::hdr::HdrMatch>| {
             let (graded, _, _) = graded(&frame, &options(800.0, "/dev/null"), m);
             crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(
                 graded,
@@ -4161,7 +4161,7 @@ mod pictures {
     fn default_sharpening_does_not_turn_high_iso_shadow_grain_into_speckles() {
         let render = |sharpen, decode| {
             let mut job = tile_job(bayer_noisy().to_str().unwrap(), None, None);
-            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+            job.camera_match = fit::hdr::CameraMatch::LensAndColour;
             job.denoise_luminance = None;
             job.denoise_colour = None;
             job.sharpen = sharpen;

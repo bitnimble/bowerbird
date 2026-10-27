@@ -13,8 +13,8 @@
 //! sources ([`Fitting`]), and a job brings its own strengths. Everything else - which stages run,
 //! what is measured, what is skipped because it was handed over - is the same code for both.
 
-use crate::hdr_fit::CameraMatch;
 use colour::resident::Resident;
+use fit::hdr::CameraMatch;
 
 /// Where a camera match comes from, and whether one is wanted.
 ///
@@ -46,7 +46,7 @@ pub struct Opening<'a> {
     pub grade: crate::hdr::Grade,
     pub strengths: render::detail::Strengths,
     /// What is already known about this photograph, so an open measures only what it must.
-    pub stored: &'a crate::photo_analysis::PhotoAnalysis,
+    pub stored: &'a fit::photo_analysis::PhotoAnalysis,
     pub fitting: Fitting<'a>,
     pub camera_match: CameraMatch,
     /// The mosaic's own noise, as the decode fitted it. What bounds the defringe's per-channel
@@ -64,7 +64,7 @@ pub struct Opening<'a> {
 
 /// Everything an open measured, in the units the stages below it read.
 pub struct Measured {
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
     /// Unfloored, as the photograph's own: `anchored()` is what the coding takes.
     pub levels: colour::tone::Levels,
     /// What the chain below is to do about longitudinal aberration, decided here so that both
@@ -223,7 +223,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         None => {
             let refused = || render::base::without_a_device("the frame's own levels");
             let gpu = gpu::device().ok_or_else(refused)?;
-            crate::fit_source::levels(gpu, frame, how.grade.white_quantile)
+            fit::source::levels(gpu, frame, how.grade.white_quantile)
                 .await
                 .ok_or("the frame's levels could not be measured")?
         }
@@ -250,7 +250,7 @@ async fn stated_match(
     fitting: &Fitting<'_>,
     levels: &colour::tone::Levels,
     neutral_ceiling: f32,
-) -> Option<crate::hdr_fit::HdrMatch> {
+) -> Option<fit::hdr::HdrMatch> {
     let source = match fitting {
         Fitting::None => return None,
         Fitting::Preview(bytes) => rawler::rawsource::RawSource::new_from_slice(bytes),
@@ -274,7 +274,7 @@ async fn stated_match(
     let colour = stated
         .colour(gpu::device()?, levels, neutral_ceiling)
         .await?;
-    Some(crate::hdr_fit::HdrMatch {
+    Some(fit::hdr::HdrMatch {
         lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(geometry::lens::Lens::none),
         colour: Some(colour),
     })
@@ -284,9 +284,9 @@ async fn complete_colour(
     fitting: &Fitting<'_>,
     frame: &Resident,
     quantile: f64,
-    matched: &crate::hdr_fit::HdrMatch,
+    matched: &fit::hdr::HdrMatch,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, colour::tone::Levels)> {
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     let preview = match fitting {
         Fitting::None => return None,
@@ -316,8 +316,8 @@ async fn fit_from_preview(
     quantile: f64,
     camera_match: CameraMatch,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, colour::tone::Levels)> {
-    // A decode narrower than the preview cannot be paired against it: `fit_source::plane_size`
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
+    // A decode narrower than the preview cannot be paired against it: `fit::source::plane_size`
     // clamps its target to the frame's own width, so the two grids come out different sizes and
     // `pairs` asserts on it. Renditions never reach this because they decode at thousands of
     // pixels; the editor can, because the client asks for the size its stage can show
@@ -329,9 +329,9 @@ async fn fit_from_preview(
     let preview = crate::hdr::match_preview_from_bytes(raw)?;
     let recorded = crate::lens::read_distortion(raw);
     let geometry = match (recorded.applied, recorded.spline) {
-        (Some(false), _) => crate::fit::Geometry::Uncorrected,
-        (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
-        (_, None) => crate::fit::Geometry::Unstated,
+        (Some(false), _) => fit::profile::Geometry::Uncorrected,
+        (_, Some(knots)) => fit::profile::Geometry::Recorded(knots),
+        (_, None) => fit::profile::Geometry::Unstated,
     };
     crate::hdr::fit_all_from_preview(
         gpu,

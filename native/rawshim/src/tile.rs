@@ -82,7 +82,7 @@ pub struct TileRequest {
     /// a rendition's loupe, over HTTP - has to do.
     #[serde(default)]
     pub defocus: render::base::Defringe,
-    /// What is already known about the photograph, so a tile fits none of it (`crate::photo_analysis`).
+    /// What is already known about the photograph, so a tile fits none of it (`fit::photo_analysis`).
     #[serde(default)]
     pub photo_analysis: Option<Vec<u8>>,
     /// How much of the sensor's resolution this render wants (`crate::view::Scale`).
@@ -121,10 +121,10 @@ impl TileRequest {
     }
 
     /// What is already known about the photograph, as far as this build can read it.
-    fn stored(&self) -> crate::photo_analysis::PhotoAnalysis {
+    fn stored(&self) -> fit::photo_analysis::PhotoAnalysis {
         self.photo_analysis
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default()
     }
 }
@@ -139,7 +139,7 @@ pub struct Prepared {
     pub keep: [usize; 4],
     /// The levels the samples above were coded against, which the grade anchors to.
     pub levels: colour::tone::Anchored,
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
     pub as_shot: Option<colour::white_balance::Illuminant>,
     /// The camera's own multipliers, which a composite files as its balance
     /// (`photo_analysis::FromRaw::balance`).
@@ -381,7 +381,7 @@ pub async fn prepared_on_device(
         });
     let levels = match known {
         Some(levels) => levels,
-        None => crate::fit_source::levels(gpu, &resident, request.grade.white_quantile)
+        None => fit::source::levels(gpu, &resident, request.grade.white_quantile)
             .await
             .ok_or("the frame's levels could not be measured")?,
     }
@@ -585,7 +585,7 @@ struct Grown {
     photograph: (usize, usize),
     /// Its match, decoded once here so the footprint, the gather and the grade cannot disagree
     /// about whether there is a lens.
-    matched: Option<crate::hdr_fit::HdrMatch>,
+    matched: Option<fit::hdr::HdrMatch>,
     /// Its lens, where that match carries one worth applying.
     lens: Option<geometry::lens::Lens>,
     /// Where the decode is resized between the coding and the lens, for a request with a `drawn`
@@ -1074,10 +1074,10 @@ mod tests {
             sharpen: 0.0,
             defringe: 0.0,
         };
-        request.photo_analysis = Some(crate::photo_analysis::encode(
-            &crate::photo_analysis::PhotoAnalysis {
-                from_raw: crate::photo_analysis::FromRaw {
-                    matched: Some(crate::hdr_fit::HdrMatch {
+        request.photo_analysis = Some(fit::photo_analysis::encode(
+            &fit::photo_analysis::PhotoAnalysis {
+                from_raw: fit::photo_analysis::FromRaw {
+                    matched: Some(fit::hdr::HdrMatch {
                         colour: Some(colour::matched::HdrColour::identity()),
                         lens: geometry::lens::Lens::none(),
                     }),

@@ -1,7 +1,7 @@
 //! A set of photographs into a recipe: what overlaps what, where each one points, and how big the
 //! canvas has to be.
 //!
-//! **Everything here runs on previews.** A `hdr_fit::sample_long_edge` plane a side is what the
+//! **Everything here runs on previews.** A `colour::matched::sample_long_edge` plane a side is what the
 //! pairs are searched on and what the rotations are solved from, so aligning ten 61MP frames costs
 //! ten preview decodes and no full-resolution pixel at all. The recipe that comes out is stated at
 //! the sources' own resolution, which is a scale factor applied at the end and not a second solve.
@@ -656,7 +656,7 @@ const MOST_NEIGHBOURS: usize = 6;
 pub async fn previews(
     gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
-) -> Result<Vec<crate::hdr_fit::Source>, String> {
+) -> Result<Vec<fit::hdr::Source>, String> {
     previews_at(gpu, sources, colour::matched::sample_long_edge()).await
 }
 
@@ -673,7 +673,7 @@ pub async fn previews_at(
     gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
     long: usize,
-) -> Result<Vec<crate::hdr_fit::Source>, String> {
+) -> Result<Vec<fit::hdr::Source>, String> {
     let wide = plane_edge(long);
     let mut planes = Vec::with_capacity(sources.len());
     for source in sources {
@@ -729,7 +729,7 @@ async fn preview_of(
     gpu: &'static gpu::Gpu,
     source: &AlignSource<'_>,
     wide: usize,
-) -> Result<crate::hdr_fit::Source, String> {
+) -> Result<fit::hdr::Source, String> {
     // **A copy of this camera's own JPEG, prepared exactly as the JPEG is.** Not through the
     // rendered branch below: that one decodes to scene-linear and reduces on the device, which is
     // a different preparation of the same picture and answers a different alignment - measured on
@@ -745,8 +745,8 @@ async fn preview_of(
         let bytes =
             std::fs::read(plane).map_err(|why| format!("{plane} could not be read: {why}"))?;
         let picture = formats::resize::decode(&bytes, wide)?;
-        return Ok(crate::hdr_fit::Source {
-            buffer: crate::hdr_fit::levelled_source(gpu, picture.as_ref()),
+        return Ok(fit::hdr::Source {
+            buffer: fit::hdr::levelled_source(gpu, picture.as_ref()),
             width: picture.width,
             height: picture.height,
         });
@@ -760,8 +760,8 @@ async fn preview_of(
             crate::decode_rawler::Preview::for_the_match(),
         )
         .ok_or_else(|| format!("{} embeds no preview to align on", source.photo_id))?;
-        return Ok(crate::hdr_fit::Source {
-            buffer: crate::hdr_fit::levelled_source(gpu, preview.as_ref()),
+        return Ok(fit::hdr::Source {
+            buffer: fit::hdr::levelled_source(gpu, preview.as_ref()),
             width: preview.width,
             height: preview.height,
         });
@@ -781,13 +781,13 @@ async fn preview_of(
     let resident = frame
         .on_device(gpu)
         .ok_or_else(|| format!("{} could not be read onto the device", source.photo_id))?;
-    let prepared = crate::fit_source::prepared(gpu, &resident, wide, QUANTILE)
+    let prepared = fit::source::prepared(gpu, &resident, wide, QUANTILE)
         .await
         .ok_or_else(|| format!("{} could not be reduced to a preview", source.photo_id))?;
     // The rendering rather than the scene-linear plane beside it: a RAW's preview arrives coded,
     // and a correlation between a coded plane and a linear one is a correlation across a gamma.
     let rendered = prepared.rendered;
-    Ok(crate::hdr_fit::Source {
+    Ok(fit::hdr::Source {
         buffer: rendered.buffer,
         width: rendered.width,
         height: rendered.height,
@@ -818,7 +818,7 @@ fn shared_lenses(
         .iter()
         .map(|s| {
             let bytes = s.analysis?;
-            crate::photo_analysis::decode(bytes)?
+            fit::photo_analysis::decode(bytes)?
                 .from_raw
                 .matched
                 .filter(|m| {
@@ -997,12 +997,12 @@ pub(crate) mod tests {
     /// correct is the case that is not synthetic.
     #[test]
     fn a_fitted_lens_with_no_distortion_is_not_a_lens_nobody_fitted() {
-        let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
-        analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
+        let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
+        analysis.from_raw.matched = Some(fit::hdr::HdrMatch {
             lens: geometry::lens::Lens::none(),
             colour: None,
         });
-        let stored = crate::photo_analysis::encode(&analysis);
+        let stored = fit::photo_analysis::encode(&analysis);
 
         let mut warnings = Vec::new();
         let mut lensless = Vec::new();
@@ -1025,15 +1025,15 @@ pub(crate) mod tests {
     #[test]
     fn a_stated_rendering_measured_only_the_lens_it_states() {
         let shared = |lens: geometry::lens::Lens| {
-            let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
-            analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
+            let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
+            analysis.from_raw.matched = Some(fit::hdr::HdrMatch {
                 lens,
                 colour: Some(colour::matched::HdrColour {
                     stated: true,
                     ..colour::matched::HdrColour::identity()
                 }),
             });
-            let stored = crate::photo_analysis::encode(&analysis);
+            let stored = fit::photo_analysis::encode(&analysis);
 
             let mut warnings = Vec::new();
             let mut lensless = Vec::new();
@@ -1297,7 +1297,7 @@ pub(crate) mod tests {
                 let taken = burst(shakes.clone());
                 let luma = taken.photograph(&scene, frame, 1.0, None);
                 let rgb: Vec<f32> = luma.iter().flat_map(|&value| [value; 3]).collect();
-                let plane = crate::hdr_fit::Source {
+                let plane = fit::hdr::Source {
                     buffer: gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("stack preview"),
                         contents: bytemuck::cast_slice(&rgb),

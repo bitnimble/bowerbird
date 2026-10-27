@@ -215,7 +215,7 @@ fn measure(path: &str) -> Option<Report> {
         drift_br: perceptual.drift_br,
         exposure: matched.colour.as_ref()?.exposure,
         curve: matched.colour.as_ref()?.curve.clone(),
-        curve_error: pollster::block_on(rawshim::hdr_fit::camera_curve_error(
+        curve_error: pollster::block_on(fit::hdr::camera_curve_error(
             gpu,
             matched.colour.as_ref()?,
         ))
@@ -324,18 +324,18 @@ fn against_camera(
 
     // Both sides already in sRGB, so the objective's own primaries matrix is the identity.
     let shown = camera_linear.len();
-    let scoring = rawshim::fit_score::Scoring::new(
+    let scoring = fit::score::Scoring::new(
         gpu,
-        rawshim::fit_score::below_buffer(gpu, &ours_linear),
+        fit::score::below_buffer(gpu, &ours_linear),
         &camera_linear,
         &vec![1.0; shown],
         &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         256,
         1,
     );
-    let neutral = [rawshim::fit_score::Probe::neutral()];
+    let neutral = [fit::score::Probe::neutral()];
     let blocks =
-        pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
+        pollster::block_on(scoring.partials(&fit::score::Shape::Saturation, &neutral))?
             .remove(0);
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
     let plain = blocks.iter().map(|b| b.plain).sum::<f64>() / shown.max(1) as f64;

@@ -2,7 +2,7 @@
 //!
 //! `slang/fit_objective.slang` is the arithmetic over pixels: the gate that makes a pair, the bins
 //! the curve is fitted from, and the residual the held-out half scores. What is left here is the
-//! batching: every candidate of a scan in one round trip, as `fit_score::Scoring` does for the colour
+//! batching: every candidate of a scan in one round trip, as `crate::score::Scoring` does for the colour
 //! objective.
 
 use gpu::dispatch::Whole;
@@ -31,11 +31,11 @@ const RECORD_WORDS: usize = 2;
 /// Words a candidate's answer occupies: the residual, its count, and the pairs the gate admitted.
 const SCORE_WORDS: usize = 3;
 
-/// `fit::refit_gain`'s radius bins, and the three sums each carries.
-pub(crate) const FALLOFF_BINS: usize = 12;
+/// `crate::profile::refit_gain`'s radius bins, and the three sums each carries.
+pub const FALLOFF_BINS: usize = 12;
 const FALLOFF_WORDS: usize = 3;
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     count: wgpu::ComputePipeline,
     group: wgpu::ComputePipeline,
@@ -47,7 +47,7 @@ pub(crate) struct Kernels {
     falloff: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -116,7 +116,7 @@ pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
 /// **Held across the folds rather than rebuilt per fold**, which is the whole reason this pays: a
 /// falloff asks three rounds of curve and score about one pair list, and a scan asks two folds
 /// about each of tens of them.
-pub(crate) struct Paired {
+pub struct Paired {
     gpu: &'static gpu::Gpu,
     /// Bound into every group below and *held* rather than merely allocated: a `wgpu::BindGroup`
     /// keeps nothing alive that a browser will free.
@@ -144,7 +144,7 @@ pub(crate) struct Paired {
 }
 
 /// One candidate's answer: its held-out residual and how many pairs the gate admitted.
-pub(crate) struct Scored {
+pub struct Scored {
     pub delta: f64,
     pub pairs: usize,
 }
@@ -163,22 +163,12 @@ fn held(
     })
 }
 
-async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
-    gpu::read_back(gpu, staging, |mapped| {
-        mapped
-            .chunks_exact(4)
-            .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<u32>>()
-    })
-    .await
-}
-
 /// Room for `candidates` warped grids against one camera grid.
 ///
 /// **Allocated once and asked many times**, which is what the refine needs: it walks fifty
 /// candidates one at a time, and allocating this set per step - six buffers, two of them megabytes -
 /// cost more than every dispatch in it put together.
-pub(crate) fn paired(
+pub fn paired(
     gpu: &'static gpu::Gpu,
     candidates: usize,
     jpeg: &gpu::Buffer,
@@ -248,18 +238,18 @@ pub(crate) fn paired(
     }
 }
 
-fn block(paired: &Paired, gained: bool, fitted: crate::fit::Phase) -> Vec<u8> {
+fn block(paired: &Paired, gained: bool, fitted: crate::profile::Phase) -> Vec<u8> {
     let mut words = [
         (paired.width as i32).to_ne_bytes(),
         (paired.height as i32).to_ne_bytes(),
         (BLOCK as i32).to_ne_bytes(),
         (paired.blocks as i32).to_ne_bytes(),
         (paired.candidates as i32).to_ne_bytes(),
-        crate::fit::MAX_PAIR_GRADIENT.to_ne_bytes(),
+        crate::profile::MAX_PAIR_GRADIENT.to_ne_bytes(),
         i32::from(gained).to_ne_bytes(),
         (fitted as i32).to_ne_bytes(),
         (fitted.held_out() as i32).to_ne_bytes(),
-        (crate::fit::MIN_BIN_SAMPLES as i32).to_ne_bytes(),
+        (crate::profile::MIN_BIN_SAMPLES as i32).to_ne_bytes(),
         (paired.admitted.get().copied().unwrap_or(0) as i32).to_ne_bytes(),
     ]
     .concat();
@@ -317,7 +307,7 @@ impl Paired {
         })
     }
 
-    fn gain_of(&self, gain: Option<&crate::fit::Gain>) -> gpu::Buffer {
+    fn gain_of(&self, gain: Option<&crate::profile::Gain>) -> gpu::Buffer {
         match gain {
             None => self.idle.clone(),
             Some(gain) => self.gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -336,11 +326,11 @@ impl Paired {
     ///
     /// Scaled into L*-sized units so `REFINE_MARGIN` and `REFINE_FLOOR` mean what they meant when
     /// this was scored in deltaE.
-    pub(crate) async fn scored(
+    pub async fn scored(
         &self,
         warped: &[gpu::Buffer],
-        fitted: crate::fit::Phase,
-        gain: Option<&crate::fit::Gain>,
+        fitted: crate::profile::Phase,
+        gain: Option<&crate::profile::Gain>,
     ) -> Option<Vec<Scored>> {
         self.scored_in(self.gpu.record(), warped, fitted, gain)
             .await
@@ -348,7 +338,7 @@ impl Paired {
 
     /// [`Self::scored`] on the training half, of `source` through each of `lenses`, warped in the
     /// same round trip into planes this keeps.
-    pub(crate) async fn scored_through(
+    pub async fn scored_through(
         &self,
         source: &gpu::Buffer,
         source_size: (usize, usize),
@@ -372,7 +362,7 @@ impl Paired {
         });
         let planes = &planes[..lenses.len()];
         let mut recording = self.gpu.record();
-        crate::hdr_fit::warped_into(
+        crate::hdr::warped_into(
             self.gpu,
             &mut recording,
             source,
@@ -381,7 +371,7 @@ impl Paired {
             planes,
             (self.width, self.height),
         );
-        self.scored_in(recording, planes, crate::fit::Phase::Train, None)
+        self.scored_in(recording, planes, crate::profile::Phase::Train, None)
             .await
     }
 
@@ -389,8 +379,8 @@ impl Paired {
         &self,
         mut recording: gpu::Recording<'_>,
         warped: &[gpu::Buffer],
-        fitted: crate::fit::Phase,
-        gain: Option<&crate::fit::Gain>,
+        fitted: crate::profile::Phase,
+        gain: Option<&crate::profile::Gain>,
     ) -> Option<Vec<Scored>> {
         recording.holding(&self.jpeg);
         // The planes into the one buffer the kernel indexes by slot, in the submit that reads them:
@@ -447,7 +437,7 @@ impl Paired {
         );
         recording.copy_buffer_to_buffer(&self.tallies, 0, &out, 0, (words * 4) as u64);
         recording.submit();
-        let read = read_words(self.gpu, &out).await?;
+        let read = gpu::read_words(self.gpu, &out).await?;
         Some(
             (0..self.candidates)
                 .map(|c| Scored {
@@ -468,7 +458,7 @@ impl Paired {
     /// `refit_gain` is the only thing that wants it: it reads the curve backwards to say what light
     /// each pair should have carried, which is 256 levels of arithmetic against a pair list the
     /// device never hands over.
-    pub(crate) async fn curve(&self, candidate: usize) -> Option<[u8; LEVELS]> {
+    pub async fn curve(&self, candidate: usize) -> Option<[u8; LEVELS]> {
         let mut recording = self.gpu.record();
         let out = held(
             self.gpu,
@@ -479,7 +469,7 @@ impl Paired {
         let from = (candidate * LEVELS * 4) as u64;
         recording.copy_buffer_to_buffer(&self.curves, from, &out, 0, (LEVELS * 4) as u64);
         recording.submit();
-        let read = read_words(self.gpu, &out).await?;
+        let read = gpu::read_words(self.gpu, &out).await?;
         Some(std::array::from_fn(|level| read[level] as u8))
     }
 
@@ -492,10 +482,10 @@ impl Paired {
     ///
     /// Blocks come back in index order for the caller to sum, which is what makes the answer the
     /// same on every adapter.
-    pub(crate) async fn falloff(
+    pub async fn falloff(
         &self,
         admitted: usize,
-        phase: crate::fit::Phase,
+        phase: crate::profile::Phase,
         back: &[u8; LEVELS],
         linear: &[f64; LEVELS],
     ) -> Option<Vec<[f64; 3]>> {

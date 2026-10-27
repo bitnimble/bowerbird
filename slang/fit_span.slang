@@ -1,7 +1,7 @@
 // How far the frame's own chroma reaches, taken over every pixel of the sharp plane where the plane
 // already is.
 //
-// The gather is a sample per pixel with the lens's falloff lifted in - `hdr_fit::chroma_span` has
+// The gather is a sample per pixel with the lens's falloff lifted in - `fit::hdr::chroma_span` has
 // why the sharp plane rather than the pairs, and why the falloff has to be on. Building those
 // samples on the host and reading the whole evaluated plane back to take a percentile of it is
 // 27MB each way on a 1616x1077 plane, to answer with one number.

@@ -8,7 +8,7 @@
 //
 // Nothing about the conversion is reimplemented here. The PQ transfer is `tone::pq`, the
 // same curve the grade rolls highlights with; the sRGB transfer and the
-// Rec.2020-to-BT.709 primaries matrix are `hdr_fit`'s, which has needed both all along
+// Rec.2020-to-BT.709 primaries matrix are `fit::hdr`'s, which has needed both all along
 // because the fit measures its deltaE in sRGB; and the YCbCr matrix with its
 // limited-range quantisation is libavif's own `avifImageRGBToYUV`.
 

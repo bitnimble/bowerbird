@@ -93,7 +93,7 @@ pub struct Target {
 #[serde(rename_all = "camelCase")]
 pub struct Job {
     pub raw_file_path: String,
-    pub camera_match: crate::hdr_fit::CameraMatch,
+    pub camera_match: fit::hdr::CameraMatch,
     /// Collapse each Bayer quad into one output pixel instead of interpolating it.
     ///
     /// **Asked for rather than inferred.** The decode already halves on its own when the
@@ -141,7 +141,7 @@ pub struct Job {
     #[serde(default)]
     pub scene_peak: Option<Light<DisplayNits>>,
     /// What has already been measured about this photograph, if the caller kept it
-    /// (`crate::photo_analysis`).
+    /// (`fit::photo_analysis`).
     ///
     /// The camera match is half a second, the noise fit a quarter of one, and the levels are a
     /// quantile over a million samples - none of them depend on anything a rendition brings, so a
@@ -271,10 +271,10 @@ impl Job {
     }
 
     /// What the caller already knows about this photograph, as far as this build can read it.
-    pub(crate) fn stored(&self) -> crate::photo_analysis::PhotoAnalysis {
+    pub(crate) fn stored(&self) -> fit::photo_analysis::PhotoAnalysis {
         self.photo_analysis
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default()
     }
 
@@ -623,12 +623,12 @@ pub(crate) struct Base {
     pub(crate) photograph: (usize, usize),
     /// Where the frame sits in that photograph, for the grade's geometry. None when it is all of it.
     pub(crate) window: Option<render::grade::Window>,
-    pub(crate) matched: Option<crate::hdr_fit::HdrMatch>,
+    pub(crate) matched: Option<fit::hdr::HdrMatch>,
     /// Everything this build now knows about the photograph, whether it was told or measured it.
     /// What is worth writing back is decided at the end of the job, once the peak is in too.
-    pub(crate) analysis: crate::photo_analysis::PhotoAnalysis,
+    pub(crate) analysis: fit::photo_analysis::PhotoAnalysis,
     /// What the job was handed, to report the difference against.
-    pub(crate) stored: crate::photo_analysis::PhotoAnalysis,
+    pub(crate) stored: fit::photo_analysis::PhotoAnalysis,
     /// The illuminant the decode balanced against, which the stored temperature and tint move
     /// away from. Read off the processor and carried, because the decode is the only place it
     /// exists.
@@ -723,7 +723,7 @@ async fn single(job: &Job, raw: Raw<'_>, size: u32, rendered: &[&Target]) -> Res
 /// to consult for (`open::Fitting`). A photograph with its match on file - which is nearly every
 /// one a rendition is asked of - reads that instead and never reaches either.
 fn fitting<'a>(job: &Job, raw: Raw<'a>) -> crate::open::Fitting<'a> {
-    if job.camera_match == crate::hdr_fit::CameraMatch::None {
+    if job.camera_match == fit::hdr::CameraMatch::None {
         return crate::open::Fitting::None;
     }
     match raw {
@@ -886,8 +886,8 @@ impl Base {
         let (red, blue) = defocus;
         gpu.settle();
         lap("code, defringe");
-        let analysis = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        let analysis = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 noise,
                 dust,
@@ -896,15 +896,15 @@ impl Base {
                 // filed for a composite, whose reference frame a window may never reach.
                 balance: None,
             },
-            from_render: crate::photo_analysis::FromRender {
-                levels: Some(crate::photo_analysis::MeasuredLevels {
+            from_render: fit::photo_analysis::FromRender {
+                levels: Some(fit::photo_analysis::MeasuredLevels {
                     levels: measured,
                     white_quantile: job.grade.white_quantile,
                 }),
                 // Filled in by `run` once a frame has been up: the peak is measured on the GPU,
                 // through the whole colour transform, and there is no frame there yet.
                 scene_peak: None,
-                defocus: Some(crate::photo_analysis::MeasuredDefocus {
+                defocus: Some(fit::photo_analysis::MeasuredDefocus {
                     red,
                     blue,
                     defringe: strengths.defringe,
@@ -963,7 +963,7 @@ impl Base {
     pub(crate) fn cropped(
         job: &Job,
         rendered: &[&Target],
-        stored: &crate::photo_analysis::PhotoAnalysis,
+        stored: &fit::photo_analysis::PhotoAnalysis,
     ) -> Option<Result<Base, String>> {
         pollster::block_on(Base::window(
             job,
@@ -977,7 +977,7 @@ impl Base {
         job: &Job,
         raw: Raw<'_>,
         rendered: &[&Target],
-        stored: &crate::photo_analysis::PhotoAnalysis,
+        stored: &fit::photo_analysis::PhotoAnalysis,
     ) -> Option<Result<Base, String>> {
         let geometry = job.pixel_geometry();
         // The network reads the whole frame, which a window does not decode.
@@ -1130,7 +1130,7 @@ impl Base {
                 origin,
             }),
             matched: window.matched,
-            analysis: crate::photo_analysis::PhotoAnalysis {
+            analysis: fit::photo_analysis::PhotoAnalysis {
                 from_raw: stored.from_raw.clone(),
                 from_render: stored.from_render,
             },
@@ -1297,13 +1297,13 @@ fn repaired(cut: &hdr::Cut, job: &Job) -> Result<(), String> {
     .map(drop)
 }
 
-fn with_camera_match(analysis: &[u8], camera_match: crate::hdr_fit::CameraMatch) -> Vec<u8> {
-    if camera_match == crate::hdr_fit::CameraMatch::LensAndColour {
+fn with_camera_match(analysis: &[u8], camera_match: fit::hdr::CameraMatch) -> Vec<u8> {
+    if camera_match == fit::hdr::CameraMatch::LensAndColour {
         return analysis.to_vec();
     }
-    let mut stored = crate::photo_analysis::decode(analysis).unwrap_or_default();
+    let mut stored = fit::photo_analysis::decode(analysis).unwrap_or_default();
     stored.from_raw.matched = camera_match.apply(stored.from_raw.matched);
-    crate::photo_analysis::encode(&stored)
+    fit::photo_analysis::encode(&stored)
 }
 
 /// One rectangle of a graded frame, which for a tile is the part of it the reader asked for.
@@ -1406,7 +1406,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         }
         lap("measure");
         if base.analysis.adds_to(&base.stored) {
-            outcome.photo_analysis = Some(crate::photo_analysis::encode(
+            outcome.photo_analysis = Some(fit::photo_analysis::encode(
                 &base.analysis.filled_from(&base.stored),
             ));
         }
@@ -1729,7 +1729,7 @@ pub(crate) async fn graded_bands(
     let out = geometry::warp::cropped_out(drawn, geometry);
     let (out_width, out_height) = out.raw();
     let rows = band_rows(out_width, out_height, pixels);
-    let analysis = with_camera_match(&crate::photo_analysis::encode(known), job.camera_match);
+    let analysis = with_camera_match(&fit::photo_analysis::encode(known), job.camera_match);
     let scale = crate::view::Scale::for_long_edge(photograph, size.width.max(size.height));
     let output = match target.output {
         Output::Pq => render::grade::Output::Pq,
@@ -2078,7 +2078,7 @@ pub(crate) async fn render(
     // pictures did not (`Base::describes_the_photograph`).
     if known_peak.is_none() && keeps_peak {
         if peak.is_a_peak() {
-            analysis.from_render.scene_peak = Some(crate::photo_analysis::MeasuredPeak {
+            analysis.from_render.scene_peak = Some(fit::photo_analysis::MeasuredPeak {
                 nits: peak,
                 reference_white_nits: job.grade.reference_white_nits,
                 white_quantile: job.grade.white_quantile,
@@ -2089,7 +2089,7 @@ pub(crate) async fn render(
     let adds = analysis.adds_to(&stored);
     let known = analysis.filled_from(&stored);
     Ok(Rendered {
-        owed: adds.then(|| crate::photo_analysis::encode(&known)),
+        owed: adds.then(|| fit::photo_analysis::encode(&known)),
         camera_tone: describes_the_photograph
             .then(|| CameraTone::of(matched.as_ref().and_then(|m| m.colour.as_ref())))
             .flatten(),
@@ -2106,7 +2106,7 @@ pub(crate) struct Rendered {
     owed: Option<Vec<u8>>,
     camera_tone: Option<CameraTone>,
     #[cfg(feature = "renditions")]
-    pub(crate) known: crate::photo_analysis::PhotoAnalysis,
+    pub(crate) known: fit::photo_analysis::PhotoAnalysis,
     #[cfg(feature = "renditions")]
     pub(crate) peak: Light<DisplayNits>,
     /// The base's, for the bands cut after it.

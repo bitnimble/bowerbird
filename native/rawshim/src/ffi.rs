@@ -7,7 +7,6 @@
 // library still owns and, where it produces an image, hands back another one. JS
 // passes a path in and gets a path or a handle out; the samples stay on this side.
 
-use crate::fit;
 use crate::job;
 use std::ffi::{CStr, c_char};
 
@@ -267,7 +266,7 @@ unsafe fn replied(result: Result<job::Outcome, String>, out: *mut u8, out_cap: u
 /// Read once by the caller ([`bb_prepare_header_cap`]) so the two sides cannot disagree about
 /// where the samples start. The header is a few hundred bytes plus the analysis blob, as JSON of up
 /// to four characters a byte, and the blob is bounded by the largest lattice a stored one may hold.
-pub const PREPARE_HEADER_CAP: usize = 256 * 1024 + 4 * 2 * crate::photo_analysis::MAX_KERNEL_WORDS;
+pub const PREPARE_HEADER_CAP: usize = 256 * 1024 + 4 * 2 * fit::photo_analysis::MAX_KERNEL_WORDS;
 
 /// One picture of a recipe, coded, for a client that will grade it itself.
 ///
@@ -847,20 +846,20 @@ fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
 ///
 /// None is a file that could not be read, which the callers report separately from a
 /// file that simply records no correction.
-pub fn geometry_for(path: &str) -> Option<fit::Geometry> {
+pub fn geometry_for(path: &str) -> Option<fit::profile::Geometry> {
     let Ok(found) = distortion_of(path) else {
         return None;
     };
     // The body's own word that it corrected nothing, which saves searching for a
-    // correction that is not there (`fit.rs`). Only Sony states it; everything else
+    // correction that is not there (`fit::profile`). Only Sony states it; everything else
     // reads as unstated and falls through.
     Some(match (found.applied, found.spline) {
-        (Some(false), _) => fit::Geometry::Uncorrected,
-        (_, Some(knots)) => fit::Geometry::Recorded(knots),
+        (Some(false), _) => fit::profile::Geometry::Uncorrected,
+        (_, Some(knots)) => fit::profile::Geometry::Recorded(knots),
         // Nothing in the file, so ask the database. The header read this needs is a
         // second open of the same file, which is why it is here rather than above:
         // a body that recorded its own spline never pays for it.
-        (_, None) => lensfun_geometry(path).unwrap_or(fit::Geometry::Unstated),
+        (_, None) => lensfun_geometry(path).unwrap_or(fit::profile::Geometry::Unstated),
     })
 }
 
@@ -917,7 +916,7 @@ fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
 /// None when the file names no lens, when nothing plausible matches, or when the
 /// match carries no distortion data - each of which leaves the geometry to be
 /// fitted, as it was before lensfun was here.
-fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
+fn lensfun_geometry(path: &str) -> Option<fit::profile::Geometry> {
     let header = formats::header::read_path(path)?;
     let knots = lensdb::distortion_knots(
         formats::header::name(&header.camera_make),
@@ -929,7 +928,7 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
         header.width as usize,
         header.height as usize,
     )?;
-    Some(fit::Geometry::Profiled(in_spline_units(knots)))
+    Some(fit::profile::Geometry::Profiled(in_spline_units(knots)))
 }
 
 #[cfg(test)]

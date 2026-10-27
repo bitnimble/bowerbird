@@ -7,7 +7,7 @@
 //! offset already believed, which is the only affordable way to answer the same question densely
 //! at a preview's own size.
 
-use crate::hdr_fit::{DevicePlane, Reach, Source, corresponded_about};
+use fit::hdr::{DevicePlane, Reach, Source, corresponded_about};
 use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel};
 use gpu::dispatch::Whole;
 

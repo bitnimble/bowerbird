@@ -41,7 +41,7 @@ pub struct Open<'a> {
     pub edit: Option<&'a dyn Fn(&mut [u16])>,
     /// The camera match to apply in place of one fitted here. An `edit` needs the unedited frame's:
     /// the embedded JPEG still shows what the edit took out, and a fit to it puts that back.
-    pub matched: Option<rawshim::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
 }
 
 pub struct Opened {
@@ -90,11 +90,11 @@ impl<'a> Open<'a> {
         }
         // Handed over as a stored pair, which `open::measure` applies ahead of the fit.
         let long_edge = frame.width.max(frame.height);
-        let stored = rawshim::photo_analysis::PhotoAnalysis {
-            from_render: rawshim::photo_analysis::FromRender {
+        let stored = fit::photo_analysis::PhotoAnalysis {
+            from_render: fit::photo_analysis::FromRender {
                 defocus: self
                     .defocus
-                    .map(|(red, blue)| rawshim::photo_analysis::MeasuredDefocus {
+                    .map(|(red, blue)| fit::photo_analysis::MeasuredDefocus {
                         red,
                         blue,
                         defringe: self.strengths.defringe,
@@ -102,7 +102,7 @@ impl<'a> Open<'a> {
                     }),
                 ..Default::default()
             },
-            from_raw: rawshim::photo_analysis::FromRaw {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: self.matched,
                 ..Default::default()
             },
@@ -116,7 +116,7 @@ impl<'a> Open<'a> {
                 true => rawshim::open::Fitting::None,
                 false => rawshim::open::Fitting::Profiled(self.path),
             },
-            camera_match: rawshim::hdr_fit::CameraMatch::LensAndColour,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             noise: frame.noise,
             matrix: frame.matrix,
             as_shot: frame.as_shot,

@@ -38,9 +38,9 @@ impl Preview {
     ///
     /// Twice the geometry search's grid, so the search still has a real reduce to make; a body
     /// that embeds nothing that large falls back to its full JPEG, which
-    /// `hdr_fit::fitted_preview_size` brings to the same grid in linear light.
+    /// `fit::hdr::fitted_preview_size` brings to the same grid in linear light.
     pub fn for_the_match() -> Preview {
-        Preview::SmallestCovering(2 * crate::fit::FIT_LONG_EDGE)
+        Preview::SmallestCovering(2 * fit::profile::FIT_LONG_EDGE)
     }
 }
 

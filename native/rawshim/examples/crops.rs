@@ -50,11 +50,11 @@ fn main() {
     let levels = [0.02f32, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9];
     let greys: Vec<[f32; 4]> = levels.iter().map(|l| [*l, *l, *l, 0.0]).collect();
     let through = |colour: &colour::matched::HdrColour| {
-        pollster::block_on(rawshim::hdr_fit::evaluated(
+        pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &greys,
-            rawshim::hdr_fit::Stage::Full,
+            fit::hdr::Stage::Full,
         ))
         .expect("the device evaluates the model")
     };

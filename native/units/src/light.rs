@@ -83,7 +83,7 @@ pub enum Scene {}
 ///
 /// **Anchored on nothing a constant can name.** The fit's target is the body's own JPEG, so the
 /// scene's diffuse white comes out wherever that body put it - across two fixtures of this repo,
-/// two stops apart. The camera's exposure carries that level (`hdr_fit::camera_curve`).
+/// two stops apart. The camera's exposure carries that level (`fit::hdr::camera_curve`).
 pub enum Rendered {}
 
 /// Absolute nits at the display, past the roll-off and bounded by the target's peak.

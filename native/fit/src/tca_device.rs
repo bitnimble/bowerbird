@@ -27,7 +27,7 @@ const KNOTS_FROM: usize = 3;
 /// Sweep candidates the split buffer is sized for. `nulling_scale` is the widest asker at 61.
 const MAX_CANDIDATES: usize = 128;
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     reduce: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
@@ -39,7 +39,7 @@ pub(crate) struct Kernels {
     slopes: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+pub fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
     static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -165,16 +165,6 @@ fn held(
         usage,
         mapped_at_creation: false,
     })
-}
-
-async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
-    gpu::read_back(gpu, staging, |mapped| {
-        mapped
-            .chunks_exact(4)
-            .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<u32>>()
-    })
-    .await
 }
 
 async fn read_floats(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<f64>> {
@@ -313,7 +303,7 @@ impl Frame {
     /// both reaches, or `None` where a reach saw too few points to be believed. A shift large
     /// enough to push a channel out of the near window still has to answer for the far one, so
     /// nulling by evacuation scores no better than nulling by registering.
-    pub(crate) async fn swept(
+    pub async fn swept(
         &self,
         slot: usize,
         scaled: bool,
@@ -368,7 +358,7 @@ impl Frame {
 
     /// The split around every point at each halo offset, with each channel read through `curve` -
     /// or through nothing, which reads the frame as it stands.
-    pub(crate) async fn haloed(
+    pub async fn haloed(
         &self,
         curve: Option<&[Vec<f64>; 2]>,
         band: (f64, f64),
@@ -410,7 +400,7 @@ impl Frame {
     }
 
     /// The projected-gradient sums of the reduce, a row at a time, folded in row order.
-    pub(crate) async fn slopes(&self, gains: [f64; 3], stride: usize) -> Option<(f64, f64, u64)> {
+    pub async fn slopes(&self, gains: [f64; 3], stride: usize) -> Option<(f64, f64, u64)> {
         let words: Vec<u8> = gains
             .iter()
             .flat_map(|v| (*v as f32).to_ne_bytes())
@@ -468,7 +458,7 @@ impl Frame {
 
     /// The gain each channel is matched against green with, over every ninety-seventh pixel of
     /// the reduce.
-    pub(crate) async fn gains(&self) -> Option<[f64; 3]> {
+    pub async fn gains(&self) -> Option<[f64; 3]> {
         let sampled = (self.out_width * self.out_height).div_ceil(97);
         let mut recording = self.gpu.record();
         let push = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -494,7 +484,7 @@ impl Frame {
         );
         recording.copy_buffer_to_buffer(&self.tally, 0, &out, 0, 12);
         recording.submit();
-        let read = read_words(self.gpu, &out).await?;
+        let read = gpu::read_words(self.gpu, &out).await?;
         let sums = [f64::from(read[0]), f64::from(read[1]), f64::from(read[2])];
         Some([
             if sums[0] > 0.0 {
@@ -511,12 +501,12 @@ impl Frame {
         ])
     }
 
-    pub(crate) fn reduced_size(&self) -> (usize, usize) {
+    pub fn reduced_size(&self) -> (usize, usize) {
         (self.out_width, self.out_height)
     }
 
     /// The frame's half-diagonal, which every radius the measurement talks in is a fraction of.
-    pub(crate) fn half(&self) -> f64 {
+    pub fn half(&self) -> f64 {
         let (cx, cy) = (self.width as f64 / 2.0, self.height as f64 / 2.0);
         (cx * cx + cy * cy).sqrt().max(1.0)
     }
@@ -527,10 +517,7 @@ impl Frame {
 /// One scan, at the innermost radius any caller wants, and each split then names the band of radii
 /// it reads. Scanning per caller would be the same walk twice over the same picture, since the
 /// only thing a scan's floor changes is which points it admits.
-pub(crate) async fn frame(
-    gpu: &'static gpu::Gpu,
-    render: &crate::fit_source::Rendered,
-) -> Option<Frame> {
+pub async fn frame(gpu: &'static gpu::Gpu, render: &crate::source::Rendered) -> Option<Frame> {
     let (width, height) = (render.width, render.height);
     let reduce = crate::tca::REDUCE;
     let (out_width, out_height) = (width / reduce, height / reduce);
@@ -619,7 +606,7 @@ pub(crate) async fn frame(
     );
     recording.copy_buffer_to_buffer(&frame.counts, (blocks * 4) as u64, &out, 0, 4);
     recording.submit();
-    frame.points = read_words(gpu, &out).await?[0] as usize;
+    frame.points = gpu::read_words(gpu, &out).await?[0] as usize;
 
     frame.at = held(gpu, "tca points", (frame.points * 2).max(1), storage);
     let mut recording = gpu.record();

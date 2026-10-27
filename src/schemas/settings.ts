@@ -99,7 +99,7 @@ export const SettingsSchema = z.object({
   // disk will answer at once - which for a library on a network mount is many.
   scan_concurrency: z.number().int().min(1).default(4),
   // Give a render the camera's own colour treatment, by fitting the transform that
-  // takes it to the JPEG embedded in the same RAW (`native/rawshim/src/fit.rs`). Applies to SDR
+  // takes it to the JPEG embedded in the same RAW (`native/fit/src/profile.rs`). Applies to SDR
   // renditions built from a render: an embedded-sourced grid already has the look,
   // and an 8-bit SDR JPEG cannot teach the HDR path what to do above diffuse white.
   //
