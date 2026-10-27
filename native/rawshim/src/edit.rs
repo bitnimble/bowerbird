@@ -9,7 +9,7 @@
 // This half is where the threads are worth having - measured at 3.2x between one and
 // twelve - against a tick that is entirely the GPU's.
 
-use crate::hdr;
+use crate::hdr_args;
 use render::detail::Strengths;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct EditRequest {
     /// Longest edge the decode is fitted to, which is the size every tick then grades.
     pub long_edge: u32,
-    pub grade: hdr::Grade,
+    pub grade: hdr_args::Grade,
     /// The library's defringe strength, which is the only filter this request decides.
     ///
     /// The sharpen is an argument to [`from_frame`] instead. It belongs to the Detail panel with
@@ -110,7 +110,7 @@ pub struct PreparedHeader {
     /// Absent where the picture was prepared without a histogram walk behind it, and then a loupe
     /// tile handing these back is refused and measures its own ([`colour::tone::Levels::usable`]).
     pub floor: Option<units::light::Light<units::light::Level>>,
-    pub grade: hdr::Grade,
+    pub grade: hdr_args::Grade,
     pub strengths: Strengths,
     pub camera_match: fit::hdr::CameraMatch,
     /// False where the file embeds no preview or the fit found too few pairs, in which

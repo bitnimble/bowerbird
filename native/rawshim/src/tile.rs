@@ -28,7 +28,7 @@ pub struct TileRequest {
     pub tile: [usize; 4],
     /// The photograph the rectangle is a piece of.
     pub frame: [usize; 2],
-    pub grade: crate::hdr::Grade,
+    pub grade: crate::hdr_args::Grade,
     pub strengths: Strengths,
     /// The Detail panel's two sliders, 0 to 100, which drive the denoise on the mosaic.
     ///
@@ -880,7 +880,7 @@ mod tests {
         TileRequest {
             tile,
             frame: [6000, 4000],
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },

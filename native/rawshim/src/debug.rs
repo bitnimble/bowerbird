@@ -384,8 +384,8 @@ impl GradeSpec {
         }
     }
 
-    fn grade(&self) -> crate::hdr::Grade {
-        crate::hdr::Grade {
+    fn grade(&self) -> crate::hdr_args::Grade {
+        crate::hdr_args::Grade {
             reference_white_nits: self.reference_white_nits,
             white_quantile: self.white_quantile,
         }

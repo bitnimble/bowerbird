@@ -19,7 +19,8 @@ mod support;
 
 use composite::tile::{CompositeRequest, From, SourceFile};
 use composition::{Composition, LensSpec};
-use rawshim::hdr::{self, Prepared};
+use rawshim::hdr::Prepared;
+use rawshim::hdr_args;
 use colour::matched::{HdrColour, TRUST_CEILING};
 use render::detail::Strengths;
 use units::light::{Light, Stops};
@@ -32,7 +33,7 @@ const WIDTH: usize = 96;
 const HEIGHT: usize = 64;
 
 /// The grade every fixture here is pinned at, which is the library's own.
-const SHIPPED: hdr::Grade = hdr::Grade {
+const SHIPPED: hdr_args::Grade = hdr_args::Grade {
     reference_white_nits: Light::exactly(203.0),
     white_quantile: 0.995,
 };
@@ -137,7 +138,7 @@ fn frame_size() -> Size<units::px::Output> {
 /// exactly what the editor does for a file whose fit found no geometry, and the frame the
 /// client is handed either way. The sharpen is `sharpen.slang` on both hosts now, driven
 /// here through its host-roundtrip spelling at the fixed sigma the fixtures were frozen at.
-fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths) {
+fn filter_once(prepared: &mut Prepared, grade: &hdr_args::Grade, strengths: Strengths) {
     render::base::code_base(
         &mut prepared.samples,
         prepared.levels.anchored(),

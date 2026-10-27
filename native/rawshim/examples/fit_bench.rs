@@ -69,7 +69,7 @@ fn measure(path: &str) {
     for _ in 0..REPEATS {
         // Re-fetched per round rather than cloned: `Geometry` is not `Clone`, and reading it is a
         // lensfun lookup rather than anything this is trying to time.
-        let Some(geometry) = rawshim::ffi::geometry_for(path) else {
+        let Some(geometry) = rawshim::lens_geometry::geometry_for(path) else {
             eprintln!("{path}: no geometry");
             return;
         };

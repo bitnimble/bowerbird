@@ -14,12 +14,28 @@
 // which honours no HDR image tagging, rewraps the file it is already served (§10.7).
 
 use formats::still::{Chroma, ContentLight, Size, decodable, fitted};
+use serde::{Deserialize, Serialize};
+
+/// How a scene-linear decode is anchored to a display (DESIGN 10.7).
+///
+/// One value rather than three loose numbers because the three are only meaningful
+/// together: the quantile picks the sample diffuse white is read from, and the two nits
+/// figures say where that sample and the highlights above it land. A rendition and a
+/// slider tick that disagreed on any one of them would be grading different pictures.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Grade {
+    /// Nits diffuse white maps to (BT.2408 HDR Reference White).
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
+    /// Quantile of the frame taken as diffuse white.
+    pub white_quantile: f64,
+}
 
 #[derive(Clone)]
 pub struct EncodeOptions {
     pub still_chroma: Chroma,
     pub output_path: String,
-    pub grade: crate::hdr::Grade,
+    pub grade: Grade,
     /// Constant-quality level; lower is better and slower.
     pub crf: i32,
     /// Encoder speed, 0 slowest, clamped to libavif's 10.
@@ -67,7 +83,7 @@ mod tests {
     use super::*;
 
     /// The library's own defaults, which is what the recorded rows were captured with.
-    const SHIPPING_GRADE: crate::hdr::Grade = crate::hdr::Grade {
+    const SHIPPING_GRADE: crate::hdr_args::Grade = crate::hdr_args::Grade {
         reference_white_nits: units::light::Light::exactly(203.0),
         white_quantile: 0.9,
     };

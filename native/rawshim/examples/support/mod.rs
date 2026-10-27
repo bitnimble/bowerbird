@@ -4,8 +4,8 @@
 #![allow(dead_code)]
 
 use denoise::galosh::Detail;
-use rawshim::hdr::Grade;
 use rawshim::hdr_args::EncodeOptions;
+use rawshim::hdr_args::Grade;
 use render::detail::Strengths;
 use units::light::Light;
 

@@ -215,7 +215,7 @@ pub struct Job {
     pub geometry: geometry::warp::Geometry,
     #[serde(default)]
     pub preserve_source_orientation: bool,
-    pub grade: hdr::Grade,
+    pub grade: hdr_args::Grade,
     pub targets: Vec<Target>,
     /// Also report the catalogue's fields off the source this job already opens, for a row whose
     /// scan took them from the device's media index rather than the file.

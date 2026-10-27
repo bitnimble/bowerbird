@@ -43,7 +43,7 @@ impl Fitting<'_> {
 
 /// What a caller brings to an open that is not the photograph.
 pub struct Opening<'a> {
-    pub grade: crate::hdr::Grade,
+    pub grade: crate::hdr_args::Grade,
     pub strengths: render::detail::Strengths,
     /// What is already known about this photograph, so an open measures only what it must.
     pub stored: &'a fit::photo_analysis::PhotoAnalysis,

@@ -16,7 +16,6 @@ use crate::hdr_args::{self, EncodeOptions};
 use colour::tone;
 use fit::hdr::{CameraMatch, HdrMatch};
 use render::detail;
-use serde::{Deserialize, Serialize};
 
 /// The long edge the camera match decodes its preview to, which is all of it (`jpeg::decode`
 /// reads 0 as whole).
@@ -47,21 +46,6 @@ pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
     let jpeg =
         decode::raw::upright_preview_jpeg_bytes(bytes, decode::raw::Preview::for_the_match())?;
     formats::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
-}
-
-/// How a scene-linear decode is anchored to a display (DESIGN 10.7).
-///
-/// One value rather than three loose numbers because the three are only meaningful
-/// together: the quantile picks the sample diffuse white is read from, and the two nits
-/// figures say where that sample and the highlights above it land. A rendition and a
-/// slider tick that disagreed on any one of them would be grading different pictures.
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Grade {
-    /// Nits diffuse white maps to (BT.2408 HDR Reference White).
-    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
-    /// Quantile of the frame taken as diffuse white.
-    pub white_quantile: f64,
 }
 
 /// A frame and its dimensions: the scene-linear decode where a caller has just decoded, and
@@ -174,7 +158,7 @@ pub async fn fit_all(
     if trace::clock::watched() {
         eprintln!("  match preview {}x{}", preview.width, preview.height);
     }
-    let lateral = crate::ffi::recorded_lateral(raw_path);
+    let lateral = crate::lens_geometry::recorded_lateral(raw_path);
     lap("preview decode");
     fit_all_from_preview(
         gpu,

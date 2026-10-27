@@ -78,6 +78,8 @@ pub mod ffi;
 pub mod hdr;
 pub mod hdr_args;
 pub mod job;
+#[cfg(feature = "renditions")]
+pub mod lens_geometry;
 pub mod open;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
@@ -442,7 +444,7 @@ pub fn fit_hdr_measured(
 ) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
-        let geometry = ffi::geometry_for(raw_path)?;
+        let geometry = lens_geometry::geometry_for(raw_path)?;
         pollster::block_on(hdr::fit_all(
             gpu,
             raw_path,

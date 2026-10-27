@@ -253,7 +253,7 @@ fn tile_job(
         adjust: render::grade::Adjust::none(),
         geometry: geometry::warp::Geometry::none(),
         preserve_source_orientation: false,
-        grade: crate::hdr::Grade {
+        grade: crate::hdr_args::Grade {
             reference_white_nits: units::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
@@ -1045,7 +1045,7 @@ mod decode_geometry {
         let bytes = std::fs::read(canon()).expect("the fixture reads");
         let request = crate::edit::EditRequest {
             long_edge: 0,
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
@@ -2709,7 +2709,8 @@ mod camera_match {
     fn fitted(path: &PathBuf) -> (fit::profile::Profile, fit::hdr::HdrMatch) {
         let frame = decode(path, 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
-        let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+        let geometry =
+            crate::lens_geometry::geometry_for(path.to_str().unwrap()).expect("a geometry");
         let (profile, matched, _) = pollster::block_on(crate::hdr::fit_all(
             adapter(),
             path.to_str().unwrap(),
@@ -2751,7 +2752,7 @@ mod camera_match {
         let options = crate::hdr_args::EncodeOptions {
             still_chroma: formats::still::Chroma::Yuv444,
             output_path: String::new(),
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
@@ -3026,7 +3027,7 @@ mod camera_match {
     /// nothing. This holds the parser to that shape.
     #[test]
     fn reads_the_lateral_pair_the_body_recorded() {
-        let Some(curve) = crate::ffi::recorded_lateral(sony().to_str().unwrap()) else {
+        let Some(curve) = crate::lens_geometry::recorded_lateral(sony().to_str().unwrap()) else {
             eprintln!("SKIPPED: this ARW records no lateral pair");
             return;
         };
@@ -3052,7 +3053,7 @@ mod camera_match {
     #[test]
     fn reads_no_lateral_pair_from_a_body_that_writes_none() {
         assert!(
-            crate::ffi::recorded_lateral(canon().to_str().unwrap()).is_none(),
+            crate::lens_geometry::recorded_lateral(canon().to_str().unwrap()).is_none(),
             "a CR3 is not a TIFF and carries no Sony SubIFD",
         );
     }
@@ -3067,7 +3068,7 @@ mod camera_match {
     /// than deleting a source that may be worth revisiting when coverage improves.
     #[test]
     fn reads_a_lateral_curve_out_of_the_database() {
-        let curve = crate::ffi::database_lateral(canon().to_str().unwrap())
+        let curve = crate::lens_geometry::database_lateral(canon().to_str().unwrap())
             .expect("the database carries a lateral curve for this lens");
         assert_eq!(
             curve[0].len(),
@@ -3099,8 +3100,9 @@ mod camera_match {
         /// real file can.
         #[test]
         fn reads_the_ilce_6300_distortion_spline_out_of_a_real_arw() {
-            let knots = crate::ffi::_for_testing_distortion_spline(sony().to_str().unwrap())
-                .expect("the ARW records a spline");
+            let knots =
+                crate::lens_geometry::_for_testing_distortion_spline(sony().to_str().unwrap())
+                    .expect("the ARW records a spline");
             // This body writes 11 knots, not the ILCE-7CR's 16.
             assert_eq!(knots.len(), 11);
             // Anchored at zero in the centre, and a small correction on a 50mm prime.
@@ -3428,7 +3430,7 @@ mod hdr_grade {
         EncodeOptions {
             still_chroma: Chroma::Yuv420,
             output_path: output_path.to_string(),
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: REFERENCE,
                 white_quantile: QUANTILE,
             },
@@ -3535,7 +3537,8 @@ mod hdr_grade {
         let path = canon();
         let frame = decode(&path, 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
-        let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+        let geometry =
+            crate::lens_geometry::geometry_for(path.to_str().unwrap()).expect("a geometry");
         let (profile, matched, _) = pollster::block_on(crate::hdr::fit_all(
             adapter(),
             path.to_str().unwrap(),
@@ -4314,7 +4317,7 @@ mod pictures {
             &bytes,
             &crate::edit::EditRequest {
                 long_edge: SHRUNK,
-                grade: crate::hdr::Grade {
+                grade: crate::hdr_args::Grade {
                     reference_white_nits: Light::exactly(203.0),
                     white_quantile: 0.995,
                 },
@@ -4472,7 +4475,7 @@ mod one_open_at_a_time {
             // Small, so this costs a second rather than ten. What is being measured is
             // whether two of them overlap, which does not depend on how big each one is.
             long_edge: 1200,
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
