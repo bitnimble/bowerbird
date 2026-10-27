@@ -5,7 +5,7 @@
 // real RAW answers the same questions slowly, and only ever says that *something* changed.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { autorun, runInAction } from 'mobx';
-import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
+import { OVERVIEW_SETTLE_MS, RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
 import { prepareOf, sameDevelop } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
@@ -767,36 +767,64 @@ describe('the window each frame is drawn at', () => {
     beforeEach(() => {
       shown = [];
       readbackCanvases.show = async (canvas, frame) => {
-        shown.push({ canvas, width: frame.width, height: frame.height });
+        if (canvas === overviewCanvas)
+          shown.push({ canvas, width: frame.width, height: frame.height });
       };
     });
     afterEach(() => {
       readbackCanvases.show = show;
     });
 
-    test('is redrawn for an edit, and left for a zoom', async () => {
+    /**
+     * Past the quiet the overview waits for, and the tick it then draws on. The re-prepare an edit
+     * schedules first, whose sweep asks for a draw of its own when it lands.
+     */
+    async function settled(): Promise<void> {
+      presenter.flushReprepare();
+      await drawn();
+      await new Promise((resolve) => setTimeout(resolve, OVERVIEW_SETTLE_MS + 30));
+      await drawn();
+    }
+    const drawnOverviews = (): unknown[] => decoder.overviews.filter((each) => each != null);
+
+    test('is redrawn once an edit settles, and left for a zoom', async () => {
       presenter.attachOverview(overviewCanvas);
       await drawn();
-      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+      expect(drawnOverviews()).toEqual([]);
+      await settled();
+      expect(drawnOverviews()).toEqual([WHOLE]);
       expect(shown).toEqual([{ canvas: overviewCanvas, width: 1024, height: 768 }]);
       expect(stage.overviewShown).toBe(true);
 
       presenter.showRegion({ x: 100, y: 100, width: 1200, height: 675 });
-      await drawn();
-      expect(decoder.overviews.at(-1)).toBeNull();
+      await settled();
+      expect(drawnOverviews()).toHaveLength(1);
       expect(shown).toHaveLength(1);
 
       presenter.previewExposure(1);
       await drawn();
-      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+      expect(drawnOverviews()).toHaveLength(1);
+      await settled();
+      expect(drawnOverviews()).toEqual([WHOLE, WHOLE]);
       expect(shown).toHaveLength(2);
+    });
+
+    test('reads nothing back while a slider moves', async () => {
+      presenter.attachOverview(overviewCanvas);
+      for (const ev of [0.2, 0.4, 0.6, 0.8]) {
+        presenter.previewExposure(ev);
+        await drawn();
+      }
+      expect(drawnOverviews()).toEqual([]);
+      await settled();
+      expect(drawnOverviews()).toEqual([WHOLE]);
     });
 
     test('is not drawn under a print hanging in its room', async () => {
       presenter.setSoftProof('print3d');
       presenter.attachOverview(overviewCanvas);
-      await drawn();
-      expect(decoder.overviews.at(-1)).toBeNull();
+      await settled();
+      expect(drawnOverviews()).toEqual([]);
     });
 
     // Zoomed, such a picture holds only a window of itself, so the overview waits for the whole.
@@ -804,12 +832,12 @@ describe('the window each frame is drawn at', () => {
       stage.preparedElsewhere = true;
       presenter.showRegion({ x: 100, y: 100, width: 1200, height: 675 });
       presenter.attachOverview(overviewCanvas);
-      await drawn();
-      expect(decoder.overviews.at(-1)).toBeNull();
+      await settled();
+      expect(drawnOverviews()).toEqual([]);
 
       presenter.showRegion({ x: 0, y: 0, width: 4000, height: 3000 });
       await drawn();
-      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+      expect(drawnOverviews()).toEqual([WHOLE]);
     });
 
     test('that the page cannot draw is dropped, and the editor carries on', async () => {
@@ -817,13 +845,13 @@ describe('the window each frame is drawn at', () => {
         throw new Error('this page has no WebGPU device to draw a read-back frame with');
       };
       presenter.attachOverview(overviewCanvas);
-      await drawn();
+      await settled();
       expect(stage.status).toBe('live');
       expect(stage.overviewShown).toBe(false);
 
       presenter.previewExposure(1);
-      await drawn();
-      expect(decoder.overviews.at(-1)).toBeNull();
+      await settled();
+      expect(drawnOverviews()).toHaveLength(1);
     });
   });
 

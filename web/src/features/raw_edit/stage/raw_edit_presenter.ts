@@ -67,6 +67,7 @@ const REACH_FADE_MS = 100;
 
 /** How long a pan or a zoom may be still before a finer window of the picture is fetched. */
 export const REWINDOW_QUIET_MS = 220;
+export const OVERVIEW_SETTLE_MS = 150;
 
 /** How far past the viewport tiles are loaded, as a share of it on each side. */
 const TILE_REACH = 0.25;
@@ -137,6 +138,8 @@ export class RawEditPresenter {
   private overviewCanvas: HTMLCanvasElement | null = null;
   /** Whether anything but the region has moved since the overview was last drawn. */
   private overviewDue = true;
+  /** Running until the last change is `OVERVIEW_SETTLE_MS` old, so a drag reads nothing back. */
+  private overviewTimer: ReturnType<typeof setTimeout> | null = null;
   private viewport: ResizeObserver | null = null;
   private density: MediaQueryList | null = null;
   /** The last CSS box the observer reported, so a density change can re-fit against it. */
@@ -1070,6 +1073,8 @@ export class RawEditPresenter {
     // message to a decoder that is about to be freed.
     if (this.windowTimer != null) clearTimeout(this.windowTimer);
     this.windowTimer = null;
+    if (this.overviewTimer != null) clearTimeout(this.overviewTimer);
+    this.overviewTimer = null;
     this.rewindowing?.abort();
     this.rewindowing = null;
     this.repair.close();
@@ -1091,9 +1096,14 @@ export class RawEditPresenter {
     this.local = null;
   }
 
-  /** A redraw of everything, the overview included. */
+  /** A redraw of everything, the overview once the change has settled. */
   private request(): void {
     this.overviewDue = true;
+    if (this.overviewTimer != null) clearTimeout(this.overviewTimer);
+    this.overviewTimer = setTimeout(() => {
+      this.overviewTimer = null;
+      this.pump();
+    }, OVERVIEW_SETTLE_MS);
     this.redraw();
   }
 
@@ -1116,7 +1126,8 @@ export class RawEditPresenter {
 
   /** The overview the next tick should draw, or null to leave it. */
   private overviewDraw(): { region: Region; width: number; height: number } | null {
-    if (!this.overviewDue || this.overviewCanvas == null || this.printStore.hanging) return null;
+    if (!this.overviewDue || this.overviewTimer != null || this.overviewCanvas == null) return null;
+    if (this.printStore.hanging) return null;
     const picture = this.displaySize;
     // A picture prepared elsewhere holds only a window of itself while zoomed, black around it.
     if (this.stage.preparedElsewhere && !covers(this.stage.region, picture)) return null;
@@ -1149,7 +1160,7 @@ export class RawEditPresenter {
 
   private pump(): void {
     if (this.closed || this.frame !== 0 || this.drawing) return;
-    if (!this.pending && this.pendingLoupe == null) return;
+    if (!this.pending && this.pendingLoupe == null && this.overviewDraw() == null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
       const drawStage = this.pending;
@@ -1168,7 +1179,7 @@ export class RawEditPresenter {
       this.reachShownFor = reached;
       const region = this.stage.region;
       const picture = this.displaySize;
-      const overview = drawStage ? this.overviewDraw() : null;
+      const overview = this.overviewDraw();
       if (overview != null) this.overviewDue = false;
       this.drawing = true;
       const landed = (error?: unknown): void => {

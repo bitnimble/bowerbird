@@ -20,8 +20,7 @@ Boundary carries regions and edits; worker draws frames.
 Exception: pictures the tab cannot decode (§8) transfer coded samples once at open.
 Normalised PQ Rec.2020 matches the local open's device frame; subsequent ticks are identical.
 
-What comes back is only ever a drawn canvas: the overview (§5), 1024 px, on a tick that changes
-an edit, and on WebKit or Firefox a stage or loupe the page shows itself (`readback_canvas.ts`).
+What comes back is only ever a drawn canvas: the overview (§5), 1024 px, once an edit settles, and on WebKit or Firefox a stage or loupe the page shows itself (`readback_canvas.ts`).
 
 Neither `GPUDevice` nor textures cross worker boundaries. Sending samples would cost 366MB
 at 61MP plus copies. Page transfers `OffscreenCanvas` (`attachStage`, `attachLoupe`);
@@ -78,8 +77,10 @@ The overview sits under the stage: the whole cropped picture at 1024 on its long
 (`tickOverview`), read back as RGB9E5 and drawn by the page, under the view's CSS transform.
 A zoom or pan outruns the tick, so until the stage's draw lands the page transforms the last
 one onto the view (`catchUpOf`), and wherever that leaves stage uncovered the overview shows.
-Redrawn on ticks that change anything but the region; skipped for a print scene, for Firefox's
-video path, and for a picture prepared elsewhere while zoomed, which holds only a window.
+Redrawn on a tick of its own once anything but the region has held still for
+`OVERVIEW_SETTLE_MS`, so a slider drag reads nothing back; skipped for a print scene, for
+Firefox's video path, and for a picture prepared elsewhere while zoomed, which holds only a
+window.
 
 `holdTile` builds a 1:1 tile through the rendition chain so loupe detail matches export,
 not stage-scaled denoise/sharpen. Retain it across pointer draws. Until its tens-of-milliseconds
