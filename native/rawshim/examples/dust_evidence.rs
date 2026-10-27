@@ -36,7 +36,7 @@ fn options() -> EncodeOptions {
 
 /// The photograph as a rendition would ship it, sharpened at the fixed sigma, with whatever the
 /// caller asked done about dust.
-fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
+fn rendered(path: &str, glass: denoise::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
     let opened = support::Open {
         dust: glass,
         ..support::Open::shipped(path, 0)
@@ -48,7 +48,7 @@ fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, us
 }
 
 /// Every candidate the frame offers, with no reader's gate applied.
-fn candidates(path: &str) -> Vec<rawshim::dust::Spot> {
+fn candidates(path: &str) -> Vec<denoise::dust::Spot> {
     let gpu = gpu::device().expect("a Vulkan adapter");
     let bytes = std::fs::read(path).expect("the file");
     let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("a decoder");
@@ -57,7 +57,7 @@ fn candidates(path: &str) -> Vec<rawshim::dust::Spot> {
         "  f/{}  {}x{}",
         sensor.aperture, sensor.width, sensor.height
     );
-    pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
+    pollster::block_on(denoise::dust::detect(gpu, held.device_mosaic(), &sensor))
         .unwrap_or_default()
 }
 
@@ -107,7 +107,7 @@ fn main() {
     let bar = |snr: f32| {
         (0..=100)
             .find(|hundredths| {
-                let at = rawshim::dust::Removal {
+                let at = denoise::dust::Removal {
                     sensitivity: f64::from(*hundredths) / 100.0,
                     intensity: 1.0,
                 };
@@ -132,7 +132,7 @@ fn main() {
     }
 
     if whole {
-        let (frame, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
+        let (frame, width, height) = rendered(&path, denoise::dust::Wanted::Off);
         let small = rawshim::image::resize_to_fit(
             units::rgb::RgbRef {
                 width,
@@ -171,7 +171,7 @@ fn main() {
         spot.y * 2.0,
         spot.snr,
     );
-    let removal = rawshim::dust::Removal {
+    let removal = denoise::dust::Removal {
         sensitivity,
         intensity: 1.0,
     };
@@ -182,9 +182,9 @@ fn main() {
         spot.snr,
     );
 
-    let (before, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
+    let (before, width, height) = rendered(&path, denoise::dust::Wanted::Off);
     let held = [spot.clone()];
-    let (after, _, _) = rendered(&path, rawshim::dust::Wanted::Given(&held, removal));
+    let (after, _, _) = rendered(&path, denoise::dust::Wanted::Given(&held, removal));
 
     // A spot's coordinates are the sensor's quad grid, so twice them is photosites - which is the
     // render's own grid, both frames here being the sensor's full size with no reduction asked for.

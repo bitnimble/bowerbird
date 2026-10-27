@@ -55,12 +55,12 @@ fn main() {
     // The frame's own noise, which every tile below is then denoised at. `Fit::Only` stops after
     // the statistics, so this is the cheap half of a decode rather than another whole one.
     let bytes = std::fs::read(&path).expect("the RAW reads");
-    let frame = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+    let frame = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
         .expect("the frame decodes");
     let fit = frame.noise.expect("the frame fitted its noise");
     let photograph = (frame.width, frame.height);
     drop(frame);
-    let amounts = rawshim::galosh::Detail::at(sliders.0, sliders.1);
+    let amounts = denoise::galosh::Detail::at(sliders.0, sliders.1);
     eprintln!(
         "fit alpha {:.3e} sigma_sq {:.3e}, denoising at {},{}",
         fit.alpha, fit.sigma_sq, sliders.0, sliders.1,
@@ -75,7 +75,7 @@ fn main() {
             &path,
             view,
             amounts,
-            rawshim::galosh::Fit::Given(fit),
+            denoise::galosh::Fit::Given(fit),
             rawshim::RENDITION_TILE_HALO,
         )
         .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));

@@ -458,8 +458,8 @@ fn whole_levels(
             job.detail(),
             MEASURED_LONG_EDGE,
             false,
-            crate::galosh::Fit::Measure,
-            crate::dust::Wanted::Off,
+            denoise::galosh::Fit::Measure,
+            denoise::dust::Wanted::Off,
         )
         .ok_or("a source could not be decoded to measure its levels")?;
         let resident = frame
@@ -575,7 +575,7 @@ fn stacked_sources(
 ) -> Option<(
     colour::resident::Resident,
     Option<colour::white_balance::Illuminant>,
-    Vec<Option<crate::galosh::NoiseFit>>,
+    Vec<Option<denoise::galosh::NoiseFit>>,
 )> {
     /// The long edge each source is reduced to before it joins the stack.
     const REDUCED_TO: usize = 1024;
@@ -586,7 +586,7 @@ fn stacked_sources(
 
     // Undenoised: reducing to `REDUCED_TO` averages away what a full-resolution denoise would take,
     // at a fraction of its cost per source.
-    let read = crate::galosh::Detail {
+    let read = denoise::galosh::Detail {
         luminance: Some(0.0),
         colour: Some(0.0),
         ..job.detail().without_upscaler()
@@ -601,8 +601,8 @@ fn stacked_sources(
             read,
             DECODED_AT,
             false,
-            crate::galosh::wanted(stored, read),
-            crate::dust::Wanted::Off,
+            denoise::galosh::wanted(stored, read),
+            denoise::dust::Wanted::Off,
         )?;
         if at == reference {
             as_shot = frame.as_shot;
@@ -790,7 +790,7 @@ pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<
     // The diagonal, which is what a crop factor is a ratio of: a 4:3 picture's long edge is not
     // 36mm over its crop.
     let diagonal = f64::from(header.width).hypot(f64::from(header.height));
-    Some(f64::from(header.focal) * crop * diagonal / crate::dust::FULL_FRAME_DIAGONAL_MM.raw())
+    Some(f64::from(header.focal) * crop * diagonal / denoise::dust::FULL_FRAME_DIAGONAL_MM.raw())
 }
 
 /// The rectangle two of them share, or None where they share none.
@@ -948,7 +948,7 @@ pub(crate) fn base(
     };
     // **One fit a source for the whole canvas.** A tile left to measure its own denoises against
     // its window's statistics, and the picture changes with how the canvas is tiled.
-    let mut fits: Vec<Option<crate::galosh::NoiseFit>> = files
+    let mut fits: Vec<Option<denoise::galosh::NoiseFit>> = files
         .iter()
         .map(|file| file.analysis.and_then(|a| a.from_raw.noise))
         .collect();
@@ -1402,7 +1402,7 @@ mod tests {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
-            detail: crate::galosh::Detail::at(0.0, 0.0),
+            detail: denoise::galosh::Detail::at(0.0, 0.0),
             sources: &files,
             from: crate::composite_tile::From::Camera,
             weight: crate::composite_tile::Weight::Feather,
@@ -1434,11 +1434,11 @@ mod tests {
         // The picture itself, over the same rectangle, as the decode hands it over.
         let frame = crate::decode::frame_from_path(
             &paths[0],
-            crate::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Detail::at(0.0, 0.0),
             wide as u32,
             false,
-            crate::galosh::Fit::Measure,
-            crate::dust::Wanted::Off,
+            denoise::galosh::Fit::Measure,
+            denoise::dust::Wanted::Off,
         )
         .expect("the fixture decodes");
         let resident = frame
@@ -2104,7 +2104,7 @@ mod tests {
                     sharpen: 0.0,
                     defringe: 0.0,
                 },
-                detail: crate::galosh::Detail::at(0.0, 0.0),
+                detail: denoise::galosh::Detail::at(0.0, 0.0),
                 sources: &files,
                 from: crate::composite_tile::From::Original,
                 weight: crate::composite_tile::Weight::Feather,

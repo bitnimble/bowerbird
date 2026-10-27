@@ -894,19 +894,6 @@ pub(crate) const DECONVOLVE_TAPS: units::px::Span<units::px::Tap> = units::px::S
 /// The same as a plain count, for the arithmetic that indexes with it.
 pub(crate) const DECONVOLVE_RADIUS: usize = DECONVOLVE_TAPS.raw();
 
-/// BT.709's luma weights, used on a Rec.2020 frame too.
-///
-/// They decide how much of an edge each channel is credited with and which part of a
-/// pixel counts as its colour, not what colour anything is; the two sets differ by less
-/// than either knob here does.
-///
-/// **The one copy.** The geometry fit, the falloff fit and the stacking descriptor all
-/// carried their own, which is three chances for them to drift apart and no way to tell
-/// that they had. Not to be confused with the Y row of an sRGB-to-XYZ matrix, which is
-/// the same three numbers meaning something else and stays with its matrix
-/// (`hdr_fit::SRGB_TO_XYZ`).
-pub const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
-
 /// How far a reconstruction's per-channel noise tracks each other channel's, as Pearson
 /// coefficients indexed by channel pair.
 ///
@@ -976,14 +963,6 @@ fn correlation_through(matrix: [[f32; 3]; 3]) -> [[f64; 3]; 3] {
     out
 }
 
-/// BT.709 luma of a triple, in whatever domain and scale the caller's values are.
-///
-/// `f64` because every caller outside this module works there. `edge_spread.slang` computes the
-/// same weighted sum on the device, and sums before it divides for the same reason this does.
-pub fn luma709(r: f64, g: f64, b: f64) -> f64 {
-    f64::from(LUMA[0]) * r + f64::from(LUMA[1]) * g + f64::from(LUMA[2]) * b
-}
-
 /// Normalised Gaussian taps for `sigma`, from the centre outwards, out to `radius`.
 ///
 /// The radius is given rather than derived from the sigma because the point spread this
@@ -1017,7 +996,7 @@ const NOISE_CEILING: f32 = 0.02;
 const NOISE_OVER_MOSAIC: f32 = 1.25;
 
 /// The ceiling [`sigma_from`] should hold itself to on a frame whose noise has been fitted.
-pub(crate) fn noise_ceiling(fit: Option<crate::galosh::NoiseFit>) -> f32 {
+pub(crate) fn noise_ceiling(fit: Option<denoise::galosh::NoiseFit>) -> f32 {
     // Not floored at `NOISE_CEILING`: a high-ISO frame carries more grain than that guess, and
     // holding a measurement down to it tells the estimate the noise is smaller than the frame
     // demonstrably has.
@@ -1049,7 +1028,7 @@ const RESIDUAL_KEEPS: f32 = 0.60;
 /// flat half and reports zero noise.
 ///
 /// The denoise this was written for runs on the mosaic now and fits its own model
-/// (`crate::galosh`); what still asks is the defringe, which needs each channel's noise to
+/// (`denoise::galosh`); what still asks is the defringe, which needs each channel's noise to
 /// debias its regression.
 pub(crate) fn sigma_from(bins: &[u32], ceiling: f32) -> f32 {
     // Bin 0 is a residual under 0.008% of full scale, which is below a quantisation step
@@ -1146,7 +1125,7 @@ pub(crate) const DEFOCUS_MIN_BINS: usize = 3;
 
 /// How hard each stage works, 0 for a stage that does not run.
 ///
-/// The denoise is not here: it runs on the mosaic (`crate::galosh`), before anything has
+/// The denoise is not here: it runs on the mosaic (`denoise::galosh`), before anything has
 /// averaged a neighbour into anything, which is the only place the noise is still what the
 /// sensor made. These are the two corrections that belong after a resample.
 ///
@@ -1407,7 +1386,7 @@ mod tests {
         // `unified_sigma` is set to what a photograph carries rather than to match `sigma_sq`: it is
         // GAT-domain and reads near 1.2 at any exposure, so a fixture agreeing with both cannot tell
         // a ceiling built from the wrong one apart.
-        let fitted = |sigma: f32| crate::galosh::NoiseFit {
+        let fitted = |sigma: f32| denoise::galosh::NoiseFit {
             alpha: 0.0,
             sigma_sq: sigma * sigma,
             unified_sigma: 1.19,
@@ -1493,7 +1472,7 @@ mod tests {
     fn the_ceiling_is_what_bounds_a_median_that_ran_into_texture() {
         let mut bins = vec![0u32; NOISE_BINS];
         bins[NOISE_BINS - 1] = 10_000;
-        let quiet = crate::galosh::NoiseFit {
+        let quiet = denoise::galosh::NoiseFit {
             alpha: 0.0,
             sigma_sq: 0.001 * 0.001,
             unified_sigma: 1.19,

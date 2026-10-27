@@ -206,8 +206,8 @@ RUN --mount=type=cache,id=bowerbird-vpx,target=/root/.cache,sharing=locked \
   && rm native/rawshim/.vpx \
   && cp -a "$tree" native/rawshim/.vpx
 
-# The denoisers' weights, which `src/pmrid.rs` and `src/upscale.rs` embed - so these are files the
-# crate does not compile without, on the same terms as the shaders. A stage of its own because the
+# The denoisers' weights, which `native/denoise`'s `pmrid.rs` and `upscale.rs` embed - so these are
+# files the crate does not compile without, on the same terms as the shaders. A stage of its own because the
 # getter unpacks PMRID's checkpoint with `fflate`, which is a dev dependency: `deps` installs
 # `--production` and so has none, and the build stage has no `node_modules` at all.
 FROM base AS models

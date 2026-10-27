@@ -51,7 +51,7 @@ pub struct Opening<'a> {
     pub camera_match: CameraMatch,
     /// The mosaic's own noise, as the decode fitted it. What bounds the defringe's per-channel
     /// estimate, which is a median over a demosaiced frame and so cannot tell texture from grain.
-    pub noise: Option<crate::galosh::NoiseFit>,
+    pub noise: Option<denoise::galosh::NoiseFit>,
     /// The matrix the demosaic multiplied the samples by, which the same estimate propagates its
     /// channel correlations through.
     pub matrix: Option<[[f32; 3]; 3]>,

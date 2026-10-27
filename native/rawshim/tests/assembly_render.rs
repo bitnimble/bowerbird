@@ -11,7 +11,7 @@ use rawshim::composite_tile::{
     Blending, CompositeRequest, From, Layer, Mask, SourceFile, Weight, layers_of,
 };
 use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
-use rawshim::galosh::Detail;
+use denoise::galosh::Detail;
 use rawshim::image::Strengths;
 use units::light::{Gain, Light, SceneNits};
 use units::px::{Composite, Rect, Share, Span};

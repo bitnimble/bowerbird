@@ -584,8 +584,8 @@ pub struct Found {
     pub photograph: String,
     pub strokes: Vec<Stroke>,
     pub lens: Option<crate::fit::Lens>,
-    pub detail: crate::galosh::Detail,
-    pub dust: crate::dust::Settings,
+    pub detail: denoise::galosh::Detail,
+    pub dust: denoise::dust::Settings,
     pub half_size: bool,
 }
 

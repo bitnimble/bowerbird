@@ -12,7 +12,7 @@ PRELU_INITIAL_SLOPE = 0.25
 
 GRAIN_SHARE = 0.25
 """Share of the weights' calibrated grain variance the editor adds by default: Luminance 75
-(`upscale::LUMINANCE` in `native/rawshim/src/upscale.rs`)."""
+(`upscale::LUMINANCE` in `native/denoise/src/upscale.rs`)."""
 SHARPEN = 0.35
 """The editor's RL sharpen amount over the upscale, `src/schemas/sharpening.ts` as a slider position.
 Both chosen by eye."""

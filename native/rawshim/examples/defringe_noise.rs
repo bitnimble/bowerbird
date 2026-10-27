@@ -214,7 +214,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
     let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
     let luma = |x: usize, y: usize| -> f64 {
         (0..3)
-            .map(|c| f64::from(rawshim::image::LUMA[c]) * at(x, y, c))
+            .map(|c| f64::from(colour::space::LUMA709[c]) * at(x, y, c))
             .sum()
     };
     let (mut sum, mut square, mut curved, mut counted) = (0f64, 0f64, 0f64, 0f64);
@@ -252,7 +252,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
 /// factor by which the fit's noise estimate is wrong.
 fn residual_fraction(plane: &[f32], width: usize, height: usize) -> Option<f64> {
     const MARGIN: usize = 12;
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     let luma = |x: usize, y: usize| -> f64 {
         (0..3)
             .map(|c| f64::from(weight[c]) * f64::from(plane[(y * width + x) * 3 + c]))
@@ -304,7 +304,7 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
     if clean.len() < width * height * 3 || noisy.len() < width * height * 3 {
         return None;
     }
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     let sums = |plane: &[f32]| -> [f64; 3] {
         let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
         let luma = |x: usize, y: usize| {
@@ -373,7 +373,7 @@ fn greyed(
     height: usize,
 ) -> Option<Vec<f32>> {
     let plane = reconstruct(gpu, rcd, mosaic, cfa, width, height)?;
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     Some(
         (0..width * height)
             .map(|at| {
@@ -394,7 +394,7 @@ struct Read {
     cfa: mosaic::cfa::Cfa,
     /// The photograph's own noise, as the decode fits it. What says whether the sigmas this probe
     /// sweeps are anywhere near what a real frame hands the stage.
-    native: Option<rawshim::galosh::NoiseFit>,
+    native: Option<denoise::galosh::NoiseFit>,
     /// The camera-to-rec2020 matrix `assemble` applies, so the noise can be measured on both sides
     /// of it. Production's own rather than a second spelling of it.
     matrix: [[f32; 3]; 3],
@@ -457,7 +457,7 @@ fn read_mosaic(path: &str) -> Option<Read> {
         cfa,
         matrix: rawshim::decode_rawler::camera_to_rec2020(&image)?,
         native: std::fs::read(path).ok().and_then(|bytes| {
-            rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+            rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
                 .and_then(|frame| frame.noise)
         }),
     })
@@ -549,13 +549,13 @@ fn show(fitted: Option<(f32, f32)>) -> String {
 /// is folded in at its own fitted RMS.
 fn as_fitted(
     drawn: f32,
-    native: Option<rawshim::galosh::NoiseFit>,
-) -> Option<rawshim::galosh::NoiseFit> {
+    native: Option<denoise::galosh::NoiseFit>,
+) -> Option<denoise::galosh::NoiseFit> {
     // The frame's own sigma comes off `alpha.s + sigma_sq` at full scale rather than off
     // `unified_sigma`, which is a GAT-domain figure and reads near one however dark the frame is.
     let carried = native.map_or(0.0, |fit| fit.model().at_white());
     let combined = (drawn * drawn + carried * carried).sqrt();
-    (combined > 0.0).then_some(rawshim::galosh::NoiseFit {
+    (combined > 0.0).then_some(denoise::galosh::NoiseFit {
         alpha: 0.0,
         sigma_sq: combined * combined,
         unified_sigma: combined,
@@ -569,7 +569,7 @@ fn fit(
     plane: &[f32],
     width: usize,
     height: usize,
-    noise: Option<rawshim::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: [[f32; 3]; 3],
 ) -> Option<(f32, f32)> {
     let samples: Vec<u16> = plane

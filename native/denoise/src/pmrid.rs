@@ -57,7 +57,7 @@ const HALVINGS: usize = 32;
 
 /// The plan for walking the weights, which is 20KB of names and offsets and is embedded on both
 /// hosts. The weights themselves are four megabytes and are not ([`weights`]).
-const MANIFEST: &str = include_str!("../.pmrid/weights.json");
+const MANIFEST: &str = include_str!("../../rawshim/.pmrid/weights.json");
 
 /// The weights as `bun run get:models` unpacks them.
 ///
@@ -67,10 +67,10 @@ const MANIFEST: &str = include_str!("../.pmrid/weights.json");
 /// megabytes of weights inside the module is four megabytes every reader pays whether or not they
 /// choose this filter - and pays again on the next build, the module's name being its own hash.
 /// Served apart, the browser caches them apart, and only a reader who asks for the network fetches
-/// them at all ([`crate::wasm::hold_pmrid_weights`]).
+/// them at all (`rawshim::wasm::hold_pmrid_weights`).
 #[cfg(not(target_arch = "wasm32"))]
-fn weights() -> Option<&'static [u8]> {
-    Some(include_bytes!("../.pmrid/weights.bin"))
+pub fn weights() -> Option<&'static [u8]> {
+    Some(include_bytes!("../../rawshim/.pmrid/weights.bin"))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -79,7 +79,7 @@ thread_local! {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn weights() -> Option<&'static [u8]> {
+pub fn weights() -> Option<&'static [u8]> {
     WEIGHTS.with(std::cell::Cell::get)
 }
 
@@ -507,7 +507,7 @@ pub(crate) fn tensor_features() -> wgpu::Features {
 /// What the forward pass computes on, fastest first. A device builds the fastest it offers of
 /// those no faster than it is asked for.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Arm {
+pub enum Arm {
     /// The 1x1 layers on the matrix units and the rest in WGSL, over a `half` arena.
     Matrix,
     /// All of it in WGSL, over a `half` arena, which needs `shader-f16`.
@@ -518,7 +518,7 @@ enum Arm {
 
 /// Every kernel of the forward pass, built once for the process.
 pub struct Pmrid {
-    arm: Arm,
+    pub arm: Arm,
     layout: wgpu::BindGroupLayout,
     /// In the order [`SPATIAL_16`] and its neighbours say.
     pipelines: Vec<wgpu::ComputePipeline>,
@@ -577,7 +577,7 @@ pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Pmrid> {
 }
 
 /// The forward pass on the fastest [`Arm`] this device offers that is no faster than `fastest`.
-fn build_kernels(gpu: &'static gpu::Gpu, weights: &'static [u8], fastest: Arm) -> Pmrid {
+pub fn build_kernels(gpu: &'static gpu::Gpu, weights: &'static [u8], fastest: Arm) -> Pmrid {
     let manifest: serde_json::Value =
         serde_json::from_str(MANIFEST).expect("the weights manifest parses");
     let offsets: HashMap<String, usize> = manifest["tensors"]
@@ -2189,147 +2189,6 @@ mod tests {
             fresh == reused,
             "the second frame read what the first left in its arena"
         );
-    }
-
-    /// The network moves the committed Bayer frames' photosites by next to nothing on average at
-    /// `NETWORK_NOISE` of the fit: what it lifts is how far that is from the noise it finds.
-    #[cfg(feature = "fixtures")]
-    #[test]
-    fn the_fit_leaves_the_network_nothing_to_lift() {
-        let Some(gpu) = gpu::device() else {
-            return;
-        };
-        let network = super::device(gpu).expect("the network built");
-        for path in [
-            crate::fixture_tests::canon(),
-            crate::fixture_tests::sony(),
-            crate::fixture_tests::clipped(),
-            crate::fixture_tests::bayer_noisy(),
-        ] {
-            let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
-            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
-            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-            let gains = crate::decode_rawler::channel_ceilings(&image);
-            let lift = pollster::block_on(super::lift(
-                gpu,
-                network,
-                held.device_mosaic(),
-                &held.cfa(),
-                gains,
-                fit,
-            ))
-            .expect("the tally reads back");
-            assert!(
-                lift.abs() < 0.25,
-                "{}: the network lifts {lift:+.3} sigma at the fit's {fit:?}",
-                path.display()
-            );
-        }
-    }
-
-    /// What each arm costs over a whole photograph on this adapter, and how far apart their
-    /// pictures are.
-    ///
-    /// **A report more than a test**: the times go to stderr past the harness's capture, so a plain
-    /// `bun run test:native pmrid_arms --features fixtures` prints them. With the arena held, as a
-    /// render queue holds it, so what is timed is the network rather than an allocation. What is
-    /// asserted is only that the arms paint the same picture, which the synthetic comparison beside
-    /// this one cannot say about a frame with real highlights in it.
-    #[cfg(feature = "fixtures")]
-    #[test]
-    fn pmrid_arms_on_a_photograph() {
-        use std::io::Write;
-        const RUNS: usize = 5;
-        let Some(gpu) = gpu::device() else {
-            return;
-        };
-        let weights = super::weights().expect("the weights");
-        let arms: Vec<(super::Arm, super::Pmrid)> =
-            [super::Arm::Matrix, super::Arm::Half, super::Arm::Float]
-                .into_iter()
-                .map(|arm| (arm, super::build_kernels(gpu, weights, arm)))
-                .filter(|(arm, kernels)| kernels.arm == *arm)
-                .collect();
-        let mut report = std::io::stderr();
-
-        super::hold_arenas();
-        for path in [
-            crate::fixture_tests::sony(),
-            crate::fixture_tests::clipped(),
-        ] {
-            let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
-            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
-            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
-            let gains = crate::decode_rawler::channel_ceilings(&image);
-            let (cfa, mosaic) = (held.cfa(), held.device_mosaic());
-            let detail = crate::galosh::Detail::at(100.0, 100.0);
-            let run = |network: &super::Pmrid| {
-                let mut frame = mosaic.duplicate(gpu);
-                gpu.block_until_done();
-                let started = trace::clock::Mark::now();
-                super::denoise(gpu, network, &mut frame, &cfa, gains, detail, fit);
-                gpu.block_until_done();
-                (started.elapsed(), frame)
-            };
-
-            // The first of each compiles whatever pipelines the driver has not cached.
-            let answers: Vec<Vec<f32>> = arms
-                .iter()
-                .map(|(_, kernels)| {
-                    pollster::block_on(run(kernels).1.read(gpu)).expect("the mosaic reads back")
-                })
-                .collect();
-            let mut fastest = vec![std::time::Duration::MAX; arms.len()];
-            for _ in 0..RUNS {
-                for (at, (_, kernels)) in arms.iter().enumerate() {
-                    fastest[at] = fastest[at].min(run(kernels).0);
-                }
-            }
-
-            let name = path.file_name().expect("a file").to_string_lossy();
-            let megapixels = (mosaic.width * mosaic.height) as f64 / 1e6;
-            let _ = writeln!(
-                report,
-                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:",
-                gpu.adapter
-            );
-            let float = answers.last().expect("every device builds the float arm");
-            let slowest = fastest.last().expect("and times it").as_secs_f64();
-            let mut apart_most = (super::Arm::Float, 0.0);
-            for (at, (arm, _)) in arms.iter().enumerate() {
-                let took = fastest[at].as_secs_f64();
-                if *arm == super::Arm::Float {
-                    let _ = writeln!(report, "  {:<7} {:>7.1}ms", "Float", took * 1e3);
-                    continue;
-                }
-                let apart: Vec<f64> = answers[at]
-                    .iter()
-                    .zip(float)
-                    .map(|(a, b)| f64::from((a - b).abs()) * 255.0)
-                    .collect();
-                let mean = apart.iter().sum::<f64>() / apart.len() as f64;
-                let worst = apart.iter().copied().fold(0.0, f64::max);
-                let _ = writeln!(
-                    report,
-                    "  {:<7} {:>7.1}ms  {:.2}x Float's speed, {mean:.4} codes of 255 from it on \
-                     average, {worst:.2} at the worst photosite",
-                    format!("{arm:?}"),
-                    took * 1e3,
-                    slowest / took,
-                );
-                if mean > apart_most.1 {
-                    apart_most = (*arm, mean);
-                }
-            }
-            let (arm, mean) = apart_most;
-            assert!(
-                mean < 0.05,
-                "{name}: {arm:?} is {mean:.4} codes from Float on average"
-            );
-        }
-        super::release_arenas();
     }
 
     /// Every shader holds the arena in the type the host sizes it for: `float` in the WGSL pass a

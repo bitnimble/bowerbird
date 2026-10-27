@@ -10,12 +10,12 @@
 //! crosses zero. That scale is over `pmrid`'s `NETWORK_NOISE`, which is the constant a median off
 //! one across the noisy frames moves.
 
-use rawshim::galosh::NoiseFit;
+use denoise::galosh::NoiseFit;
 
 fn main() {
     let gpu = gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels");
-    let network = rawshim::pmrid::device(gpu).expect("the network's weights");
+    let kernels = denoise::galosh::device(gpu).expect("the GALOSH kernels");
+    let network = denoise::pmrid::device(gpu).expect("the network's weights");
     println!(
         "{:<16} {:>9} {:>9} {:>7}   {:>9}",
         "frame", "alpha", "sigma_sq", "lift", "zero at"
@@ -27,20 +27,20 @@ fn main() {
             continue;
         };
         let cfa = held.cfa();
-        if !rawshim::pmrid::filters(&cfa) {
+        if !denoise::pmrid::filters(&cfa) {
             eprintln!("{path}: not a Bayer frame");
             continue;
         }
         let mosaic = held.device_mosaic();
         let gains = held.ceilings();
-        let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
+        let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
         let lift_at = |scale: f64| {
             let fit = NoiseFit {
                 alpha: (f64::from(fit.alpha) * scale) as f32,
                 sigma_sq: (f64::from(fit.sigma_sq) * scale) as f32,
                 ..fit
             };
-            pollster::block_on(rawshim::pmrid::lift(gpu, network, mosaic, &cfa, gains, fit))
+            pollster::block_on(denoise::pmrid::lift(gpu, network, mosaic, &cfa, gains, fit))
         };
         let name = std::path::Path::new(&path)
             .file_name()

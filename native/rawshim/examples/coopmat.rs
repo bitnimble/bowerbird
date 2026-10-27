@@ -253,7 +253,7 @@ const RENDITION_PUSHED: u32 = (std::mem::size_of::<Pushed>() + 6 * 4) as u32;
 /// multiplies of this shape, and the two 3x3 dense layers at the full plane are a hundredth of the
 /// work; what this measures is the two thirds that is.
 fn multiplies(packed: usize) -> Vec<Multiply> {
-    rawshim::pmrid::pointwise(packed)
+    denoise::pmrid::pointwise(packed)
         .into_iter()
         .map(|layer| {
             // The depth loop steps a fragment at a time whatever shape the arm is, so a layer whose

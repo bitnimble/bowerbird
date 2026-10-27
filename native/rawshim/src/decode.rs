@@ -46,10 +46,10 @@ pub async fn hold_path(path: &str) -> Result<Held, String> {
 /// edge that would still serve, which a photograph at least twice that is halved to.
 pub async fn frame_from_bytes(
     bytes: &[u8],
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     match crate::decode_rendered::is_rendered_bytes(bytes) {
         true => {
@@ -73,11 +73,11 @@ pub async fn frame_from_bytes(
 /// collapse, so halving one is a resample the caller can ask for through the floor instead.
 pub fn frame_from_path(
     path: &str,
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
     force_half: bool,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     if !crate::decode_rendered::is_rendered(path) {
         return crate::decode_rawler::decode_fitted(
@@ -148,10 +148,10 @@ pub(crate) async fn whole(
 pub async fn tile_from(
     source: Source<'_>,
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
-    dust: crate::dust::Known<'_>,
+    dust: denoise::dust::Known<'_>,
 ) -> Option<crate::frame::Frame> {
     let bytes;
     let rendered = match source {
@@ -181,8 +181,8 @@ pub async fn tile_from(
 pub async fn merged_tile_from(
     paths: &[&str],
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
     prior: &[crate::burst::Offset],
     recipe: &crate::composition::Composition,
@@ -219,7 +219,7 @@ impl Held {
     /// frame somebody else's camera has already demosaiced and denoised has neither the lattice
     /// nor the statistics. Reporting a number read off one anyway is what would make the Detail
     /// panel filter a reconstruction.
-    pub async fn fit(&self) -> Option<crate::galosh::NoiseFit> {
+    pub async fn fit(&self) -> Option<denoise::galosh::NoiseFit> {
         match self {
             Held::Mosaic(held) => held.fit().await,
             Held::Rendered(_) => None,
@@ -256,10 +256,10 @@ impl Held {
     /// move at all.
     pub async fn frame(
         &self,
-        detail: crate::galosh::Detail,
+        detail: denoise::galosh::Detail,
         at_least_long_edge: u32,
-        fit: crate::galosh::Fit,
-        dust: crate::dust::Wanted<'_>,
+        fit: denoise::galosh::Fit,
+        dust: denoise::dust::Wanted<'_>,
         report: crate::open_stage::Report<'_>,
     ) -> Option<crate::frame::Frame> {
         match self {
@@ -277,12 +277,12 @@ impl Held {
     /// photosite against its own colour's neighbours on the CFA, and a frame that has been
     /// demosaiced has no such neighbours - what it would find on one is the reconstruction's own
     /// texture, everywhere.
-    pub async fn dust(&self) -> Option<Vec<crate::dust::Spot>> {
+    pub async fn dust(&self) -> Option<Vec<denoise::dust::Spot>> {
         let Held::Mosaic(held) = self else {
             return None;
         };
         let gpu = gpu::device()?;
-        crate::dust::detect(gpu, held.device_mosaic(), &held.glass()).await
+        denoise::dust::detect(gpu, held.device_mosaic(), &held.glass()).await
     }
 
     /// One window of the photograph, as the scene-linear frame the pipeline reads.
@@ -295,10 +295,10 @@ impl Held {
         &self,
         window: Rect<Photograph>,
         scale: crate::view::Scale,
-        detail: crate::galosh::Detail,
-        fit: crate::galosh::Fit,
+        detail: denoise::galosh::Detail,
+        fit: denoise::galosh::Fit,
         halo: usize,
-        dust: crate::dust::Known<'_>,
+        dust: denoise::dust::Known<'_>,
     ) -> Option<crate::frame::Frame> {
         match self {
             Held::Mosaic(held) => {

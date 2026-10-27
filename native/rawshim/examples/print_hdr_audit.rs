@@ -20,7 +20,7 @@ fn main() -> Result<(), String> {
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
-            denoiser: rawshim::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),

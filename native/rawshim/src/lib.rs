@@ -136,10 +136,6 @@ pub mod decode_rendered;
 mod demosaic_tests;
 pub mod dereflect;
 mod dng_rendering;
-/// Sensor particles found on the mosaic, and their shadows divided back out of it.
-pub mod dust;
-/// The search half of that, dispatched on the device the mosaic is already on.
-pub mod dust_find;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
 pub mod exif;
@@ -156,8 +152,6 @@ pub mod fit_source;
 mod fit_span;
 mod fit_wide;
 pub mod frame;
-/// The denoise, on the mosaic, before anything has averaged a neighbour into it.
-pub mod galosh;
 pub mod grade;
 pub mod hdr;
 pub mod hdr_args;
@@ -199,8 +193,6 @@ pub mod photo_analysis;
 pub mod picture;
 pub mod pipelines;
 pub mod planes;
-/// The other denoise, in the same place: a learned network a reader can choose instead.
-pub mod pmrid;
 /// PNG, which an export can ask for and nothing else writes.
 #[cfg(feature = "renditions")]
 pub mod png_write;
@@ -228,7 +220,6 @@ pub mod tile_grid;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
 #[cfg(all(feature = "renditions", target_os = "android"))]
 mod tv_stage;
-pub mod upscale;
 pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
@@ -369,7 +360,7 @@ fn rerun_on_loss<T>(
 pub(crate) fn release_freed_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
-        if pmrid::arenas_held() {
+        if denoise::pmrid::arenas_held() {
             return;
         }
         unsafe extern "C" {
@@ -399,20 +390,20 @@ pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<frame::Frame>
     decode_frame_via(
         DecodeSource::Path(path),
         at_least_long_edge,
-        galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Detail::at(0.0, 0.0),
     )
 }
 
 /// The same decode, with the mosaic denoised before it is demosaiced.
 ///
-/// `fit` is whose statistics it filters with: [`galosh::Fit::Given`] where the caller has the
+/// `fit` is whose statistics it filters with: [`denoise::galosh::Fit::Given`] where the caller has the
 /// photograph's already, which is a quarter of a second of whole-frame reductions it does not pay
 /// again (`crate::photo_analysis`).
 pub fn decode_frame_denoised(
     path: &str,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
-    fit: galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Path(path),
@@ -424,17 +415,17 @@ pub fn decode_frame_denoised(
 }
 
 /// `fit` is what the decode does about the noise, and only an in-memory decode is ever asked:
-/// [`galosh::Fit::Only`] measures the frame without filtering it, which is the editor's open, and
+/// [`denoise::galosh::Fit::Only`] measures the frame without filtering it, which is the editor's open, and
 /// the measurement rides back on `frame.noise` for the loupe tiles that follow.
 pub fn decode_frame_bytes(
     bytes: &[u8],
     at_least_long_edge: u32,
-    fit: galosh::Fit,
+    fit: denoise::galosh::Fit,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Bytes(bytes),
         at_least_long_edge,
-        galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Detail::at(0.0, 0.0),
         None,
         fit,
     )
@@ -448,14 +439,14 @@ enum DecodeSource<'a> {
 fn decode_frame_via(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
+    detail: denoise::galosh::Detail,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(
         source,
         at_least_long_edge,
         detail,
         None,
-        galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
     )
 }
 
@@ -464,14 +455,14 @@ fn decode_frame_via(
 fn decode_frame_cropped(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
+    detail: denoise::galosh::Detail,
     crop: Option<(crate::view::View, usize)>,
-    fit: galosh::Fit,
+    fit: denoise::galosh::Fit,
 ) -> Option<frame::Frame> {
     // Nothing taken off the glass here. The callers below are the ones that are not the pipeline -
     // the debug renders, the fixture pins, the examples - and a spot removed from a fixture is a
     // fixture that no longer pins what it was written to pin.
-    let glass = dust::Wanted::Off;
+    let glass = denoise::dust::Wanted::Off;
     let scene = match (&source, crop) {
         // The view carries its own scale, so `at_least_long_edge` says nothing here: whether a
         // window is halved is the *photograph's* question and the caller has already answered it.
@@ -481,7 +472,7 @@ fn decode_frame_cropped(
             detail,
             fit,
             halo,
-            dust::Known::Off,
+            denoise::dust::Known::Off,
         )),
         (DecodeSource::Path(path), None) => {
             decode::frame_from_path(path, detail, at_least_long_edge, false, fit, glass)
@@ -527,8 +518,8 @@ fn decode_frame_cropped(
 pub fn decode_tile(
     path: &str,
     view: crate::view::View,
-    detail: galosh::Detail,
-    fit: galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(DecodeSource::Path(path), 0, detail, Some((view, halo)), fit)
@@ -561,7 +552,7 @@ impl Tile {
 
 /// How much context a tile is given either side, where what a seam costs is worth more than what
 /// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
-/// GALOSH reads farther and raises it to its own ([`galosh::reach`]).
+/// GALOSH reads farther and raises it to its own ([`denoise::galosh::reach`]).
 ///
 /// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
 /// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
@@ -838,7 +829,7 @@ pub extern "C" fn bb_cancel_job(progress_id: u32) {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_hold_render_memory() {
-    pmrid::hold_arenas();
+    denoise::pmrid::hold_arenas();
 }
 
 /// Ends one `bb_hold_render_memory`; the last frees everything kept.
@@ -846,7 +837,7 @@ pub extern "C" fn bb_hold_render_memory() {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_release_render_memory() {
-    pmrid::release_arenas();
+    denoise::pmrid::release_arenas();
     release_freed_memory();
 }
 
@@ -1023,12 +1014,12 @@ mod tests {
             view::View::whole(units::px::Size::exact(whole.width, whole.height))
                 .showing(units::px::Rect::exact(2000, 1400, side, side))
         };
-        let sliders = galosh::Detail::at(40.0, 40.0);
+        let sliders = denoise::galosh::Detail::at(40.0, 40.0);
         decode_tile(
             &path,
             seeing(400),
             sliders,
-            galosh::Fit::Measure,
+            denoise::galosh::Fit::Measure,
             RENDITION_TILE_HALO,
         );
         for side in [400usize, 700] {
@@ -1037,7 +1028,7 @@ mod tests {
                 &path,
                 seeing(side),
                 sliders,
-                galosh::Fit::Measure,
+                denoise::galosh::Fit::Measure,
                 RENDITION_TILE_HALO,
             );
             let took = started.elapsed().as_millis();

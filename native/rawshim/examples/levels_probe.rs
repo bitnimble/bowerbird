@@ -22,7 +22,7 @@
 //! luma on one side and as a maximum on the other, the same rank lands on a higher level and the
 //! error grows with how saturated the picture is.
 
-use rawshim::galosh::{Detail, Fit};
+use denoise::galosh::{Detail, Fit};
 
 /// `H_sat / H_grey` under ISO 12232: saturation-based speed is `78/H_sat`, and the metered grey
 /// sits at `10/H`, so the ratio is fixed by the standard rather than by the camera.

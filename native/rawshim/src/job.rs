@@ -118,7 +118,7 @@ pub struct Job {
     /// it has the frame. Absent means "measure it", which is what every caller but the editor's
     /// loupe wants and what a client too old to send it gets.
     #[serde(default)]
-    pub noise_fit: Option<crate::galosh::NoiseFit>,
+    pub noise_fit: Option<denoise::galosh::NoiseFit>,
     /// The whole frame's diffuse white and scene peak, for a tile that would otherwise read its
     /// crop's.
     ///
@@ -151,7 +151,7 @@ pub struct Job {
     pub photo_analysis: Option<Vec<u8>>,
     /// The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
     ///
-    /// They drive the denoise on the *mosaic*, inside the decode (`crate::galosh`), which
+    /// They drive the denoise on the *mosaic*, inside the decode (`denoise::galosh`), which
     /// is why they are on the job rather than on a target: every rendition is cut from one
     /// decode, so they could not differ between targets even if a caller asked.
     ///
@@ -167,13 +167,13 @@ pub struct Job {
     /// Which filter those two positions drive. Absent is the one every rendition took before there
     /// was a choice, so a library rendered before this reads the same.
     #[serde(default)]
-    pub denoiser: crate::galosh::Denoiser,
+    pub denoiser: denoise::galosh::Denoiser,
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, on the job for the same reason the pair above is:
     /// the correction is on the mosaic, inside the one decode every target is cut from.
     #[serde(default)]
-    pub dust: crate::dust::Settings,
+    pub dust: denoise::dust::Settings,
     /// The reader's repairs, in the order they were made (`crate::repair`).
     ///
     /// On the job rather than on a target for the reason the dust is: every rendition is cut from
@@ -260,8 +260,8 @@ fn upright() -> crate::image::Geometry {
 
 impl Job {
     /// The denoise, as this document holds it: a position on each track, or neither.
-    pub(crate) fn detail(&self) -> crate::galosh::Detail {
-        crate::galosh::Detail {
+    pub(crate) fn detail(&self) -> denoise::galosh::Detail {
+        denoise::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
@@ -743,11 +743,11 @@ impl Base {
         let mut lap = trace::clock::laps("  base ");
         let stored = job.stored();
         // Denoised inside the decode, on the mosaic, which is the only place the noise is
-        // still one photosite's own (`crate::galosh`).
+        // still one photosite's own (`denoise::galosh`).
         // Reached through `decode` rather than `crate::decode_frame_denoised`, which reads the
         // frame back for the callers that want samples: everything below this is a shader, so the
         // rendition takes the spelling that leaves it where the decode wrote it.
-        let fit = crate::galosh::wanted(stored.from_raw.noise, job.detail());
+        let fit = denoise::galosh::wanted(stored.from_raw.noise, job.detail());
         // Off the sidecar where the editor's open already found them, so an export agrees with
         // the tab that ordered it spot for spot rather than detecting a second time against a
         // frame the decode may have halved.
@@ -1042,7 +1042,7 @@ impl Base {
         // library taking the long way round on its first crop to be told there was nothing to find.
         // The aperture is in the header, which is already read above.
         if job.dust.wanted(None).does_anything()
-            && crate::dust::worth_reading(header.aperture)
+            && denoise::dust::worth_reading(header.aperture)
             && stored.from_raw.dust.is_none()
         {
             return None;
@@ -1262,7 +1262,7 @@ pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
             job.detail(),
             MEASURED_LONG_EDGE,
             job.half_size,
-            crate::galosh::wanted(stored.from_raw.noise, job.detail()),
+            denoise::galosh::wanted(stored.from_raw.noise, job.detail()),
             job.dust.wanted(stored.from_raw.dust.as_deref()),
         )?;
         let looked = crate::dereflect::looked(gpu, frame.resident()?)?;

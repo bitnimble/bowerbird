@@ -191,10 +191,10 @@ fn tagged(
 pub fn decode_tile(
     path: &str,
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
-    dust: crate::dust::Known<'_>,
+    dust: denoise::dust::Known<'_>,
 ) -> Option<Frame> {
     blocking(decode_tile_source(
         &mapped(path)?,
@@ -225,10 +225,10 @@ pub(crate) fn mapped(path: &str) -> Option<rawler::rawsource::RawSource> {
 pub(crate) async fn decode_tile_source(
     source: &rawler::rawsource::RawSource,
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
-    dust: crate::dust::Known<'_>,
+    dust: denoise::dust::Known<'_>,
 ) -> Option<Frame> {
     let region = match region_mosaic(
         source,
@@ -266,8 +266,8 @@ pub(crate) async fn decode_tile_source(
 pub(crate) async fn decode_merged_tile(
     sources: &[rawler::rawsource::RawSource],
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
     prior: &[crate::burst::Offset],
     recipe: &crate::composition::Composition,
@@ -290,7 +290,7 @@ pub(crate) async fn decode_merged_tile(
             detail.without_upscaler(),
             fit,
             halo,
-            crate::dust::Known::Off,
+            denoise::dust::Known::Off,
         )
         .await;
     }
@@ -298,14 +298,14 @@ pub(crate) async fn decode_merged_tile(
     // reference's fit is what weighs them against each other.
     let read = match stack.weights.averages {
         false => detail.without_upscaler(),
-        true => crate::galosh::Detail {
+        true => denoise::galosh::Detail {
             luminance: Some(0.0),
             colour: Some(0.0),
             ..detail.without_upscaler()
         },
     };
     let given = match fit {
-        crate::galosh::Fit::Given(fit) => Some(fit),
+        denoise::galosh::Fit::Given(fit) => Some(fit),
         _ => None,
     };
     let mut lap = trace::clock::laps("  merge ");
@@ -317,13 +317,13 @@ pub(crate) async fn decode_merged_tile(
         view,
         read,
         match (given, stack.weights.averages) {
-            (Some(fit), _) => crate::galosh::Fit::Given(fit),
-            (None, false) => crate::galosh::Fit::Measure,
-            (None, true) => crate::galosh::Fit::Only,
+            (Some(fit), _) => denoise::galosh::Fit::Given(fit),
+            (None, false) => denoise::galosh::Fit::Measure,
+            (None, true) => denoise::galosh::Fit::Only,
         },
         halo,
         units::px::Span::exact(reference_extra),
-        crate::dust::Known::Off,
+        denoise::dust::Known::Off,
         Demosaiced::Here,
     )
     .await?
@@ -345,7 +345,7 @@ pub(crate) async fn decode_merged_tile(
             detail.without_upscaler(),
             fit,
             halo,
-            crate::dust::Known::Off,
+            denoise::dust::Known::Off,
         )
         .await;
     };
@@ -415,10 +415,10 @@ pub(crate) async fn decode_merged_tile(
             source,
             placed_at(view, prior[at]),
             read,
-            crate::galosh::Fit::Given(reference.noise?),
+            denoise::galosh::Fit::Given(reference.noise?),
             halo,
             units::px::Span::exact(frame_extra),
-            crate::dust::Known::Off,
+            denoise::dust::Known::Off,
             Demosaiced::ByTheReference,
         )
         .await?
@@ -587,7 +587,7 @@ struct RegionMosaic {
     /// The sensor's readable area the region is cut from.
     frame: (usize, usize),
     /// What the region was denoised for, which the demosaic finishes for the upscaler.
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     origin: units::px::At<units::px::Sensor>,
     photograph_origin: units::px::At<units::px::Sensor>,
     cfa: mosaic::cfa::Cfa,
@@ -596,7 +596,7 @@ struct RegionMosaic {
     crop: (usize, usize, usize, usize),
     upright: rawler::decoders::Orientation,
     halving: bool,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     noise_left: f32,
     as_shot: Option<colour::white_balance::Illuminant>,
 }
@@ -663,11 +663,11 @@ impl RegionMosaic {
 async fn region_mosaic(
     source: &rawler::rawsource::RawSource,
     view: crate::view::View,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
     extra: units::px::Span<units::px::Sensor>,
-    dust: crate::dust::Known<'_>,
+    dust: denoise::dust::Known<'_>,
     demosaiced: Demosaiced,
 ) -> Option<Region> {
     // The window in the photograph's own pixels, which is the only space this function speaks.
@@ -721,7 +721,7 @@ async fn region_mosaic(
     let cfa = cfa_of(&shape)?;
     let halo = crate::tile_halo(halo);
     let reach = RCD_MARGIN + detailed_halo(gpu::device(), detail, &cfa, halo) + extra.raw();
-    let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
+    let (lattice_x, lattice_y) = denoise::galosh::lattice(&cfa);
     let (left, top) = (
         (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
         (origin.1 + tile.top).saturating_sub(reach) / lattice_y * lattice_y,
@@ -829,7 +829,7 @@ async fn region_mosaic(
     // found its own would be corrected differently from its neighbours and from the export it
     // exists to predict.
     if let Some(gpu) = gpu {
-        crate::dust::apply(gpu, &mosaic, &dust, (left, top));
+        denoise::dust::apply(gpu, &mosaic, &dust, (left, top));
     }
 
     let colour = colour_of(image)?;
@@ -896,14 +896,14 @@ async fn region_mosaic(
 }
 
 /// The whole frame, at the sensor's own resolution and with nothing taken off the glass.
-pub fn decode(path: &str, detail: crate::galosh::Detail) -> Option<Frame> {
+pub fn decode(path: &str, detail: denoise::galosh::Detail) -> Option<Frame> {
     decode_fitted(
         path,
         detail,
         0,
         false,
-        crate::galosh::Fit::Measure,
-        crate::dust::Wanted::Off,
+        denoise::galosh::Fit::Measure,
+        denoise::dust::Wanted::Off,
     )
 }
 
@@ -917,11 +917,11 @@ pub fn decode(path: &str, detail: crate::galosh::Detail) -> Option<Frame> {
 /// that wants samples.
 pub fn decode_fitted(
     path: &str,
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
     force_half: bool,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<Frame> {
     let mut lap = trace::clock::laps("  decode ");
     let path = std::path::Path::new(path);
@@ -1003,10 +1003,10 @@ fn uncached(_: &std::path::Path) -> std::io::Result<(Vec<u8>, usize)> {
 /// straight on, so opening the path again would read it twice.
 pub fn decode_bytes(
     bytes: &[u8],
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<Frame> {
     blocking(decode_bytes_async(
         bytes,
@@ -1024,10 +1024,10 @@ pub fn decode_bytes(
 /// is what lets every blocking entry point above stay exactly as blocking as it was.
 pub async fn decode_bytes_async(
     bytes: &[u8],
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<Frame> {
     decode_source(
         &rawler::rawsource::RawSource::new_from_slice(bytes),
@@ -1063,16 +1063,16 @@ struct Sensor {
     upright: rawler::decoders::Orientation,
     as_shot: Option<colour::white_balance::Illuminant>,
     /// What the lens was stopped down to, which decides how large and how deep a particle's shadow
-    /// is (`crate::dust`). Zero where the file recorded none, and then nothing is looked for.
+    /// is (`denoise::dust`). Zero where the file recorded none, and then nothing is looked for.
     aperture: f32,
     /// The picture's diagonal across the silicon, in millimetres, which with the diagonal in
-    /// photosites is the pitch a particle's shadow is measured in (`crate::dust`).
+    /// photosites is the pitch a particle's shadow is measured in (`denoise::dust`).
     diagonal_mm: units::px::Extent<units::px::Millimetre>,
 }
 
 impl Sensor {
-    fn glass(&self) -> crate::dust::Sensor {
-        crate::dust::Sensor {
+    fn glass(&self) -> denoise::dust::Sensor {
+        denoise::dust::Sensor {
             width: self.width,
             height: self.height,
             crop: self.crop,
@@ -1084,8 +1084,8 @@ impl Sensor {
 }
 
 impl Held {
-    /// What `crate::dust` needs of this body to read its cover glass.
-    pub fn glass(&self) -> crate::dust::Sensor {
+    /// What `denoise::dust` needs of this body to read its cover glass.
+    pub fn glass(&self) -> denoise::dust::Sensor {
         self.sensor.glass()
     }
 }
@@ -1780,7 +1780,7 @@ async fn hold(
 /// asked for together.
 ///
 /// The aperture is zero where the file recorded nothing usable. The diagonal falls back to
-/// [`crate::dust::FULL_FRAME_DIAGONAL_MM`], because the 35mm-equivalent focal length is the only
+/// [`denoise::dust::FULL_FRAME_DIAGONAL_MM`], because the 35mm-equivalent focal length is the only
 /// reading of a body's size that crosses makers and plenty of them omit it.
 fn optics_of(
     decoder: &dyn rawler::decoders::Decoder,
@@ -1788,7 +1788,7 @@ fn optics_of(
     params: &rawler::decoders::RawDecodeParams,
 ) -> (f32, units::px::Extent<units::px::Millimetre>) {
     let Ok(metadata) = decoder.raw_metadata(source, params) else {
-        return (0.0, crate::dust::FULL_FRAME_DIAGONAL_MM);
+        return (0.0, denoise::dust::FULL_FRAME_DIAGONAL_MM);
     };
     let exif = &metadata.exif;
     let rational = |r: &rawler::formats::tiff::Rational| match r.d {
@@ -1807,10 +1807,10 @@ fn optics_of(
     (aperture, diagonal_mm_of(focal, equivalent))
 }
 
-/// The picture's diagonal across the silicon, or [`crate::dust::FULL_FRAME_DIAGONAL_MM`] where the
+/// The picture's diagonal across the silicon, or [`denoise::dust::FULL_FRAME_DIAGONAL_MM`] where the
 /// two focal lengths do not give a crop factor.
 fn diagonal_mm_of(focal: f32, equivalent: f32) -> units::px::Extent<units::px::Millimetre> {
-    let full = crate::dust::FULL_FRAME_DIAGONAL_MM;
+    let full = denoise::dust::FULL_FRAME_DIAGONAL_MM;
     crate::header::crop_of(focal, equivalent).map_or(full, |crop| {
         units::px::Extent::exactly(full.raw() / f64::from(crop))
     })
@@ -1818,11 +1818,11 @@ fn diagonal_mm_of(focal: f32, equivalent: f32) -> units::px::Extent<units::px::M
 
 async fn decode_source(
     source: &rawler::rawsource::RawSource,
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     at_least_long_edge: u32,
     force_half: bool,
-    fit: crate::galosh::Fit,
-    dust: crate::dust::Wanted<'_>,
+    fit: denoise::galosh::Fit,
+    dust: denoise::dust::Wanted<'_>,
 ) -> Option<Frame> {
     let opened = open(source)
         .await
@@ -1853,13 +1853,13 @@ impl Held {
     /// tile the frame's fit: Phase 0 reduces over everything it is shown, so a region's own
     /// statistics are not the photograph's.
     /// None for a pattern GALOSH does not filter, which is a photograph with no mosaic noise to
-    /// report rather than one measured wrong ([`crate::galosh::filters`]).
-    pub async fn fit(&self) -> Option<crate::galosh::NoiseFit> {
+    /// report rather than one measured wrong ([`denoise::galosh::filters`]).
+    pub async fn fit(&self) -> Option<denoise::galosh::NoiseFit> {
         let gpu = gpu::device()?;
-        let kernels = crate::galosh::device(gpu)?;
-        crate::galosh::filters(&self.sensor.cfa).then_some(())?;
+        let kernels = denoise::galosh::device(gpu)?;
+        denoise::galosh::filters(&self.sensor.cfa).then_some(())?;
         Some(
-            crate::galosh::fit(
+            denoise::galosh::fit(
                 gpu,
                 kernels,
                 &self.mosaic,
@@ -1933,10 +1933,10 @@ impl Held {
         &self,
         tile: crate::Tile,
         scale: crate::view::Scale,
-        detail: crate::galosh::Detail,
-        fit: crate::galosh::Fit,
+        detail: denoise::galosh::Detail,
+        fit: denoise::galosh::Fit,
         halo: usize,
-        dust: crate::dust::Known<'_>,
+        dust: denoise::dust::Known<'_>,
     ) -> Option<Frame> {
         let gpu = gpu::device();
         let whole = &self.mosaic;
@@ -1959,7 +1959,7 @@ impl Held {
         // blocks from the region's own origin, so a window that starts off that lattice shrinks
         // every pixel against other blocks and the band stops being the frame. Costs the few rows
         // it can add to two sides, which are halo either way. See `region_mosaic`'s copy of this.
-        let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
+        let (lattice_x, lattice_y) = denoise::galosh::lattice(&cfa);
         let (left, top) = (
             (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
             (origin.1 + tile.top).saturating_sub(reach) / lattice_y * lattice_y,
@@ -1985,7 +1985,7 @@ impl Held {
         // The photograph's own particles, offset into this window - never a search of its own,
         // which `Known` leaves no way to ask for and which would find a different set from the
         // bands either side of it.
-        crate::dust::apply(gpu?, &mosaic, &dust, (left, top));
+        denoise::dust::apply(gpu?, &mosaic, &dust, (left, top));
 
         let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
         let region_crop = (
@@ -2053,10 +2053,10 @@ impl Held {
     /// For a caller that will ask again at another amount, which is what a Detail slider is.
     pub async fn frame(
         &self,
-        detail: crate::galosh::Detail,
+        detail: denoise::galosh::Detail,
         at_least_long_edge: u32,
-        fit: crate::galosh::Fit,
-        dust: crate::dust::Wanted<'_>,
+        fit: denoise::galosh::Fit,
+        dust: denoise::dust::Wanted<'_>,
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let copy = self.mosaic.duplicate(gpu::device()?);
@@ -2075,11 +2075,11 @@ impl Held {
     /// for the trade rather than for a size.
     pub async fn into_frame(
         mut self,
-        detail: crate::galosh::Detail,
+        detail: denoise::galosh::Detail,
         at_least_long_edge: u32,
         force_half: bool,
-        fit: crate::galosh::Fit,
-        dust: crate::dust::Wanted<'_>,
+        fit: denoise::galosh::Fit,
+        dust: denoise::dust::Wanted<'_>,
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let mut lap = trace::clock::laps("  decode ");
@@ -2128,7 +2128,7 @@ impl Held {
         // The whole mosaic, never a window: the gates read this frame's texture floor.
         let mut spots = None;
         if let Some(gpu) = gpu {
-            spots = crate::dust::run(gpu, mosaic, &glass, &dust).await;
+            spots = denoise::dust::run(gpu, mosaic, &glass, &dust).await;
             if dust.does_anything() {
                 lap("dust");
             }
@@ -2147,10 +2147,10 @@ impl Held {
         if let Some(gpu) = gpu {
             let frame = &mut *mosaic;
             if let Some(kernels) =
-                crate::galosh::device(gpu).filter(|_| crate::galosh::filters(&cfa))
+                denoise::galosh::device(gpu).filter(|_| denoise::galosh::filters(&cfa))
             {
-                let only = matches!(fit, crate::galosh::Fit::Only);
-                let brought = matches!(fit, crate::galosh::Fit::Given(_));
+                let only = matches!(fit, denoise::galosh::Fit::Only);
+                let brought = matches!(fit, denoise::galosh::Fit::Given(_));
                 // **Measured ahead of the filtering rather than on its way past**, which
                 // `Fit::Only` always wanted and a slider the document leaves unset now needs too:
                 // the amount is this frame's own until somebody says otherwise, so there is nothing
@@ -2158,10 +2158,10 @@ impl Held {
                 // photograph's whatever this decode was asked to do with it, and it is what every
                 // loupe tile and every band of a re-prepare is then handed.
                 let measured = match fit {
-                    crate::galosh::Fit::Given(fit) => Some(fit),
+                    denoise::galosh::Fit::Given(fit) => Some(fit),
                     _ if only || detail.could_do_anything() => {
                         report(crate::open_stage::Stage::MeasuringNoise);
-                        Some(crate::galosh::fit(gpu, kernels, frame, &cfa, colour.ceiling).await)
+                        Some(denoise::galosh::fit(gpu, kernels, frame, &cfa, colour.ceiling).await)
                     }
                     _ => None,
                 };
@@ -2176,10 +2176,10 @@ impl Held {
                             true => {
                                 report(crate::open_stage::Stage::Denoising);
                                 denoised = match detail.denoiser {
-                                    crate::galosh::Denoiser::Pmrid => {
-                                        match crate::pmrid::device(gpu) {
+                                    denoise::galosh::Denoiser::Pmrid => {
+                                        match denoise::pmrid::device(gpu) {
                                             Some(net) => {
-                                                crate::pmrid::denoise(
+                                                denoise::pmrid::denoise(
                                                     gpu,
                                                     net,
                                                     frame,
@@ -2199,7 +2199,7 @@ impl Held {
                                             }
                                         }
                                     }
-                                    crate::galosh::Denoiser::Galosh => {
+                                    denoise::galosh::Denoiser::Galosh => {
                                         denoise_in_tiles(
                                             gpu,
                                             kernels,
@@ -2214,8 +2214,8 @@ impl Held {
                                         true
                                     }
                                     // Denoised as it is upscaled, in the demosaic below.
-                                    crate::galosh::Denoiser::Upscaler => {
-                                        crate::upscale::device(gpu).is_some()
+                                    denoise::galosh::Denoiser::Upscaler => {
+                                        denoise::upscale::device(gpu).is_some()
                                     }
                                 };
                                 Some(measured)
@@ -2329,16 +2329,16 @@ fn spans_of(total: usize, tile: usize) -> impl Iterator<Item = (usize, usize)> {
 async fn denoise_over(
     gpu: Option<&'static gpu::Gpu>,
     mosaic: &mut mosaic::condition::Mosaic,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
     cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
-) -> (Option<crate::galosh::NoiseFit>, f32) {
+) -> (Option<denoise::galosh::NoiseFit>, f32) {
     let mut noise = None;
     let mut denoised = false;
-    let only = matches!(fit, crate::galosh::Fit::Only);
-    let brought = matches!(fit, crate::galosh::Fit::Given(_));
+    let only = matches!(fit, denoise::galosh::Fit::Only);
+    let brought = matches!(fit, denoise::galosh::Fit::Given(_));
     // **Tiled inside the region, once the region is worth tiling.** A loupe window is not the size
     // of the glass - it is grown by the reach of everything after the gather - so the region
     // reaches the size at which whole-region RCD is gigabytes of planes. Safe within a grown region
@@ -2347,17 +2347,17 @@ async fn denoise_over(
     // one tile and copy it twice, so that stays the single pass it has always been.
     let tiled = mosaic.width > DENOISE_TILE || mosaic.height > DENOISE_TILE;
     if let Some(gpu) = gpu {
-        let denoises = (only || detail.could_do_anything()) && crate::galosh::filters(cfa);
-        if let Some(kernels) = crate::galosh::device(gpu).filter(|_| denoises) {
+        let denoises = (only || detail.could_do_anything()) && denoise::galosh::filters(cfa);
+        if let Some(kernels) = denoise::galosh::device(gpu).filter(|_| denoises) {
             // **The frame's fit, where the caller had one.** Every whole-region reduction in Phase
             // 0 and Phase 2 measures this crop rather than the photograph, and a crop is not a
             // sample of the frame: measured on the fixtures, a 512px tile fitted between 0.49 and
             // 1.51 times its own frame's noise, which is the strength it is then denoised at. So a
             // loupe disagreed with the export it exists to predict, and moved as the reader panned.
-            let network = detail.denoiser == crate::galosh::Denoiser::Pmrid;
-            let upscales = detail.denoiser == crate::galosh::Denoiser::Upscaler;
+            let network = detail.denoiser == denoise::galosh::Denoiser::Pmrid;
+            let upscales = detail.denoiser == denoise::galosh::Denoiser::Upscaler;
             let measured = match fit {
-                crate::galosh::Fit::Given(fit) => Some(fit),
+                denoise::galosh::Fit::Given(fit) => Some(fit),
                 // A tile fitting itself is the case above's cost, not its correctness: it is what a
                 // caller with no frame's fit to hand back gets, and it is what the numbers describe.
                 // Measured by the one filtering run below rather than by a pass of its own.
@@ -2369,7 +2369,7 @@ async fn denoise_over(
                 // filtering run it would be each tile's own statistics, which is the disagreement
                 // above at a smaller scale and against itself. An unset slider needs it ahead of
                 // the filtering for a second reason: it has no number until the frame is measured.
-                _ => Some(crate::galosh::fit(gpu, kernels, mosaic, cfa, gains).await),
+                _ => Some(denoise::galosh::fit(gpu, kernels, mosaic, cfa, gains).await),
             };
             let amounts = detail.amounts(measured);
             (noise, denoised) = match (measured, tiled) {
@@ -2385,13 +2385,13 @@ async fn denoise_over(
                     (None, false)
                 }
                 // Denoised as it is upscaled, in the demosaic (`demosaic_detailed`).
-                (Some(fit), _) if upscales => (Some(fit), crate::upscale::device(gpu).is_some()),
+                (Some(fit), _) if upscales => (Some(fit), denoise::upscale::device(gpu).is_some()),
                 // The network tiles itself, and with a halo of its own, so the region's is not
                 // used: what a tile of it needs on every side is the reach of four halvings rather
                 // than of a kernel.
-                (Some(fit), _) if network => match crate::pmrid::device(gpu) {
+                (Some(fit), _) if network => match denoise::pmrid::device(gpu) {
                     Some(net) => {
-                        crate::pmrid::denoise(gpu, net, mosaic, cfa, gains, detail, fit);
+                        denoise::pmrid::denoise(gpu, net, mosaic, cfa, gains, detail, fit);
                         (Some(fit), true)
                     }
                     // A page that asked for the network before handing over what it fetched. Said
@@ -2411,13 +2411,15 @@ async fn denoise_over(
                 }
                 (Some(fit), false) => (
                     Some(
-                        crate::galosh::denoise_with(gpu, kernels, mosaic, cfa, gains, amounts, fit)
-                            .await,
+                        denoise::galosh::denoise_with(
+                            gpu, kernels, mosaic, cfa, gains, amounts, fit,
+                        )
+                        .await,
                     ),
                     true,
                 ),
                 (None, _) => (
-                    Some(crate::galosh::denoise(gpu, kernels, mosaic, cfa, gains, amounts).await),
+                    Some(denoise::galosh::denoise(gpu, kernels, mosaic, cfa, gains, amounts).await),
                     true,
                 ),
             };
@@ -2432,12 +2434,12 @@ async fn denoise_over(
 /// A decode that filters nothing measures nothing, so `None` is the ordinary answer for most
 /// callers and only means a decline when the caller wanted the fit or asked for an amount.
 fn declined_galosh(
-    noise: &Option<crate::galosh::NoiseFit>,
-    detail: crate::galosh::Detail,
-    fit: crate::galosh::Fit,
+    noise: &Option<denoise::galosh::NoiseFit>,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     cfa: &mosaic::cfa::Cfa,
 ) {
-    let wanted = matches!(fit, crate::galosh::Fit::Only) || detail.could_do_anything();
+    let wanted = matches!(fit, denoise::galosh::Fit::Only) || detail.could_do_anything();
     if !wanted || noise.is_some() {
         return;
     }
@@ -2445,7 +2447,7 @@ fn declined_galosh(
     // denoised and was not, which is what the browser's own spec watches this line for. A pattern
     // GALOSH has no colour to separate is the documented answer for that sensor, and saying so in
     // the same words would teach a reader - and that spec - to ignore the one that matters.
-    match crate::galosh::filters(cfa) {
+    match denoise::galosh::filters(cfa) {
         true => trace::warn(
             "rawshim: no GPU for GALOSH, so this frame carries no noise fit and was not denoised",
         ),
@@ -2459,15 +2461,15 @@ fn declined_galosh(
 /// The mosaic denoise, tile by tile, at the halo this caller grew its region by.
 async fn denoise_in_tiles(
     gpu: &'static gpu::Gpu,
-    kernels: &'static crate::galosh::Galosh,
+    kernels: &'static denoise::galosh::Galosh,
     mosaic: &mut mosaic::condition::Mosaic,
     cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
-    amounts: crate::galosh::Amounts,
-    fit: crate::galosh::NoiseFit,
+    amounts: denoise::galosh::Amounts,
+    fit: denoise::galosh::NoiseFit,
     halo: usize,
 ) {
-    crate::galosh::denoise_in_tiles(
+    denoise::galosh::denoise_in_tiles(
         gpu,
         kernels,
         mosaic,
@@ -2595,11 +2597,11 @@ async fn demosaic_detailed(
     colour: mosaic::demosaic::Colour,
     seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
-    detail: crate::galosh::Detail,
-    noise: Option<crate::galosh::NoiseFit>,
+    detail: denoise::galosh::Detail,
+    noise: Option<denoise::galosh::NoiseFit>,
 ) -> Option<colour::resident::Resident> {
     if upscales(detail, noise) {
-        let upscaler = crate::upscale::device(gpu);
+        let upscaler = denoise::upscale::device(gpu);
         let photo = match (upscaler, noise) {
             (Some(upscaler), Some(fit)) => upscaler
                 .photo(colour.ceiling, cfa, fit.model(), detail.resolved(Some(fit)))
@@ -2638,8 +2640,8 @@ async fn demosaic_detailed(
 
 /// Whether [`demosaic_detailed`] takes the upscaler: without a fit `declined_galosh` has already said
 /// why, and both sliders at 0 are the input as it was, which is the plain demosaic.
-fn upscales(detail: crate::galosh::Detail, noise: Option<crate::galosh::NoiseFit>) -> bool {
-    detail.denoiser == crate::galosh::Denoiser::Upscaler
+fn upscales(detail: denoise::galosh::Detail, noise: Option<denoise::galosh::NoiseFit>) -> bool {
+    detail.denoiser == denoise::galosh::Denoiser::Upscaler
         && noise.is_some()
         && detail.amounts(noise).does_anything()
 }
@@ -2655,7 +2657,7 @@ pub async fn demosaic_as_decoded(
     let gpu = gpu::device()?;
     let rcd = mosaic::demosaic::device(gpu)?;
     let field = mosaic::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
-    let detail = crate::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
+    let detail = denoise::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
     let (width, height) = (mosaic.width, mosaic.height);
     demosaic_at(
         gpu,
@@ -2689,8 +2691,8 @@ async fn demosaic_at(
     colour: mosaic::demosaic::Colour,
     seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
-    detail: crate::galosh::Detail,
-    noise: Option<crate::galosh::NoiseFit>,
+    detail: denoise::galosh::Detail,
+    noise: Option<denoise::galosh::NoiseFit>,
     by: usize,
 ) -> Option<colour::resident::Resident> {
     let detailed = |crop| {
@@ -2750,15 +2752,15 @@ const UPSCALE_TILE: usize = RENDER_TILE / 2;
 /// the whole frame's.
 fn detailed_halo(
     gpu: Option<&'static gpu::Gpu>,
-    detail: crate::galosh::Detail,
+    detail: denoise::galosh::Detail,
     cfa: &mosaic::cfa::Cfa,
     halo: usize,
 ) -> usize {
     match detail.on_bayer(cfa.is_bayer()).denoiser {
-        crate::galosh::Denoiser::Galosh => crate::galosh::reach(cfa, halo),
-        crate::galosh::Denoiser::Pmrid => halo,
-        crate::galosh::Denoiser::Upscaler => gpu
-            .and_then(crate::upscale::device)
+        denoise::galosh::Denoiser::Galosh => denoise::galosh::reach(cfa, halo),
+        denoise::galosh::Denoiser::Pmrid => halo,
+        denoise::galosh::Denoiser::Upscaler => gpu
+            .and_then(denoise::upscale::device)
             .map_or(halo, |upscaler| {
                 halo.max(upscaler.margin() + HALVING_REACH + 2)
             }),
@@ -2776,8 +2778,8 @@ fn detailed_halo(
 async fn upscaled_in_tiles(
     gpu: &'static gpu::Gpu,
     rcd: &'static mosaic::demosaic::Rcd,
-    upscaler: &'static crate::upscale::Upscaler,
-    photo: &crate::upscale::Photo,
+    upscaler: &'static denoise::upscale::Upscaler,
+    photo: &denoise::upscale::Photo,
     mosaic: &mosaic::condition::Mosaic,
     origin: (usize, usize),
     frame: (usize, usize),
@@ -2833,7 +2835,7 @@ async fn upscaled_in_tiles(
                     .upscale(
                         gpu,
                         &window.buffer,
-                        crate::upscale::Placement {
+                        denoise::upscale::Placement {
                             window: (
                                 origin.0 + reach_left,
                                 origin.1 + reach_top,
@@ -4081,7 +4083,7 @@ mod tests {
     #[test]
     fn a_bodys_size_comes_off_the_pair_of_focal_lengths() {
         let diagonal = |focal, equivalent| super::diagonal_mm_of(focal, equivalent).raw();
-        let full = crate::dust::FULL_FRAME_DIAGONAL_MM.raw();
+        let full = denoise::dust::FULL_FRAME_DIAGONAL_MM.raw();
         let apsc = diagonal(24.0, 36.0);
         assert!(
             (apsc - 28.84).abs() < 0.01,

@@ -17,7 +17,7 @@
 //! reason `open_bench` gives: no phase of GALOSH branches on a sample value, so the dispatch shape
 //! is fixed by the frame's size alone and the timings transfer exactly.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
@@ -30,7 +30,7 @@ fn main() {
     drop(prepared);
 
     let gpu = gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the denoise");
+    let kernels = denoise::galosh::device(gpu).expect("the denoise");
     let amounts = Amounts::from_sliders(50.0, 50.0);
 
     let mut state = 0x2545_f491_4f6c_dd1du64;
@@ -48,8 +48,8 @@ fn main() {
         pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
     };
     let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
-    let gains = rawshim::galosh::UNGAINED;
-    let fit = pollster::block_on(rawshim::galosh::fit(
+    let gains = denoise::galosh::UNGAINED;
+    let fit = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         &upload(&mosaic),
@@ -68,13 +68,13 @@ fn main() {
     for _ in 0..3 {
         let scratch = upload(&mosaic);
         let began = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise_with(
+        pollster::block_on(denoise::galosh::denoise_with(
             gpu, kernels, &scratch, &cfa, gains, amounts, fit,
         ));
         one = one.min(began.elapsed());
     }
     let whole = upload(&mosaic);
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu, kernels, &whole, &cfa, gains, amounts, fit,
     ));
     let whole = read(&whole);
@@ -85,7 +85,7 @@ fn main() {
         let mut gaps: Vec<std::time::Duration> = Vec::new();
         let mut last = std::time::Instant::now();
         let began = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise_in_tiles(
+        pollster::block_on(denoise::galosh::denoise_in_tiles(
             gpu,
             kernels,
             &mut out,
@@ -184,7 +184,7 @@ fn request() -> rawshim::edit::EditRequest {
         // would be measuring a filtered frame filtered again.
         denoise_luminance: Some(0.0),
         denoise_colour: Some(0.0),
-        denoiser: rawshim::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
     }
 }

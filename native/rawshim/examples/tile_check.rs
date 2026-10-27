@@ -34,7 +34,7 @@ fn main() {
         },
     };
 
-    let amounts = rawshim::galosh::Detail::at(0.0, 0.0);
+    let amounts = denoise::galosh::Detail::at(0.0, 0.0);
     let started = std::time::Instant::now();
     let Some(whole) = rawshim::decode_rawler::decode(&path, amounts) else {
         eprintln!("the whole frame declined");
@@ -49,12 +49,12 @@ fn main() {
         rawshim::view::View::whole(units::px::Size::exact(whole.width, whole.height)).showing(
             units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
         );
-    let glass = rawshim::dust::Known::Off;
+    let glass = denoise::dust::Known::Off;
     rawshim::decode_rawler::decode_tile(
         &path,
         view,
         amounts,
-        rawshim::galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
         halo,
         glass,
     );
@@ -63,7 +63,7 @@ fn main() {
         &path,
         view,
         amounts,
-        rawshim::galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
         halo,
         glass,
     ) else {

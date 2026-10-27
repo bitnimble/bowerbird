@@ -17,11 +17,11 @@
 //! what happened before any of this existed.
 
 use crate::fit::Lens;
-use crate::galosh::NoiseFit;
 use crate::hdr_fit::HdrMatch;
 use colour::lattice::ChromaMap;
 use colour::matched::HdrColour;
 use colour::tone::Levels;
+use denoise::galosh::NoiseFit;
 use half::f16;
 
 /// Bumped when a section's own layout changes, so an older blob is ignored rather than misread.
@@ -74,12 +74,12 @@ pub struct FromRaw {
     /// reductions, and a property of the photosites rather than of any filtering of them.
     pub noise: Option<NoiseFit>,
     /// The particles on the cover glass, every candidate the frame offers rather than the ones any
-    /// setting keeps (`crate::dust`).
+    /// setting keeps (`denoise::dust`).
     ///
     /// **Unthresholded on purpose.** The sensitivity slider is a cut on `Spot::snr`, so storing the
     /// kept set would make a slider move a re-detection and a whole-frame read. `Some(vec![])` is a
     /// photograph that was looked at and found clean, which is a different thing from `None`.
-    pub dust: Option<Vec<crate::dust::Spot>>,
+    pub dust: Option<Vec<denoise::dust::Spot>>,
     /// The blur a decode of this file carries, as a Gaussian sigma in sensor pixels, read off the
     /// 10-90 distance of the frame's own sharpest edges (`crate::base::measure_edge_spread`). What
     /// the sharpen's deconvolution is composed from (`crate::image::deconvolve_split`).
@@ -807,7 +807,7 @@ fn take_peak(at: &mut Reader<'_>) -> Option<MeasuredPeak> {
 ///
 /// Each spot is written as the flat words `dust.slang` indexes, so a section this build wrote is
 /// the buffer that build uploads with no reshaping in between.
-fn put_dust(out: &mut Vec<u8>, spots: &[crate::dust::Spot]) {
+fn put_dust(out: &mut Vec<u8>, spots: &[denoise::dust::Spot]) {
     put_u32(out, spots.len() as u32);
     for spot in spots {
         for value in spot.words() {
@@ -816,16 +816,16 @@ fn put_dust(out: &mut Vec<u8>, spots: &[crate::dust::Spot]) {
     }
 }
 
-fn take_dust(at: &mut Reader<'_>) -> Option<Vec<crate::dust::Spot>> {
+fn take_dust(at: &mut Reader<'_>) -> Option<Vec<denoise::dust::Spot>> {
     let count = at.u32()? as usize;
     // A count from a stored blob decides how much is read and how many workgroups are dispatched,
     // so it is bounded before it is trusted.
-    if count > crate::dust::MOST_SPOTS {
+    if count > denoise::dust::MOST_SPOTS {
         return None;
     }
     let mut spots = Vec::with_capacity(count);
     for _ in 0..count {
-        let mut words = [0f32; crate::dust::SPOT_WORDS];
+        let mut words = [0f32; denoise::dust::SPOT_WORDS];
         for word in &mut words {
             *word = at.f32_narrow()?;
         }
@@ -835,7 +835,7 @@ fn take_dust(at: &mut Reader<'_>) -> Option<Vec<crate::dust::Spot>> {
         // loupe tile gets an empty list while the stage shows a correction, which is the
         // disagreement the whole sidecar exists to prevent. The words themselves are still
         // consumed, so the stream stays in step.
-        if let Some(spot) = crate::dust::Spot::from_words(&words) {
+        if let Some(spot) = denoise::dust::Spot::from_words(&words) {
             spots.push(spot);
         }
     }
@@ -1090,11 +1090,11 @@ pub(crate) mod tests {
 
     /// A count a real sensor plausibly offers, so what the section costs is the measured shape of
     /// the thing rather than one spot's worth extrapolated.
-    fn some_dust() -> Vec<crate::dust::Spot> {
+    fn some_dust() -> Vec<denoise::dust::Spot> {
         (0..40u16)
             .map(|at| {
                 let step = f32::from(at);
-                crate::dust::Spot {
+                denoise::dust::Spot {
                     x: 130.5 + step * 37.25,
                     y: 88.25 + step * 19.5,
                     scale: 5.5 + step * 0.031,
@@ -1268,7 +1268,7 @@ pub(crate) mod tests {
                     some_dust()
                         .into_iter()
                         .cycle()
-                        .take(crate::dust::MOST_SPOTS)
+                        .take(denoise::dust::MOST_SPOTS)
                         .collect(),
                 ),
                 ..Default::default()

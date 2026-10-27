@@ -2433,6 +2433,8 @@ mod tests {
     /// catches anywhere.
     #[test]
     fn tiling_the_denoise_does_not_move_a_sample() {
+        // `rawshim::RENDITION_TILE_HALO`, which the reach floors.
+        const RENDITION_TILE_HALO: usize = 96;
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
@@ -2490,7 +2492,7 @@ mod tests {
                     gains,
                     amounts,
                     fit,
-                    crate::RENDITION_TILE_HALO,
+                    RENDITION_TILE_HALO,
                     tile,
                     |done| ticks.push(done),
                 ));
@@ -3130,7 +3132,7 @@ mod tests {
                             let pixel = &rgb[index(at % width, at / width) * 3..][..3];
                             let luma = pixel
                                 .iter()
-                                .zip(crate::image::LUMA)
+                                .zip(colour::space::LUMA709)
                                 .map(|(&value, weight)| f64::from(value) * f64::from(weight))
                                 .sum::<f64>();
                             f64::from(pixel[2 * axis]) - luma
@@ -3213,7 +3215,7 @@ mod tests {
                         .map(|at| {
                             rgb[index(at % width, at / width) * 3..][..3]
                                 .iter()
-                                .zip(crate::image::LUMA)
+                                .zip(colour::space::LUMA709)
                                 .map(|(&value, weight)| f64::from(value) * f64::from(weight))
                                 .sum()
                         })
@@ -3376,7 +3378,7 @@ mod tests {
                         let pixel = &rgb[at * 3..][..3];
                         let luma = pixel
                             .iter()
-                            .zip(crate::image::LUMA)
+                            .zip(colour::space::LUMA709)
                             .map(|(&value, weight)| f64::from(value) * f64::from(weight))
                             .sum::<f64>();
                         let truth = f64::from(clean[at]);

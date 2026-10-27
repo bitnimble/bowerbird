@@ -563,7 +563,7 @@ pub async fn prepare(
     sharpen_noise: crate::image::SharpenNoise,
     lens: &crate::fit::Lens,
     defocus: Defringe,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
 ) -> Option<(colour::resident::Resident, (f32, f32))> {
     let (source, out) = (gather.source, gather.out);
@@ -1177,7 +1177,7 @@ pub async fn correct(
     frame: &colour::resident::Resident,
     strengths: crate::image::Strengths,
     defocus: Option<(f32, f32)>,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
 ) -> Option<(f32, f32)> {
     let (width, height) = frame.size();
@@ -1280,7 +1280,7 @@ fn defringe_into(
     params.extend_from_slice(&(height as u32).to_le_bytes());
     params.extend_from_slice(&defocus.0.to_le_bytes());
     params.extend_from_slice(&defocus.1.to_le_bytes());
-    for channel in crate::image::LUMA {
+    for channel in colour::space::LUMA709 {
         params.extend_from_slice(&channel.to_le_bytes());
     }
     // `vec3f` is padded to four words, and the `full` after it lands in the hole rather than past
@@ -1393,7 +1393,7 @@ pub(crate) fn sharpen_into(
         params.extend_from_slice(&tap.to_le_bytes());
     }
     params.extend_from_slice(&capture.to_le_bytes());
-    for channel in crate::image::LUMA {
+    for channel in colour::space::LUMA709 {
         params.extend_from_slice(&channel.to_le_bytes());
     }
     params.extend_from_slice(&resample.to_le_bytes());
@@ -1620,7 +1620,7 @@ pub fn full_scale_light(
 pub fn sharpen_noise(
     levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     noise_left: f32,
     matrix: Option<[[f32; 3]; 3]>,
     wb_gains: [f32; 3],
@@ -1631,7 +1631,7 @@ pub fn sharpen_noise(
     };
     let identity = [[1.0f64, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let matrix = matrix.map_or(identity, |matrix| matrix.map(|row| row.map(f64::from)));
-    let output_luma = crate::image::LUMA.map(f64::from);
+    let output_luma = colour::space::LUMA709.map(f64::from);
     let sensitivity = std::array::from_fn(|camera| {
         std::array::from_fn(|output| (output_luma[output] * matrix[output][camera]) as f32)
     });
@@ -1702,7 +1702,7 @@ pub fn noise_already_balanced(wb_gains: [f32; 3]) -> (f64, f64) {
 /// proportional to the signal, and the balance reaches a luma weighted by `w^2` where it reached
 /// the fit as green's.
 pub fn luma_noise_in_light(
-    noise: crate::galosh::NoiseModel,
+    noise: denoise::galosh::NoiseModel,
     full_scale_light: f32,
     wb_gains: [f32; 3],
 ) -> [f64; 2] {
@@ -2145,7 +2145,7 @@ pub async fn measure_defocus(
     samples: &[u16],
     width: usize,
     height: usize,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
 ) -> Option<(f32, f32)> {
     if samples.len() < width * height * 3 {
@@ -2194,7 +2194,7 @@ pub async fn measure_edge_spread(
     // A `vec3f` aligns to four words, so the two counts above are followed by their own padding
     // rather than by the weights - the layout the shader declares.
     params.extend_from_slice(&[0u8; 8]);
-    for channel in crate::image::LUMA {
+    for channel in colour::space::LUMA709 {
         params.extend_from_slice(&channel.to_le_bytes());
     }
     params.extend_from_slice(&[0u8; 4]);
@@ -2470,7 +2470,7 @@ async fn measure_defocus_into(
     frame: &gpu::Buffer,
     width: usize,
     height: usize,
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
 ) -> Option<(f32, f32)> {
     // **The stencil has to fit, and this is where every caller meets.** `defocus.slang` reads the
@@ -2519,7 +2519,7 @@ async fn measure_defocus_into(
     for value in [cx as f32, cy as f32, (cx * cx + cy * cy) as f32] {
         params.extend_from_slice(&value.to_le_bytes());
     }
-    for channel in crate::image::LUMA {
+    for channel in colour::space::LUMA709 {
         params.extend_from_slice(&channel.to_le_bytes());
     }
     // `vec3f` is padded to four words and `noise_max` lands in the hole, as the defringe's `full`
@@ -2604,7 +2604,7 @@ async fn measure_defocus_into(
     // The full covariance, not `sum w_c^2.v_c`: that reduction needs independent channels, and a
     // demosaic building red and blue out of green is what makes it untrue. On a flat frame the
     // cross terms are the difference between a fit of (0.124, 0.175) and nothing.
-    let weight = crate::image::LUMA.map(f64::from);
+    let weight = colour::space::LUMA709.map(f64::from);
     let variance = [
         sigmas[0] * sigmas[0],
         sigmas[1] * sigmas[1],
@@ -2983,9 +2983,9 @@ mod tests {
         let diagonal_before = frame_of(&blur(&diagonal, w, h, &taps));
         let measured_noise = crate::image::SharpenNoise {
             sensitivity: [
-                [crate::image::LUMA[0], 0.0, 0.0],
-                [0.0, crate::image::LUMA[1], 0.0],
-                [0.0, 0.0, crate::image::LUMA[2]],
+                [colour::space::LUMA709[0], 0.0, 0.0],
+                [0.0, colour::space::LUMA709[1], 0.0],
+                [0.0, 0.0, colour::space::LUMA709[2]],
             ],
             read_variance: [1e-8; 3],
             ..crate::image::SharpenNoise::NONE
@@ -3058,9 +3058,9 @@ mod tests {
             .collect();
         let measured_noise = crate::image::SharpenNoise {
             sensitivity: [
-                [crate::image::LUMA[0], 0.0, 0.0],
-                [0.0, crate::image::LUMA[1], 0.0],
-                [0.0, 0.0, crate::image::LUMA[2]],
+                [colour::space::LUMA709[0], 0.0, 0.0],
+                [0.0, colour::space::LUMA709[1], 0.0],
+                [0.0, 0.0, colour::space::LUMA709[2]],
             ],
             read_variance: [1e-12; 3],
             ..crate::image::SharpenNoise::NONE
@@ -3079,7 +3079,7 @@ mod tests {
             let luma = |pixel: usize| {
                 (0..3)
                     .map(|channel| {
-                        crate::image::LUMA[channel] * f32::from(samples[pixel * 3 + channel])
+                        colour::space::LUMA709[channel] * f32::from(samples[pixel * 3 + channel])
                     })
                     .sum::<f32>()
             };
@@ -3530,7 +3530,7 @@ mod tests {
             floor: None,
         }
         .anchored();
-        let fit = Some(crate::galosh::NoiseFit {
+        let fit = Some(denoise::galosh::NoiseFit {
             alpha: 0.0004,
             sigma_sq: 0.000002,
             unified_sigma: 1.2,

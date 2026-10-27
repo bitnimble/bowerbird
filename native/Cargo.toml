@@ -1,7 +1,7 @@
 # Rooted above rawshim's path dependencies so cargo hashes them by relative path. Rooted at
 # rawshim, every worktree compiles its own rawler, heif and lensdb, and no build cache shares them.
 [workspace]
-members = ["colour", "gpu", "linalg", "mosaic", "rawshim", "rawshim_cdylib", "shaders", "trace", "units"]
+members = ["colour", "denoise", "gpu", "linalg", "mosaic", "rawshim", "rawshim_cdylib", "shaders", "trace", "units"]
 exclude = ["avif_planes", "heif", "lensdb", "seccomp_enosys", "updater", "vendor", "vp9_encode"]
 resolver = "3"
 

@@ -117,10 +117,10 @@ fn main() {
             e.parse().expect("a number")
         });
     let mut number = || args.next().map(|v| v.parse::<f64>().expect("a number"));
-    let detail = rawshim::galosh::Detail {
+    let detail = denoise::galosh::Detail {
         luminance: number(),
         colour: number(),
-        ..rawshim::galosh::Detail::AUTO
+        ..denoise::galosh::Detail::AUTO
     };
 
     let opened = support::Open {

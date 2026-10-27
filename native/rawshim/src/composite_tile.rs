@@ -686,7 +686,7 @@ pub struct CompositeRequest<'a> {
     pub levels: Option<colour::tone::Anchored>,
     pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub strengths: crate::image::Strengths,
-    pub detail: crate::galosh::Detail,
+    pub detail: denoise::galosh::Detail,
     pub sources: &'a [SourceFile<'a>],
     pub from: From,
     pub weight: Weight<'a>,
@@ -992,7 +992,7 @@ fn order_of(spec: &Composition) -> Vec<usize> {
 struct Taken {
     layer: Layer,
     /// What GALOSH fitted off this source's own mosaic, for a stage measuring what the decode was.
-    noise: Option<crate::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     levels: colour::tone::Anchored,
     /// The levels this source was *coded* against, which is [`levels`] divided by its own gain.
     ///
@@ -1062,7 +1062,7 @@ async fn taken(
                 window: region,
                 scale: crate::view::Scale::for_long_edge(photograph.raw(), wanted as u32),
             };
-            let fit = crate::galosh::wanted(noise, request.detail);
+            let fit = denoise::galosh::wanted(noise, request.detail);
             let frame = match merging {
                 None => {
                     crate::decode::tile_from(
@@ -1072,7 +1072,7 @@ async fn taken(
                         fit,
                         crate::RENDITION_TILE_HALO,
                         // A panorama carries no reader's settings yet, and dust removal is one.
-                        crate::dust::Known::Off,
+                        denoise::dust::Known::Off,
                     )
                     .await
                 }
@@ -1286,7 +1286,7 @@ pub async fn layers_of(
 /// What one source's layer arrived with, beside the layer itself.
 pub struct Arrived {
     /// What GALOSH fitted off this source's own mosaic.
-    pub noise: Option<crate::galosh::NoiseFit>,
+    pub noise: Option<denoise::galosh::NoiseFit>,
     /// The levels this source was *coded* against, which is the composite's own divided by this
     /// source's gain.
     pub coded: colour::tone::Anchored,
@@ -1382,11 +1382,11 @@ pub(crate) async fn camera_picture(
     if crate::decode_rendered::is_rendered(path) {
         return crate::decode::frame_from_path(
             path,
-            crate::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Detail::at(0.0, 0.0),
             at_least_long_edge,
             false,
-            crate::galosh::Fit::Measure,
-            crate::dust::Wanted::Off,
+            denoise::galosh::Fit::Measure,
+            denoise::dust::Wanted::Off,
         )
         .ok_or_else(|| format!("{path} could not be decoded"));
     }
@@ -2018,7 +2018,7 @@ mod tests {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
-            detail: crate::galosh::Detail::at(0.0, 0.0),
+            detail: denoise::galosh::Detail::at(0.0, 0.0),
             sources: &[],
             from: From::Original,
             weight: Weight::Feather,

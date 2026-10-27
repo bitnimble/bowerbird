@@ -61,7 +61,7 @@ use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
-use rawshim::galosh::{Denoiser, Detail, NoiseFit};
+use denoise::galosh::{Denoiser, Detail, NoiseFit};
 use units::light::Light;
 
 #[derive(serde::Deserialize)]
@@ -185,8 +185,8 @@ static PANICKED: Mutex<Option<String>> = Mutex::new(None);
 
 fn main() {
     let gpu = gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels built");
-    let network = rawshim::pmrid::device(gpu).expect("the network built");
+    let kernels = denoise::galosh::device(gpu).expect("the GALOSH kernels built");
+    let network = denoise::pmrid::device(gpu).expect("the network built");
     let report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let message = info
@@ -278,8 +278,8 @@ fn panicked(doing: &str) -> String {
 
 fn opened(
     gpu: &'static gpu::Gpu,
-    kernels: &rawshim::galosh::Galosh,
-    network: &rawshim::pmrid::Pmrid,
+    kernels: &denoise::galosh::Galosh,
+    network: &denoise::pmrid::Pmrid,
     path: &str,
     out: &str,
     noisy: bool,
@@ -310,9 +310,9 @@ fn opened(
             "{path}'s picture area falls outside its mosaic"
         )));
     }
-    let dust = rawshim::dust::Settings::default().wanted(None);
-    pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
-    let fit = pollster::block_on(rawshim::galosh::fit(
+    let dust = denoise::dust::Settings::default().wanted(None);
+    pollster::block_on(denoise::dust::run(gpu, &mosaic, &held.glass(), &dust));
+    let fit = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         &mosaic,
@@ -342,8 +342,8 @@ fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Faile
         Detail::AUTO,
         floor,
         false,
-        rawshim::galosh::wanted(None, Detail::AUTO),
-        rawshim::dust::Settings::default().wanted(None),
+        denoise::galosh::wanted(None, Detail::AUTO),
+        denoise::dust::Settings::default().wanted(None),
     )
     .ok_or_else(|| Failed::Unreadable(format!("{path} did not decode")))?;
     let matrix = frame
@@ -480,7 +480,7 @@ fn full_scale(bits: &[u16]) -> Vec<f32> {
 
 fn denoised(
     gpu: &'static gpu::Gpu,
-    network: &rawshim::pmrid::Pmrid,
+    network: &denoise::pmrid::Pmrid,
     request: &Denoise,
 ) -> Result<serde_json::Value, Failed> {
     let cfa = mosaic::cfa::Cfa::bayer(request.cfa)
@@ -578,7 +578,7 @@ fn sharpened(
     let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let halving = request
         .supersampled
-        .then(|| rawshim::upscale::Halving::new(gpu));
+        .then(|| denoise::upscale::Halving::new(gpu));
     let (out_width, out_height) = match halving {
         Some(_) => (width / 2, height / 2),
         None => (width, height),
@@ -659,7 +659,7 @@ fn measured(path: &str) -> Result<Measured, Failed> {
 fn halved(
     gpu: &'static gpu::Gpu,
     rcd: &'static mosaic::demosaic::Rcd,
-    halving: &rawshim::upscale::Halving,
+    halving: &denoise::upscale::Halving,
     mosaic: &[f32],
     cfa: &mosaic::cfa::Cfa,
     width: usize,
@@ -753,27 +753,27 @@ struct Arenas;
 
 impl Arenas {
     fn held() -> Self {
-        rawshim::pmrid::hold_arenas();
+        denoise::pmrid::hold_arenas();
         Arenas
     }
 }
 
 impl Drop for Arenas {
     fn drop(&mut self) {
-        rawshim::pmrid::release_arenas();
+        denoise::pmrid::release_arenas();
     }
 }
 
 fn filter(
     gpu: &'static gpu::Gpu,
-    network: &rawshim::pmrid::Pmrid,
+    network: &denoise::pmrid::Pmrid,
     mosaic: &mut mosaic::condition::Mosaic,
     cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     fit: NoiseFit,
 ) {
     if DETAIL.amounts(Some(fit)).does_anything() {
-        rawshim::pmrid::denoise(gpu, network, mosaic, cfa, gains, DETAIL, fit);
+        denoise::pmrid::denoise(gpu, network, mosaic, cfa, gains, DETAIL, fit);
     }
 }
 

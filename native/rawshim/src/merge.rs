@@ -5,7 +5,7 @@
 //! reference's photosites or a finer one, the same arithmetic either way.
 
 use crate::align::{Exposure, Field};
-use crate::galosh::NoiseModel;
+use denoise::galosh::NoiseModel;
 use gpu::compute::Kernel;
 use gpu::dispatch::Whole;
 use gpu::{Buffer, Gpu, Recording};

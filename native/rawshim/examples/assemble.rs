@@ -335,7 +335,7 @@ fn through_the_render(
     path: &str,
     long: usize,
     sharpen: f64,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
 ) {
     let files: Vec<SourceFile<'_>> = recipe
         .spec
@@ -549,7 +549,7 @@ struct Args {
     long: usize,
     /// The deconvolution's strength and GALOSH's detail, as a library sets them.
     sharpen: f64,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
     /// The focal a body would have written, for a file with no header to read it from.
     ///
     /// A burst of a scene at infinity is degenerate in the focal (§3.1), so a solve that is told
@@ -569,7 +569,7 @@ impl Args {
             layers: None,
             long: support::FULL_RENDITION_SIZE as usize,
             sharpen: support::STRENGTHS.sharpen,
-            detail: rawshim::galosh::Detail::AUTO,
+            detail: denoise::galosh::Detail::AUTO,
             focal: None,
         };
         let mut args = std::env::args().skip(1);
@@ -597,10 +597,10 @@ impl Args {
                 "--detail" => {
                     let asked = args.next().expect("a number or `auto`");
                     parsed.detail = match asked.as_str() {
-                        "auto" => rawshim::galosh::Detail::AUTO,
+                        "auto" => denoise::galosh::Detail::AUTO,
                         number => {
                             let both: f64 = number.parse().expect("a number or `auto`");
-                            rawshim::galosh::Detail::at(both, both)
+                            denoise::galosh::Detail::at(both, both)
                         }
                     };
                 }

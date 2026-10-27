@@ -97,7 +97,7 @@ pub struct HeldRaw {
     /// Whether this photograph has a sensor behind it, which is what decides the two things
     /// `bytes` would otherwise be sniffed for on every prepare.
     mosaic: bool,
-    fit: Option<crate::galosh::NoiseFit>,
+    fit: Option<denoise::galosh::NoiseFit>,
     request: crate::edit::EditRequest,
     /// The photograph's diffuse white and scene peak, as the last whole-frame prepare measured
     /// them. A band is handed these rather than measuring its own: a quantile of one strip
@@ -331,7 +331,7 @@ pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<
         }
         _ => {}
     }
-    let fit = fit.filter(crate::galosh::NoiseFit::usable);
+    let fit = fit.filter(denoise::galosh::NoiseFit::usable);
     let bytes = match rendered {
         true => Vec::new(),
         false => bytes.to_vec(),
@@ -418,7 +418,7 @@ impl HeldRaw {
         held: Option<crate::decode::Held>,
         bytes: Vec<u8>,
         mosaic: bool,
-        fit: Option<crate::galosh::NoiseFit>,
+        fit: Option<denoise::galosh::NoiseFit>,
         request: crate::edit::EditRequest,
     ) -> HeldRaw {
         HeldRaw {
@@ -526,7 +526,7 @@ fn reflection_of(json: &str) -> Result<crate::dereflect::Settings, JsValue> {
 }
 
 /// Which filter the Detail panel is driving, as the document spells it.
-fn denoiser_of(name: &str) -> Result<crate::galosh::Denoiser, JsValue> {
+fn denoiser_of(name: &str) -> Result<denoise::galosh::Denoiser, JsValue> {
     serde_json::from_str(&format!("\"{name}\""))
         .map_err(|_| JsValue::from_str(&format!("rawshim: {name} is not a denoiser")))
 }
@@ -540,19 +540,19 @@ fn denoiser_of(name: &str) -> Result<crate::galosh::Denoiser, JsValue> {
 /// that names PMRID rather than at startup.
 #[wasm_bindgen(js_name = holdPmridWeights)]
 pub fn hold_pmrid_weights(bytes: Vec<u8>) {
-    crate::pmrid::hold_weights(bytes);
+    denoise::pmrid::hold_weights(bytes);
 }
 
 /// The upscaler's weights, fetched and handed over as [`hold_pmrid_weights`]'s are.
 #[wasm_bindgen(js_name = holdUpscalerWeights)]
 pub fn hold_upscaler_weights(bytes: Vec<u8>) {
-    crate::upscale::hold_weights(bytes);
+    denoise::upscale::hold_weights(bytes);
 }
 
 /// An upscaler model the app downloaded, in place of the one this build carries.
 #[wasm_bindgen(js_name = holdUpscalerModel)]
 pub fn hold_upscaler_model(manifest: String, bytes: Vec<u8>) {
-    crate::upscale::hold_model(manifest, bytes);
+    denoise::upscale::hold_model(manifest, bytes);
 }
 
 /// The reflection remover the app downloaded (`models/dereflect`'s bundle).
@@ -580,8 +580,8 @@ type Donor = [units::px::Extent<units::px::Stored>; 2];
 struct FoundBy {
     model: u64,
     strokes: Vec<crate::dereflect::Stroke>,
-    detail: crate::galosh::Detail,
-    dust: crate::dust::Settings,
+    detail: denoise::galosh::Detail,
+    dust: denoise::dust::Settings,
 }
 
 type Found = (FoundBy, std::sync::Arc<crate::dereflect::Layer>);
@@ -976,7 +976,7 @@ impl HeldRaw {
         let reflection = reflection_of(reflection)?;
         // Undefined either side is the document not having said, which the decode answers with this
         // frame's own fit rather than with a number (`galosh::Detail`).
-        let detail = crate::galosh::Detail {
+        let detail = denoise::galosh::Detail {
             luminance,
             colour,
             denoiser: denoiser_of(denoiser)?,
@@ -986,8 +986,8 @@ impl HeldRaw {
         // denoised at too - never a fit of whatever this amount happens to produce.
         let fit = self
             .fit
-            .map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
-        let settings = crate::dust::Settings {
+            .map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given);
+        let settings = denoise::dust::Settings {
             enabled: dust_enabled,
             sensitivity: dust_sensitivity,
             intensity: dust_intensity,
@@ -1339,7 +1339,7 @@ impl HeldRaw {
     ) -> Result<(), JsValue> {
         let repairs = repairs_of(repairs)?;
         let reflection = reflection_of(reflection)?;
-        let dust = crate::dust::Settings {
+        let dust = denoise::dust::Settings {
             enabled: dust_enabled,
             sensitivity: dust_sensitivity,
             intensity: dust_intensity,
@@ -1348,7 +1348,7 @@ impl HeldRaw {
         // on the first band after the switch is thrown, and nothing on the rest of the sweep.
         self.look_for_dust(dust, &crate::open_stage::quiet).await;
         let denoiser = denoiser_of(denoiser)?;
-        let detail = crate::galosh::Detail {
+        let detail = denoise::galosh::Detail {
             luminance,
             colour,
             denoiser,
@@ -1458,10 +1458,10 @@ impl HeldRaw {
         &self,
         luminance: Option<f64>,
         colour: Option<f64>,
-        denoiser: crate::galosh::Denoiser,
+        denoiser: denoise::galosh::Denoiser,
         highlight_recovery: f64,
         sharpen: f64,
-        dust: crate::dust::Settings,
+        dust: denoise::dust::Settings,
         top: usize,
         rows: usize,
         frame_width: usize,
@@ -2437,8 +2437,8 @@ impl HeldRaw {
     /// one that found it.
     fn found_by(
         strokes: &[crate::dereflect::Stroke],
-        detail: crate::galosh::Detail,
-        dust: crate::dust::Settings,
+        detail: denoise::galosh::Detail,
+        dust: denoise::dust::Settings,
     ) -> FoundBy {
         FoundBy {
             model: crate::dereflect::generation(),
@@ -2465,8 +2465,8 @@ impl HeldRaw {
     async fn removal(
         &self,
         settings: &crate::dereflect::Settings,
-        detail: crate::galosh::Detail,
-        dust: crate::dust::Settings,
+        detail: denoise::galosh::Detail,
+        dust: denoise::dust::Settings,
     ) -> Result<Option<crate::dereflect::Removal>, JsValue> {
         if !settings.takes_out() {
             return Ok(None);
@@ -2486,7 +2486,7 @@ impl HeldRaw {
         let stored = self.opened_as().stored();
         let fit = self
             .fit
-            .map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
+            .map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given);
         let frame = self
             .mosaic_held()?
             .frame(
@@ -2536,7 +2536,7 @@ impl HeldRaw {
     /// kind of fact is a second thing to keep in step.
     async fn look_for_dust(
         &self,
-        settings: crate::dust::Settings,
+        settings: denoise::dust::Settings,
         report: crate::open_stage::Report<'_>,
     ) {
         // `does_anything`, not the switch alone: with the switch on and Intensity at nothing, the
@@ -2582,8 +2582,8 @@ impl HeldRaw {
 /// browser (`scripts/upscale-bench-browser.ts`).
 #[wasm_bindgen]
 pub struct UpscaleTrial {
-    upscaler: crate::upscale::Upscaler,
-    photo: crate::upscale::Photo,
+    upscaler: denoise::upscale::Upscaler,
+    photo: denoise::upscale::Photo,
     mosaic: gpu::Buffer,
     into: gpu::Buffer,
     width: usize,
@@ -2610,10 +2610,10 @@ impl UpscaleTrial {
         needs_webgpu().await?;
         let gpu = gpu::page_device().await.ok_or("rawshim: no device")?;
         let arm = match half {
-            true => crate::upscale::Arm::Half,
-            false => crate::upscale::Arm::Float,
+            true => denoise::upscale::Arm::Half,
+            false => denoise::upscale::Arm::Float,
         };
-        let upscaler = crate::upscale::Upscaler::new(gpu, &manifest, &weights, arm)
+        let upscaler = denoise::upscale::Upscaler::new(gpu, &manifest, &weights, arm)
             .map_err(|e| JsValue::from_str(&e))?
             .ok_or_else(|| JsValue::from_str(&format!("rawshim: {arm:?} is not on this device")))?;
         let gains: [f32; 3] = gains
@@ -2624,7 +2624,7 @@ impl UpscaleTrial {
             .photo(
                 gains,
                 &rggb,
-                crate::galosh::NoiseModel { alpha, sigma_sq },
+                denoise::galosh::NoiseModel { alpha, sigma_sq },
                 (100.0, 100.0),
             )
             .map_err(|e| JsValue::from_str(&e))?;
@@ -2636,7 +2636,7 @@ impl UpscaleTrial {
         });
         let into = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("upscale trial answer"),
-            size: crate::upscale::answer_bytes(width, height),
+            size: denoise::upscale::answer_bytes(width, height),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -2658,7 +2658,7 @@ impl UpscaleTrial {
             .upscale(
                 gpu,
                 &self.mosaic,
-                crate::upscale::Placement {
+                denoise::upscale::Placement {
                     window: (0, 0, self.width, self.height),
                     frame: (self.width, self.height),
                     rect: (0, 0, self.width, self.height),

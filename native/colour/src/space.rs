@@ -3,6 +3,26 @@
 /// Rec.2020 luma, for the chroma blend and the sample weighting.
 pub const LUMA: [f64; 3] = [0.2627, 0.678, 0.0593];
 
+/// BT.709's luma weights, used on a Rec.2020 frame too: `prelude.slang`'s `LUMA709`.
+///
+/// They decide how much of an edge each channel is credited with and which part of a
+/// pixel counts as its colour, not what colour anything is; the two sets differ by less
+/// than either knob does.
+///
+/// **The one copy.** The geometry fit, the falloff fit and the stacking descriptor all
+/// carried their own, which is three chances for them to drift apart and no way to tell
+/// that they had. Not to be confused with the Y row of [`SRGB_TO_XYZ`], which is the same
+/// three numbers meaning something else and stays with its matrix.
+pub const LUMA709: [f32; 3] = [0.2126, 0.7152, 0.0722];
+
+/// BT.709 luma of a triple, in whatever domain and scale the caller's values are.
+///
+/// `f64` because every caller works there. `edge_spread.slang` computes the same weighted sum
+/// on the device, and sums before it divides for the same reason this does.
+pub fn luma709(r: f64, g: f64, b: f64) -> f64 {
+    f64::from(LUMA709[0]) * r + f64::from(LUMA709[1]) * g + f64::from(LUMA709[2]) * b
+}
+
 pub const SRGB_TO_XYZ: [[f64; 3]; 3] = [
     [0.4124564, 0.3575761, 0.1804375],
     [0.2126729, 0.7151522, 0.072175],

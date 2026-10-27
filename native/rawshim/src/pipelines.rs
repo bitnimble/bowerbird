@@ -8,14 +8,14 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::base::device(gpu);
     mosaic::condition::device(gpu);
     mosaic::demosaic::device(gpu);
-    crate::dust::device(gpu);
-    crate::dust_find::device(gpu);
-    crate::galosh::device(gpu);
+    denoise::dust::device(gpu);
+    denoise::dust_find::device(gpu);
+    denoise::galosh::device(gpu);
     mosaic::highlight::device(gpu);
     crate::linearise::device(gpu);
     mosaic::lslcd::device(gpu);
     crate::planes::kernel(gpu);
-    crate::pmrid::device(gpu);
+    denoise::pmrid::device(gpu);
     crate::repair::averaging(gpu);
     crate::repair::repairing(gpu);
     crate::retouched_frame::copying(gpu);

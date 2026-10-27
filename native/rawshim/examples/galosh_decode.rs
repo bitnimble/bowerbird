@@ -8,7 +8,7 @@
 //! cargo run --release --example galosh_decode -- /path/to/photo.CR3
 //! ```
 
-use rawshim::galosh::Detail;
+use denoise::galosh::Detail;
 
 fn main() {
     let path = std::env::args().nth(1).expect("a RAW to decode");

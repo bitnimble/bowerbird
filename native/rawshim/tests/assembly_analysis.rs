@@ -100,7 +100,7 @@ fn a_noiseless_set_does_not_divide_by_zero() {
     let size = (64, 64);
     let mut planes = planes_of(synthetic(&rig, &[Patch::None; 3], size));
     for plane in &mut planes {
-        plane.noise = rawshim::galosh::NoiseModel {
+        plane.noise = denoise::galosh::NoiseModel {
             alpha: 0.0,
             sigma_sq: 0.0,
         };

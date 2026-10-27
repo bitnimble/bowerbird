@@ -57,7 +57,7 @@ struct Params {
     float cx;
     float cy;
     float half_squared;
-    /// `image::LUMA`, and `noise_max` lands in the padding `vec3f` leaves behind - the same layout
+    /// `colour::space::LUMA709`, and `noise_max` lands in the padding `vec3f` leaves behind - the same layout
     /// the host writes, and not a coincidence worth relying on silently.
     float3 luma;
     float noise_max;

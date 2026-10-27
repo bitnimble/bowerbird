@@ -176,6 +176,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 colour = { path = "../colour" }
+denoise = { path = "../denoise" }
 gpu = { path = "../gpu" }
 linalg = { path = "../linalg" }
 mosaic = { path = "../mosaic" }

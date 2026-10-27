@@ -16,7 +16,7 @@
 //! grain or strokes, and its mean per colour whether a colour's level moved. Each result is also
 //! written demosaiced as `<denoiser>.png`, beside `truth.png`.
 
-use rawshim::galosh::{Amounts, Detail};
+use denoise::galosh::{Amounts, Detail};
 
 /// Site detail, in deviations of the noise, under which ground counts as flat and over which it
 /// counts as textured.
@@ -43,7 +43,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let gpu = gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
+    let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     let held = |path: &str| {
         let bytes = std::fs::read(path).expect("read the raw");
         pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held")
@@ -65,7 +65,7 @@ fn main() {
     }
 
     let noisy_frame = held(&noisy_path);
-    let night = pollster::block_on(rawshim::galosh::fit(
+    let night = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         noisy_frame.device_mosaic(),
@@ -110,7 +110,7 @@ fn main() {
     );
 
     let window = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &window, &cfa, gains));
+    let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, &window, &cfa, gains));
     assert!(
         fit.usable(),
         "the window is too small or too flat to fit: {fit:?}"
@@ -140,7 +140,7 @@ fn main() {
                 assert_eq!(other, "galosh", "{other} is not a denoiser");
                 let amounts: Amounts = Detail::AUTO.amounts(Some(fit));
                 let mosaic = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
-                pollster::block_on(rawshim::galosh::denoise_with(
+                pollster::block_on(denoise::galosh::denoise_with(
                     gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
                 ));
                 pollster::block_on(mosaic.read(gpu)).expect("reads back")

@@ -50,7 +50,7 @@ pub struct EditRequest {
     /// Which filter those two positions drive. Absent is the one every document had before there
     /// was a choice.
     #[serde(default)]
-    pub denoiser: crate::galosh::Denoiser,
+    pub denoiser: denoise::galosh::Denoiser,
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic where the denoise does.
@@ -58,7 +58,7 @@ pub struct EditRequest {
     /// Here for the same reason the Detail pair is: the shadow is one number per photosite while the
     /// frame is still a mosaic, and three that disagree once RCD has interpolated between them.
     #[serde(default)]
-    pub dust: crate::dust::Settings,
+    pub dust: denoise::dust::Settings,
     /// The reader's repairs, which the open applies after the chain as every window does.
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
@@ -75,8 +75,8 @@ pub struct EditRequest {
 
 impl EditRequest {
     /// The Detail sliders as this document holds them, spelled as `job::Job::detail` spells it.
-    pub fn detail(&self) -> crate::galosh::Detail {
-        crate::galosh::Detail {
+    pub fn detail(&self) -> denoise::galosh::Detail {
+        denoise::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
@@ -151,7 +151,7 @@ pub struct PreparedHeader {
     ///
     /// Absent where the decode had no adapter, which is the same case as a tile fitting its own.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub noise_fit: Option<crate::galosh::NoiseFit>,
+    pub noise_fit: Option<denoise::galosh::NoiseFit>,
     /// The longitudinal aberration the defringe took off, handed back for the same reason as the
     /// fit above: it is read over the whole frame, so a loupe tile fitting its own is corrected by
     /// whatever its window's edges say, and neighbouring tiles by different amounts.
@@ -355,7 +355,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
         bytes,
         request.detail(),
         request.long_edge,
-        crate::galosh::wanted(stored.from_raw.noise, request.detail()),
+        denoise::galosh::wanted(stored.from_raw.noise, request.detail()),
         // Detected here where the caller has never had this photograph looked at, and taken off the
         // sidecar where it has - a whole-frame read is most of a second, and nothing about which
         // particles are on the glass depends on anything a reader can move.
@@ -544,7 +544,7 @@ pub async fn from_frame(
                 // corrected, so asking again would divide every shadow out twice and leave a bright
                 // disc where a dark one was. Spelled rather than defaulted, because the default is
                 // the *reader's* starting position and that one is on.
-                dust: crate::dust::Settings {
+                dust: denoise::dust::Settings {
                     enabled: false,
                     ..Default::default()
                 },
@@ -676,10 +676,10 @@ async fn payload(
     strengths: Strengths,
     // What the request arrived carrying, so what this open measured can be reported as new.
     stored: &crate::photo_analysis::PhotoAnalysis,
-    noise_fit: Option<crate::galosh::NoiseFit>,
+    noise_fit: Option<denoise::galosh::NoiseFit>,
     capture_sigma: Option<f32>,
     defocus: (f32, f32),
-    dust: Option<Vec<crate::dust::Spot>>,
+    dust: Option<Vec<denoise::dust::Spot>>,
     mosaic: bool,
 ) -> PreparedHeader {
     // Everything this open now knows, against everything it was told. Reported only where it says

@@ -16,7 +16,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
 
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    weights();
     environments();
 
     // Only a `renditions` build binds anything: rawler reads the RAWs, and libavif and libjxl are
@@ -30,27 +29,6 @@ fn main() {
         server_bindings(&include).to_string(),
     )
     .expect("write bindings");
-}
-
-/// The denoisers' weights, which `src/pmrid.rs` and `src/upscale.rs` embed.
-///
-/// Named here so that a tree without them fails at the build saying which command fetches them,
-/// rather than at an `include_bytes!` pointing at a path nobody has heard of. The same reasoning as
-/// the compiler and the codecs: what a photograph looks like is not allowed to depend on which
-/// files happen to be beside the binary.
-fn weights() {
-    let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    for network in [".pmrid", ".upscaler"] {
-        for name in ["weights.bin", "weights.json"] {
-            let at = crate_dir.join(network).join(name);
-            println!("cargo:rerun-if-changed={}", at.display());
-            assert!(
-                at.exists(),
-                "{}: missing. `bun run get:models` fetches the denoisers' weights.",
-                at.display(),
-            );
-        }
-    }
 }
 
 /// The pinned tree `.environments` links to rather than the link, so every worktree on one pin

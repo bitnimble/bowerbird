@@ -16,7 +16,7 @@
 //! perceptual hash survives none of it well enough to be worth a threshold; see
 //! the design document for the measurements that settled this shape.
 
-use crate::image::LUMA;
+use colour::space::LUMA709;
 use gpu::dispatch::Whole;
 use units::rgb::RgbRef;
 
@@ -209,9 +209,9 @@ fn luma_grid(cells: &Cells) -> Vec<f32> {
         // The shared constant in its own width rather than through `luma_of`: the descriptor is
         // persisted, so going via f64 and back would shift stored values for no gain.
         .map(|cell| {
-            LUMA[0] * cells.mean(cell, 0)
-                + LUMA[1] * cells.mean(cell, 1)
-                + LUMA[2] * cells.mean(cell, 2)
+            LUMA709[0] * cells.mean(cell, 0)
+                + LUMA709[1] * cells.mean(cell, 1)
+                + LUMA709[2] * cells.mean(cell, 2)
         })
         .collect()
 }

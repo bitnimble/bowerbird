@@ -6,6 +6,7 @@ const manifests = [
   'native/rawshim/Cargo.toml',
   'native/rawshim_cdylib/Cargo.toml',
   'native/colour/Cargo.toml',
+  'native/denoise/Cargo.toml',
   'native/gpu/Cargo.toml',
   'native/linalg/Cargo.toml',
   'native/mosaic/Cargo.toml',

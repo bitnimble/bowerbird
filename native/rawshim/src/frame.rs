@@ -94,15 +94,15 @@ pub struct Frame {
     /// None where the decode had no adapter or a filter array that does not tile into 2x2
     /// sites. It is the only physical description of this photograph's noise anything
     /// downstream has, and unlike the ISO it can tell a pushed exposure from a clean one.
-    pub noise: Option<crate::galosh::NoiseFit>,
+    pub noise: Option<denoise::galosh::NoiseFit>,
     /// The share of that noise's variance the denoise left in these samples, 1 where none ran.
     pub noise_left: f32,
     /// The particles this decode found on the cover glass, where it was the one to look.
     ///
     /// Travels beside the noise fit because it is the same kind of thing: measured off the mosaic,
     /// a property of the file rather than of any setting, and expensive enough that the caller keeps
-    /// it. Every candidate, not the ones the reader's sensitivity keeps (`crate::dust`).
-    pub dust: Option<Vec<crate::dust::Spot>>,
+    /// it. Every candidate, not the ones the reader's sensitivity keeps (`denoise::dust`).
+    pub dust: Option<Vec<denoise::dust::Spot>>,
     /// The camera-to-rec2020 matrix the demosaic's `assemble` multiplied these samples by.
     ///
     /// Here for the reason `as_shot` is: the samples carry no trace of it, and a stage downstream

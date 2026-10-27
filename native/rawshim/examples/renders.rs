@@ -153,7 +153,7 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
 /// `job::Base::build` in miniature, decoded at the floor a target of `edge` sets.
 fn rendition(
     path: &str,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
     edge: usize,
     stages: Stages<'_>,
 ) -> (Vec<u8>, usize, usize, Vec<u16>) {
@@ -472,7 +472,7 @@ fn main() {
     let out = args.next().expect("an output directory");
     // What the library ships with nothing said, so a render with no flags is the picture a
     // rendition is.
-    let mut detail = rawshim::galosh::Detail::AUTO;
+    let mut detail = denoise::galosh::Detail::AUTO;
     let mut sweep: Vec<f64> = Vec::new();
     let mut sweep_colour: Option<f64> = None;
     let mut sweep_luma: Option<f64> = None;
@@ -610,10 +610,10 @@ fn main() {
             "--detail" => {
                 let asked = args.next().expect("a number or `auto`");
                 detail = match asked.as_str() {
-                    "auto" => rawshim::galosh::Detail::AUTO,
+                    "auto" => denoise::galosh::Detail::AUTO,
                     number => {
                         let both: f64 = number.parse().expect("a number or `auto`");
-                        rawshim::galosh::Detail::at(both, both)
+                        denoise::galosh::Detail::at(both, both)
                     }
                 }
                 .using(detail.denoiser);
@@ -633,9 +633,9 @@ fn main() {
             "--denoiser" => {
                 let asked = args.next().expect("galosh, pmrid or upscaler");
                 detail = detail.using(match asked.as_str() {
-                    "galosh" => rawshim::galosh::Denoiser::Galosh,
-                    "pmrid" => rawshim::galosh::Denoiser::Pmrid,
-                    "upscaler" => rawshim::galosh::Denoiser::Upscaler,
+                    "galosh" => denoise::galosh::Denoiser::Galosh,
+                    "pmrid" => denoise::galosh::Denoiser::Pmrid,
+                    "upscaler" => denoise::galosh::Denoiser::Upscaler,
                     other => panic!("{other} is not a denoiser"),
                 });
             }
@@ -1721,7 +1721,7 @@ fn sweep_grid(
     columns: usize,
     crops: &[(usize, usize, usize)],
     edge: usize,
-    denoiser: rawshim::galosh::Denoiser,
+    denoiser: denoise::galosh::Denoiser,
     stages: Stages<'_>,
 ) {
     assert!(
@@ -1743,8 +1743,8 @@ fn sweep_grid(
     let opened = rawshim::decode_frame_denoised(
         path,
         0,
-        rawshim::galosh::Detail::at(0.0, 0.0),
-        rawshim::galosh::Fit::Only,
+        denoise::galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Fit::Only,
     )
     .expect("decode");
     let measured_gains = opened.wb_gains;
@@ -1784,7 +1784,7 @@ fn sweep_grid(
         };
         let (data, width, height, _) = rendition(
             path,
-            rawshim::galosh::Detail::at(pair.0, pair.1).using(denoiser),
+            denoise::galosh::Detail::at(pair.0, pair.1).using(denoiser),
             edge,
             stages,
         );

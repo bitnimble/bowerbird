@@ -10,8 +10,8 @@
 //! noise fit given. `time` upscales a 24MP and a 61MP frame and prints each arm's milliseconds, the
 //! answer's allocation and the upload left out.
 
-use rawshim::galosh::NoiseModel;
-use rawshim::upscale::{Arm, Placement, Upscaler, answer_bytes};
+use denoise::galosh::NoiseModel;
+use denoise::upscale::{Arm, Placement, Upscaler, answer_bytes};
 
 /// What `time` stabilises under: a middling photo's, which costs what any other does.
 const TIMED_GAINS: [f32; 3] = [0.5, 1.0, 0.7];

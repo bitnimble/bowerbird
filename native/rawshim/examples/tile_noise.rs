@@ -26,7 +26,7 @@ fn fit_only() {
         .skip(1)
         .filter(|a| !a.starts_with("--"))
         .collect();
-    let amounts = rawshim::galosh::Detail::at(50.0, 50.0);
+    let amounts = denoise::galosh::Detail::at(50.0, 50.0);
 
     println!(
         "{:>16}  {:>10}  {:>10}  {:>10}  {}",
@@ -54,7 +54,7 @@ fn fit_only() {
             continue;
         };
         let started = std::time::Instant::now();
-        let fit = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+        let fit = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
             .and_then(|frame| frame.noise);
         let Some(fit) = fit else { continue };
         println!(
@@ -74,7 +74,7 @@ fn main() {
         return;
     }
 
-    let amounts = rawshim::galosh::Detail::at(50.0, 50.0);
+    let amounts = denoise::galosh::Detail::at(50.0, 50.0);
     if std::env::args().any(|a| a == "--fit") {
         fit_only();
         return;
@@ -119,7 +119,7 @@ fn main() {
                 &path,
                 view,
                 amounts,
-                rawshim::galosh::Fit::Measure,
+                denoise::galosh::Fit::Measure,
                 rawshim::RENDITION_TILE_HALO,
             ) else {
                 println!("{name:>16}  the tile at {left},{top} declined");

@@ -8,7 +8,7 @@
 //!
 //! Skipped where no Vulkan adapter answers, loudly rather than silently.
 
-use rawshim::dust::{self, BINS, Removal, SPAN, Spot};
+use denoise::dust::{self, BINS, Removal, SPAN, Spot};
 
 /// A flat mosaic with one particle's shadow multiplied into it, in the shape a spot describes.
 ///
@@ -121,8 +121,8 @@ fn the_kernel_divides_the_shadow_it_was_given_back_out() {
 /// **The aperture has to be one the search would look at.** Anything wider is refused outright, and a
 /// frame small enough to test in milliseconds implies a very coarse pitch - so a narrower plane than
 /// this rejects a particle of the size worth planting.
-fn sized(edge: usize) -> rawshim::dust::Sensor {
-    rawshim::dust::Sensor {
+fn sized(edge: usize) -> denoise::dust::Sensor {
+    denoise::dust::Sensor {
         width: edge,
         height: edge,
         crop: (0, 0, edge, edge),
@@ -137,7 +137,7 @@ fn sized(edge: usize) -> rawshim::dust::Sensor {
 /// The dip is flat-topped with a soft rim rather than Gaussian, because that is the shape the optics
 /// make: the shadow is the pupil convolved with a much smaller particle. Coordinates are the plane's
 /// own quad grid, whatever working grid the search then picks.
-fn planted(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Vec<f32> {
+fn planted(sensor: &denoise::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Vec<f32> {
     let mut samples = vec![0f32; sensor.width * sensor.height];
     let mut noise = 0x5eed_1234u32;
     for (at, sample) in samples.iter_mut().enumerate() {
@@ -160,20 +160,20 @@ fn planted(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Ve
 }
 
 /// What the search makes of a planted frame, or None where no adapter answered.
-fn found(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Option<Vec<Spot>> {
+fn found(sensor: &denoise::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Option<Vec<Spot>> {
     found_in(sensor, sensor, spots)
 }
 
 /// The same, where the picture the search is told about is inset in a larger plane.
 fn found_in(
-    plane: &rawshim::dust::Sensor,
-    sensor: &rawshim::dust::Sensor,
+    plane: &denoise::dust::Sensor,
+    sensor: &denoise::dust::Sensor,
     spots: &[(f32, f32, f32, f32)],
 ) -> Option<Vec<Spot>> {
     let gpu = gpu::device()?;
     let samples = planted(plane, spots);
     let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
-    pollster::block_on(rawshim::dust::detect(gpu, &mosaic, sensor))
+    pollster::block_on(denoise::dust::detect(gpu, &mosaic, sensor))
 }
 
 #[test]
@@ -254,13 +254,13 @@ fn a_denser_body_still_answers_in_frame_coordinates() {
 /// other case here is square, and a real sensor never is.
 #[test]
 fn a_frame_that_is_not_square_answers_the_right_way_round() {
-    let oblong = rawshim::dust::Sensor {
+    let oblong = denoise::dust::Sensor {
         width: 1200,
         height: 800,
         crop: (0, 0, 1200, 800),
         cfa: mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
-        diagonal_mm: rawshim::dust::FULL_FRAME_DIAGONAL_MM,
+        diagonal_mm: denoise::dust::FULL_FRAME_DIAGONAL_MM,
     };
     let put = (180.0, 220.0, 6.0, 0.12);
     let Some(spots) = found(&oblong, &[put]) else {
@@ -381,7 +381,7 @@ fn overlapping_footprints_are_one_spot() {
 #[test]
 fn a_picture_inside_a_larger_plane_is_read_from_where_it_starts() {
     let plane = sized(1200);
-    let inset = rawshim::dust::Sensor {
+    let inset = denoise::dust::Sensor {
         crop: (16, 8, 1100, 1100),
         ..plane
     };
@@ -400,7 +400,7 @@ fn a_picture_inside_a_larger_plane_is_read_from_where_it_starts() {
 
     // A crop the file says is larger than the plane holding it reads as far as the plane goes,
     // rather than off the end of it.
-    let overrun = rawshim::dust::Sensor {
+    let overrun = denoise::dust::Sensor {
         crop: (100, 100, 1200, 1200),
         ..plane
     };

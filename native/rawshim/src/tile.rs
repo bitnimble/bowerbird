@@ -42,16 +42,16 @@ pub struct TileRequest {
     /// Which filter those two positions drive, which a window has to match the frame on or a loupe
     /// would predict an export it does not resemble.
     #[serde(default)]
-    pub denoiser: crate::galosh::Denoiser,
+    pub denoiser: denoise::galosh::Denoiser,
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic beside the denoise.
     ///
     /// The particles themselves are not here: they are in `photo_analysis`, because they are the
     /// photograph's rather than the reader's, and a window must never look for its own
-    /// (`crate::dust::Wanted`).
+    /// (`denoise::dust::Wanted`).
     #[serde(default)]
-    pub dust: crate::dust::Settings,
+    pub dust: denoise::dust::Settings,
     /// The reader's sliders. Only the presence three are read here, for how far past the tile the
     /// guided filter reaches; the grade reads the rest.
     #[serde(default)]
@@ -61,9 +61,9 @@ pub struct TileRequest {
     pub levels: Option<colour::tone::Levels>,
     /// The photograph's mosaic noise, measured at the open.
     #[serde(default)]
-    pub noise_fit: Option<crate::galosh::NoiseFit>,
+    pub noise_fit: Option<denoise::galosh::NoiseFit>,
     /// The capture's blur sigma in sensor pixels, measured at the open
-    /// (`crate::galosh::NoiseFit` rides beside it for the same reason). Absent, the sharpen
+    /// (`denoise::galosh::NoiseFit` rides beside it for the same reason). Absent, the sharpen
     /// deconvolves its fixed default.
     #[serde(default)]
     pub capture_sigma: Option<f32>,
@@ -111,8 +111,8 @@ pub struct TileRequest {
 }
 
 impl TileRequest {
-    pub(crate) fn detail(&self) -> crate::galosh::Detail {
-        crate::galosh::Detail {
+    pub(crate) fn detail(&self) -> denoise::galosh::Detail {
+        denoise::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
@@ -150,7 +150,7 @@ pub struct Prepared {
     pub wb_gains: Option<[f32; 3]>,
     /// The mosaic noise the window was denoised and is sharpened against: a composite's is its
     /// reference source's.
-    pub noise: Option<crate::galosh::NoiseFit>,
+    pub noise: Option<denoise::galosh::NoiseFit>,
     /// The photograph the window is a piece of, which is the scale the presence sliders read at.
     pub photograph: (usize, usize),
     /// Where the window starts in that photograph, which is where the grade reads the
@@ -260,9 +260,9 @@ pub async fn prepared_on_device(
     // photograph, for the caller with no open behind it to have measured one.
     let noise = request
         .noise_fit
-        .filter(crate::galosh::NoiseFit::usable)
+        .filter(denoise::galosh::NoiseFit::usable)
         .or(stored.from_raw.noise);
-    let fit = noise.map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
+    let fit = noise.map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given);
     // The rendition's halo, not the editor's, though a loupe is an editor feature: what it is for
     // is showing what the export will be, and a magnifier denoised to a different standard from
     // the export is one that lies.
@@ -277,7 +277,7 @@ pub async fn prepared_on_device(
     // looking would read the frame's own texture floor over a few hundred thousand photosites and
     // find a different set from its neighbours and from the export it exists to predict. Absent is
     // an empty list - correct nothing - which is why this takes a slice and not an option.
-    let spots: &[crate::dust::Spot] = stored.from_raw.dust.as_deref().unwrap_or(&[]);
+    let spots: &[denoise::dust::Spot] = stored.from_raw.dust.as_deref().unwrap_or(&[]);
     let dust = request.dust.known(spots);
     let frame = match source {
         Source::Frame(frame) => Some(frame),
@@ -947,7 +947,7 @@ mod tests {
             },
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
             adjust: crate::grade::Adjust::none(),

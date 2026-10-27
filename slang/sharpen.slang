@@ -39,7 +39,7 @@ struct Params {
     /// The capture blur at this frame's scale before the warp stretched it; with `resample`,
     /// the pair the per-pixel sigma is composed from when `spatial` is on.
     float capture;
-    /// `image::LUMA` - BT.709, the frame-side rule, not `prelude.slang`'s BT.2020 grading one.
+    /// `colour::space::LUMA709` - BT.709, the frame-side rule, not `prelude.slang`'s BT.2020 grading one.
     float3 luma;
     float resample;
     /// Whether the warp handed over a Jacobian to vary the sigma by; off, `taps` rule alone.

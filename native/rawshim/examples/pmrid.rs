@@ -13,10 +13,10 @@
 //! a copy of an earlier run's - says how far this one moved from it, which is how a change to the
 //! network's arithmetic is held against the picture it used to make.
 //!
-//! The network itself is `crate::pmrid`, which is what a rendition and the editor both dispatch;
+//! The network itself is `denoise::pmrid`, which is what a rendition and the editor both dispatch;
 //! nothing here describes it a second time.
 
-use rawshim::galosh::{Amounts, Detail};
+use denoise::galosh::{Amounts, Detail};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -48,21 +48,21 @@ fn main() {
     let cfa = held.cfa();
     let mosaic = held.device_mosaic();
     let stride = mosaic.width;
-    let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
+    let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     // The conditioning divided every photosite by the largest white balance coefficient and
     // multiplied it by its own, and the network wants what the sensor read.
     let gains = held.ceilings();
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
+    let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
     let model = fit.model();
     eprintln!(
         "fit alpha {:.3e} sigma_sq {:.3e}",
         model.alpha, model.sigma_sq
     );
 
-    let network = rawshim::pmrid::device(gpu).expect("the network built");
+    let network = denoise::pmrid::device(gpu).expect("the network built");
     let filter = |window: &mut mosaic::condition::Mosaic| {
         let started = std::time::Instant::now();
-        rawshim::pmrid::denoise(
+        denoise::pmrid::denoise(
             gpu,
             network,
             window,
@@ -121,7 +121,7 @@ fn main() {
 
     let samples = pollster::block_on(mosaic.read(gpu)).expect("reads back");
     let filtered = mosaic.duplicate(gpu);
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu,
         kernels,
         &filtered,

@@ -237,11 +237,11 @@ fn tile_job(
         // the shrinkage's lattice would shrink against other blocks than the frame did, unseen.
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
-        denoiser: crate::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
         // Off: a tile of this job is compared against a whole render of it, and a correction
         // the whole render detected for itself is not one a tile can be handed here.
-        dust: crate::dust::Settings {
+        dust: denoise::dust::Settings {
             enabled: false,
             ..Default::default()
         },
@@ -558,7 +558,7 @@ mod decode_geometry {
     /// ordinary drag of the magnifier, and nothing here decoded a tile at all.
     #[test]
     fn a_tile_of_any_size_survives_the_denoise() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         assert!(
             detail.could_do_anything(),
             "the denoise has to run or this tests nothing"
@@ -579,7 +579,7 @@ mod decode_geometry {
                 canon().to_str().unwrap(),
                 viewing(canon().to_str().unwrap(), tile),
                 detail,
-                crate::galosh::Fit::Measure,
+                denoise::galosh::Fit::Measure,
                 crate::RENDITION_TILE_HALO,
             )
             .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
@@ -606,7 +606,7 @@ mod decode_geometry {
     /// column.
     #[test]
     fn a_tile_past_one_render_tile_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(0.0, 0.0);
+        let detail = denoise::galosh::Detail::at(0.0, 0.0);
         assert!(
             !detail.could_do_anything(),
             "a fitted denoise would not compare against the frame"
@@ -633,9 +633,9 @@ mod decode_geometry {
                 path,
                 viewing(path, tile),
                 detail,
-                crate::galosh::Fit::Measure,
+                denoise::galosh::Fit::Measure,
                 crate::RENDITION_TILE_HALO,
-                crate::dust::Known::Off,
+                denoise::dust::Known::Off,
             )
             .and_then(|cut| pollster::block_on(cut.to_host()))
             .expect("the tile");
@@ -686,7 +686,7 @@ mod decode_geometry {
         let path = fuji_noisy();
         let path = path.to_str().unwrap();
         let read = |colour: f64| {
-            let detail = crate::galosh::Detail::at(0.0, colour);
+            let detail = denoise::galosh::Detail::at(0.0, colour);
             pollster::block_on(
                 crate::decode_rawler::decode(path, detail)
                     .expect("the frame")
@@ -749,8 +749,8 @@ mod decode_geometry {
         let frame = crate::decode_frame_denoised(
             path.to_str().unwrap(),
             0,
-            crate::galosh::Detail::at(0.0, 0.0),
-            crate::galosh::Fit::Only,
+            denoise::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Fit::Only,
         )
         .expect("the frame decodes");
         let samples = frame.samples16().expect("16-bit");
@@ -830,8 +830,8 @@ mod decode_geometry {
             .expect("the frame reads back")
         };
 
-        let plain = read(crate::galosh::Detail::at(0.0, 0.0));
-        let asked = crate::galosh::Detail::at(80.0, 80.0);
+        let plain = read(denoise::galosh::Detail::at(0.0, 0.0));
+        let asked = denoise::galosh::Detail::at(80.0, 80.0);
         assert!(
             asked.could_do_anything(),
             "the sliders have to be asking for something"
@@ -938,7 +938,7 @@ mod decode_geometry {
             let path = path.to_str().unwrap();
             let decode = |detail| crate::decode_rawler::decode(path, detail).expect("the frame");
 
-            let off = decode(crate::galosh::Detail::at(0.0, 0.0));
+            let off = decode(denoise::galosh::Detail::at(0.0, 0.0));
             let resident = off
                 .resident()
                 .expect("the decode leaves the frame on the device");
@@ -954,8 +954,8 @@ mod decode_geometry {
             Snapshot::crops(Frame::Scene(resident, anchoring), &crops)
                 .check(&name("off"), tolerance);
             for (setting, detail) in [
-                ("auto", crate::galosh::Detail::AUTO),
-                ("full", crate::galosh::Detail::at(100.0, 100.0)),
+                ("auto", denoise::galosh::Detail::AUTO),
+                ("full", denoise::galosh::Detail::at(100.0, 100.0)),
             ] {
                 let frame = decode(detail);
                 let resident = frame
@@ -978,7 +978,7 @@ mod decode_geometry {
     /// below is deliberately on none of the boundaries anything aligns to.
     #[test]
     fn an_xtrans_tile_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(0.0, 0.0);
+        let detail = denoise::galosh::Detail::at(0.0, 0.0);
         assert!(
             !detail.could_do_anything(),
             "a fitted denoise would not compare against the frame"
@@ -1003,9 +1003,9 @@ mod decode_geometry {
             path,
             viewing(path, tile),
             detail,
-            crate::galosh::Fit::Measure,
+            denoise::galosh::Fit::Measure,
             crate::RENDITION_TILE_HALO,
-            crate::dust::Known::Off,
+            denoise::dust::Known::Off,
         )
         .and_then(|cut| pollster::block_on(cut.to_host()))
         .expect("the tile");
@@ -1067,13 +1067,13 @@ mod decode_geometry {
             )),
             denoise_luminance: Some(40.0),
             denoise_colour: Some(40.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             // **On, and that is the point of it being on here.** The frame corrects from that list
             // and the bands are handed it through the analysis; a band that looked for its own, or
             // that was handed coordinates in the wrong space, would divide a shadow out of the
             // wrong photosites and this is what says so.
-            dust: crate::dust::Settings {
+            dust: denoise::dust::Settings {
                 enabled: true,
                 sensitivity: 0.5,
                 intensity: 1.0,
@@ -1094,7 +1094,7 @@ mod decode_geometry {
             held.frame(
                 request.detail(),
                 request.long_edge,
-                crate::galosh::Fit::Given(fit),
+                denoise::galosh::Fit::Given(fit),
                 request
                     .dust
                     .wanted(request.stored().from_raw.dust.as_deref()),
@@ -1197,7 +1197,7 @@ mod decode_geometry {
     /// better - it is deterministic, and it can be put exactly on the seams.
     ///
     /// Coordinates are the sensor's own, halved, which is the space a `Spot` speaks.
-    fn particles() -> Vec<crate::dust::Spot> {
+    fn particles() -> Vec<denoise::dust::Spot> {
         [
             (420.0, 260.0),
             (900.0, 1040.0),
@@ -1205,7 +1205,7 @@ mod decode_geometry {
             (760.0, 2260.0),
         ]
         .into_iter()
-        .map(|(x, y)| crate::dust::Spot {
+        .map(|(x, y)| denoise::dust::Spot {
             x,
             y,
             scale: 7.0,
@@ -1214,7 +1214,7 @@ mod decode_geometry {
             turn: (0.8, 0.6),
             snr: 6.0,
             profile: std::array::from_fn(|bin| {
-                let along = (bin as f32 + 0.5) / crate::dust::BINS as f32 * crate::dust::SPAN;
+                let along = (bin as f32 + 0.5) / denoise::dust::BINS as f32 * denoise::dust::SPAN;
                 0.12 * (1.4 - along).clamp(0.0, 1.0)
             }),
         })
@@ -1236,14 +1236,14 @@ mod decode_geometry {
     #[test]
     fn a_band_of_a_held_mosaic_is_the_frame_it_was_cut_from() {
         for detail in [
-            crate::galosh::Detail::at(40.0, 40.0),
-            crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler),
+            denoise::galosh::Detail::at(40.0, 40.0),
+            denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler),
         ] {
             a_band_is_the_frame(detail);
         }
     }
 
-    fn a_band_is_the_frame(detail: crate::galosh::Detail) {
+    fn a_band_is_the_frame(detail: denoise::galosh::Detail) {
         assert!(
             detail.could_do_anything(),
             "a band that filters nothing proves nothing"
@@ -1259,7 +1259,7 @@ mod decode_geometry {
         // On here as well as in the band test above, and for a sharper reason: this is the half
         // where the coordinates are, so a spot placed in the window's space rather than the
         // sensor's shows up as a band that differs from the frame exactly where a particle is.
-        let settings = crate::dust::Settings {
+        let settings = denoise::dust::Settings {
             enabled: true,
             sensitivity: 0.5,
             intensity: 1.0,
@@ -1275,7 +1275,7 @@ mod decode_geometry {
         let decoded = pollster::block_on(held.frame(
             detail,
             0,
-            crate::galosh::Fit::Given(fit),
+            denoise::galosh::Fit::Given(fit),
             settings.wanted(Some(&spots)),
             &crate::open_stage::quiet,
         ))
@@ -1303,7 +1303,7 @@ mod decode_geometry {
                     units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
                     crate::view::Scale::Full,
                     detail,
-                    crate::galosh::Fit::Given(fit),
+                    denoise::galosh::Fit::Given(fit),
                     crate::RENDITION_TILE_HALO,
                     settings.known(&spots),
                 )
@@ -1341,7 +1341,7 @@ mod decode_geometry {
     /// after the denoise, so both of these see the same full-resolution mosaic.
     #[test]
     fn the_fit_alone_is_the_fit_the_denoise_makes() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         for path in [sony(), canon()] {
             let path = path.to_str().unwrap().to_string();
             let denoised = crate::decode_frame_denoised(&path, 0, detail, Default::default())
@@ -1349,9 +1349,10 @@ mod decode_geometry {
                 .expect("the denoise fits the frame");
             let bytes = std::fs::read(&path).expect("the fixture reads");
             for long_edge in [0u32, 1000] {
-                let alone = crate::decode_frame_bytes(&bytes, long_edge, crate::galosh::Fit::Only)
-                    .and_then(|frame| frame.noise)
-                    .expect("the fit alone");
+                let alone =
+                    crate::decode_frame_bytes(&bytes, long_edge, denoise::galosh::Fit::Only)
+                        .and_then(|frame| frame.noise)
+                        .expect("the fit alone");
                 assert_eq!(alone, denoised, "{path} fitted differently at {long_edge}");
             }
         }
@@ -1380,13 +1381,13 @@ mod decode_geometry {
             let auto = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::AUTO,
-                crate::galosh::Fit::Measure,
+                denoise::galosh::Detail::AUTO,
+                denoise::galosh::Fit::Measure,
             )
             .expect("the frame decodes");
             let fit = auto.noise.expect("an automatic decode measures the frame");
-            let (luminance, colour) = crate::galosh::Detail::AUTO.resolved(Some(fit));
-            if crate::galosh::Detail::AUTO
+            let (luminance, colour) = denoise::galosh::Detail::AUTO.resolved(Some(fit));
+            if denoise::galosh::Detail::AUTO
                 .amounts(Some(fit))
                 .does_anything()
             {
@@ -1396,8 +1397,8 @@ mod decode_geometry {
             let asked = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::at(luminance, colour),
-                crate::galosh::Fit::Given(fit),
+                denoise::galosh::Detail::at(luminance, colour),
+                denoise::galosh::Fit::Given(fit),
             )
             .expect("the frame decodes");
             let (from_auto, from_asking) = (
@@ -1438,7 +1439,7 @@ mod decode_geometry {
     /// gated on.
     #[test]
     fn the_fit_is_the_one_this_sensor_has() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         // alpha and sigma_sq are green's, in the conditioned mosaic's own units - where full scale
         // is the most amplified channel's saturation (`decode_rawler::channel_ceilings`). The dark
         // reference slots are in the stabilised domain those two define.
@@ -1509,8 +1510,8 @@ mod decode_geometry {
             let fit = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::at(0.0, 0.0),
-                crate::galosh::Fit::Only,
+                denoise::galosh::Detail::at(0.0, 0.0),
+                denoise::galosh::Fit::Only,
             )
             .and_then(|frame| frame.noise)
             .expect("every fixture here has a mosaic to fit");
@@ -1540,7 +1541,7 @@ mod decode_geometry {
     /// every photograph, with the whole suite still green.
     #[test]
     fn a_decoded_frame_carries_what_the_defringe_measures_its_noise_with() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         for path in [sony(), canon()] {
             let path = path.to_str().unwrap().to_string();
             let frame = crate::decode_frame_denoised(&path, 0, detail, Default::default())
@@ -1577,14 +1578,14 @@ mod decode_geometry {
     /// `galosh::reach`, whose coarsest level reads hundreds of photosites.
     #[test]
     fn a_denoised_region_is_the_frame_it_was_cut_from() {
-        let galosh = crate::galosh::Detail::at(40.0, 40.0);
-        let upscaler = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        let galosh = denoise::galosh::Detail::at(40.0, 40.0);
+        let upscaler = denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler);
         for (path, detail) in [(sony(), galosh), (fuji_noisy(), galosh), (sony(), upscaler)] {
             let path = path.to_str().unwrap().to_string();
             let path = path.as_str();
             let whole = crate::decode_frame_denoised(path, 0, detail, Default::default())
                 .expect("the frame decodes");
-            let fit = crate::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
+            let fit = denoise::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
             let (width, height) = (whole.width, whole.height);
             let samples = whole.samples16().expect("a 16-bit decode");
 
@@ -1658,7 +1659,7 @@ mod decode_geometry {
     /// that frame's pixels.
     #[test]
     fn a_halved_region_under_the_upscaler_is_the_halved_frame() {
-        let detail = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        let detail = denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler);
         let path = sony().to_str().unwrap().to_string();
         let path = path.as_str();
         let whole = crate::decode_frame_denoised(path, 640, detail, Default::default())
@@ -1667,11 +1668,11 @@ mod decode_geometry {
         let plain = crate::decode_frame_denoised(
             path,
             640,
-            crate::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Detail::at(0.0, 0.0),
             Default::default(),
         )
         .expect("the plain frame decodes");
-        let fit = crate::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
+        let fit = denoise::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
         let (width, height) = (whole.width, whole.height);
         let samples = whole.samples16().expect("a 16-bit decode");
         assert_ne!(
@@ -1733,10 +1734,10 @@ mod decode_geometry {
     /// not two names for one measurement.
     #[test]
     fn a_tile_denoises_at_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         let path = canon().to_str().unwrap().to_string();
         let bytes = std::fs::read(&path).expect("the fixture reads");
-        let frame = crate::decode_frame_bytes(&bytes, 0, crate::galosh::Fit::Only)
+        let frame = crate::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
             .and_then(|f| f.noise)
             .expect("the frame's fit");
 
@@ -1751,7 +1752,7 @@ mod decode_geometry {
             &path,
             viewing(&path, tile),
             detail,
-            crate::galosh::Fit::Given(frame),
+            denoise::galosh::Fit::Given(frame),
             halo,
         )
         .and_then(|f| f.noise)
@@ -1760,7 +1761,7 @@ mod decode_geometry {
             &path,
             viewing(&path, tile),
             detail,
-            crate::galosh::Fit::Measure,
+            denoise::galosh::Fit::Measure,
             halo,
         )
         .and_then(|f| f.noise)
@@ -2822,7 +2823,7 @@ mod camera_match {
     }
 
     fn green_drift(reference: [f64; 3], colour: [f64; 3]) -> (f64, f64, f64) {
-        let weights = crate::image::LUMA.map(f64::from);
+        let weights = colour::space::LUMA709.map(f64::from);
         let total = weights.iter().sum::<f64>();
         let luma = |rgb: [f64; 3]| -> f64 {
             rgb.into_iter()
@@ -4241,10 +4242,10 @@ mod pictures {
             let held =
                 pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("the mosaic");
             let frame = pollster::block_on(held.frame(
-                crate::galosh::Detail::at(0.0, 0.0),
+                denoise::galosh::Detail::at(0.0, 0.0),
                 0,
-                crate::galosh::Fit::Only,
-                crate::dust::Wanted::Off,
+                denoise::galosh::Fit::Only,
+                denoise::dust::Wanted::Off,
                 &crate::open_stage::quiet,
             ))
             .expect("the frame");
@@ -4326,7 +4327,7 @@ mod pictures {
                 photo_analysis: None,
                 denoise_luminance: Some(0.0),
                 denoise_colour: Some(0.0),
-                denoiser: crate::galosh::Denoiser::Galosh,
+                denoiser: denoise::galosh::Denoiser::Galosh,
                 highlight_recovery: None,
                 dust: Default::default(),
                 repairs: Vec::new(),
@@ -4491,7 +4492,7 @@ mod one_open_at_a_time {
             // rather than a cheaper one that skips the denoise.
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
         }
     }
@@ -5163,5 +5164,146 @@ mod tone_domain {
                 path.display(),
             );
         }
+    }
+}
+
+mod pmrid {
+    /// The network moves the committed Bayer frames' photosites by next to nothing on average at
+    /// `NETWORK_NOISE` of the fit: what it lifts is how far that is from the noise it finds.
+    #[test]
+    fn the_fit_leaves_the_network_nothing_to_lift() {
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let network = denoise::pmrid::device(gpu).expect("the network built");
+        for path in [
+            super::canon(),
+            super::sony(),
+            super::clipped(),
+            super::bayer_noisy(),
+        ] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let lift = pollster::block_on(denoise::pmrid::lift(
+                gpu,
+                network,
+                held.device_mosaic(),
+                &held.cfa(),
+                gains,
+                fit,
+            ))
+            .expect("the tally reads back");
+            assert!(
+                lift.abs() < 0.25,
+                "{}: the network lifts {lift:+.3} sigma at the fit's {fit:?}",
+                path.display()
+            );
+        }
+    }
+
+    /// What each arm costs over a whole photograph on this adapter, and how far apart their
+    /// pictures are.
+    ///
+    /// **A report more than a test**: the times go to stderr past the harness's capture, so a plain
+    /// `bun run test:native pmrid_arms --features fixtures` prints them. With the arena held, as a
+    /// render queue holds it, so what is timed is the network rather than an allocation. What is
+    /// asserted is only that the arms paint the same picture, which the synthetic comparison beside
+    /// this one cannot say about a frame with real highlights in it.
+    #[test]
+    fn pmrid_arms_on_a_photograph() {
+        use std::io::Write;
+        const RUNS: usize = 5;
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let weights = denoise::pmrid::weights().expect("the weights");
+        let arms: Vec<(denoise::pmrid::Arm, denoise::pmrid::Pmrid)> = [
+            denoise::pmrid::Arm::Matrix,
+            denoise::pmrid::Arm::Half,
+            denoise::pmrid::Arm::Float,
+        ]
+        .into_iter()
+        .map(|arm| (arm, denoise::pmrid::build_kernels(gpu, weights, arm)))
+        .filter(|(arm, kernels)| kernels.arm == *arm)
+        .collect();
+        let mut report = std::io::stderr();
+
+        denoise::pmrid::hold_arenas();
+        for path in [super::sony(), super::clipped()] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let (cfa, mosaic) = (held.cfa(), held.device_mosaic());
+            let detail = denoise::galosh::Detail::at(100.0, 100.0);
+            let run = |network: &denoise::pmrid::Pmrid| {
+                let mut frame = mosaic.duplicate(gpu);
+                gpu.block_until_done();
+                let started = trace::clock::Mark::now();
+                denoise::pmrid::denoise(gpu, network, &mut frame, &cfa, gains, detail, fit);
+                gpu.block_until_done();
+                (started.elapsed(), frame)
+            };
+
+            // The first of each compiles whatever pipelines the driver has not cached.
+            let answers: Vec<Vec<f32>> = arms
+                .iter()
+                .map(|(_, kernels)| {
+                    pollster::block_on(run(kernels).1.read(gpu)).expect("the mosaic reads back")
+                })
+                .collect();
+            let mut fastest = vec![std::time::Duration::MAX; arms.len()];
+            for _ in 0..RUNS {
+                for (at, (_, kernels)) in arms.iter().enumerate() {
+                    fastest[at] = fastest[at].min(run(kernels).0);
+                }
+            }
+
+            let name = path.file_name().expect("a file").to_string_lossy();
+            let megapixels = (mosaic.width * mosaic.height) as f64 / 1e6;
+            let _ = writeln!(
+                report,
+                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:",
+                gpu.adapter
+            );
+            let float = answers.last().expect("every device builds the float arm");
+            let slowest = fastest.last().expect("and times it").as_secs_f64();
+            let mut apart_most = (denoise::pmrid::Arm::Float, 0.0);
+            for (at, (arm, _)) in arms.iter().enumerate() {
+                let took = fastest[at].as_secs_f64();
+                if *arm == denoise::pmrid::Arm::Float {
+                    let _ = writeln!(report, "  {:<7} {:>7.1}ms", "Float", took * 1e3);
+                    continue;
+                }
+                let apart: Vec<f64> = answers[at]
+                    .iter()
+                    .zip(float)
+                    .map(|(a, b)| f64::from((a - b).abs()) * 255.0)
+                    .collect();
+                let mean = apart.iter().sum::<f64>() / apart.len() as f64;
+                let worst = apart.iter().copied().fold(0.0, f64::max);
+                let _ = writeln!(
+                    report,
+                    "  {:<7} {:>7.1}ms  {:.2}x Float's speed, {mean:.4} codes of 255 from it on \
+                     average, {worst:.2} at the worst photosite",
+                    format!("{arm:?}"),
+                    took * 1e3,
+                    slowest / took,
+                );
+                if mean > apart_most.1 {
+                    apart_most = (*arm, mean);
+                }
+            }
+            let (arm, mean) = apart_most;
+            assert!(
+                mean < 0.05,
+                "{name}: {arm:?} is {mean:.4} codes from Float on average"
+            );
+        }
+        denoise::pmrid::release_arenas();
     }
 }

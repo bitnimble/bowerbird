@@ -53,8 +53,8 @@ pub fn ground(x: usize, y: usize) -> f32 {
 ///
 /// The frames below code that signal as light directly - a plane whose `full_scale_light` is 1 -
 /// so here the two normalisations coincide and a stage reading `light_of_code` reads this model.
-pub fn noise() -> rawshim::galosh::NoiseModel {
-    rawshim::galosh::NoiseModel {
+pub fn noise() -> denoise::galosh::NoiseModel {
+    denoise::galosh::NoiseModel {
         alpha: 2e-4,
         sigma_sq: 1e-6,
     }

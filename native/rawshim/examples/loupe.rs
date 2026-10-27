@@ -74,7 +74,7 @@ fn main() {
         strengths: support::STRENGTHS,
         denoise_luminance: None,
         denoise_colour: None,
-        denoiser: rawshim::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
         dust: Default::default(),
         adjust: rawshim::grade::Adjust::none(),

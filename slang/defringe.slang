@@ -24,7 +24,7 @@ struct Params {
     uint height;
     float k_red;
     float k_blue;
-    /// `image::LUMA`, and `full` is the sensor's full scale in levels (`packed::level_of`).
+    /// `colour::space::LUMA709`, and `full` is the sensor's full scale in levels (`packed::level_of`).
     float3 luma;
     float full;
 };

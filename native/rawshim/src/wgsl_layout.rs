@@ -85,12 +85,6 @@ mod tests {
                 crate::merge::block(),
             ),
             (
-                "dust.wgsl",
-                "Params",
-                shaders::DUST.source,
-                crate::dust::params_block(),
-            ),
-            (
                 "fit_wide.wgsl",
                 "Params",
                 shaders::FIT_WIDE.source,

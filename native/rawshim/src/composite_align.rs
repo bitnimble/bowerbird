@@ -769,13 +769,13 @@ async fn preview_of(
 
     let frame = crate::decode::frame_from_path(
         path,
-        crate::galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Detail::at(0.0, 0.0),
         wide as u32,
         // The floor above is the whole of what this wants: a preview is a reduction, and halving
         // a mosaic underneath it would be one the alignment never asked for.
         false,
-        crate::galosh::Fit::Measure,
-        crate::dust::Wanted::Off,
+        denoise::galosh::Fit::Measure,
+        denoise::dust::Wanted::Off,
     )
     .ok_or_else(|| format!("{} could not be decoded", source.photo_id))?;
     let resident = frame
@@ -1172,7 +1172,7 @@ pub(crate) mod tests {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
-            detail: crate::galosh::Detail::at(0.0, 0.0),
+            detail: denoise::galosh::Detail::at(0.0, 0.0),
             sources: &files,
             from,
             weight: crate::composite_tile::Weight::Feather,

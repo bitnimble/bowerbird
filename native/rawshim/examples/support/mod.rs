@@ -3,7 +3,7 @@
 //! before the camera match, which moves the match.
 #![allow(dead_code)]
 
-use rawshim::galosh::Detail;
+use denoise::galosh::Detail;
 use rawshim::hdr::Grade;
 use rawshim::hdr_args::EncodeOptions;
 use rawshim::image::Strengths;
@@ -35,7 +35,7 @@ pub struct Open<'a> {
     pub strengths: Strengths,
     /// The pair to defringe by, in place of the one this frame measures.
     pub defocus: Option<(f32, f32)>,
-    pub dust: rawshim::dust::Wanted<'a>,
+    pub dust: denoise::dust::Wanted<'a>,
     /// Edits the decode's half-float samples before anything measures them, as a stage between the
     /// decode and the open would.
     pub edit: Option<&'a dyn Fn(&mut [u16])>,
@@ -60,7 +60,7 @@ impl<'a> Open<'a> {
             detail: Detail::AUTO,
             strengths: STRENGTHS,
             defocus: None,
-            dust: rawshim::dust::Settings::default().wanted(None),
+            dust: denoise::dust::Settings::default().wanted(None),
             edit: None,
             matched: None,
         }
@@ -72,7 +72,7 @@ impl<'a> Open<'a> {
             self.detail,
             self.floor,
             false,
-            rawshim::galosh::wanted(None, self.detail),
+            denoise::galosh::wanted(None, self.detail),
             self.dust,
         )?;
         if let Some(edit) = self.edit {

@@ -1,0 +1,23 @@
+[package]
+name = "denoise"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }
+colour = { path = "../colour" }
+gpu = { path = "../gpu" }
+mosaic = { path = "../mosaic" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+half = { version = "2.7.1", default-features = false }
+pollster = "0.4"
+rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+shaders = { path = "../shaders", features = ["layout"] }

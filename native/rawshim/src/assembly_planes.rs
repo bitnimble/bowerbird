@@ -38,7 +38,7 @@ pub struct Plane {
     /// [`rgb`]: Plane::rgb
     /// [`full_scale_light`]: Plane::full_scale_light
     /// [`samples_averaged`]: Plane::samples_averaged
-    pub noise: crate::galosh::NoiseModel,
+    pub noise: denoise::galosh::NoiseModel,
     /// The light a full-scale mosaic sample of this source codes to, its own gain included: each
     /// source is coded against the reference's white divided by that gain, so this is where an
     /// exposure match lands and there is none left to apply downstream.
@@ -86,7 +86,7 @@ pub async fn analysis_planes(
             sharpen: 0.0,
             defringe: 0.0,
         },
-        detail: crate::galosh::Detail::at(0.0, 0.0),
+        detail: denoise::galosh::Detail::at(0.0, 0.0),
         sources,
         // Never the library's setting: `Plane::noise` below is GALOSH's fit off the mosaic, and a
         // camera's JPEG has none - so a carve of the cameras' pictures would score every tile

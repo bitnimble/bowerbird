@@ -171,7 +171,7 @@ pub unsafe extern "C" fn bb_hold_upscaler_model(
     else {
         return -2;
     };
-    crate::upscale::hold_model(manifest, weights);
+    denoise::upscale::hold_model(manifest, weights);
     0
 }
 

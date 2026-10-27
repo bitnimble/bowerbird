@@ -1047,7 +1047,7 @@ async fn residual_for(
 /// it free: the tone curve fitted over it absorbs any transfer difference between the two images.
 #[cfg(test)]
 fn luma8(r: u8, g: u8, b: u8) -> u8 {
-    crate::image::luma709(f64::from(r), f64::from(g), f64::from(b)).round() as u8
+    colour::space::luma709(f64::from(r), f64::from(g), f64::from(b)).round() as u8
 }
 
 // **Folded on the device, and exactly.** Both of the objective's accumulations add `u8`-valued

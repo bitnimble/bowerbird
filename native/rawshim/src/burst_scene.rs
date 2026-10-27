@@ -297,8 +297,8 @@ mod tests {
     use super::{Burst, Focus, Noise, Random, Scene, Shake, Subject};
     use crate::align::{self, Exposure};
     use crate::burst::Offset;
-    use crate::galosh::NoiseModel;
     use crate::merge::{Frame, Grid, Merge};
+    use denoise::galosh::NoiseModel;
     use units::px::{At, Rect};
 
     const WIDTH: usize = 1024;

@@ -7,7 +7,7 @@
 // gather and no reshape. Saying that to the hardware wants `OpCooperativeMatrixMulAddKHR`, which
 // WGSL has no spelling for, so this compiles to SPIR-V and is handed to the driver as it stands.
 //
-// **Two hosts dispatch it, and only one of them is a picture.** `native/rawshim/src/pmrid.rs` runs
+// **Two hosts dispatch it, and only one of them is a picture.** `native/denoise/src/pmrid.rs` runs
 // [`separable`] or [`pointwise`] for each 1x1 layer of a rendition, on the device wgpu already
 // opened and over the `half` arena the WGSL beside it holds, where a browser has neither the
 // instruction nor a way to pass a driver its own language and takes the WGSL pass instead.

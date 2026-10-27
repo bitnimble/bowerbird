@@ -6,7 +6,7 @@
 //! departs from ISO is where it is more right than ISO, since a pushed exposure and a clean
 //! one at the same sensitivity are not the same photograph.
 
-use rawshim::galosh::Detail;
+use denoise::galosh::Detail;
 
 fn main() {
     let dir = std::env::args().nth(1).expect("a directory of RAWs");

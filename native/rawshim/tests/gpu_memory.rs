@@ -8,7 +8,7 @@
 //! parallel threads: a second test allocating inside this one's before-and-after window reads as a
 //! leak, or hides one. Measured at three failures in ten before these were folded together.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 const WIDTH: usize = 256;
 const HEIGHT: usize = 192;
@@ -66,16 +66,16 @@ fn every_stage_hands_its_working_planes_back() {
 
     // GALOSH takes about five frames of working planes - the GAT frame and the pyramid's levels -
     // and none of it may outlive the call.
-    match rawshim::galosh::device(gpu) {
+    match denoise::galosh::device(gpu) {
         None => eprintln!("SKIPPED: this adapter has no room for the noise fit's workgroup."),
         Some(kernels) => gives_it_back(gpu, "denoise", || {
             let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
-            pollster::block_on(rawshim::galosh::denoise(
+            pollster::block_on(denoise::galosh::denoise(
                 gpu,
                 kernels,
                 &mosaic,
                 &mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
-                rawshim::galosh::UNGAINED,
+                denoise::galosh::UNGAINED,
                 Amounts::from_sliders(50.0, 50.0),
             ));
         }),

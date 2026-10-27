@@ -88,7 +88,7 @@ fn fitted(path: &str) -> String {
     // Scene-linear and undenoised, which is the frame `base::prepare` measures on. `Fit::Only`
     // rather than `Measure`: this decode asks for no denoise, and `Measure` fits nothing where
     // there are no amounts, which would leave the fitted ceiling below unexercised.
-    let Some(frame) = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only) else {
+    let Some(frame) = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only) else {
         return "no decode".to_string();
     };
     let rawshim::frame::Pixels::Sixteen(samples) = &frame.pixels else {
@@ -127,7 +127,7 @@ struct Found {
 
 fn measure(path: &str) -> Result<Found, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{e}"))?;
-    let noise = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+    let noise = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
         .and_then(|frame| frame.noise)
         .ok_or("the frame did not fit its noise")?;
 

@@ -9,13 +9,13 @@ import light;
 
 /// `colour::space::LUMA`, BT.2020's weights for a Rec.2020 frame.
 ///
-/// Not `image::LUMA`. That one is BT.709 and belongs to the denoise, which is measuring
+/// Not `colour::space::LUMA709`. That one is BT.709 and belongs to the denoise, which is measuring
 /// where detail is rather than what a colour weighs, and never meets this. Taking it here
 /// put the wrong weights under `finish_chroma`'s grey axis, the chroma map's level axis and
 /// its reconstructed middle channel, so every matched photograph was graded around the wrong luma.
 public static const float3 LUMA = float3(0.2627, 0.678, 0.0593);
 
-/// BT.709's weights, which `image::luma709` is the host's statement of.
+/// BT.709's weights, which `colour::space::luma709` is the host's statement of.
 ///
 /// **Beside `LUMA` rather than instead of it, and the pair is the point.** Which one a stage wants
 /// follows from what it is weighing: `LUMA` for a Rec.2020 frame, this for the camera's own sRGB
