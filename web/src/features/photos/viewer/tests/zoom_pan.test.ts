@@ -4,6 +4,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   DOUBLE_SCALE,
   MIN_SCALE,
+  NO_SIZE,
+  catchUpOf,
   clampPan,
   fitScale,
   isDoubleTap,
@@ -73,6 +75,57 @@ describe('regionOf', () => {
       expect(region.x + region.width).toBeLessThanOrEqual(NATURAL.width);
       expect(region.y + region.height).toBeLessThanOrEqual(NATURAL.height);
     }
+  });
+});
+
+describe('catchUpOf', () => {
+  const FITTED_VIEW = { scale: 1, x: 0, y: 0 };
+  const drawnAt = (view: View, natural = NATURAL) => ({
+    region: regionOf(view, BOX, natural),
+    picture: natural,
+  });
+
+  test('is nothing once the draw is of the view on screen', () => {
+    for (const view of [
+      FITTED_VIEW,
+      { scale: 2, x: 120, y: -30 },
+      clampPan({ scale: 5, x: 99999, y: -99999 }, BOX, NATURAL),
+    ]) {
+      expect(catchUpOf(view, drawnAt(view), BOX, NATURAL)).toBeUndefined();
+    }
+  });
+
+  // Bound by its height in this box, where the landscape frame is bound by its width.
+  test('is nothing for a portrait frame drawn at the view on screen', () => {
+    const portrait = { width: 4000, height: 6000 };
+    expect(catchUpOf(FITTED_VIEW, drawnAt(FITTED_VIEW, portrait), BOX, portrait)).toBeUndefined();
+  });
+
+  test('magnifies a fitted draw about the middle as the zoom outruns it', () => {
+    expect(catchUpOf({ scale: 2, x: 0, y: 0 }, drawnAt(FITTED_VIEW), BOX, NATURAL)).toBe(
+      'translate(0px, 0px) scale(2)',
+    );
+  });
+
+  // A 2x window over the frame's left side, 3000 source pixels wide, whose centre sits 1500 source
+  // pixels left of the frame's: 500px at 2x, 250px fitted.
+  test('moves a zoomed draw to where the view has panned the frame', () => {
+    const leftSide = drawnAt({ scale: 2, x: 500, y: 0 });
+    expect(catchUpOf({ scale: 2, x: 0, y: 0 }, leftSide, BOX, NATURAL)).toBe(
+      'translate(-500px, 0px) scale(1)',
+    );
+    expect(catchUpOf(FITTED_VIEW, leftSide, BOX, NATURAL)).toBe(
+      'translate(-250px, 0px) scale(0.5)',
+    );
+  });
+
+  test('is nothing for a draw of a picture of another shape, or before one lands', () => {
+    const otherShape = drawnAt(FITTED_VIEW, { width: 4000, height: 3000 });
+    expect(catchUpOf({ scale: 2, x: 0, y: 0 }, otherShape, BOX, NATURAL)).toBeUndefined();
+    expect(catchUpOf({ scale: 2, x: 0, y: 0 }, null, BOX, NATURAL)).toBeUndefined();
+    expect(catchUpOf({ scale: 2, x: 0, y: 0 }, drawnAt(FITTED_VIEW), NO_SIZE, NATURAL)).toBe(
+      undefined,
+    );
   });
 });
 

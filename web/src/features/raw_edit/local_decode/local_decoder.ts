@@ -422,6 +422,7 @@ export class LocalDecoder {
     drawStage: boolean;
     region: Region | null;
     loupe: Region | null;
+    overview: { region: Region; width: number; height: number } | null;
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
     proof: Proof | null;
@@ -436,6 +437,10 @@ export class LocalDecoder {
       drawStage: tick.drawStage,
       region: tick.region == null ? null : JSON.stringify(tick.region),
       loupe: tick.loupe == null ? null : JSON.stringify(tick.loupe),
+      overview:
+        tick.overview == null
+          ? null
+          : { ...tick.overview, region: JSON.stringify(tick.overview.region) },
       adjust: tick.adjust == null ? null : JSON.stringify(tick.adjust),
       geometry: tick.geometry == null ? null : JSON.stringify(tick.geometry),
       proof: tick.proof,

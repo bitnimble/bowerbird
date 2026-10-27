@@ -140,6 +140,7 @@ export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() })
  */
 export const TickedSchema = z.object({
   stage: BytesSchema.nullable(),
+  overview: BytesSchema.nullable(),
   loupe: BytesSchema.nullable(),
 });
 export type Ticked = z.infer<typeof TickedSchema>;
@@ -318,6 +319,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     /** Absent draws the cropped picture whole, which the module works out from the geometry. */
     region: JsonSchema.nullable(),
     loupe: JsonSchema.nullable(),
+    /** The whole picture as a region, and the size to draw it at for the page; null leaves the last. */
+    overview: z.object({ region: JsonSchema, width: z.number(), height: z.number() }).nullable(),
     adjust: JsonSchema.nullable(),
     geometry: JsonSchema.nullable(),
     proof: ProofSchema.nullable(),

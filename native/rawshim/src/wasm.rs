@@ -120,6 +120,8 @@ pub struct HeldRaw {
     /// The canvases the page handed over, kept across prepares for that reason.
     stage: std::cell::RefCell<Option<crate::gpu::Stage>>,
     loupe: std::cell::RefCell<Option<crate::gpu::Stage>>,
+    /// The whole picture, small, for the page to show where a gesture has outrun the stage.
+    overview: std::cell::RefCell<Option<crate::gpu::Stage>>,
     /// The canvas the last repair thumbnail was drawn onto, kept until the page has copied it out.
     thumbnail: std::cell::RefCell<Option<crate::gpu::Stage>>,
     wheel: std::cell::RefCell<Option<crate::gpu::Stage>>,
@@ -427,6 +429,7 @@ impl HeldRaw {
             drawing: std::cell::RefCell::new(None),
             stage: std::cell::RefCell::new(None),
             loupe: std::cell::RefCell::new(None),
+            overview: std::cell::RefCell::new(None),
             thumbnail: std::cell::RefCell::new(None),
             wheel: std::cell::RefCell::new(None),
             tile: std::cell::RefCell::new(None),
@@ -1159,6 +1162,12 @@ impl HeldRaw {
     #[wasm_bindgen(js_name = heldLoupe)]
     pub async fn held_loupe(&self) -> Result<Option<Vec<u8>>, JsValue> {
         self.read_held(&self.loupe).await
+    }
+
+    /// What the last [`HeldRaw::tick_overview`] drew, as RGB9E5 words.
+    #[wasm_bindgen(js_name = heldOverview)]
+    pub async fn held_overview(&self) -> Result<Option<Vec<u8>>, JsValue> {
+        self.read_held(&self.overview).await
     }
 
     /// The same for a colour wheel attached with no canvas, which is always video.
@@ -1903,6 +1912,33 @@ impl HeldRaw {
         )
     }
 
+    /// The same grade over `region`, the page's whole picture, `width` by `height`, into a texture
+    /// [`HeldRaw::held_overview`] reads back. Named rather than absent: a framed print's picture
+    /// is larger than the cropped one by its border.
+    #[wasm_bindgen(js_name = tickOverview)]
+    pub fn tick_overview(
+        &self,
+        ev: Option<f64>,
+        region: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<(), JsValue> {
+        let gpu = crate::gpu::device()
+            .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        self.overview
+            .borrow_mut()
+            .get_or_insert_with(|| crate::gpu::Stage::held(gpu, width, height, None))
+            .resize(gpu, width, height);
+        self.draw(
+            &self.overview,
+            ev.map(crate::light::Stops::measured),
+            Some(region),
+            Reading::Frame,
+            false,
+            self.proof.get(),
+        )
+    }
+
     /// The same grade at the loupe's own region, onto the loupe's canvas: the rendition's own tile
     /// where one has been built for where it points, and the editor's frame until it lands.
     #[wasm_bindgen(js_name = tickLoupe)]
@@ -2346,7 +2382,8 @@ impl HeldRaw {
         let (picture_w, picture_h) = drawing.picture();
         let adjust = self.adjust.borrow().clone();
         let on_stage = std::ptr::eq(onto, &self.stage);
-        let print = if on_stage { self.print.get() } else { None };
+        let shows_print = on_stage || std::ptr::eq(onto, &self.overview);
+        let print = if shows_print { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),

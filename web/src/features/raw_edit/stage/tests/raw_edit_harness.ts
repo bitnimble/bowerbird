@@ -89,6 +89,9 @@ export class FakeDecoder {
     stage: { width: number; height: number };
   }[] = [];
 
+  /** The overview each tick asked for, or null where it left the overview alone. */
+  readonly overviews: ({ region: Region; width: number; height: number } | null)[] = [];
+
   /** What the loupe was last asked to magnify, and how many times it was asked. */
   loupeRegion: Region | null = null;
   loupeDraws = 0;
@@ -112,6 +115,7 @@ export class FakeDecoder {
     drawStage: boolean;
     region: Region | null;
     loupe: Region | null;
+    overview: { region: Region; width: number; height: number } | null;
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
     proof: Proof | null;
@@ -120,6 +124,7 @@ export class FakeDecoder {
     printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
   }): Promise<Ticked> {
+    this.overviews.push(tick.overview);
     this.reachMasks.push(tick.reachMask);
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
@@ -150,7 +155,13 @@ export class FakeDecoder {
       this.handsBack && tick.drawStage
         ? new Uint8Array(words * Uint32Array.BYTES_PER_ELEMENT)
         : null;
-    return this.landed().then(() => ({ stage, loupe: null }));
+    const overview =
+      tick.overview == null
+        ? null
+        : new Uint8Array(
+            tick.overview.width * tick.overview.height * Uint32Array.BYTES_PER_ELEMENT,
+          );
+    return this.landed().then(() => ({ stage, overview, loupe: null }));
   }
 
   attach(): Promise<void> {

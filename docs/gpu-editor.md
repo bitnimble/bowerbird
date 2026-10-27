@@ -12,13 +12,15 @@ Shared implementation guarantees agreement; duplicated rules have fixtures (§6)
 reporting an unreadable file. Conditioning, GALOSH, RCD, coding, defringe, gather and grade are
 shaders; no CPU fallback allowed.
 
-## 2. No pixels cross the boundary
+## 2. No frame crosses the boundary
 
 Worker's device decodes, denoises, demosaics, warps, sharpens and grades into transferred canvases.
 Boundary carries regions and edits; worker draws frames.
 
 Exception: pictures the tab cannot decode (§8) transfer coded samples once at open.
 Normalised PQ Rec.2020 matches the local open's device frame; subsequent ticks are identical.
+
+What comes back is only ever a drawn canvas: the overview (§5), 1024 px, once an edit settles, and on WebKit or Firefox a stage or loupe the page shows itself (`readback_canvas.ts`).
 
 Neither `GPUDevice` nor textures cross worker boundaries. Sending samples would cost 366MB
 at 61MP plus copies. Page transfers `OffscreenCanvas` (`attachStage`, `attachLoupe`);
@@ -65,11 +67,20 @@ Absent `region` draws the whole cropped picture; module computes it from `hdr::c
 
 `setAdjust` and `setGeometry` retain independent state across ticks and drags.
 
-## 5. The two canvases
+## 5. The three canvases
 
 The stage is the picture. The loupe is a second canvas over it, drawn from the same frame at
 `max_lod: 0` - a magnifier is only ever magnified, so it reads the frame's own buffer at whatever
 ratio rather than a level averaged for a smaller canvas.
+
+The overview sits under the stage: the whole cropped picture at 1024 on its long edge
+(`tickOverview`), read back as RGB9E5 and drawn by the page, under the view's CSS transform.
+A zoom or pan outruns the tick, so until the stage's draw lands the page transforms the last
+one onto the view (`catchUpOf`), and wherever that leaves stage uncovered the overview shows.
+Redrawn on a tick of its own once anything but the region has held still for
+`OVERVIEW_SETTLE_MS`, so a slider drag reads nothing back; skipped for a print scene, for
+Firefox's video path, and for a picture prepared elsewhere while zoomed, which holds only a
+window.
 
 `holdTile` builds a 1:1 tile through the rendition chain so loupe detail matches export,
 not stage-scaled denoise/sharpen. Retain it across pointer draws. Until its tens-of-milliseconds

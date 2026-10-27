@@ -51,7 +51,7 @@ import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
 import type { EditSurface } from './edit_surface';
 import { Fade } from './fade';
-import { SUPERSAMPLE, stageResolution } from './stage_resolution';
+import { SUPERSAMPLE, overviewResolution, stageResolution } from './stage_resolution';
 import { type PreparedHeader, readPreparedHeader } from '../../../../../src/schemas/prepared';
 import type { EditAdjust, Region } from '../edits';
 import { isSoftProof, type SoftProof } from '../proof/soft_proof';
@@ -67,6 +67,7 @@ const REACH_FADE_MS = 100;
 
 /** How long a pan or a zoom may be still before a finer window of the picture is fetched. */
 export const REWINDOW_QUIET_MS = 220;
+export const OVERVIEW_SETTLE_MS = 150;
 
 /** How far past the viewport tiles are loaded, as a share of it on each side. */
 const TILE_REACH = 0.25;
@@ -97,6 +98,17 @@ function reach(
   return [x, y, width, height];
 }
 
+function covers(region: Region | null, picture: { width: number; height: number }): boolean {
+  // Slack for a fitted region's `box / (box / picture)`, which can land an ulp short.
+  return (
+    region != null && region.width >= picture.width - 0.5 && region.height >= picture.height - 0.5
+  );
+}
+
+function wordsOf(bytes: Uint8Array<ArrayBuffer>): Uint32Array {
+  return new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+}
+
 /**
  * Drives one RAW through the open-once, grade-per-tick loop.
  *
@@ -123,6 +135,11 @@ export class RawEditPresenter {
   /** The last backing store asked for, so an unchanged one is not sent again. */
   private sized: { width: number; height: number } | null = null;
   private canvas: HTMLCanvasElement | null = null;
+  private overviewCanvas: HTMLCanvasElement | null = null;
+  /** Whether anything but the region has moved since the overview was last drawn. */
+  private overviewDue = true;
+  /** Running until the last change is `OVERVIEW_SETTLE_MS` old, so a drag reads nothing back. */
+  private overviewTimer: ReturnType<typeof setTimeout> | null = null;
   private viewport: ResizeObserver | null = null;
   private density: MediaQueryList | null = null;
   /** The last CSS box the observer reported, so a density change can re-fit against it. */
@@ -308,6 +325,13 @@ export class RawEditPresenter {
     this.watchPixelRatio();
   }
 
+  /** The canvas under the stage that shows the whole picture where a gesture outruns the stage. */
+  attachOverview(canvas: HTMLCanvasElement | null): void {
+    // No `rgba16float` page canvas on the video path.
+    this.overviewCanvas = videoSdrMatch() == null ? canvas : null;
+    this.request();
+  }
+
   /**
    * The other thing that changes how many device pixels the stage is worth.
    *
@@ -406,7 +430,7 @@ export class RawEditPresenter {
       return;
     }
     this.stage.region = next;
-    this.request();
+    this.redraw();
     this.wantWindow();
   }
 
@@ -1049,6 +1073,8 @@ export class RawEditPresenter {
     // message to a decoder that is about to be freed.
     if (this.windowTimer != null) clearTimeout(this.windowTimer);
     this.windowTimer = null;
+    if (this.overviewTimer != null) clearTimeout(this.overviewTimer);
+    this.overviewTimer = null;
     this.rewindowing?.abort();
     this.rewindowing = null;
     this.repair.close();
@@ -1070,6 +1096,17 @@ export class RawEditPresenter {
     this.local = null;
   }
 
+  /** A redraw of everything, the overview once the change has settled. */
+  private request(): void {
+    this.overviewDue = true;
+    if (this.overviewTimer != null) clearTimeout(this.overviewTimer);
+    this.overviewTimer = setTimeout(() => {
+      this.overviewTimer = null;
+      this.pump();
+    }, OVERVIEW_SETTLE_MS);
+    this.redraw();
+  }
+
   /**
    * Coalesced onto the next frame, not queued.
    *
@@ -1079,11 +1116,25 @@ export class RawEditPresenter {
    *
    * Everything that changes what is on screen ends here, the stage's own size included, so
    * the whole state a frame is drawn from is read in one breath immediately before drawing it.
+   * A move of the region alone calls this directly, leaving the overview as it is.
    */
-  private request(): void {
+  private redraw(): void {
     if (this.closed || !this.drawable) return;
     this.pending = true;
     this.pump();
+  }
+
+  /** The overview the next tick should draw, or null to leave it. */
+  private overviewDraw(): { region: Region; width: number; height: number } | null {
+    if (!this.overviewDue || this.overviewTimer != null || this.overviewCanvas == null) return null;
+    if (this.printStore.hanging) return null;
+    const picture = this.displaySize;
+    // A picture prepared elsewhere holds only a window of itself while zoomed, black around it.
+    if (this.stage.preparedElsewhere && !covers(this.stage.region, picture)) return null;
+    return {
+      region: this.atTheLevel({ x: 0, y: 0, ...picture }),
+      ...overviewResolution(picture),
+    };
   }
 
   private showReach(shown: boolean): void {
@@ -1109,7 +1160,7 @@ export class RawEditPresenter {
 
   private pump(): void {
     if (this.closed || this.frame !== 0 || this.drawing) return;
-    if (!this.pending && this.pendingLoupe == null) return;
+    if (!this.pending && this.pendingLoupe == null && this.overviewDraw() == null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
       const drawStage = this.pending;
@@ -1126,6 +1177,10 @@ export class RawEditPresenter {
       // Held through the fade out: a press off the wheel lets go of the edit as the drag ends.
       const reached = reach > 0 ? (this.colourWheelStore.selectedNode ?? this.reachShownFor) : null;
       this.reachShownFor = reached;
+      const region = this.stage.region;
+      const picture = this.displaySize;
+      const overview = this.overviewDraw();
+      if (overview != null) this.overviewDue = false;
       this.drawing = true;
       const landed = (error?: unknown): void => {
         this.drawing = false;
@@ -1136,7 +1191,7 @@ export class RawEditPresenter {
         // and hands it back on the next tick (`gpu::refusal`); this is what puts it on screen.
         if (error != null) this.fail(describe(error));
         else {
-          if (drawStage) this.drew(print == null ? 'photo' : 'print');
+          if (drawStage) this.drew(print == null ? 'photo' : 'print', region, picture);
           const framed = print?.presentation === 'surface' && print.framed;
           if (framed !== this.framedSurface) {
             this.framedSurface = framed;
@@ -1145,8 +1200,8 @@ export class RawEditPresenter {
         }
         this.pump();
       };
-      // One message carrying both draws and the size they read: the worker applies them in the
-      // order they are written here, which is the order the page's own two submits were in.
+      // One message carrying the draws and the size they read: the worker applies them in the
+      // order they are written here.
       //
       // Both arms, because a worker that died mid-draw rejects too - and a rejection swallowed
       // here would leave the flag set and every later frame waiting on a tick that never lands.
@@ -1157,8 +1212,9 @@ export class RawEditPresenter {
         .tick({
           ev: this.editStore.exposureEv,
           drawStage,
-          region: this.stage.region == null ? null : this.atTheLevel(this.stage.region),
+          region: region == null ? null : this.atTheLevel(region),
           loupe,
+          overview,
           adjust: this.adjust,
           geometry: this.keystoneStore.geometry,
           proof: {
@@ -1171,12 +1227,30 @@ export class RawEditPresenter {
           ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
           stage,
         })
-        .then((ticked) => (this.closed ? undefined : this.showOnPage(ticked)))
+        .then((ticked) => (this.closed ? undefined : this.showOnPage(ticked, overview)))
         .then(() => landed(), landed);
     });
   }
 
-  private async showOnPage(ticked: Ticked): Promise<void> {
+  private async showOnPage(
+    ticked: Ticked,
+    overview: { width: number; height: number } | null,
+  ): Promise<void> {
+    if (ticked.overview != null && overview != null && this.overviewCanvas != null) {
+      try {
+        await readbackCanvases.show(this.overviewCanvas, {
+          words: wordsOf(ticked.overview),
+          width: overview.width,
+          height: overview.height,
+        });
+        this.showOverview(true);
+      } catch {
+        // Only the fallback under a gesture is lost, which is no reason to fail the editor.
+        this.overviewCanvas = null;
+        this.showOverview(false);
+      }
+      if (this.closed) return;
+    }
     for (const which of ['stage', 'loupe'] as const) {
       const bytes = ticked[which];
       const shown = this.surface.onPage[which];
@@ -1188,13 +1262,17 @@ export class RawEditPresenter {
         else this.loupe.showVideoFrame(mp4);
         continue;
       }
-      const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
       await readbackCanvases.show(shown.canvas, {
-        words,
+        words: wordsOf(bytes),
         width: shown.width,
         height: shown.height,
       });
     }
+  }
+
+  @action.bound
+  private showOverview(shown: boolean): void {
+    this.stage.overviewShown = shown;
   }
 
   @action.bound
@@ -1203,9 +1281,14 @@ export class RawEditPresenter {
   }
 
   @action.bound
-  private drew(mode: 'photo' | 'print'): void {
+  private drew(
+    mode: 'photo' | 'print',
+    region: Region | null,
+    picture: { width: number; height: number },
+  ): void {
     if (this.closed) return;
     this.stage.renderedMode = mode;
+    this.stage.drawn = region == null ? null : { region, picture };
   }
 
   /**
@@ -1269,6 +1352,8 @@ export class RawEditPresenter {
     this.stage.defocus = null;
     this.stage.levels = null;
     this.stage.region = null;
+    this.stage.drawn = null;
+    this.stage.overviewShown = false;
     this.stage.stage = null;
     this.stage.renderedMode = null;
     this.stage.videoFrame = null;
