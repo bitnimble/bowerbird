@@ -38,9 +38,7 @@ pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("planes"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/planes.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::PLANES.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

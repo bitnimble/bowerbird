@@ -10,8 +10,8 @@
 //! noise as the slope and intercept of green's variance against level - so there is no per-body
 //! noise profile to ship and no ISO to trust.
 //!
-//! The kernels are in `slang/galosh/` with every other shader, compiled at build time and
-//! `include_str!`'d out of `OUT_DIR`. This module is the only thing that dispatches them either
+//! The kernels are in `slang/galosh/` with every other shader, compiled by the `shaders` crate.
+//! This module is the only thing that dispatches them either
 //! way: a browser reaches these kernels through the wasm build of it rather than by binding them
 //! itself.
 //!
@@ -373,14 +373,14 @@ impl Galosh {
         }
 
         let device = gpu.describing();
-        let build = |name: &'static str,
-                     body: &str,
+        let build = |shader: shaders::Module,
                      bindings: &[(u32, bool)],
                      constants: &[(&str, f64)]|
          -> Kernel {
+            let name = shader.stem();
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(body.into()),
+                source: wgpu::ShaderSource::Wgsl(shader.source.into()),
             });
             let mut entries: Vec<_> = bindings
                 .iter()
@@ -436,59 +436,54 @@ impl Galosh {
 
         // The entry point and the file are one name in every kernel here, so it is written once.
         macro_rules! kernel {
-            ($name:literal, $bindings:expr) => {
-                kernel!($name, $bindings, &[])
+            ($shader:ident, $bindings:expr) => {
+                kernel!($shader, $bindings, &[])
             };
-            ($name:literal, $bindings:expr, $constants:expr) => {
-                build(
-                    $name,
-                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/galosh/", $name, ".wgsl")),
-                    $bindings,
-                    $constants,
-                )
+            ($shader:ident, $bindings:expr, $constants:expr) => {
+                build(shaders::galosh::$shader, $bindings, $constants)
             };
         }
 
         const R: bool = true;
         const W: bool = false;
         Some(Galosh {
-            ne_block_stats: kernel!("ne_block_stats", &[(0, R), (1, W), (2, W)]),
-            under_black_reduce: kernel!("under_black_reduce", &[(0, R), (1, W)]),
-            ne_finalize: kernel!("ne_finalize", &[(0, R), (1, R), (2, R), (3, W)]),
-            gat_forward_full: kernel!("gat_forward_full", &[(0, R), (1, W), (6, R)]),
-            build_inv_lut: kernel!("build_inv_lut", &[(0, R), (1, W), (2, W), (3, W)]),
-            lut_finalize: kernel!("lut_finalize", &[(0, R), (1, W)]),
-            sigma_per_cfa: kernel!("sigma_per_cfa", &[(0, R), (1, W)]),
-            sigma_per_cfa_merge: kernel!("sigma_per_cfa_merge", &[(0, R), (1, W)]),
-            unified_sigma: kernel!("unified_sigma", &[(0, W)]),
-            normalize_apply: kernel!("normalize_apply", &[(0, W), (5, R)]),
-            irls_seed: kernel!("irls_seed", &[(0, W)]),
-            dark_ref_reduce: kernel!("dark_ref_reduce_mwg", &[(0, R), (1, R), (2, R), (3, W)]),
-            dark_ref_finalize: kernel!("dark_ref_finalize_mwg", &[(0, R), (1, W)]),
-            dark_resid_reduce: kernel!("dark_resid_reduce_mwg", &[(0, R), (1, R), (2, R), (3, W)]),
-            dark_resid_finalize: kernel!("dark_resid_finalize_mwg", &[(0, R), (1, W)]),
-            dark_sub_full: kernel!("dark_sub_full", &[(0, W), (5, R)]),
-            pyr_pack: kernel!("pyr_pack", &[(0, R), (1, W), (2, W), (3, R), (9, R)]),
+            ne_block_stats: kernel!(NE_BLOCK_STATS, &[(0, R), (1, W), (2, W)]),
+            under_black_reduce: kernel!(UNDER_BLACK_REDUCE, &[(0, R), (1, W)]),
+            ne_finalize: kernel!(NE_FINALIZE, &[(0, R), (1, R), (2, R), (3, W)]),
+            gat_forward_full: kernel!(GAT_FORWARD_FULL, &[(0, R), (1, W), (6, R)]),
+            build_inv_lut: kernel!(BUILD_INV_LUT, &[(0, R), (1, W), (2, W), (3, W)]),
+            lut_finalize: kernel!(LUT_FINALIZE, &[(0, R), (1, W)]),
+            sigma_per_cfa: kernel!(SIGMA_PER_CFA, &[(0, R), (1, W)]),
+            sigma_per_cfa_merge: kernel!(SIGMA_PER_CFA_MERGE, &[(0, R), (1, W)]),
+            unified_sigma: kernel!(UNIFIED_SIGMA, &[(0, W)]),
+            normalize_apply: kernel!(NORMALIZE_APPLY, &[(0, W), (5, R)]),
+            irls_seed: kernel!(IRLS_SEED, &[(0, W)]),
+            dark_ref_reduce: kernel!(DARK_REF_REDUCE_MWG, &[(0, R), (1, R), (2, R), (3, W)]),
+            dark_ref_finalize: kernel!(DARK_REF_FINALIZE_MWG, &[(0, R), (1, W)]),
+            dark_resid_reduce: kernel!(DARK_RESID_REDUCE_MWG, &[(0, R), (1, R), (2, R), (3, W)]),
+            dark_resid_finalize: kernel!(DARK_RESID_FINALIZE_MWG, &[(0, R), (1, W)]),
+            dark_sub_full: kernel!(DARK_SUB_FULL, &[(0, W), (5, R)]),
+            pyr_pack: kernel!(PYR_PACK, &[(0, R), (1, W), (2, W), (3, R), (9, R)]),
             pyr_pack_raw: kernel!(
-                "pyr_pack",
+                PYR_PACK,
                 &[(0, R), (1, W), (2, W), (3, R), (9, R)],
                 &[(PYRAMID_FROM_RAW_ID, 1.0)]
             ),
-            pyr_down: kernel!("pyr_down", &[(0, R), (1, W)]),
+            pyr_down: kernel!(PYR_DOWN, &[(0, R), (1, W)]),
             pyr_pilot: kernel!(
-                "pyr_shrink",
+                PYR_SHRINK,
                 &[(0, R), (1, W), (3, R), (4, R), (5, R)],
                 &[(PYRAMID_PILOT_ID, 1.0)]
             ),
-            pyr_shrink: kernel!("pyr_shrink", &[(0, R), (1, W), (3, R), (4, R), (5, R)]),
+            pyr_shrink: kernel!(PYR_SHRINK, &[(0, R), (1, W), (3, R), (4, R), (5, R)]),
             pyr_shrink_own: kernel!(
-                "pyr_shrink",
+                PYR_SHRINK,
                 &[(0, R), (1, W), (3, R), (4, R), (5, R)],
                 &[(PYRAMID_OWN_PILOT_ID, 1.0)]
             ),
-            pyr_fuse: kernel!("pyr_fuse", &[(0, W), (1, R), (2, R)]),
+            pyr_fuse: kernel!(PYR_FUSE, &[(0, W), (1, R), (2, R)]),
             pyr_restore: kernel!(
-                "pyr_restore",
+                PYR_RESTORE,
                 &[
                     (0, R),
                     (1, R),

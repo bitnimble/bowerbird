@@ -73,9 +73,10 @@ Declare each light's domain; ratios use `Stops`.
 
 ## The shaders are Slang
 
-Edit `slang/`, never generated WGSL. `native/rawshim/build.rs` compiles every `.slang` except
-a `module` with `slangc` into `$OUT_DIR/wgsl/<name>.wgsl`; `include_str!` and runtime shader
-tests read there. No generated files are committed; no `wgsl/` source directory exists.
+Edit `slang/`, never generated WGSL. `native/shaders/build.rs` compiles every `.slang` except
+a `module` with `slangc` into `$OUT_DIR/wgsl/<name>.wgsl` and names each as a constant:
+`shaders::FRAME.source`, `shaders::galosh::PYR_PACK`, `shaders::ALL` for tests over every one.
+No generated files are committed; no `wgsl/` source directory exists.
 
 Browser builds cannot access cargo's `$OUT_DIR`. `scripts/build-web-shaders.ts` uses the same
 pinned compiler, emits gitignored `web/src/features/photos/generated/`, imported with `?raw`.

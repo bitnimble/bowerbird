@@ -63,7 +63,7 @@ fn built(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::Kernel {
     crate::hdr_fit::kernel(
         gpu,
         entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_gather.wgsl")),
+        shaders::COMPOSITE_GATHER.source,
         &[
             (0, UNIFORM),
             (1, READ),
@@ -396,7 +396,7 @@ fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::K
     crate::hdr_fit::kernel(
         gpu,
         entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_blend.wgsl")),
+        shaders::COMPOSITE_BLEND.source,
         &[
             (0, UNIFORM),
             (1, READ),

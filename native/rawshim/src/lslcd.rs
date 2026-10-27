@@ -228,9 +228,7 @@ impl Lslcd {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lslcd"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/lslcd.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::LSLCD.source.into()),
         });
 
         let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
@@ -291,11 +289,7 @@ impl Lslcd {
                     // Every stage here runs on a 6x6 period and no other, so `mosaic.slang`'s
                     // modulo is a compile-time one.
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: crate::wgsl_overrides::for_entry(
-                            "lslcd.wgsl",
-                            name,
-                            &xtrans.constants(),
-                        ),
+                        constants: shaders::LSLCD.constants_for(name, &xtrans.constants()),
                         ..Default::default()
                     },
                     cache: None,

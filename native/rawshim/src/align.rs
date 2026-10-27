@@ -151,7 +151,7 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
         crate::hdr_fit::kernel(
             gpu,
             entry,
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/align_luma.wgsl")),
+            shaders::ALIGN_LUMA.source,
             &[(0, UNIFORM), (1, READ), (2, WRITE)],
             &[],
         )
@@ -174,7 +174,7 @@ fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_f
         crate::hdr_fit::kernel(
             gpu,
             entry,
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/align.wgsl")),
+            shaders::ALIGN.source,
             &[
                 (0, UNIFORM),
                 (1, READ),

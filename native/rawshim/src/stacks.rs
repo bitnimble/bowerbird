@@ -249,9 +249,7 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stacks"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/stacks.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::STACKS.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

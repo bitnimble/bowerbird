@@ -34,15 +34,11 @@ impl Pipelines {
     pub(super) fn new(device: &super::dispatch::Device) -> Self {
         let wheel = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("colour wheel"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/colour_wheel.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::COLOUR_WHEEL.source.into()),
         });
         let probe = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("colour probe"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/colour_probe.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::COLOUR_PROBE.source.into()),
         });
         let backdrop_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("colour wheel"),

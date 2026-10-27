@@ -623,7 +623,7 @@ mod tests {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print optical checks"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_probe.wgsl")).into(),
+                shaders::PRINT_PROBE.source.into(),
             ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

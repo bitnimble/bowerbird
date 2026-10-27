@@ -20,7 +20,7 @@ impl Pipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print surface"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_surface.wgsl")).into(),
+                shaders::PRINT_SURFACE.source.into(),
             ),
         });
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

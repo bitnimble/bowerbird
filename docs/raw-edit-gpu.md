@@ -302,7 +302,7 @@ compute pipeline the whole diagnosis is `Compute library failed creation` - no
 constant named, no line number, because nothing on that path sets an `NSError`
 (`Pipeline.mm`; fixed in trunk June 2026, so it will be a Safari floor for a
 while). So a module's constants go only to the entry points
-`wgsl_overrides::READS_OVERRIDES` lists, and `tests/wgsl_overrides.rs` holds that
+`shaders::overrides::READS_OVERRIDES` lists, and `native/shaders/tests/overrides.rs` holds that
 list to what each entry point of the compiled WGSL actually reads - a listed one
 reads every constant its module declares, an unlisted one none - so a shader
 edit that moves a read fails a test rather than every open on Safari. Where a

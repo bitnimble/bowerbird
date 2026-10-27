@@ -321,13 +321,7 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
         "repair" => &[(0, UNIFORM), (1, WRITE), (2, READ), (3, READ), (4, READ)],
         _ => &[(0, UNIFORM), (1, WRITE), (3, READ), (5, WRITE)],
     };
-    crate::hdr_fit::kernel(
-        gpu,
-        entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/repair.wgsl")),
-        bindings,
-        &[],
-    )
+    crate::hdr_fit::kernel(gpu, entry, shaders::REPAIR.source, bindings, &[])
 }
 
 pub(crate) fn repairing(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {

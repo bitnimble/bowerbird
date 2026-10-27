@@ -296,9 +296,7 @@ fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
     });
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("print geometry"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_geometry_probe.wgsl")).into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(shaders::PRINT_GEOMETRY_PROBE.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("print geometry"),

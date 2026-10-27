@@ -76,9 +76,7 @@ impl Find {
         }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dust find"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/dust_find.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::DUST_FIND.source.into()),
         });
 
         let bindings = |bindings: &[(u32, bool)]| {

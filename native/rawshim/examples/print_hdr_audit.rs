@@ -92,7 +92,7 @@ fn main() -> Result<(), String> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("print HDR audit"),
         source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_hdr_audit.wgsl")).into(),
+            shaders::PRINT_HDR_AUDIT.source.into(),
         ),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

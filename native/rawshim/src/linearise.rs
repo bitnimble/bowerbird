@@ -30,9 +30,7 @@ impl Linearise {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("linearise"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/linearise.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::LINEARISE.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

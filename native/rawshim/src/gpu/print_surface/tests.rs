@@ -63,10 +63,7 @@ impl Comparison {
             .describing()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("print comparison"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_surface_compare.wgsl"))
-                        .into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(shaders::PRINT_SURFACE_COMPARE.source.into()),
             });
         let pipeline = gpu
             .describing()

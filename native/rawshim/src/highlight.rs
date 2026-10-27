@@ -32,8 +32,6 @@ pub fn grid(cfa: &crate::cfa::Cfa) -> usize {
     CELL_SITES * site(cfa) << (LEVELS - 1)
 }
 
-const SHADER: &str = "highlight_field.wgsl";
-
 /// What `measure` writes, for `wgsl_layout`, which holds it against the struct the shader declares.
 #[cfg(test)]
 pub(crate) fn params_block() -> usize {
@@ -74,9 +72,7 @@ impl Kernels {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("highlight field"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/highlight_field.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::HIGHLIGHT_FIELD.source.into()),
         });
         let storage = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -117,7 +113,7 @@ impl Kernels {
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: crate::wgsl_overrides::for_entry(SHADER, entry, &cfa.constants()),
+                    constants: shaders::HIGHLIGHT_FIELD.constants_for(entry, &cfa.constants()),
                     ..Default::default()
                 },
                 cache: None,

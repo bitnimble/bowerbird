@@ -39,7 +39,7 @@ fn coarse_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         kernel(
             gpu,
             "composite_coarse",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_coarse.wgsl")),
+            shaders::COMPOSITE_COARSE.source,
             &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)],
             &[],
         )

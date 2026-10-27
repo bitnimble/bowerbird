@@ -188,9 +188,7 @@ pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("illuminant"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/white_balance.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::WHITE_BALANCE.source.into()),
         });
         let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
             binding,

@@ -17,17 +17,6 @@ use rawshim::gpu::dispatch::Whole;
 use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
 use rawshim::lattice::LutAxes;
 
-/// The shaders as the crate was built with them, from where `build.rs` gathered them.
-///
-/// Read rather than vendored, so a change to the shader is a change to this test. A copy
-/// would pass forever against whatever it was copied from.
-fn read_wgsl(name: &str) -> String {
-    let path = std::path::Path::new(env!("OUT_DIR"))
-        .join("wgsl")
-        .join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
 /// A colour model with every stage off its identity, for a uniform shaped like a real match's.
 fn model() -> HdrColour {
     let mut colour = HdrColour::identity();
@@ -220,7 +209,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("peak"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("peak.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PEAK.source.into()),
     });
     // Derived from what `quantile` actually reads, which is the histogram, the peak, the
     // candidates and the uniform. An explicit layout would have to name every binding the
@@ -349,7 +338,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("peak"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("probe_bins.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PROBE_BINS.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("probe_bins"),
@@ -458,7 +447,7 @@ fn the_half_conversion_rounds_alike_on_every_adapter() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("halves"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("probe_halves.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PROBE_HALVES.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("probe_halves"),

@@ -995,9 +995,7 @@ impl Halving {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("supersample"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/supersample.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::SUPERSAMPLE.source.into()),
         });
         let buffer = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
@@ -1396,8 +1394,8 @@ fn lay_out(
 /// `slang/upscale.slang` as WGSL, holding its tensors in `half` or in `float`.
 fn forward_pass(half: bool) -> &'static str {
     match half {
-        true => include_str!(concat!(env!("OUT_DIR"), "/wgsl/upscale_half.wgsl")),
-        false => include_str!(concat!(env!("OUT_DIR"), "/wgsl/upscale.wgsl")),
+        true => shaders::UPSCALE_HALF.source,
+        false => shaders::UPSCALE.source,
     }
 }
 
@@ -1427,15 +1425,12 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, fragment: usize, blocks: &[u16]) -> Optio
     match (gpu.backend, fragment) {
         #[cfg(target_vendor = "apple")]
         (wgpu::Backend::Metal, METAL_FRAGMENT) => {
-            handed.msl = Some(
-                include_str!(concat!(env!("OUT_DIR"), "/passthrough/upscale_coop.metal")).into(),
-            );
+            handed.msl = Some(shaders::passthrough::UPSCALE_COOP_METAL.into());
         }
         (wgpu::Backend::Vulkan, SPIRV_FRAGMENT) => {
-            handed.spirv = Some(wgpu::util::make_spirv_raw(include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/passthrough/upscale_coop.spv"
-            ))));
+            handed.spirv = Some(wgpu::util::make_spirv_raw(
+                shaders::passthrough::UPSCALE_COOP_SPV,
+            ));
         }
         _ => return None,
     }

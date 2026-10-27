@@ -17,7 +17,7 @@
 use crate::gpu::dispatch::{Banded, Whole};
 
 fn source() -> String {
-    include_str!(concat!(env!("OUT_DIR"), "/wgsl/base.wgsl")).to_string()
+    shaders::BASE.source.to_string()
 }
 
 pub struct Base {
@@ -138,9 +138,7 @@ impl Base {
             device.create_banded_pipeline("encode_base", &module, &[&layout], "encode_base", &[]);
         let defringe_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("defringe"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/defringe.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::DEFRINGE.source.into()),
         });
         let defringe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("defringe"),
@@ -165,9 +163,7 @@ impl Base {
 
         let warp_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("warp"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/warp.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::WARP.source.into()),
         });
         let warp_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("warp"),
@@ -190,9 +186,7 @@ impl Base {
 
         let sharpen_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sharpen"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/sharpen.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::SHARPEN.source.into()),
         });
         let sharpen_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sharpen"),
@@ -217,9 +211,7 @@ impl Base {
         // second copy here is the drift the shared file exists to prevent.
         let reduce_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reduce"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/reduce.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::REDUCE.source.into()),
         });
         // A layout per entry point, holding exactly what that entry point reads, which is what the
         // page does and for its reason: one shared layout would have to name `coarser`, and the
@@ -270,9 +262,7 @@ impl Base {
 
         let defocus_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("defocus"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/defocus.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::DEFOCUS.source.into()),
         });
         let defocus_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("defocus"),
@@ -289,9 +279,7 @@ impl Base {
 
         let edge_spread_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("edge_spread"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/edge_spread.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::EDGE_SPREAD.source.into()),
         });
         let edge_spread_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -315,9 +303,7 @@ impl Base {
 
         let chroma_leak_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chroma_leak"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/chroma_leak.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::CHROMA_LEAK.source.into()),
         });
         let chroma_leak_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -341,9 +327,7 @@ impl Base {
 
         let content_light_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("content_light"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/content_light.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::CONTENT_LIGHT.source.into()),
         });
         let content_light_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4219,9 +4203,7 @@ mod tests {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("codes"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/probe_codes.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::PROBE_CODES.source.into()),
         });
         let searched = |entry: &str, table: &[f32], lights: &[f32]| -> Vec<u32> {
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

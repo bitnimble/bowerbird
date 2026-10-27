@@ -707,8 +707,8 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest:
 /// `slang/pmrid.slang` as WGSL, holding its arena in `half` or in `float` ([`Pmrid::cell`]).
 fn forward_pass(half: bool) -> &'static str {
     match half {
-        true => include_str!(concat!(env!("OUT_DIR"), "/wgsl/pmrid_half.wgsl")),
-        false => include_str!(concat!(env!("OUT_DIR"), "/wgsl/pmrid.wgsl")),
+        true => shaders::PMRID_HALF.source,
+        false => shaders::PMRID.source,
     }
 }
 
@@ -733,16 +733,13 @@ fn passthrough(
     match backend {
         #[cfg(target_vendor = "apple")]
         wgpu::Backend::Metal => {
-            handed.msl = Some(
-                include_str!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.metal")).into(),
-            );
+            handed.msl = Some(shaders::passthrough::PMRID_COOP_METAL.into());
             Some((handed, METAL_FRAGMENT))
         }
         wgpu::Backend::Vulkan => {
-            handed.spirv = Some(wgpu::util::make_spirv_raw(include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/passthrough/pmrid_coop.spv"
-            ))));
+            handed.spirv = Some(wgpu::util::make_spirv_raw(
+                shaders::passthrough::PMRID_COOP_SPV,
+            ));
             Some((handed, SPIRV_FRAGMENT))
         }
         _ => None,
@@ -2004,8 +2001,9 @@ mod tests {
             source.contains(&format!("#define FRAGMENT {}", super::SPIRV_FRAGMENT)),
             "the shader's own fragment is not the one the Vulkan artefact is read with",
         );
-        let build = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/build.rs"))
-            .expect("the build script is this crate's");
+        let build =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../shaders/build.rs"))
+                .expect("the shaders crate's build script");
         assert!(
             build.contains(&format!("-DFRAGMENT={}", super::METAL_FRAGMENT)),
             "the Metal artefact is compiled for a fragment this host does not pack for",
@@ -2352,7 +2350,7 @@ mod tests {
             "the WGSL pass without `shader-f16` does not hold its arena in `float`",
         );
         assert!(
-            read("build.rs").contains("-DSTORED=half"),
+            read("../shaders/build.rs").contains("-DSTORED=half"),
             "the WGSL pass with `shader-f16` does not hold its arena in `half`",
         );
         assert!(

@@ -347,7 +347,7 @@ pub(crate) fn copying(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit:
         crate::hdr_fit::kernel(
             gpu,
             "copy_rect",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/copy_rect.wgsl")),
+            shaders::COPY_RECT.source,
             &[(0, UNIFORM), (1, READ), (2, WRITE)],
             &[],
         )

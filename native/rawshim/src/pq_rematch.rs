@@ -12,7 +12,7 @@ fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
         crate::hdr_fit::kernel(
             gpu,
             "rematch_pq",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq_rematch.wgsl")),
+            shaders::PQ_REMATCH.source,
             &[(0, crate::hdr_fit::WRITE), (1, crate::hdr_fit::UNIFORM)],
             &[],
         )

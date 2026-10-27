@@ -143,7 +143,7 @@ public struct UnderBlack {
 public static const int UNDER_BLACK_SUMS = 24;
 
 // Every one of these writes through a parameter, a field at a time: they are called under loops,
-// where Metal drops a call that returns a struct (`tests/wgsl_call_shapes.rs`).
+// where Metal drops a call that returns a struct (`native/shaders/tests/call_shapes.rs`).
 
 int under_black_word(int workgroup, int level)
 {

@@ -257,13 +257,7 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
         ),
     };
     BUILT[index].get(gpu, || {
-        crate::hdr_fit::kernel(
-            gpu,
-            name,
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/merge.wgsl")),
-            bindings,
-            &[],
-        )
+        crate::hdr_fit::kernel(gpu, name, shaders::MERGE.source, bindings, &[])
     })
 }
 

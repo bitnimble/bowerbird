@@ -26,45 +26,6 @@
 
 use naga::{Module, Statement, TypeInner};
 use std::collections::HashSet;
-use std::path::Path;
-
-/// The shaders as the crate was built with them, out of where `build.rs` compiled them.
-fn read_wgsl(name: &str) -> String {
-    let path = Path::new(env!("OUT_DIR")).join("wgsl").join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
-/// Every module the crate builds, which is every file `build.rs` emitted. A stage links what it
-/// imports, so a file is a module on its own and there is nothing to compose.
-fn units() -> Vec<(String, String)> {
-    // Walked rather than listed, at any depth: a stage `build.rs` emits and this did not analyse
-    // would be the one place the rule is not enforced, and nothing would say so.
-    let mut units: Vec<_> = emitted(Path::new(env!("OUT_DIR")).join("wgsl"), "")
-        .into_iter()
-        .map(|at| (at.clone(), read_wgsl(&at)))
-        .collect();
-    units.sort();
-    units
-}
-
-/// Every `.wgsl` under `dir`, by the path it keeps relative to the staged root.
-fn emitted(dir: std::path::PathBuf, under: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
-        let entry = entry.expect("a staged shader");
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let at = match under.is_empty() {
-            true => name.clone(),
-            false => format!("{under}/{name}"),
-        };
-        if entry.path().is_dir() {
-            found.extend(emitted(entry.path(), &at));
-        } else if name.ends_with(".wgsl") {
-            found.push(at);
-        }
-    }
-    found
-}
 
 /// Call edges out of one body, each with whether the call statement sits inside a loop there.
 fn calls(block: &naga::Block, in_loop: bool, out: &mut Vec<(naga::Handle<naga::Function>, bool)>) {
@@ -171,10 +132,13 @@ fn violations(label: &str, module: &Module, out: &mut Vec<String>) {
 #[test]
 fn no_struct_returns_under_a_loop() {
     let mut found = Vec::new();
-    for (label, source) in units() {
-        let module = naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("{label} does not parse: {}", e.emit_to_string(&source)));
-        violations(&label, &module, &mut found);
+    // Every module `build.rs` emitted: a stage links what it imports, so a file is a module on its
+    // own and there is nothing to compose.
+    for shader in shaders::ALL {
+        let (label, source) = (shader.path, shader.source);
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{label} does not parse: {}", e.emit_to_string(source)));
+        violations(label, &module, &mut found);
     }
     assert!(
         found.is_empty(),

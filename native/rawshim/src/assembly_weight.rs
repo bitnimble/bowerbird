@@ -145,13 +145,8 @@ fn built(gpu: &'static Gpu, entry: &str, uses: &'static [u32]) -> Entry {
                 .map(|&at| (at, if at <= 3 { READ } else { WRITE })),
         )
         .collect();
-    let kernel = crate::hdr_fit::kernel(
-        gpu,
-        entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/assembly_weight.wgsl")),
-        &bindings,
-        &[],
-    );
+    let kernel =
+        crate::hdr_fit::kernel(gpu, entry, shaders::ASSEMBLY_WEIGHT.source, &bindings, &[]);
     Entry { kernel, uses }
 }
 

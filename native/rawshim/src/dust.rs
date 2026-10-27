@@ -709,9 +709,7 @@ impl Dust {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dust"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/dust.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::DUST.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

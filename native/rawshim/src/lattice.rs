@@ -726,9 +726,7 @@ impl BakeKernel {
     pub(crate) fn new(device: crate::gpu::Describing<'_>) -> BakeKernel {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lattice_bake"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/lattice_bake.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::LATTICE_BAKE.source.into()),
         });
         let storage = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,

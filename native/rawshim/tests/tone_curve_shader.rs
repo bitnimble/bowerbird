@@ -7,9 +7,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
     let device = gpu.describing();
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tone probe"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/tone_probe.wgsl")).into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(shaders::TONE_PROBE.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,

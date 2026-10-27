@@ -34,7 +34,7 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
     crate::hdr_fit::kernel(
         gpu,
         entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/assembly_levels.wgsl")),
+        shaders::ASSEMBLY_LEVELS.source,
         &[
             (0, UNIFORM),
             (1, READ),

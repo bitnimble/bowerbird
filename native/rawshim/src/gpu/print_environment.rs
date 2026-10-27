@@ -23,10 +23,7 @@ impl Pipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print environment"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(
-                    env!("OUT_DIR"),
-                    "/wgsl/print_environment_build.wgsl"
-                ))
+                shaders::PRINT_ENVIRONMENT_BUILD.source
                 .into(),
             ),
         });

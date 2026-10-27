@@ -64,9 +64,7 @@ impl Rcd {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rcd"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/rcd.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::RCD.source.into()),
         });
 
         let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
@@ -123,11 +121,7 @@ impl Rcd {
                     module: &module,
                     entry_point: Some(name),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: crate::wgsl_overrides::for_entry(
-                            "rcd.wgsl",
-                            name,
-                            &bayer.constants(),
-                        ),
+                        constants: shaders::RCD.constants_for(name, &bayer.constants()),
                         ..Default::default()
                     },
                     cache: None,
@@ -140,9 +134,7 @@ impl Rcd {
         // neither group with the stages above.
         let assemble_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("assemble"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/assemble.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::ASSEMBLE.source.into()),
         });
         // Group 0 is `mosaic.slang`'s and has exactly the shape RCD's own does - the frame's
         // description beside the conditioned mosaic - so the layout is reused rather than declared
@@ -183,11 +175,7 @@ impl Rcd {
                 module: &assemble_module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: crate::wgsl_overrides::for_entry(
-                        "assemble.wgsl",
-                        entry,
-                        &cfa.constants(),
-                    ),
+                    constants: shaders::ASSEMBLE.constants_for(entry, &cfa.constants()),
                     ..Default::default()
                 },
                 cache: None,
@@ -199,7 +187,7 @@ impl Rcd {
                 &assemble_module,
                 groups,
                 entry,
-                crate::wgsl_overrides::for_entry("assemble.wgsl", entry, &cfa.constants()),
+                shaders::ASSEMBLE.constants_for(entry, &cfa.constants()),
             )
         };
         // The only entry points either pattern reaches, so the only ones compiled twice. The two

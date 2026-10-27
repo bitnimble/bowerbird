@@ -5,9 +5,9 @@
 //! this. Two implementations of one picture drift silently (DESIGN 21.1); sharing the source
 //! makes that unexpressible rather than tested-for.
 //!
-//! The shaders are `include_str!`'d out of `OUT_DIR`, which is what the browser's build compiles
-//! too, so the module the page runs and the module this runs are the same bytes. A copy beside
-//! either host would pass every test it had while diverging from what ships.
+//! The shaders are the `shaders` crate's, compiled from the files the browser's build compiles, so
+//! the module the page runs and the module this runs are the same bytes. A copy beside either host
+//! would pass every test it had while diverging from what ships.
 //!
 //! **The device is process-wide and built once.** Adapter enumeration and shader
 //! compilation are tens of milliseconds; a rendition job that paid them per photo would
@@ -46,11 +46,11 @@ const DRAWINGS: [(bool, &str); 6] = [
     (true, "fs_print_flat"),
 ];
 
-const FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl"));
-const PEAK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/peak.wgsl"));
-const DETAIL_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/detail.wgsl"));
-const READBACK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/readback.wgsl"));
-const PQ420_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq420.wgsl"));
+const FRAME_WGSL: &str = shaders::FRAME.source;
+const PEAK_WGSL: &str = shaders::PEAK.source;
+const DETAIL_WGSL: &str = shaders::DETAIL.source;
+const READBACK_WGSL: &str = shaders::READBACK.source;
+const PQ420_WGSL: &str = shaders::PQ420.source;
 
 /// Where `pq420.slang`'s `pack_pq420` writes each plane of a `width` by `height` frame, in words of
 /// two samples: luma rows a block of four pixels wide and padded to an even count, then the two
@@ -199,10 +199,10 @@ pub struct DetailSize {
 
 /// The frame's coding undone, and nothing of `colour` because it binds the same table
 /// read-only.
-const DECODE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/decode.wgsl"));
+const DECODE_WGSL: &str = shaders::DECODE.source;
 
-const MEAN_FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/mean_frame.wgsl"));
-const CHROMA_SMOOTH_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/chroma_smooth.wgsl"));
+const MEAN_FRAME_WGSL: &str = shaders::MEAN_FRAME.source;
+const CHROMA_SMOOTH_WGSL: &str = shaders::CHROMA_SMOOTH.source;
 
 /// How many texels the chroma-smoothing pass's blur reaches, held against `chroma_smooth.slang`.
 const CHROMA_BLUR_REACH: u32 = 4;
@@ -244,7 +244,7 @@ pub fn chroma_smooth_reach(
 }
 
 /// The reader's temperature and tint solved into one matrix, and the camera match's into another.
-const BALANCE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/white_balance.wgsl"));
+const BALANCE_WGSL: &str = shaders::WHITE_BALANCE.source;
 
 /// Floats that pass writes: two matrices of three rows of four, the fourth of each unread.
 const BALANCE_FLOATS: u64 = 24;
@@ -1348,7 +1348,7 @@ impl Gpu {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("print albedo"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into(),
+                    shaders::PRINT_ALBEDO.source.into(),
                 ),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1379,7 +1379,7 @@ impl Gpu {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("print lamp"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl"))
+                    shaders::PRINT_LIGHT_CALIBRATE.source
                         .into(),
                 ),
             });
@@ -1535,8 +1535,7 @@ impl Gpu {
                         module: &self.frame_module,
                         entry_point: Some(entry),
                         compilation_options: wgpu::PipelineCompilationOptions {
-                            constants: crate::wgsl_overrides::for_entry(
-                                "frame.wgsl",
+                            constants: shaders::FRAME.constants_for(
                                 entry,
                                 &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
                             ),
@@ -6167,11 +6166,11 @@ mod tests {
     /// The WGSL of every shader that imports `px`, read here rather than through `gpu.rs`'s own
     /// consts: most of these are built by the module that dispatches them, and this test is about
     /// the emitted text rather than about any pipeline.
-    const SHARPEN_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/sharpen.wgsl"));
-    const DUST_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dust.wgsl"));
-    const DUST_FIND_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dust_find.wgsl"));
+    const SHARPEN_WGSL: &str = shaders::SHARPEN.source;
+    const DUST_WGSL: &str = shaders::DUST.source;
+    const DUST_FIND_WGSL: &str = shaders::DUST_FIND.source;
     const COMPOSITE_FEATURES_WGSL: &str =
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_features.wgsl"));
+        shaders::COMPOSITE_FEATURES.source;
 
     /// `px.slang`'s spaces are a compile-time argument and reach no buffer a host binds.
     ///
@@ -7595,7 +7594,7 @@ mod tests {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("probe_xy"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/probe_xy.wgsl")).into(),
+                shaders::PROBE_XY.source.into(),
             ),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -7770,7 +7769,7 @@ mod tests {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("probe_geometry"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/probe_geometry.wgsl")).into(),
+                shaders::PROBE_GEOMETRY.source.into(),
             ),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

@@ -279,9 +279,7 @@ pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fit_grids"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_grids.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::FIT_GRIDS.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

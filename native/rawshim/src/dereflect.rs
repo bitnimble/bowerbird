@@ -10,8 +10,8 @@ use crate::gpu::{Buffer, Gpu};
 use crate::resident::Resident;
 use units::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 
-const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect.wgsl"));
-const WGSL_HALF: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect_half.wgsl"));
+const WGSL: &str = shaders::DEREFLECT.source;
+const WGSL_HALF: &str = shaders::DEREFLECT_HALF.source;
 
 /// What the device holds the weights and every tensor in. Arithmetic is `float` either way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -879,9 +879,7 @@ fn frame_kernels(gpu: &'static Gpu) -> &'static FrameKernels {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dereflect_frame"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect_frame.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::DEREFLECT_FRAME.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,

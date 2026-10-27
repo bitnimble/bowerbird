@@ -1195,9 +1195,7 @@ pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fit_model"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_model.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shaders::FIT_MODEL.source.into()),
         });
         let entry = |binding: u32, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry {
             binding,
@@ -1428,7 +1426,7 @@ pub(crate) fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         kernel(
             gpu,
             "fit_gather",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_gather.wgsl")),
+            shaders::FIT_GATHER.source,
             &[(0, READ), (1, READ), (2, READ), (3, WRITE), (20, UNIFORM)],
             &[],
         )
@@ -3374,7 +3372,7 @@ const LANE_MOST_SEARCH: isize = 4;
 pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
     static BUILT: crate::gpu::Cache<Searching> = crate::gpu::Cache::new();
     BUILT.get(gpu, || {
-        const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/correspond.wgsl"));
+        const WGSL: &str = shaders::CORRESPOND.source;
         const BINDINGS: &[(u32, wgpu::BufferBindingType)] = &[
             (0, READ),
             (1, READ),
@@ -3403,7 +3401,7 @@ pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
     })
 }
 
-const SHAPING_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_warp.wgsl"));
+const SHAPING_WGSL: &str = shaders::FIT_WARP.source;
 const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
@@ -3443,7 +3441,7 @@ pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel 
         kernel(
             gpu,
             "fit_register",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_register.wgsl")),
+            shaders::FIT_REGISTER.source,
             &[
                 (0, READ),
                 (1, READ),
@@ -3464,7 +3462,7 @@ pub(crate) fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         kernel(
             gpu,
             "patch_stats",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/patch_stats.wgsl")),
+            shaders::PATCH_STATS.source,
             &[(0, READ), (1, WRITE), (20, UNIFORM)],
             &[],
         )
@@ -6007,7 +6005,7 @@ fn balance_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         kernel(
             gpu,
             "fit_balance",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_balance.wgsl")),
+            shaders::FIT_BALANCE.source,
             &[
                 (0, UNIFORM),
                 (5, READ),

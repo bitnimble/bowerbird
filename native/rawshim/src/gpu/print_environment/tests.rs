@@ -61,13 +61,7 @@ fn measured(gpu: &Gpu, environment: Environment) -> (Vec<f32>, u32) {
     });
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("print environment measure"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(
-                env!("OUT_DIR"),
-                "/wgsl/print_environment_probe.wgsl"
-            ))
-            .into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(shaders::PRINT_ENVIRONMENT_PROBE.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("print environment measure"),

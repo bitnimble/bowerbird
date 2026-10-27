@@ -251,7 +251,6 @@ pub mod wasm;
 /// What a uniform block is, according to the shader that reads it.
 #[cfg(test)]
 mod wgsl_layout;
-pub mod wgsl_overrides;
 pub mod white_balance;
 
 /// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links

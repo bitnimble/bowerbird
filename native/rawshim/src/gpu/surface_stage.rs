@@ -8,7 +8,7 @@ use crate::hdr_fit;
 use units::light::{DisplayNits, Gain, Light};
 use units::px::{At, Canvas, Extent, Output, Place, Rect, Size, Span};
 
-const STAGE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/stage.wgsl"));
+const STAGE_WGSL: &str = shaders::STAGE.source;
 
 /// `ink` in `web/src/ui/tokens.stylex.ts`, what the page shows around the stage.
 const INK: [u8; 3] = [0x14, 0x16, 0x1a];
@@ -256,11 +256,7 @@ pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
             module,
             entry_point: Some("planar"),
             compilation_options: wgpu::PipelineCompilationOptions {
-                constants: crate::wgsl_overrides::for_entry(
-                    "stage.wgsl",
-                    "planar",
-                    &[(SCRGB_WHITE_ID, white.raw())],
-                ),
+                constants: shaders::STAGE.constants_for("planar", &[(SCRGB_WHITE_ID, white.raw())]),
                 ..Default::default()
             },
             targets: &[Some(CANVAS_FORMAT.into())],
