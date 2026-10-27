@@ -160,6 +160,7 @@ fn the_page_imports_the_entry_points_this_declares() {
             "pageDevice",
             "buildEveryPipeline",
             "recentSubmissions",
+            "splitBands",
             "holdRaw",
             "heifView",
             "holdPlanes",

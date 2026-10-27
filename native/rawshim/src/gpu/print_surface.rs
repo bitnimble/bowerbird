@@ -16,7 +16,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(super) fn new(device: &super::dispatch::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print surface"),
             source: wgpu::ShaderSource::Wgsl(
@@ -255,9 +255,8 @@ impl Uploaded<'_> {
                 },
             ],
         });
-        let mut pass = recording
-            .encoder()
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
+        recording.draw(
+            &wgpu::RenderPassDescriptor {
                 label: Some("print surface"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
@@ -269,11 +268,14 @@ impl Uploaded<'_> {
                     },
                 })],
                 ..Default::default()
-            });
-        pass.set_pipeline(if pq { &pipelines.pq } else { &pipelines.draw });
-        pass.set_bind_group(0, &group, &[]);
-        pass.set_bind_group(1, &scene_group, &[]);
-        pass.draw(0..3, 0..1);
+            },
+            |pass| {
+                pass.set_pipeline(if pq { &pipelines.pq } else { &pipelines.draw });
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_bind_group(1, &scene_group, &[]);
+                pass.draw(0..3, 0..1);
+            },
+        );
     }
 
     fn print_pigment(
@@ -429,22 +431,19 @@ impl Uploaded<'_> {
                 },
             ],
         });
-        {
-            let mut pass = recording
-                .encoder()
-                .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("print lighting"),
-                    ..Default::default()
-                });
-            pass.set_pipeline(&self.gpu.print_surface().field);
-            pass.set_bind_group(0, &group, &[]);
-            pass.set_bind_group(1, scene_group, &[]);
-            pass.dispatch_workgroups(
+        recording.dispatch(
+            [
                 extent.width.div_ceil(8),
                 extent.height.div_ceil(8),
                 extent.depth_or_array_layers,
-            );
-        }
+            ],
+            super::dispatch::Whole::Measured,
+            |pass| {
+                pass.set_pipeline(&self.gpu.print_surface().field);
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_bind_group(1, scene_group, &[]);
+            },
+        );
         cached.lighting = Some((key, texture.clone()));
         texture
     }

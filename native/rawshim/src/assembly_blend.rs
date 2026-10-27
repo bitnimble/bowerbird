@@ -6,6 +6,7 @@
 //! `CompositeRequest::mask` asks the gather for.
 
 use crate::composite_tile::Layer;
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
 use crate::px::{Composite, Rect};
 use crate::resident::Resident;
@@ -154,14 +155,11 @@ impl Banding {
         recording.holding(layer.rgb.buffer());
         recording.holding(&layer.weight);
         recording.holding(&self.lowpass[slot]);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(self.pixels);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(self.pixels);
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
+        });
         self.added += 1;
         // Dropped before the next source is decoded, as `Blending::add` does: the submission holds
         // what it reads, so the handle going here is the allocation coming back.
@@ -184,14 +182,11 @@ impl Banding {
             self.out.buffer().as_entire_binding(),
         );
         recording.holding(self.out.buffer());
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
+        });
         drop(recording);
         self.out
     }

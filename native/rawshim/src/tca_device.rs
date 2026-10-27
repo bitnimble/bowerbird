@@ -6,6 +6,8 @@
 //! row of the reduce, three channel sums and the one word saying how many point sources the scan
 //! found - never the picture, in either direction.
 
+use crate::gpu::dispatch::Whole;
+
 /// Stepped positions one workgroup of the scan takes.
 ///
 /// Wide, because a block is a workgroup and a dispatch holds at most 65535.
@@ -293,21 +295,22 @@ impl Frame {
             contents: &self.block(ask),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.group(&push), &[]);
-            pass.dispatch_workgroups((threads as u32).div_ceil(64).max(1), 1, 1);
-        }
+        let group = self.group(&push);
+        recording.dispatch(
+            [(threads as u32).div_ceil(64).max(1), 1, 1],
+            Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &group, &[]);
+            },
+        );
         let out = held(
             self.gpu,
             "tca splits out",
             words,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.splits, 0, &out, 0, (words * 4) as u64);
+        recording.copy_buffer_to_buffer(&self.splits, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         read_floats(self.gpu, &out).await
     }
@@ -433,12 +436,15 @@ impl Frame {
             contents: &self.block(&ask),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernels(self.gpu).slopes);
-            pass.set_bind_group(0, &self.group(&push), &[]);
-            pass.dispatch_workgroups((walked as u32).div_ceil(64).max(1), 1, 1);
-        }
+        let group = self.group(&push);
+        recording.dispatch(
+            [(walked as u32).div_ceil(64).max(1), 1, 1],
+            Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(&kernels(self.gpu).slopes);
+                pass.set_bind_group(0, &group, &[]);
+            },
+        );
         let count = walked.max(1) * ROW_WORDS;
         let out = held(
             self.gpu,
@@ -446,9 +452,7 @@ impl Frame {
             count,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.rows, 0, &out, 0, (count * 4) as u64);
+        recording.copy_buffer_to_buffer(&self.rows, 0, &out, 0, (count * 4) as u64);
         recording.submit();
         let read = read_floats(self.gpu, &out).await?;
 
@@ -480,22 +484,23 @@ impl Frame {
             contents: &self.block(&Ask::plain()),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        recording.encoder().clear_buffer(&self.tally, 0, None);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernels(self.gpu).gains);
-            pass.set_bind_group(0, &self.group(&push), &[]);
-            pass.dispatch_workgroups((sampled as u32).div_ceil(64).max(1), 1, 1);
-        }
+        recording.clear_buffer(&self.tally, 0, None);
+        let group = self.group(&push);
+        recording.dispatch(
+            [(sampled as u32).div_ceil(64).max(1), 1, 1],
+            Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(&kernels(self.gpu).gains);
+                pass.set_bind_group(0, &group, &[]);
+            },
+        );
         let out = held(
             self.gpu,
             "tca tally out",
             3,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.tally, 0, &out, 0, 12);
+        recording.copy_buffer_to_buffer(&self.tally, 0, &out, 0, 12);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         let sums = [f64::from(read[0]), f64::from(read[1]), f64::from(read[2])];
@@ -595,22 +600,22 @@ pub(crate) async fn frame(
     let group = frame.group(&push);
     let built = kernels(gpu);
     if out_width > 0 && out_height > 0 {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&built.reduce);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
+        let over_reduce = [
             (out_width as u32).div_ceil(16),
             (out_height as u32).div_ceil(16),
             1,
-        );
+        ];
+        recording.dispatch(over_reduce, Whole::Fixed, |pass| {
+            pass.set_pipeline(&built.reduce);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
-    // A pass each: the scan reads what the count wrote.
     let over_blocks = blocks as u32;
     for (pipeline, groups) in [(&built.count, over_blocks), (&built.offsets, 1)] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(groups, 1, 1);
+        recording.dispatch([groups, 1, 1], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
     // The total alone, which is the only word of the counts the host wants: the offsets are read
     // by `tca_write` where they are, and the buffer is a word a block.
@@ -620,9 +625,7 @@ pub(crate) async fn frame(
         1,
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&frame.counts, (blocks * 4) as u64, &out, 0, 4);
+    recording.copy_buffer_to_buffer(&frame.counts, (blocks * 4) as u64, &out, 0, 4);
     recording.submit();
     frame.points = read_words(gpu, &out).await?[0] as usize;
 
@@ -633,12 +636,11 @@ pub(crate) async fn frame(
         contents: &frame.block(&ask),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let group = frame.group(&push);
+    recording.dispatch([over_blocks, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.write);
-        pass.set_bind_group(0, &frame.group(&push), &[]);
-        pass.dispatch_workgroups(over_blocks, 1, 1);
-    }
+        pass.set_bind_group(0, &group, &[]);
+    });
     recording.submit();
     Some(frame)
 }

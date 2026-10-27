@@ -17,6 +17,7 @@ import init, {
   pageDevice,
   recentSubmissions,
   renderRendition,
+  splitBands,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
 import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environments';
@@ -40,6 +41,7 @@ import {
 import {
   AnswerSchema,
   CompilingSchema,
+  LostSchema,
   MessageSchema,
   ProgressSchema,
   StartMessageSchema,
@@ -82,12 +84,15 @@ void device.then((opened) =>
     lost = info.message;
     // A closing open keeps no stage once the device is gone, so nothing would wake these.
     stages.abandon();
+    const submitted = recentSubmissions();
     gpuLog.error('the GPU was reset', {
       reason: info.reason,
       message: info.message,
       asking: [...asking.values()],
-      submitted: recentSubmissions(),
+      submitted,
     });
+    if (info.reason !== 'destroyed')
+      worker.postMessage(LostSchema.parse({ lost: info.message, submitted }));
   }),
 );
 
@@ -135,7 +140,9 @@ async function openDevice(): Promise<GPUDevice | null> {
   const adapter = await navigator.gpu?.requestAdapter();
   if (adapter == null) return null;
   gpuLog.info('drawing on', adapterName(adapter));
-  return (pageDevice() as Promise<GPUDevice | null>).catch(() => null);
+  const opened = await (pageDevice() as Promise<GPUDevice | null>).catch(() => null);
+  if (opened != null) splitBands((await started.promise).splitBands);
+  return opened;
 }
 
 type Report = (stage: string) => void;

@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 
+use crate::gpu::dispatch::Whole;
+
 /// Their calibration's anchor, from `run_benchmark.py`: `K(1600)` and `Sigma(1600)` of the
 /// polynomials fitted to the sensor PMRID was trained on.
 const ANCHOR_K: f64 = 0.0005995267 * 1600.0 + 0.00868861;
@@ -1189,17 +1191,11 @@ async fn tallied(
     // A slice each rather than one running sum: a tile's photosites fill an `int` to about half.
     for (slice, tile) in edges.iter().enumerate() {
         let mut recording = gpu.record();
-        recording.encoder().clear_buffer(&held.tally, 0, None);
+        recording.clear_buffer(&held.tally, 0, None);
         recording.submit();
         held.run(gpu, pmrid, tile, plane, Step::Tally);
         let mut recording = gpu.record();
-        recording.encoder().copy_buffer_to_buffer(
-            &held.tally,
-            0,
-            &readback,
-            slice as u64 * words,
-            words,
-        );
+        recording.copy_buffer_to_buffer(&held.tally, 0, &readback, slice as u64 * words, words);
         recording.submit();
     }
     crate::gpu::read_back(gpu, &readback, |bytes| {
@@ -1638,142 +1634,156 @@ impl Session {
         recording.holding(&self.edges);
         recording.holding(&self.tally);
         recording.holding(&pmrid.weights);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            let sites = ((pw as u32).div_ceil(WIDE), (ph as u32).div_ceil(TALL));
+        let sites = ((pw as u32).div_ceil(WIDE), (ph as u32).div_ceil(TALL));
+        recording.dispatch([sites.0, sites.1, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&pmrid.pipelines[SOW]);
             pass.set_bind_group(0, &self.groups[0], &[]);
-            pass.dispatch_workgroups(sites.0, sites.1, 1);
+        });
 
-            for (at, layer) in net.layers.iter().enumerate() {
-                let output = net.tensors[layer.output];
-                let input = net.tensors[layer.input];
-                // A depthwise taken together with its 1x1 is that layer's dispatch.
-                let taken = matches!(self.matrices.get(at + 1), Some(Some(Matrix::Separable(_))));
-                if taken || self.separable.get(at + 1) == Some(&true) {
-                    continue;
-                }
-                if let Some(matrix) = self.matrices[at] {
-                    let coop = pmrid
-                        .coop
-                        .as_ref()
-                        .expect("a matrix means the kernels are built");
-                    let group = self
-                        .coop_group
-                        .as_ref()
-                        .expect("and a group to dispatch them in");
-                    let (width, height) = (pw >> output.level, ph >> output.level);
-                    let mut shape = Shape {
-                        rows: output.channels as u32,
-                        columns: (width * height) as u32,
-                        depth: input.channels as u32,
-                        weights_at: coop.weights_at[at] as u32,
-                        plane_at: self.at[layer.input] as u32,
-                        into_at: self.at[layer.output] as u32,
-                        skip_at: self.at[layer.skip] as u32,
-                        bias_at: layer.bias_at as u32,
-                        after: u32::from(layer.relu) | (u32::from(layer.fused) << 1),
-                        ..Default::default()
-                    };
-                    let (pipeline, (across, down), rows) = match matrix {
-                        Matrix::Separable(rows) => {
-                            let spread = &net.layers[at - 1];
-                            let before = net.tensors[spread.input];
-                            shape.plane_at = self.at[spread.input] as u32;
-                            shape.in_width = (pw >> before.level) as u32;
-                            shape.in_height = (ph >> before.level) as u32;
-                            shape.out_width = width as u32;
-                            shape.kernel = spread.kernel as u32;
-                            shape.stride = spread.stride as u32;
-                            shape.spread_at = spread.weights_at as u32;
-                            let tiles = (
-                                width.div_ceil(SEPARABLE_WIDE),
-                                height.div_ceil(SEPARABLE_TALL),
-                            );
-                            (&coop.separable[rows], tiles, rows)
-                        }
-                        Matrix::Pointwise(rows) => (
-                            &coop.pointwise[rows],
+        for (at, layer) in net.layers.iter().enumerate() {
+            let output = net.tensors[layer.output];
+            let input = net.tensors[layer.input];
+            // A depthwise taken together with its 1x1 is that layer's dispatch.
+            let taken = matches!(self.matrices.get(at + 1), Some(Some(Matrix::Separable(_))));
+            if taken || self.separable.get(at + 1) == Some(&true) {
+                continue;
+            }
+            if let Some(matrix) = self.matrices[at] {
+                let coop = pmrid
+                    .coop
+                    .as_ref()
+                    .expect("a matrix means the kernels are built");
+                let group = self
+                    .coop_group
+                    .as_ref()
+                    .expect("and a group to dispatch them in");
+                let (width, height) = (pw >> output.level, ph >> output.level);
+                let mut shape = Shape {
+                    rows: output.channels as u32,
+                    columns: (width * height) as u32,
+                    depth: input.channels as u32,
+                    weights_at: coop.weights_at[at] as u32,
+                    plane_at: self.at[layer.input] as u32,
+                    into_at: self.at[layer.output] as u32,
+                    skip_at: self.at[layer.skip] as u32,
+                    bias_at: layer.bias_at as u32,
+                    after: u32::from(layer.relu) | (u32::from(layer.fused) << 1),
+                    ..Default::default()
+                };
+                let (pipeline, (across, down), rows) = match matrix {
+                    Matrix::Separable(rows) => {
+                        let spread = &net.layers[at - 1];
+                        let before = net.tensors[spread.input];
+                        shape.plane_at = self.at[spread.input] as u32;
+                        shape.in_width = (pw >> before.level) as u32;
+                        shape.in_height = (ph >> before.level) as u32;
+                        shape.out_width = width as u32;
+                        shape.kernel = spread.kernel as u32;
+                        shape.stride = spread.stride as u32;
+                        shape.spread_at = spread.weights_at as u32;
+                        let tiles = (
+                            width.div_ceil(SEPARABLE_WIDE),
+                            height.div_ceil(SEPARABLE_TALL),
+                        );
+                        (&coop.separable[rows], tiles, rows)
+                    }
+                    Matrix::Pointwise(rows) => (
+                        &coop.pointwise[rows],
+                        (width * height / POINTWISE_PIXELS, 1),
+                        rows,
+                    ),
+                    Matrix::Upsample(rows) => {
+                        let (width, height) = (pw >> input.level, ph >> input.level);
+                        shape.rows = output.channels as u32 * 4;
+                        shape.columns = (width * height) as u32;
+                        shape.in_width = width as u32;
+                        shape.in_height = height as u32;
+                        (
+                            &coop.upsample[rows],
                             (width * height / POINTWISE_PIXELS, 1),
                             rows,
-                        ),
-                        Matrix::Upsample(rows) => {
-                            let (width, height) = (pw >> input.level, ph >> input.level);
-                            shape.rows = output.channels as u32 * 4;
-                            shape.columns = (width * height) as u32;
-                            shape.in_width = width as u32;
-                            shape.in_height = height as u32;
-                            (
-                                &coop.upsample[rows],
-                                (width * height / POINTWISE_PIXELS, 1),
-                                rows,
-                            )
-                        }
-                    };
-                    pass.set_bind_group(0, group, &[]);
-                    pass.set_pipeline(pipeline);
-                    pass.set_immediates(0, bytemuck::bytes_of(&shape));
-                    pass.dispatch_workgroups(
+                        )
+                    }
+                };
+                recording.dispatch(
+                    [
                         across as u32,
                         shape.rows / COOP_ROWS[rows] as u32,
                         down as u32,
-                    );
-                    continue;
-                }
-                pass.set_bind_group(0, &self.groups[at], &[]);
-                // A 1x1 convolution is a matrix multiply over the whole plane at once, so it is
-                // dispatched over pixels and channels rather than over the picture's own shape.
-                if self.tiles[at] != usize::MAX {
-                    let (pipeline, rows, columns) = TILES[self.tiles[at]];
-                    let (width, height) = (pw >> output.level, ph >> output.level);
-                    let wide = tile_wide(columns);
-                    let (pipeline, across, down) = match self.separable[at] {
-                        true => (
-                            SEPARABLE + self.tiles[at],
-                            width.div_ceil(wide),
-                            height.div_ceil(columns / wide),
-                        ),
-                        false => (pipeline, (width * height).div_ceil(columns), 1),
-                    };
-                    pass.set_pipeline(&pmrid.pipelines[pipeline]);
-                    pass.dispatch_workgroups(
+                    ],
+                    Whole::Measured,
+                    |pass| {
+                        pass.set_bind_group(0, group, &[]);
+                        pass.set_pipeline(pipeline);
+                        pass.set_immediates(0, bytemuck::bytes_of(&shape));
+                    },
+                );
+                continue;
+            }
+            // A 1x1 convolution is a matrix multiply over the whole plane at once, so it is
+            // dispatched over pixels and channels rather than over the picture's own shape.
+            if self.tiles[at] != usize::MAX {
+                let (pipeline, rows, columns) = TILES[self.tiles[at]];
+                let (width, height) = (pw >> output.level, ph >> output.level);
+                let wide = tile_wide(columns);
+                let (pipeline, across, down) = match self.separable[at] {
+                    true => (
+                        SEPARABLE + self.tiles[at],
+                        width.div_ceil(wide),
+                        height.div_ceil(columns / wide),
+                    ),
+                    false => (pipeline, (width * height).div_ceil(columns), 1),
+                };
+                recording.dispatch(
+                    [
                         across as u32,
                         output.channels.div_ceil(rows) as u32,
                         down as u32,
-                    );
-                    continue;
-                }
-                pass.set_pipeline(match layer.op {
-                    Op::Dense => &pmrid.pipelines[spatial(layer, net)],
-                    Op::Depthwise => &pmrid.pipelines[DEPTHWISE],
-                    Op::Upsample => &pmrid.pipelines[UPSAMPLE],
-                    Op::Add => &pmrid.pipelines[ADD],
-                });
-                // `spatial` carries every output channel a thread and `upsample` the 2x2 one input
-                // pixel becomes, so each is dispatched over less than the output it writes.
-                let (across, down) = match layer.op {
-                    Op::Upsample => (pw >> input.level, ph >> input.level),
-                    _ => (pw >> output.level, ph >> output.level),
-                };
-                let depth = match layer.op {
-                    Op::Dense => 1,
-                    _ => output.channels,
-                };
-                pass.dispatch_workgroups(
+                    ],
+                    Whole::Measured,
+                    |pass| {
+                        pass.set_bind_group(0, &self.groups[at], &[]);
+                        pass.set_pipeline(&pmrid.pipelines[pipeline]);
+                    },
+                );
+                continue;
+            }
+            // `spatial` carries every output channel a thread and `upsample` the 2x2 one input
+            // pixel becomes, so each is dispatched over less than the output it writes.
+            let (across, down) = match layer.op {
+                Op::Upsample => (pw >> input.level, ph >> input.level),
+                _ => (pw >> output.level, ph >> output.level),
+            };
+            let depth = match layer.op {
+                Op::Dense => 1,
+                _ => output.channels,
+            };
+            recording.dispatch(
+                [
                     (across as u32).div_ceil(WIDE),
                     (down as u32).div_ceil(TALL),
                     depth as u32,
-                );
-            }
+                ],
+                Whole::Measured,
+                |pass| {
+                    pass.set_bind_group(0, &self.groups[at], &[]);
+                    pass.set_pipeline(match layer.op {
+                        Op::Dense => &pmrid.pipelines[spatial(layer, net)],
+                        Op::Depthwise => &pmrid.pipelines[DEPTHWISE],
+                        Op::Upsample => &pmrid.pipelines[UPSAMPLE],
+                        Op::Add => &pmrid.pipelines[ADD],
+                    });
+                },
+            );
+        }
 
+        recording.dispatch([sites.0, sites.1, 1], Whole::Measured, |pass| {
             pass.set_pipeline(match step {
                 Step::Tally => &pmrid.pipelines[TALLY],
                 Step::Reap => &pmrid.pipelines[REAP],
             });
             pass.set_bind_group(0, &self.groups[0], &[]);
-            pass.dispatch_workgroups(sites.0, sites.1, 1);
-        }
-        recording.submit();
+        });
     }
 }
 

@@ -17,6 +17,7 @@
 //! Its own module rather than more of `demosaic.rs` because the denoise sits between the two, and
 //! than more of `base.rs` because that one's frame is the demosaiced one.
 
+use crate::gpu::dispatch::Whole;
 use rayon::prelude::*;
 
 pub struct Condition {
@@ -146,7 +147,7 @@ impl Mosaic {
     pub fn duplicate(&self, gpu: &crate::gpu::Gpu) -> Mosaic {
         let copy = Mosaic::plane(gpu, self.width, self.height);
         let mut recording = gpu.record();
-        recording.encoder().copy_buffer_to_buffer(
+        recording.copy_buffer_to_buffer(
             &self.buffer,
             0,
             &copy.buffer,
@@ -240,13 +241,11 @@ impl Mosaic {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(width * height);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernels.copy_rect);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(width * height);
-            pass.dispatch_workgroups(x, y, 1);
-        }
+        });
         recording.submit();
     }
 
@@ -282,7 +281,7 @@ impl Mosaic {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_buffer_to_buffer(
+        recording.copy_buffer_to_buffer(
             &self.buffer,
             (top * self.width * 4) as u64,
             &readback,
@@ -465,13 +464,11 @@ pub fn normalise(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (x, y) = crate::base::groups(count);
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernels.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = crate::base::groups(count);
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
     recording.submit();
 
     // Every handle on the samples and the curve, then the poll that retires them. The recording

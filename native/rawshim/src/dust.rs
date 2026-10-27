@@ -24,6 +24,7 @@
 //! knob: it is what confines the answer to the regions where the answer is trustworthy, and the
 //! correction is only sound where it has passed.
 
+use crate::gpu::dispatch::Whole;
 use crate::px::{Extent, Millimetre};
 
 /// Profile samples per spot, spanning [`SPAN`] elliptical radii. Matched in `dust.slang`.
@@ -891,12 +892,10 @@ pub fn correct(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([spots.len() as u32, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernels.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(spots.len() as u32, 1, 1);
-    }
+    });
     recording.submit();
 }
 

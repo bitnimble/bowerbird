@@ -683,16 +683,16 @@ mod tests {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &probes_group, &[]);
-            pass.set_bind_group(1, &scene_group, &[]);
-            pass.dispatch_workgroups(probes.len() as u32, 1, 1);
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
+        recording.dispatch(
+            [probes.len() as u32, 1, 1],
+            crate::gpu::dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &probes_group, &[]);
+                pass.set_bind_group(1, &scene_group, &[]);
+            },
+        );
+        recording.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         recording.submit();
         pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
             bytes
@@ -725,9 +725,7 @@ mod tests {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&calibration, 0, &readback, 0, 8);
+        recording.copy_buffer_to_buffer(&calibration, 0, &readback, 0, 8);
         recording.submit();
         pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
             std::array::from_fn(|i| {

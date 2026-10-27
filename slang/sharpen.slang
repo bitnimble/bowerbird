@@ -11,6 +11,7 @@
 // apply pass translates each pixel's chroma differences to the new luma unchanged. The host
 // drives one iteration as four dispatches (blur H, blur V + ratio, blur H, blur V + multiply)
 // over ping-pong planes; the iteration count is the host's `image::DECONVOLVE_ITERATIONS`.
+import band;
 import lanes;
 import light;
 import packed;
@@ -140,8 +141,9 @@ float3 axis_taps(uint pixel, uint axis)
 /// Luma into a plane of its own, and the estimate's floor.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_luma(uint3 id : SV_DispatchThreadID)
+void sharpen_luma(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let p = wide<Drawn>(at) * 3;
@@ -154,8 +156,9 @@ void sharpen_luma(uint3 id : SV_DispatchThreadID)
 /// First half of `blurred = G (x) estimate`.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_spread(uint3 id : SV_DispatchThreadID)
+void sharpen_spread(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let taps = row_taps(at % params.width, at / params.width);
@@ -168,8 +171,9 @@ void sharpen_spread(uint3 id : SV_DispatchThreadID)
 /// Second half of the blur, and the RL ratio against it in the same breath.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_ratio(uint3 id : SV_DispatchThreadID)
+void sharpen_ratio(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let taps = column_taps(at % params.width, at / params.width);
@@ -183,8 +187,9 @@ void sharpen_ratio(uint3 id : SV_DispatchThreadID)
 /// First half of the correction blur, over the ratio.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_gather(uint3 id : SV_DispatchThreadID)
+void sharpen_gather(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let taps = row_taps(at % params.width, at / params.width);
@@ -208,8 +213,9 @@ void sharpen_gather(uint3 id : SV_DispatchThreadID)
 /// where this is exact.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_correct(uint3 id : SV_DispatchThreadID)
+void sharpen_correct(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let taps = column_taps(at % params.width, at / params.width);
@@ -225,8 +231,9 @@ void sharpen_correct(uint3 id : SV_DispatchThreadID)
 /// rather than the whole window.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_range(uint3 id : SV_DispatchThreadID)
+void sharpen_range(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let taps = row_taps(at % params.width, at / params.width);
@@ -336,8 +343,9 @@ float3 sharpened(uint pixel)
 /// else, where one pixel's three would share its last word with a neighbour and race on it.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void sharpen_apply(uint3 id : SV_DispatchThreadID)
+void sharpen_apply(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let pair = linear(id);
     let pixels = params.width * params.height;
     let first = pair * 2;

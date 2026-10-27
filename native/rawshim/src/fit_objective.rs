@@ -2,8 +2,10 @@
 //!
 //! `slang/fit_objective.slang` is the arithmetic over pixels: the gate that makes a pair, the bins
 //! the curve is fitted from, and the residual the held-out half scores. What is left here is the
-//! batching: every candidate of a scan in one submit, as `fit_score::Scoring` does for the colour
+//! batching: every candidate of a scan in one round trip, as `fit_score::Scoring` does for the colour
 //! objective.
+
+use crate::gpu::dispatch::Whole;
 
 /// Pixels one thread of the gate walks.
 ///
@@ -333,7 +335,7 @@ impl Paired {
 
     /// Each candidate's mean residual over the half its curve was not fitted from.
     ///
-    /// **Bins, curve and score in one submit.** Split so the host draws the curve in the middle,
+    /// **Bins, curve and score in one round trip.** Split so the host draws the curve in the middle,
     /// the refine's fifty sequential steps pay three round trips each and the whole search comes
     /// out half again slower (`test:bench`, `measure` +51%).
     ///
@@ -350,7 +352,7 @@ impl Paired {
     }
 
     /// [`Self::scored`] on the training half, of `source` through each of `lenses`, warped in the
-    /// same submit into planes this keeps.
+    /// same round trip into planes this keeps.
     pub(crate) async fn scored_through(
         &self,
         source: &crate::gpu::Buffer,
@@ -401,7 +403,7 @@ impl Paired {
         let plane_bytes = (self.pixels * 3 * 4) as u64;
         for (slot, plane) in warped.iter().enumerate() {
             recording.holding(plane);
-            recording.encoder().copy_buffer_to_buffer(
+            recording.copy_buffer_to_buffer(
                 plane,
                 0,
                 &self.stacked,
@@ -411,7 +413,7 @@ impl Paired {
         }
         // Cleared rather than allocated afresh: a falloff asks three rounds of this about one pair
         // list, and every slot in both folds is added into.
-        recording.encoder().clear_buffer(&self.tallies, 0, None);
+        recording.clear_buffer(&self.tallies, 0, None);
         let push = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("fit_objective push"),
             contents: &block(self, gain.is_some(), fitted),
@@ -427,7 +429,6 @@ impl Paired {
         let candidates = self.candidates as u32;
         let groups = self.blocks.div_ceil(GROUP) as u32;
         assert!(groups <= 65535, "{groups} groups overrun a dispatch");
-        // A pass each, and every one of them reads what the pass before it wrote.
         for (pipeline, across, down) in [
             (&built.count, over_blocks, candidates),
             (&built.group, groups, candidates),
@@ -437,10 +438,10 @@ impl Paired {
             (&built.curve, candidates, 1),
             (&built.score, over_pairs, candidates),
         ] {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(across, down, 1);
+            recording.dispatch([across, down, 1], Whole::Fixed, |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &group, &[]);
+            });
         }
         let words = self.candidates * SCORE_WORDS;
         let out = held(
@@ -449,9 +450,7 @@ impl Paired {
             words,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.tallies, 0, &out, 0, (words * 4) as u64);
+        recording.copy_buffer_to_buffer(&self.tallies, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         Some(
@@ -483,9 +482,7 @@ impl Paired {
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
         let from = (candidate * LEVELS * 4) as u64;
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.curves, from, &out, 0, (LEVELS * 4) as u64);
+        recording.copy_buffer_to_buffer(&self.curves, from, &out, 0, (LEVELS * 4) as u64);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         Some(std::array::from_fn(|level| read[level] as u8))
@@ -530,25 +527,18 @@ impl Paired {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let gain = self.idle.clone();
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let group = self.group(&push, &gain);
+        recording.dispatch([(blocks as u32).div_ceil(64), 1, 1], Whole::Fixed, |pass| {
             pass.set_pipeline(&kernels(self.gpu).falloff);
-            pass.set_bind_group(0, &self.group(&push, &gain), &[]);
-            pass.dispatch_workgroups((blocks as u32).div_ceil(64), 1, 1);
-        }
+            pass.set_bind_group(0, &group, &[]);
+        });
         let out = held(
             self.gpu,
             "fit objective falloff out",
             words,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording.encoder().copy_buffer_to_buffer(
-            &self.falloff_bins,
-            0,
-            &out,
-            0,
-            (words * 4) as u64,
-        );
+        recording.copy_buffer_to_buffer(&self.falloff_bins, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         let read = crate::gpu::read_back(self.gpu, &out, |mapped| {
             mapped

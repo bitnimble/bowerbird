@@ -52,7 +52,7 @@ fn main() {
             .map(|_| {
                 let began = std::time::Instant::now();
                 let mut round = gpu.record();
-                round.encoder();
+                round.clear_buffer(&scratch, 0, Some(4));
                 round.submit();
                 began.elapsed().as_secs_f64() * 1000.0
             })
@@ -64,7 +64,7 @@ fn main() {
             .map(|_| {
                 let began = std::time::Instant::now();
                 let mut round = gpu.record();
-                round.encoder();
+                round.clear_buffer(&scratch, 0, Some(4));
                 round.submit();
                 pollster::block_on(rawshim::gpu::finished(gpu));
                 began.elapsed().as_secs_f64() * 1000.0
@@ -77,9 +77,7 @@ fn main() {
             .map(|_| {
                 let began = std::time::Instant::now();
                 let mut round = gpu.record();
-                round
-                    .encoder()
-                    .copy_buffer_to_buffer(&scratch, 0, &staging, 0, 256);
+                round.copy_buffer_to_buffer(&scratch, 0, &staging, 0, 256);
                 round.submit();
                 pollster::block_on(rawshim::gpu::read_back(gpu, &staging, |bytes| bytes.len()));
                 began.elapsed().as_secs_f64() * 1000.0

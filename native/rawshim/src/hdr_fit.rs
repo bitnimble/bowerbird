@@ -8,6 +8,7 @@
 // curve extrapolable, which is what lets the camera's rendering stop at diffuse white and
 // BT.2390 take over above it (10.7.1).
 
+use crate::gpu::dispatch::{Banded, Whole};
 use crate::lattice::{ChromaMap, LutAxes};
 use crate::light::Light;
 use crate::parallel::*;
@@ -1170,9 +1171,7 @@ impl Evaluated {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.buffer, 0, &staging, 0, bytes);
+        recording.copy_buffer_to_buffer(&self.buffer, 0, &staging, 0, bytes);
         recording.submit();
         crate::gpu::read_back(gpu, &staging, |mapped| {
             mapped
@@ -1401,13 +1400,11 @@ pub fn evaluate_over(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (across, down) = crate::base::groups(count);
+    recording.dispatch([across, down, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (across, down) = crate::base::groups(count);
-        pass.dispatch_workgroups(across, down, 1);
-    }
+    });
     recording.submit();
     Evaluated {
         buffer: output,
@@ -1528,12 +1525,10 @@ fn gathered(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([(count as u32).div_ceil(64), 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
-    }
+    });
     recording.submit();
     samples
 }
@@ -2102,9 +2097,7 @@ impl Judges {
         let parts = populations.map(|(own, n, target, balance)| {
             recording.holding(&own);
             let (at, bytes) = ((from * 16) as u64, (n * 16) as u64);
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(&own, 0, &samples, at, bytes);
+            recording.copy_buffer_to_buffer(&own, 0, &samples, at, bytes);
             from += n;
             (
                 from - n,
@@ -2641,9 +2634,7 @@ impl Rescored {
             let mut recording = gpu.record();
             recording.holding(evaluated);
             let (at, bytes) = ((from * 16) as u64, (count * 16) as u64);
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(evaluated, at, &self.below, 0, bytes);
+            recording.copy_buffer_to_buffer(evaluated, at, &self.below, 0, bytes);
             recording.submit();
         }
         &self.scoring
@@ -3299,23 +3290,7 @@ pub fn kernel(
         label: Some(name),
         source: wgpu::ShaderSource::Wgsl(wgsl.into()),
     });
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
-        .iter()
-        .map(|(binding, ty)| wgpu::BindGroupLayoutEntry {
-            binding: *binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: *ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        })
-        .collect();
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some(name),
-        entries: &entries,
-    });
+    let layout = kernel_layout(gpu, name, bindings);
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(name),
         bind_group_layouts: &[Some(&layout)],
@@ -3337,6 +3312,31 @@ pub fn kernel(
     }
 }
 
+fn kernel_layout(
+    gpu: &'static crate::gpu::Gpu,
+    name: &str,
+    bindings: &[(u32, wgpu::BufferBindingType)],
+) -> wgpu::BindGroupLayout {
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
+        .iter()
+        .map(|(binding, ty)| wgpu::BindGroupLayoutEntry {
+            binding: *binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: *ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        })
+        .collect();
+    gpu.describing()
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(name),
+            entries: &entries,
+        })
+}
+
 pub(crate) const READ: wgpu::BufferBindingType =
     wgpu::BufferBindingType::Storage { read_only: true };
 pub(crate) const WRITE: wgpu::BufferBindingType =
@@ -3348,20 +3348,21 @@ pub(crate) const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uni
 /// One layout, so a bind group made for either fits both, and the caller picks the pipeline off
 /// whether the plane it is searching into carries its statistics.
 pub struct Searching {
-    tabulated: Kernel,
-    inline: Kernel,
+    layout: wgpu::BindGroupLayout,
+    tabulated: Banded,
+    inline: Banded,
     /// `correspond_lanes`, a workgroup a point, for a reach its workgroup holds.
-    lanes_tabulated: Kernel,
-    lanes_inline: Kernel,
+    lanes_tabulated: Banded,
+    lanes_inline: Banded,
 }
 
 impl Searching {
-    fn pipeline(&self, tabulated: bool, lanes: bool) -> &wgpu::ComputePipeline {
+    fn pipeline(&self, tabulated: bool, lanes: bool) -> &Banded {
         match (tabulated, lanes) {
-            (true, false) => &self.tabulated.pipeline,
-            (false, false) => &self.inline.pipeline,
-            (true, true) => &self.lanes_tabulated.pipeline,
-            (false, true) => &self.lanes_inline.pipeline,
+            (true, false) => &self.tabulated,
+            (false, false) => &self.inline,
+            (true, true) => &self.lanes_tabulated,
+            (false, true) => &self.lanes_inline,
         }
     }
 }
@@ -3383,11 +3384,21 @@ pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
             (5, READ),
             (20, UNIFORM),
         ];
+        let device = gpu.describing();
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("correspond"),
+            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
+        });
+        let layout = kernel_layout(gpu, "correspond", BINDINGS);
+        let banded = |entry: &str, tabulated: f64| {
+            device.create_banded_pipeline(entry, &module, &[&layout], entry, &[("0", tabulated)])
+        };
         Searching {
-            tabulated: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 1.0)]),
-            inline: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 0.0)]),
-            lanes_tabulated: kernel(gpu, "correspond_lanes", WGSL, BINDINGS, &[("0", 1.0)]),
-            lanes_inline: kernel(gpu, "correspond_lanes", WGSL, BINDINGS, &[("0", 0.0)]),
+            tabulated: banded("correspond", 1.0),
+            inline: banded("correspond", 0.0),
+            lanes_tabulated: banded("correspond_lanes", 1.0),
+            lanes_inline: banded("correspond_lanes", 0.0),
+            layout,
         }
     })
 }
@@ -3522,9 +3533,7 @@ fn staged(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(plane, 0, &staging, 0, bytes);
+    recording.copy_buffer_to_buffer(plane, 0, &staging, 0, bytes);
     staging
 }
 
@@ -3737,14 +3746,17 @@ impl Shaping {
         }
     }
 
-    fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>) {
-        pass.set_pipeline(self.pipeline);
-        pass.set_bind_group(0, &self.group, &[]);
-        pass.dispatch_workgroups(
+    #[track_caller]
+    fn dispatch(&self, recording: &mut crate::gpu::Recording<'_>, whole: Whole) {
+        let groups = [
             (self.width as u32).div_ceil(16),
             (self.height as u32).div_ceil(16),
             1,
-        );
+        ];
+        recording.dispatch(groups, whole, |pass| {
+            pass.set_pipeline(self.pipeline);
+            pass.set_bind_group(0, &self.group, &[]);
+        });
     }
 }
 
@@ -3763,17 +3775,9 @@ pub struct DevicePlane {
     pub(crate) height: usize,
 }
 
-/// A plane's patch statistics, and the block the pass that wrote them read its size from.
-///
-/// The uniform is held rather than released at the end of `tabulate`, because the pass is encoded
-/// there and submitted by the caller: a buffer destroyed between those two is a buffer the bind
-/// group still points at when the queue reaches it.
+/// A plane's patch statistics.
 struct Tabulated {
     buffer: crate::gpu::Buffer,
-    /// Held for its count: the bind group the pass was recorded with points at it, and the last
-    /// handle dropping destroys it.
-    #[expect(dead_code)]
-    push: crate::gpu::Buffer,
 }
 
 impl DevicePlane {
@@ -3866,25 +3870,24 @@ impl DevicePlane {
             (width, height),
             Shape::Luma,
         );
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            reducing.dispatch(&mut pass);
-            taking.dispatch(&mut pass);
-        }
+        reducing.dispatch(&mut recording, Whole::Fixed);
+        taking.dispatch(&mut recording, Whole::Fixed);
         recording.submit();
         plane
     }
 
     /// The plane carrying the statistics of every window a search will read. `reach` has to be the
     /// one that search will use, since the statistics are of its window and no other.
+    #[track_caller]
     pub(crate) fn tabulated(mut self, gpu: &'static crate::gpu::Gpu, reach: Reach) -> DevicePlane {
         let mut recording = gpu.record();
-        self.tabulate(gpu, recording.encoder(), reach);
+        self.tabulate(gpu, &mut recording, reach);
         recording.submit();
         self
     }
 
     /// The luma of an f32 RGB `source` on the device, written by the pass this records.
+    #[track_caller]
     fn luma_of(
         gpu: &'static crate::gpu::Gpu,
         recording: &mut crate::gpu::Recording<'_>,
@@ -3902,21 +3905,16 @@ impl DevicePlane {
             (width, height),
             Shape::Luma,
         );
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        shaping.dispatch(&mut pass);
-        drop(pass);
+        shaping.dispatch(recording, Whole::Fixed);
         plane
     }
 
     /// Work every patch statistic out up front, for a plane a dense search will read.
-    ///
-    /// Encoded rather than submitted, so a caller can put it in front of the search that reads it -
-    /// which is the whole point, since a submit of its own would cost the round trip the batch
-    /// exists to avoid.
+    #[track_caller]
     fn tabulate(
         &mut self,
         gpu: &'static crate::gpu::Gpu,
-        encoder: &mut wgpu::CommandEncoder,
+        recording: &mut crate::gpu::Recording<'_>,
         reach: Reach,
     ) {
         let buffer = gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -3956,17 +3954,16 @@ impl DevicePlane {
                 },
             ],
         });
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
+        let groups = [
+            (self.width as u32).div_ceil(16),
+            (self.height as u32).div_ceil(16),
+            1,
+        ];
+        recording.dispatch(groups, Whole::Fixed, |pass| {
             pass.set_pipeline(&kernels.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(
-                (self.width as u32).div_ceil(16),
-                (self.height as u32).div_ceil(16),
-                1,
-            );
-        }
-        self.stats = Some(Tabulated { buffer, push });
+        });
+        self.stats = Some(Tabulated { buffer });
     }
 }
 
@@ -4035,10 +4032,7 @@ fn corresponded_grid_about(
         Reach::NARROW,
         false,
     );
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        asking.dispatch(gpu, &mut pass);
-    }
+    asking.dispatch(gpu, &mut recording);
     recording.submit();
     asking
 }
@@ -4132,11 +4126,8 @@ pub async fn corresponded_about(
         refine,
         reach,
     );
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        asking.dispatch(gpu, &mut pass);
-    }
-    asking.copy(recording.encoder());
+    asking.dispatch(gpu, &mut recording);
+    asking.copy(&mut recording);
     recording.submit();
     asking.read(gpu).await
 }
@@ -4146,29 +4137,21 @@ const CORRESPOND_GROUP: u32 = 64;
 
 /// Threads the correspondence search puts along x, the rest going to y.
 ///
-/// **A dense search does not fit in one dimension.** It is a thread per pixel of the camera's
-/// plane, and a dispatch dimension holds 65535 workgroups - so a plane past about 4.2M pixels is
-/// a validation error, which `gpu::build` promotes to a panic, so `fit_hdr_for` fails and the
-/// frame ships with its own colour rather than the camera's. Measured over 43 frames of two real
-/// libraries, 8 of them were losing their match to this.
-///
-/// Below the limit this is every point, so `y` is one group and the dispatch is what it always
-/// was. `correspond.slang` reconstructs the index as `id.y * span + id.x` and must agree.
-///
-/// Split evenly rather than filling x first: at 66084 groups, packing x to the limit dispatches
-/// 65535 by 2 and half of the second row launches only to fail the bounds test, where an even
-/// 33042 by 2 is the same coverage with nothing spare.
+/// Rows are narrow so [`crate::gpu::Recording::banded`] can split the search finely, and widen
+/// only where there would be more than a dimension's 65535 workgroups of them.
+/// `correspond.slang` reconstructs the index as `id.y * span + id.x` and must agree.
 ///
 /// `per_group` is the points a workgroup takes: `CORRESPOND_GROUP` for `correspond`, one for
 /// `correspond_lanes`.
 fn dispatch_span(points: usize, per_group: usize) -> usize {
     const LIMIT: usize = 65535;
-    let groups = (points.div_ceil(per_group)).max(1);
-    groups.div_ceil(groups.div_ceil(LIMIT)) * per_group
+    const ROW_GROUPS: usize = 256;
+    let groups = points.div_ceil(per_group).max(1);
+    groups.min(ROW_GROUPS.max(groups.div_ceil(LIMIT))) * per_group
 }
 
-/// One correspondence dispatch's own buffers, so a caller can put it in an encoder beside whatever
-/// else it wanted submitted - the settle builds the plane it searches in the same submit.
+/// One correspondence dispatch's own buffers, so a caller can record it beside whatever else it
+/// wanted done in the same round trip - the settle builds the plane it searches there too.
 struct Asking {
     pub(crate) found: crate::gpu::Buffer,
     staging: crate::gpu::Buffer,
@@ -4274,7 +4257,7 @@ impl Asking {
         let their_stats = theirs.stats.as_ref().map_or(&filler, |stats| &stats.buffer);
         let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("correspond"),
-            layout: &search_device(gpu).tabulated.layout,
+            layout: &search_device(gpu).layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -4318,17 +4301,26 @@ impl Asking {
         }
     }
 
-    fn dispatch(&self, gpu: &'static crate::gpu::Gpu, pass: &mut wgpu::ComputePass<'_>) {
-        pass.set_pipeline(search_device(gpu).pipeline(self.tabulated, self.lanes));
-        pass.set_bind_group(0, &self.group, &[]);
+    #[track_caller]
+    fn dispatch(&self, gpu: &'static crate::gpu::Gpu, recording: &mut crate::gpu::Recording<'_>) {
         let taken = per_group(self.lanes);
         let across = (dispatch_span(self.points, taken) / taken) as u32;
         let groups = self.points.div_ceil(taken).max(1) as u32;
-        pass.dispatch_workgroups(across, groups.div_ceil(across), 1);
+        recording.banded(
+            search_device(gpu).pipeline(self.tabulated, self.lanes),
+            [across, groups.div_ceil(across), 1],
+            |pass| pass.set_bind_group(0, &self.group, &[]),
+        );
     }
 
-    fn copy(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(&self.found, 0, &self.staging, 0, (self.points * 16) as u64);
+    fn copy(&self, recording: &mut crate::gpu::Recording<'_>) {
+        recording.copy_buffer_to_buffer(
+            &self.found,
+            0,
+            &self.staging,
+            0,
+            (self.points * 16) as u64,
+        );
     }
 
     async fn read(&self, gpu: &'static crate::gpu::Gpu) -> Option<Vec<Option<Found>>> {
@@ -4469,9 +4461,7 @@ fn sampled_at_found(
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(from, 0, &out, 0, bytes);
+        recording.copy_buffer_to_buffer(from, 0, &out, 0, bytes);
         out
     };
     let mine = carried(&mut recording, blurred[0]);
@@ -4542,12 +4532,11 @@ fn sampled_at_found(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let over_plane = [(width as u32).div_ceil(16), (height as u32).div_ceil(16), 1];
+    recording.dispatch(over_plane, Whole::Fixed, |pass| {
         pass.set_pipeline(&built.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
-    }
+    });
     recording.submit();
     (mine, camera)
 }
@@ -5995,13 +5984,11 @@ fn rebalanced(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (across, down) = crate::base::groups(pixels);
+    recording.dispatch([across, down, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (across, down) = crate::base::groups(pixels);
-        pass.dispatch_workgroups(across, down, 1);
-    }
+    });
     recording.submit();
     Source {
         buffer: lit,
@@ -6110,11 +6097,8 @@ pub async fn preview_planes(
             },
         ),
     ];
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        for shaping in &boxes {
-            shaping.dispatch(&mut pass);
-        }
+    for shaping in &boxes {
+        shaping.dispatch(&mut recording, Whole::Measured);
     }
     recording.submit();
     // Both stay where they were written. The colour fit reads the linearised one and the geometry
@@ -6320,7 +6304,7 @@ struct FitPlanes {
 ///
 /// `source` is the render at its own size, unwarped and unnormalised; `scale` is what puts it in
 /// multiples of diffuse white and rides the warp. The lens is applied here because the pairs only
-/// correspond through it. One submit builds every plane: the render warped through the lens, both
+/// correspond through it. One round trip builds every plane: the render warped through the lens, both
 /// sides' luma for the search, and both sides box-averaged to the fit grid, prefiltered and with
 /// the lens's falloff already in ours.
 async fn prepared_planes(
@@ -6389,11 +6373,8 @@ async fn prepared_planes(
             },
         ),
     ];
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        for shaping in &shapings {
-            shaping.dispatch(&mut pass);
-        }
+    for shaping in &shapings {
+        shaping.dispatch(&mut recording, Whole::Fixed);
     }
     let prefiltered = |recording: &mut crate::gpu::Recording<'_>, plane: &crate::gpu::Buffer| {
         let held = crate::fit::Sampled {
@@ -6408,7 +6389,7 @@ async fn prepared_planes(
     let jpeg_blurred = prefiltered(&mut recording, &jpeg_out);
     let ours = DevicePlane::luma_of(gpu, &mut recording, &warped, wide, tall);
     let mut theirs = DevicePlane::luma_of(gpu, &mut recording, &camera, camera_wide, camera_tall);
-    theirs.tabulate(gpu, recording.encoder(), Reach::NARROW);
+    theirs.tabulate(gpu, &mut recording, Reach::NARROW);
     recording.submit();
     lap("device planes");
 
@@ -6494,7 +6475,7 @@ pub fn levelled_source(
 }
 
 /// `source` through each of `lenses` onto a `width` by `height` grid, one plane per lens, left
-/// where they were written. One submit for all of them: the geometry search scores every candidate
+/// where they were written. One round trip for all of them: the geometry search scores every candidate
 /// of a scan at once, and a round trip per candidate was most of what it cost.
 ///
 /// The planes stay on the device because the objective that reads them is
@@ -6527,7 +6508,7 @@ pub(crate) fn warped_planes(
     planes
 }
 
-/// [`warped_planes`], recorded into planes the caller holds rather than submitted on its own.
+/// [`warped_planes`], recorded into planes the caller holds, in the caller's recording.
 pub(crate) fn warped_into(
     gpu: &'static crate::gpu::Gpu,
     recording: &mut crate::gpu::Recording<'_>,
@@ -6557,9 +6538,8 @@ pub(crate) fn warped_into(
             )
         })
         .collect();
-    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
     for shaping in &shapings {
-        shaping.dispatch(&mut pass);
+        shaping.dispatch(recording, Whole::Fixed);
     }
 }
 
@@ -6682,8 +6662,8 @@ impl Settling {
 /// The lens is applied here, since the two pictures only correspond through it. None where no bin
 /// had enough to match on.
 ///
-/// **One submit, and nothing per-pixel on the host.** The warp writes the plane the search reads, so
-/// the two go into one encoder and the round trip is paid once: what crosses back is six thousand
+/// **One round trip, and nothing per-pixel on the host.** The warp writes the plane the search reads,
+/// so the two are recorded together and waited on once: what crosses back is six thousand
 /// answers, not the plane they were found in.
 pub async fn registration(
     gpu: &'static crate::gpu::Gpu,
@@ -6727,12 +6707,9 @@ pub async fn registration(
         -1,
         Reach::NARROW,
     );
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        warping.dispatch(&mut pass);
-        asking.dispatch(gpu, &mut pass);
-    }
-    asking.copy(recording.encoder());
+    warping.dispatch(&mut recording, Whole::Fixed);
+    asking.dispatch(gpu, &mut recording);
+    asking.copy(&mut recording);
     recording.submit();
     let searched = asking.read(gpu).await?;
 
@@ -8341,11 +8318,8 @@ mod tests {
                 Reach::NARROW,
                 lanes,
             );
-            {
-                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-                asking.dispatch(gpu, &mut pass);
-            }
-            asking.copy(recording.encoder());
+            asking.dispatch(gpu, &mut recording);
+            asking.copy(&mut recording);
             recording.submit();
             pollster::block_on(asking.read(gpu))
                 .expect("the device searches")
@@ -9776,16 +9750,5 @@ mod tests {
         // Neither half is one end of the list, which is what the stride is for.
         assert!(judged.at[0] < HOLDOUT_EVERY);
         assert!(*judged.at.last().unwrap() >= 1000 - HOLDOUT_EVERY);
-    }
-
-    #[test]
-    fn the_correspondence_dispatch_is_unchanged_below_the_limit() {
-        // One row, so `id.y * span + id.x` is `id.x` and the geometry is what it always was.
-        let points: usize = 3_300_000;
-        let groups = points.div_ceil(CORRESPOND_GROUP as usize);
-        assert_eq!(
-            dispatch_span(points, CORRESPOND_GROUP as usize),
-            groups * CORRESPOND_GROUP as usize
-        );
     }
 }

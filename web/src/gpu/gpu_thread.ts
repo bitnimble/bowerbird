@@ -4,6 +4,7 @@ import { serveFiles } from '../app/local_setting';
 import { pageLog } from '../features/logs/page_log';
 import { onMobileDevice } from '../api/transport';
 import { MessageSchema, ReplySchema, StartMessageSchema, type Addressed } from './gpu_protocol';
+import { GpuLosses } from './gpu_losses';
 
 /**
  * The app's GPU, on a thread of its own: one worker for the life of the page, holding the wasm
@@ -31,10 +32,16 @@ export class GpuThread {
   private opened = 0;
   private compiling: { compiled: number; of: number } | null = null;
   private readonly compilingListeners = new Set<(compiled: number, of: number) => void>();
+  private readonly losses = new GpuLosses(() => sessionStorage);
 
   constructor() {
     this.worker.onmessage = (event: MessageEvent<unknown>) => {
       const answer = ReplySchema.parse(event.data);
+      if ('lost' in answer) {
+        // A wasm call into a lost device can trap mid-write, so nothing short of a new page is sound.
+        if (this.losses.record(answer.submitted, Date.now())) window.location.reload();
+        return;
+      }
       if (!('id' in answer)) {
         this.compiling = answer;
         for (const listener of this.compilingListeners) listener(answer.compiled, answer.of);
@@ -62,6 +69,7 @@ export class GpuThread {
         to: 'start',
         port: files.port2,
         compilesSparingly: onMobileDevice(),
+        splitBands: this.losses.sites(),
       }),
       [files.port2],
     );

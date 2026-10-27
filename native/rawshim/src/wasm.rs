@@ -51,6 +51,17 @@ pub fn recent_submissions() -> Vec<String> {
     crate::gpu::device().map_or_else(Vec::new, |gpu| gpu.queue.recent_submissions())
 }
 
+/// Cuts the bands dispatched from each of `sites`, as [`recent_submissions`] names them, smaller:
+/// a device this page had before was lost after a submission from there.
+#[wasm_bindgen(js_name = splitBands)]
+pub fn split_bands(sites: Vec<String>) {
+    if let Some(gpu) = crate::gpu::device() {
+        for at in &sites {
+            gpu.split_bands(at);
+        }
+    }
+}
+
 /// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.
 ///
 /// **The frame below the denoise is a function of the amounts; everything above it is not.** The
@@ -1634,7 +1645,6 @@ impl HeldRaw {
             let mut held = self.held_tiles.borrow_mut();
             let mut recording = gpu.record();
             {
-                let encoder = recording.encoder();
                 for patch in held.iter_mut() {
                     if patch.level != level {
                         continue;
@@ -1654,7 +1664,7 @@ impl HeldRaw {
                         patch.size.0,
                         patch.size.1,
                     ) {
-                        encoder.copy_buffer_to_buffer(
+                        recording.copy_buffer_to_buffer(
                             patch.rgb.buffer(),
                             from,
                             frame.buffer(),
@@ -1754,23 +1764,14 @@ impl HeldRaw {
                 }
                 let rgb = crate::resident::Resident::empty(gpu, size.0, size.1);
                 let mut recording = gpu.record();
-                {
-                    let encoder = recording.encoder();
-                    for (to, from, bytes) in crate::resident::runs(
-                        header.width,
-                        at.0 - origin.0,
-                        at.1 - origin.1,
-                        size.0,
-                        size.1,
-                    ) {
-                        encoder.copy_buffer_to_buffer(
-                            whole.buffer(),
-                            from,
-                            rgb.buffer(),
-                            to,
-                            bytes,
-                        );
-                    }
+                for (to, from, bytes) in crate::resident::runs(
+                    header.width,
+                    at.0 - origin.0,
+                    at.1 - origin.1,
+                    size.0,
+                    size.1,
+                ) {
+                    recording.copy_buffer_to_buffer(whole.buffer(), from, rgb.buffer(), to, bytes);
                 }
                 recording.submit();
                 // Replaced rather than doubled: a re-prepare at new mosaic settings sends the same
@@ -2688,9 +2689,7 @@ impl UpscaleTrial {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.into, 0, &staging, 0, self.into.size());
+        recording.copy_buffer_to_buffer(&self.into, 0, &staging, 0, self.into.size());
         recording.submit();
         crate::gpu::read_back(gpu, &staging, |bytes| {
             bytemuck::cast_slice::<u8, f32>(bytes).to_vec()

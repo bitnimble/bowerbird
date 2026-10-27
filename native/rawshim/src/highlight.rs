@@ -5,6 +5,7 @@
 //! starting on `grid`; anything smaller is a different field.
 
 use crate::gpu::Gpu;
+use crate::gpu::dispatch::Whole;
 use crate::px::{At, Sensor, Span};
 
 const CELL_SITES: usize = 4;
@@ -297,19 +298,18 @@ pub fn measure(
                 },
             ],
         });
-        let mut pass = recording
-            .encoder()
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("highlight field"),
-                timestamp_writes: None,
-            });
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &shape_group, &[]);
-        pass.set_bind_group(1, &group, &[]);
-        pass.dispatch_workgroups(
-            (over.0 as u32).div_ceil(8).max(1),
-            (over.1 as u32).div_ceil(8).max(1),
-            1,
+        recording.dispatch(
+            [
+                (over.0 as u32).div_ceil(8).max(1),
+                (over.1 as u32).div_ceil(8).max(1),
+                1,
+            ],
+            Whole::Measured,
+            |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &shape_group, &[]);
+                pass.set_bind_group(1, &group, &[]);
+            },
         );
     };
     let seed = match cfa.is_bayer() {

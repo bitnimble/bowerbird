@@ -10,6 +10,7 @@
 //! re-prepares a photograph a band at a time, a loupe asks for tile after tile of one open, and a
 //! rendition job asks for every size in turn. Each of those is this pass over a rectangle.
 
+use crate::gpu::dispatch::Whole;
 use crate::px::{At, Photograph, Rect, Size};
 
 pub struct Linearise {
@@ -550,13 +551,11 @@ impl Picture {
                     },
                 ],
             });
-            {
-                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            let (x, y) = crate::base::groups(words.1 - words.0);
+            recording.dispatch([x, y, 1], Whole::Measured, |pass| {
                 pass.set_pipeline(&kernels.pipeline);
                 pass.set_bind_group(0, &group, &[]);
-                let (x, y) = crate::base::groups(words.1 - words.0);
-                pass.dispatch_workgroups(x, y, 1);
-            }
+            });
             recording.submit();
         }
         Some(out)

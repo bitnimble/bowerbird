@@ -16,6 +16,7 @@
 //! perceptual hash survives none of it well enough to be worth a threshold; see
 //! the design document for the measurements that settled this shape.
 
+use crate::gpu::dispatch::Whole;
 use crate::image::LUMA;
 use crate::rgb::RgbRef;
 
@@ -362,15 +363,15 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_bind_group(0, &group, &[]);
-        pass.set_pipeline(&built.cells);
-        pass.dispatch_workgroups(GRID as u32, GRID as u32, VIEWS.len() as u32);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&sums, 0, &out, 0, sums_bytes);
+    recording.dispatch(
+        [GRID as u32, GRID as u32, VIEWS.len() as u32],
+        Whole::Measured,
+        |pass| {
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&built.cells);
+        },
+    );
+    recording.copy_buffer_to_buffer(&sums, 0, &out, 0, sums_bytes);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {

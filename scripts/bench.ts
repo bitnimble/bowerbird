@@ -214,7 +214,7 @@ function measured(stdout: string): Taken {
 function render(
   burst: string[],
   want?: string,
-): { adapter: string; offered: string[]; taken: Taken } {
+): { adapter: string; offered: string[]; taken: Taken; long: string[] } {
   const run = spawnSync(
     'bun',
     [
@@ -246,7 +246,16 @@ function render(
     adapter: adapterOf(run.stderr),
     offered: offeredBy(run.stderr),
     taken: measured(run.stdout),
+    long: longDispatches(run.stderr),
   };
+}
+
+/// The dispatches `gpu::dispatch` reported running whole past its limit, which on a slow or
+/// starved GPU is a submission Windows resets the device over: each has to be banded.
+function longDispatches(stderr: string): string[] {
+  return stderr
+    .split('\n')
+    .filter((l) => /^rawshim gpu: (a dispatch run whole|an indirect dispatch) /.test(l));
 }
 
 function main(): void {
@@ -257,13 +266,22 @@ function main(): void {
   const burst = burstFrames();
   const first = render(burst);
   const rest = first.offered.filter((a) => a !== first.adapter);
-  const runs = [
-    { adapter: first.adapter, taken: first.taken },
-    ...rest.map((want) => {
-      const run = render(burst, want);
-      return { adapter: run.adapter, taken: run.taken };
-    }),
-  ];
+  const runs = [first, ...rest.map((want) => render(burst, want))];
+
+  const long = new Map(
+    runs.flatMap((run) =>
+      run.long.map((l) => [
+        `${run.adapter} ${l.slice(l.lastIndexOf(': '))}`,
+        `${run.adapter}: ${l}`,
+      ]),
+    ),
+  );
+  if (long.size > 0) {
+    console.error(
+      `dispatches run whole for too long; band them:\n${[...long.values()].join('\n')}`,
+    );
+    process.exit(1);
+  }
 
   // **These stages share a CPU and one integrated GPU with whatever else is running**, so a build
   // or a browser suite alongside them moves every number at once: measured here, one run put

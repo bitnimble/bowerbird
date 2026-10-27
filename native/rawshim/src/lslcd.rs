@@ -9,6 +9,7 @@
 //! from `slang/mosaic.slang`, shared with RCD.
 
 use crate::cfa::Cfa;
+use crate::gpu::dispatch::Whole;
 
 /// Radius of the one-dimensional prototype, and so the margin the demultiplexing does not write
 /// (specification §3.1, §5). The horizontal pass reaches this far in `x` and the vertical this far
@@ -306,7 +307,7 @@ impl Lslcd {
     }
 }
 
-/// The three dispatches, recorded but not submitted, with the plane they write.
+/// The three dispatches, with the recording still open and the plane they write.
 ///
 /// None where the pattern is not one §2.6 decomposes, or where the frame is too small to hold an
 /// interior at all - a decode that reads nothing rather than one that answers with a second
@@ -393,23 +394,14 @@ pub fn record(
         ],
     });
 
-    {
-        let mut pass = recording
-            .encoder()
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("lslcd"),
-                timestamp_writes: None,
-            });
-        pass.set_bind_group(0, shape_group, &[]);
-        pass.set_bind_group(1, &plane_group, &[]);
-        let groups_x = width.div_ceil(8) as u32;
-        let groups_y = height.div_ceil(8) as u32;
-        // In order: the vertical pass reads what the horizontal one wrote, and a compute pass gives
-        // each dispatch a barrier against the last.
-        for pipeline in &lslcd.pipelines {
+    let groups_x = width.div_ceil(8) as u32;
+    let groups_y = height.div_ceil(8) as u32;
+    for pipeline in &lslcd.pipelines {
+        recording.dispatch([groups_x, groups_y, 1], Whole::Measured, |pass| {
+            pass.set_bind_group(0, shape_group, &[]);
+            pass.set_bind_group(1, &plane_group, &[]);
             pass.set_pipeline(pipeline);
-            pass.dispatch_workgroups(groups_x, groups_y, 1);
-        }
+        });
     }
 
     lap("record");

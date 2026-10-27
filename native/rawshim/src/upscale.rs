@@ -15,6 +15,8 @@
 
 use std::sync::Mutex;
 
+use crate::gpu::dispatch::Whole;
+
 /// What the forward pass computes on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arm {
@@ -649,7 +651,7 @@ impl Upscaler {
             recording.holding(buffer);
             // Another layout's interior lies where this one's ring of zeros is.
             if relaid {
-                recording.encoder().clear_buffer(buffer, 0, None);
+                recording.clear_buffer(buffer, 0, None);
             }
         }
 
@@ -821,81 +823,80 @@ impl Upscaler {
             })
             .collect();
 
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            for (n, step) in steps.iter().enumerate() {
-                let index = n % self.ops.len();
-                let op = self.ops[index];
-                let offset = (n as u64 * stride) as u32;
-                let level = op.level();
-                let (width, height) = (region.0 >> level, region.1 >> level);
-                let lanes = |quads: usize| {
+        for (n, step) in steps.iter().enumerate() {
+            let index = n % self.ops.len();
+            let op = self.ops[index];
+            let offset = (n as u64 * stride) as u32;
+            let level = op.level();
+            let (width, height) = (region.0 >> level, region.1 >> level);
+            let lanes = |quads: usize| {
+                (
+                    (width * quads).div_ceil(STEP_WIDE) as u32,
+                    height.div_ceil(STEP_TALL) as u32,
+                )
+            };
+            let (x, y, z, pipeline) = match op {
+                Op::Pack => (
+                    width.div_ceil(STEP_WIDE) as u32,
+                    height.div_ceil(STEP_TALL) as u32,
+                    1,
+                    &self.pack,
+                ),
+                Op::Conv { layer, .. } => {
+                    let (_, output, _) = CONVS[layer.kind];
+                    let slices = output.div_ceil(OUT_MOST) as u32;
+                    let (wide, tall) = self.arm.tile();
+                    if let (Some(coop), Some(group)) = (&self.coop, &coop_groups[index]) {
+                        recording.dispatch(
+                            [(width / wide) as u32, (height / tall) as u32, slices],
+                            Whole::Measured,
+                            |pass| {
+                                pass.set_pipeline(&coop.convs[layer.kind]);
+                                pass.set_bind_group(0, group, &[]);
+                                pass.set_immediates(0, bytemuck::bytes_of(step));
+                            },
+                        );
+                        continue;
+                    }
                     (
-                        (width * quads).div_ceil(STEP_WIDE) as u32,
-                        height.div_ceil(STEP_TALL) as u32,
+                        (width / wide) as u32,
+                        (height / tall) as u32,
+                        slices,
+                        &self.convs[layer.kind],
                     )
-                };
-                let (x, y, z, pipeline) = match op {
-                    Op::Pack => (
-                        width.div_ceil(STEP_WIDE) as u32,
-                        height.div_ceil(STEP_TALL) as u32,
+                }
+                Op::Pool { channels, .. } => {
+                    let (x, y) = lanes(channels / 4);
+                    (x, y, 1, &self.pool)
+                }
+                Op::Rise { output, .. } => {
+                    let (x, y) = lanes(output / 4);
+                    (x, y, 1, &self.rise)
+                }
+                Op::Double { channels, .. } => {
+                    let (x, y) = lanes(channels / 4);
+                    (x, y, 1, &self.double)
+                }
+                Op::Leave { .. } => {
+                    if step.inner_width == 0 || step.inner_height == 0 {
+                        continue;
+                    }
+                    (
+                        step.inner_width.div_ceil(STEP_WIDE as u32),
+                        step.inner_height.div_ceil(STEP_TALL as u32),
                         1,
-                        &self.pack,
-                    ),
-                    Op::Conv { layer, .. } => {
-                        let (_, output, _) = CONVS[layer.kind];
-                        let slices = output.div_ceil(OUT_MOST) as u32;
-                        let (wide, tall) = self.arm.tile();
-                        if let (Some(coop), Some(group)) = (&self.coop, &coop_groups[index]) {
-                            pass.set_pipeline(&coop.convs[layer.kind]);
-                            pass.set_bind_group(0, group, &[]);
-                            pass.set_immediates(0, bytemuck::bytes_of(step));
-                            pass.dispatch_workgroups(
-                                (width / wide) as u32,
-                                (height / tall) as u32,
-                                slices,
-                            );
-                            continue;
-                        }
-                        (
-                            (width / wide) as u32,
-                            (height / tall) as u32,
-                            slices,
-                            &self.convs[layer.kind],
-                        )
-                    }
-                    Op::Pool { channels, .. } => {
-                        let (x, y) = lanes(channels / 4);
-                        (x, y, 1, &self.pool)
-                    }
-                    Op::Rise { output, .. } => {
-                        let (x, y) = lanes(output / 4);
-                        (x, y, 1, &self.rise)
-                    }
-                    Op::Double { channels, .. } => {
-                        let (x, y) = lanes(channels / 4);
-                        (x, y, 1, &self.double)
-                    }
-                    Op::Leave { .. } => {
-                        if step.inner_width == 0 || step.inner_height == 0 {
-                            continue;
-                        }
-                        (
-                            step.inner_width.div_ceil(STEP_WIDE as u32),
-                            step.inner_height.div_ceil(STEP_TALL as u32),
-                            1,
-                            &self.leave,
-                        )
-                    }
-                };
+                        &self.leave,
+                    )
+                }
+            };
+            recording.dispatch([x, y, z], Whole::Measured, |pass| {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(
                     0,
                     groups[index].as_ref().expect("a WGSL step's group"),
                     &[offset],
                 );
-                pass.dispatch_workgroups(x, y, z);
-            }
+            });
         }
         recording.submit();
         Ok(())
@@ -907,6 +908,7 @@ impl Upscaler {
     }
 
     /// [`Halving::halve`].
+    #[track_caller]
     pub fn halve(
         &self,
         gpu: &crate::gpu::Gpu,
@@ -955,6 +957,7 @@ impl Upscaler {
 impl Halving {
     /// `plane`, RCD's three `f32` a site over a `source` of the upscale, halved into a plane of its
     /// own through Lanczos-3, recorded into `recording`.
+    #[track_caller]
     pub fn halve(
         &self,
         gpu: &crate::gpu::Gpu,
@@ -980,13 +983,11 @@ impl Halving {
             layout: &self.layout,
             entries: &[entry(0, &uniform), entry(1, plane), entry(2, &smaller)],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(out.0 * out.1);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(out.0 * out.1);
-            pass.dispatch_workgroups(x, y, 1);
-        }
+        });
         smaller
     }
 

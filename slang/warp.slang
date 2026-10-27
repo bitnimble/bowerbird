@@ -5,6 +5,7 @@
 //
 // **A gather cannot run in place.** `frame` and `out` are two buffers, and every neighbour a tap
 // reads is the source as it arrived.
+import band;
 import lanes;
 import packed;
 import lens_gather;
@@ -130,8 +131,9 @@ float3 gathered(uint pixel)
 /// with its neighbour's first and one of the two writes would be lost.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void warp_lens(uint3 id : SV_DispatchThreadID)
+void warp_lens(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let pair = linear(id);
     let pixels = params.size.x * params.size.y;
     let first = pair * 2;

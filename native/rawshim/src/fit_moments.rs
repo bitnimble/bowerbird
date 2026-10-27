@@ -5,6 +5,8 @@
 //! the same numbers itself. The 3x3 solve stays on the host: it reads those and nothing else, so
 //! a dispatch for it would be all round trip and no work.
 
+use crate::gpu::dispatch::Whole;
+
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
 pub(crate) const MOMENT_WORDS: usize = 36;
 
@@ -148,21 +150,21 @@ pub(crate) async fn partials(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel(gpu).moments);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((matrices.len() * blocks) as u32, 1, 1);
-    }
+    recording.dispatch(
+        [(matrices.len() * blocks) as u32, 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&kernel(gpu).moments);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit moments out"),
         size: (words * 4) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
+    recording.copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {

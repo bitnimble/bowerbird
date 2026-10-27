@@ -644,7 +644,7 @@ fn stacked_sources(
     let mut recording = gpu.record();
     let mut at = 0u64;
     for part in &parts {
-        recording.encoder().copy_buffer_to_buffer(
+        recording.copy_buffer_to_buffer(
             part.buffer(),
             0,
             stacked.buffer(),
@@ -1107,11 +1107,8 @@ pub(crate) fn base(
                 }
             };
             let mut recording = gpu.record();
-            {
-                let encoder = recording.encoder();
-                for (from, to, bytes) in tile_runs(width, left, top, wide, deep) {
-                    encoder.copy_buffer_to_buffer(tile.buffer(), from, whole.buffer(), to, bytes);
-                }
+            for (from, to, bytes) in tile_runs(width, left, top, wide, deep) {
+                recording.copy_buffer_to_buffer(tile.buffer(), from, whole.buffer(), to, bytes);
             }
             recording.submit();
             tile.reclaim();

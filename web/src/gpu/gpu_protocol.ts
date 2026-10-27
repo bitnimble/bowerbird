@@ -171,6 +171,8 @@ export const StartMessageSchema = z.object({
   ),
   /** How `PipelineWarmth` compiles: one at a time and only for the editor, or everything at once at open. */
   compilesSparingly: z.boolean(),
+  /** Where devices this tab lost were submitting from (`GpuLosses`), once for each loss. */
+  splitBands: z.array(z.string()),
 });
 export type StartMessage = z.infer<typeof StartMessageSchema>;
 export type Addressed = DistributiveOmit<Message, 'id'>;
@@ -190,4 +192,7 @@ export const ProgressSchema = z.object({ id: z.number(), stage: OpenStageSchema 
  */
 export const CompilingSchema = z.object({ compiled: z.number(), of: z.number() });
 
-export const ReplySchema = z.union([ProgressSchema, AnswerSchema, CompilingSchema]);
+/** The worker's device was lost, sent unasked, with where it recently submitted from. */
+export const LostSchema = z.object({ lost: z.string(), submitted: z.array(z.string()) });
+
+export const ReplySchema = z.union([ProgressSchema, AnswerSchema, CompilingSchema, LostSchema]);

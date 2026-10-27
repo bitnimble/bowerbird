@@ -6,6 +6,7 @@
 //! source because both sides of a seam have to read the same width or `smoothstep` is not symmetric.
 
 use crate::assembly::Drawing;
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
 use crate::px::{Composite, Rect};
 
@@ -199,6 +200,7 @@ fn uploaded<T: bytemuck::Pod>(gpu: &'static Gpu, values: &[T], label: &str) -> g
 }
 
 /// `entry` over `bound`, every field in binding order from 1, of which it binds those it reads.
+#[track_caller]
 fn dispatch(
     gpu: &'static Gpu,
     entry: &Entry,
@@ -236,13 +238,10 @@ fn dispatch(
         layout: &kernel.layout,
         entries: &entries,
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([groups.0, groups.1, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(groups.0, groups.1, 1);
-    }
-    recording.submit();
+    });
 }
 
 /// The fields for one window of one render, at `scale` canvas pixels an output pixel.

@@ -31,7 +31,7 @@ const PROBE_BINDINGS: [(u32, Binding); 14] = [
 ];
 
 impl Pipelines {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(super) fn new(device: &super::dispatch::Device) -> Self {
         let wheel = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("colour wheel"),
             source: wgpu::ShaderSource::Wgsl(
@@ -236,9 +236,8 @@ impl super::Gpu {
                 resource: uniform.as_entire_binding(),
             }],
         });
-        let mut pass = recording
-            .encoder()
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
+        recording.draw(
+            &wgpu::RenderPassDescriptor {
                 label: Some("colour wheel"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
@@ -250,10 +249,13 @@ impl super::Gpu {
                     },
                 })],
                 ..Default::default()
-            });
-        pass.set_pipeline(&built.backdrop);
-        pass.set_bind_group(0, &group, &[]);
-        pass.draw(0..3, 0..1);
+            },
+            |pass| {
+                pass.set_pipeline(&built.backdrop);
+                pass.set_bind_group(0, &group, &[]);
+                pass.draw(0..3, 0..1);
+            },
+        );
     }
 }
 
@@ -430,21 +432,26 @@ impl Uploaded<'static> {
             })
         };
         let (scatter_group, field_group) = (group(&scattered.0), group(&fielded.0));
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&built.scatter);
-            pass.set_bind_group(0, &scatter_group, &[]);
-            pass.dispatch_workgroups((dots as u32).div_ceil(64), 1, 1);
-            if !places.is_empty() {
-                pass.set_pipeline(&built.field);
-                pass.set_bind_group(0, &field_group, &[]);
-                pass.dispatch_workgroups((places.len() as u32).div_ceil(64), 1, 1);
-            }
+        recording.dispatch(
+            [(dots as u32).div_ceil(64), 1, 1],
+            super::dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(&built.scatter);
+                pass.set_bind_group(0, &scatter_group, &[]);
+            },
+        );
+        if !places.is_empty() {
+            recording.dispatch(
+                [(places.len() as u32).div_ceil(64), 1, 1],
+                super::dispatch::Whole::Fixed,
+                |pass| {
+                    pass.set_pipeline(&built.field);
+                    pass.set_bind_group(0, &field_group, &[]);
+                },
+            );
         }
         for (out, staged, size) in [&scattered, &fielded] {
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(out, 0, staged, 0, *size);
+            recording.copy_buffer_to_buffer(out, 0, staged, 0, *size);
         }
         recording.submit();
         Probing {
@@ -505,7 +512,7 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_texture_to_buffer(
+        recording.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
                 mip_level: 0,

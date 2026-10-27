@@ -6,6 +6,7 @@
 //
 // **The frame is sixteen bits packed two to a word** (`packed`): half-float levels in, PQ codes
 // out, which is the layout the editor holds and the one a rendition reads back.
+import band;
 import lanes;
 import packed;
 
@@ -43,8 +44,9 @@ uint coded(uint bits)
 /// on every word.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void encode_base(uint3 id : SV_DispatchThreadID)
+void encode_base(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.words) { return; }
 

@@ -15,6 +15,7 @@
 
 use crate::assembly_seam::{MinCut, NEIGHBOURS, SeamField, TIE, along_an_edge, differ};
 use crate::assembly_tiles::{simplify, trace};
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
 use crate::light::{Gain, Stops};
 use crate::patch_search::Patch;
@@ -256,19 +257,19 @@ pub fn measure(
             entry(5, &cells),
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
+    recording.dispatch(
+        [
             (grid.cells.0 as u32).div_ceil(8),
             (grid.cells.1 as u32).div_ceil(8),
             1,
-        );
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&cells, 0, &readback, 0, bytes);
+        ],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernel.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&cells, 0, &readback, 0, bytes);
     recording.submit();
     Ok(Measuring {
         gpu,

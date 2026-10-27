@@ -6,6 +6,7 @@
 use crate::assembly_planes::Plane;
 use crate::assembly_seam::{SHRINK, SeamField, shrunk_size};
 use crate::base::Base;
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
 
 /// The most frames one assembly may hold, which is what bounds the shader's per-frame arrays.
@@ -142,14 +143,11 @@ pub async fn seam_field<E>(
                 bound(7, &level),
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(count);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(count);
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
+        });
     };
 
     for (slot, plane) in planes.iter().enumerate() {
@@ -188,9 +186,7 @@ async fn read_words<T: bytemuck::Pod>(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
     recording.submit();
     gpu::read_back(gpu, &readback, |mapped| {
         bytemuck::cast_slice::<u8, T>(mapped).to_vec()

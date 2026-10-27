@@ -22,6 +22,7 @@
 use crate::hdr_fit::{self, HdrColour};
 
 pub mod colour_wheel;
+pub mod dispatch;
 mod print_environment;
 mod print_surface;
 #[cfg(all(not(target_arch = "wasm32"), feature = "renditions"))]
@@ -317,8 +318,14 @@ pub struct Gpu {
     /// Private so that the four allocating calls on it are unreachable: [`Release`] says why they
     /// have to be, and [`Recording`], the `own_*` constructors and [`Describing`] are what is
     /// reachable instead.
-    device: wgpu::Device,
+    device: dispatch::Device,
     pub queue: Queue,
+    /// Whether each pass is timed, which is what sizes [`Recording::banded`]'s bands.
+    timestamps: bool,
+    costs: std::sync::Arc<dispatch::Costs>,
+    /// [`dispatch::LOSSES`] when this device opened: past it, this device is gone.
+    #[cfg(not(target_arch = "wasm32"))]
+    opened_after: u64,
     /// Kept because a surface is asked of the instance rather than of the device, and the
     /// editor's canvas or a TV's window arrives long after the device is opened
     /// ([`Stage::attach`], [`surface_stage::SurfaceStage::attach`]).
@@ -327,7 +334,7 @@ pub struct Gpu {
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     wgpu_adapter: wgpu::Adapter,
     layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::ComputePipeline,
+    encode: dispatch::Banded,
     frame_module: wgpu::ShaderModule,
     draw_layout: wgpu::BindGroupLayout,
     draw_from_frame: PipelineCell<wgpu::RenderPipeline>,
@@ -358,19 +365,19 @@ pub struct Gpu {
     detail_box_layout: wgpu::BindGroupLayout,
     detail_mean_layout: wgpu::BindGroupLayout,
     detail_apply_layout: wgpu::BindGroupLayout,
-    detail_shrink: wgpu::ComputePipeline,
-    detail_moments: wgpu::ComputePipeline,
-    detail_coefficients: wgpu::ComputePipeline,
-    detail_window_mean: wgpu::ComputePipeline,
-    detail_apply: wgpu::ComputePipeline,
+    detail_shrink: dispatch::Banded,
+    detail_moments: dispatch::Banded,
+    detail_coefficients: dispatch::Banded,
+    detail_window_mean: dispatch::Banded,
+    detail_apply: dispatch::Banded,
     balance_layout: wgpu::BindGroupLayout,
     balance_pipeline: wgpu::ComputePipeline,
     mean_layout: wgpu::BindGroupLayout,
-    mean_pipeline: wgpu::ComputePipeline,
+    mean_pipeline: dispatch::Banded,
     chroma_model_layout: wgpu::BindGroupLayout,
     chroma_blur_layout: wgpu::BindGroupLayout,
-    chroma_model: wgpu::ComputePipeline,
-    chroma_blur: wgpu::ComputePipeline,
+    chroma_model: dispatch::Banded,
+    chroma_blur: dispatch::Banded,
     sampler: wgpu::Sampler,
     /// The frame's coding undone. Filled once with the device, since `tone::encode_base`
     /// anchors every frame to the reference white before coding it and what comes back out
@@ -387,7 +394,30 @@ struct PrintMaterial {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static GPU: std::sync::OnceLock<Option<Gpu>> = std::sync::OnceLock::new();
+static GPU: std::sync::Mutex<Opened> = std::sync::Mutex::new(Opened::Unasked);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+enum Opened {
+    Unasked,
+    Open(&'static Gpu),
+    /// Lost, and not yet replaced: devices were lost faster than [`LOSSES_TOLERATED`] allows, or
+    /// the driver did not answer while it reset. Asked again on the next call.
+    Lost(&'static Gpu),
+    /// No adapter answered.
+    Refused,
+}
+
+/// Devices lost within [`LOSS_WINDOW`] past which no other is opened: Windows stops the whole
+/// machine (bug check 0x117) at the sixth GPU hang within a minute.
+#[cfg(not(target_arch = "wasm32"))]
+const LOSSES_TOLERATED: usize = 3;
+
+#[cfg(not(target_arch = "wasm32"))]
+const LOSS_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+#[cfg(not(target_arch = "wasm32"))]
+static REOPENED: std::sync::Mutex<Vec<crate::clock::Mark>> = std::sync::Mutex::new(Vec::new());
 
 /// The device, or None where no adapter of any kind answered.
 ///
@@ -395,14 +425,43 @@ static GPU: std::sync::OnceLock<Option<Gpu>> = std::sync::OnceLock::new();
 /// implementation is the drift DESIGN 21.1 guards against - so `job::run` returns an error
 /// naming the missing driver and the photo goes unrendered rather than rendered differently.
 /// An `Option` rather than a panic so the refusal is the caller's to word.
+///
+/// A device lost since it opened is replaced here, so the next call after a loss runs on a new one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device() -> Option<&'static Gpu> {
-    let open = GPU.get_or_init(Gpu::new).as_ref();
+    let mut opened = GPU.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *opened = match *opened {
+        Opened::Open(gpu) | Opened::Lost(gpu) if gpu.lost() => reopened(gpu),
+        Opened::Unasked => Gpu::new().map_or(Opened::Refused, |gpu| {
+            Opened::Open(Box::leak(Box::new(gpu)))
+        }),
+        held => held,
+    };
+    let Opened::Open(open) = *opened else {
+        return None;
+    };
     #[cfg(target_os = "linux")]
-    if open.is_some() {
-        leave::through_exit();
+    leave::through_exit();
+    Some(open)
+}
+
+/// The device opened in place of `lost`, unless too many have been lost lately.
+///
+/// Leaked like the first: a call still running holds the lost one.
+#[cfg(not(target_arch = "wasm32"))]
+fn reopened(lost: &'static Gpu) -> Opened {
+    let mut reopened = REOPENED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    reopened.retain(|at| at.elapsed() < LOSS_WINDOW);
+    if reopened.len() >= LOSSES_TOLERATED {
+        crate::warn("rawshim gpu: the device was lost too often; no other is opened yet");
+        return Opened::Lost(lost);
     }
-    open
+    reopened.push(crate::clock::Mark::now());
+    let Some(mut next) = Gpu::new() else {
+        return Opened::Lost(lost);
+    };
+    lost.succeeded_by(&mut next);
+    Opened::Open(Box::leak(Box::new(next)))
 }
 
 /// Leaving a cargo-run process without unwinding a driver that will not survive it.
@@ -490,6 +549,8 @@ pub const MOST_STORAGE_BUFFERS: u32 = 9;
 /// that does not is unaffected either way, so requesting it can only add. A device that refuses is
 /// a device with no adapter, which is a different failure entirely.
 ///
+/// Timestamps size [`Recording::banded`]'s bands; without them a band stays its first size.
+///
 /// The other three are one thing: PMRID's 1x1 convolutions on the matrix units ([`crate::pmrid`]).
 /// WGSL cannot spell a cooperative matrix, so that kernel is handed to the driver in the driver's
 /// own language - SPIR-V on Vulkan, MSL on Metal - and dispatched with its shape in immediate data,
@@ -501,7 +562,8 @@ fn asked_features(adapter: &wgpu::Adapter) -> wgpu::Features {
         & (wgpu::Features::SHADER_F16
             | wgpu::Features::EXPERIMENTAL_COOPERATIVE_MATRIX
             | wgpu::Features::PASSTHROUGH_SHADERS
-            | wgpu::Features::IMMEDIATES)
+            | wgpu::Features::IMMEDIATES
+            | wgpu::Features::TIMESTAMP_QUERY)
 }
 
 /// The adapter's own limits, bar the storage buffers a stage binds ([`MOST_STORAGE_BUFFERS`]).
@@ -518,6 +580,9 @@ fn limits_of(adapter: &wgpu::Adapter) -> wgpu::Limits {
 /// The device this crate opens for the page, on the first call and once: the app's only one, which
 /// its own WebGPU drawing borrows through [`Gpu::webgpu_device`]. None where the browser offers no
 /// adapter, which is supported rather than fatal.
+///
+/// A page whose device is lost reloads rather than being handed another: wgpu's unwraps trap
+/// mid-call on a lost device, which can leave this instance's state half written.
 #[cfg(target_arch = "wasm32")]
 pub async fn page_device() -> Option<&'static Gpu> {
     if let Some(open) = PAGE.with(std::cell::Cell::get) {
@@ -710,9 +775,21 @@ impl Texture {
 }
 
 /// The device, narrowed to the calls that allocate nothing, for the one-time pipeline builds.
-pub struct Describing<'a>(&'a wgpu::Device);
+pub struct Describing<'a>(&'a dispatch::Device);
 
 impl Describing<'_> {
+    pub fn create_banded_pipeline(
+        &self,
+        label: &str,
+        module: &wgpu::ShaderModule,
+        groups: &[&wgpu::BindGroupLayout],
+        entry_point: &str,
+        constants: &[(&str, f64)],
+    ) -> dispatch::Banded {
+        self.0
+            .create_banded_pipeline(label, module, groups, entry_point, constants)
+    }
+
     pub fn create_shader_module(
         &self,
         descriptor: wgpu::ShaderModuleDescriptor<'_>,
@@ -788,7 +865,7 @@ pub struct Queue {
     recent: std::sync::Mutex<Submissions>,
 }
 
-type Submissions = std::collections::VecDeque<&'static std::panic::Location<'static>>;
+type Submissions = std::collections::VecDeque<dispatch::Site>;
 
 impl std::ops::Deref for Queue {
     type Target = wgpu::Queue;
@@ -806,18 +883,23 @@ impl Queue {
         }
     }
 
-    #[track_caller]
-    pub fn submit<I: IntoIterator<Item = wgpu::CommandBuffer>>(
+    fn submit_from<I: IntoIterator<Item = wgpu::CommandBuffer>>(
         &self,
+        at: dispatch::Site,
         buffers: I,
     ) -> wgpu::SubmissionIndex {
         let mut recent = self.recent();
         if recent.len() == SUBMISSIONS_KEPT {
             recent.pop_front();
         }
-        recent.push_back(std::panic::Location::caller());
+        recent.push_back(at);
         drop(recent);
         self.queue.submit(buffers)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recent_sites(&self) -> std::collections::HashSet<dispatch::Site> {
+        self.recent().iter().copied().collect()
     }
 
     /// Oldest first, as `file:line`.
@@ -835,14 +917,14 @@ impl Queue {
     }
 }
 
-/// One submission and everything allocated to feed it.
+/// A run of submissions and everything allocated to feed them.
 ///
 /// A plane cannot be freed while unsubmitted work reads it - there is no way to submit but through
 /// the recording that holds it - and cannot outlive the recording either, so an early return frees
 /// what it abandoned.
 pub struct Recording<'a> {
     gpu: &'a Gpu,
-    encoder: Option<wgpu::CommandEncoder>,
+    encoder: dispatch::Encoder<'a>,
     /// One handle per resource, so the counts stay above zero until this drops.
     held: Vec<Kept>,
 }
@@ -883,9 +965,145 @@ impl<'a> Recording<'a> {
         self.held.push(Kept::Texture(texture.clone()));
     }
 
-    pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+    /// One dispatch, in a submission of its own with everything recorded before it.
+    #[track_caller]
+    pub fn dispatch(
+        &mut self,
+        [x, y, z]: [u32; 3],
+        because: dispatch::Whole,
+        set: impl FnOnce(&mut dispatch::Pass<'_>),
+    ) {
+        let at = std::panic::Location::caller();
         self.encoder
-            .get_or_insert_with(|| self.gpu.device.create_command_encoder(&Default::default()))
+            .dispatch(at, dispatch::Kind::Whole(because), set, |pass| {
+                pass.dispatch_workgroups(x, y, z)
+            });
+    }
+
+    /// One dispatch whose workgroup count the device wrote into `counts` at `offset`.
+    #[track_caller]
+    pub fn dispatch_indirect(
+        &mut self,
+        counts: &wgpu::Buffer,
+        offset: u64,
+        set: impl FnOnce(&mut dispatch::Pass<'_>),
+    ) {
+        let at = std::panic::Location::caller();
+        self.encoder.dispatch(at, dispatch::Kind::Indirect, set, |pass| {
+            pass.dispatch_workgroups_indirect(counts, offset)
+        });
+    }
+
+    /// One dispatch of `pipeline` run as bands of its `y` rows of workgroups, each a submission of
+    /// its own, and each sized to what this device took for the last band of that pipeline
+    /// dispatched from the same place.
+    #[track_caller]
+    pub fn banded(
+        &mut self,
+        pipeline: &dispatch::Banded,
+        [x, y, z]: [u32; 3],
+        mut set: impl FnMut(&mut dispatch::BandedPass<'_, '_>),
+    ) {
+        let kernel: dispatch::Kernel = (std::panic::Location::caller(), pipeline.name.clone());
+        let pressed = self.gpu.device.vram_pressed();
+        let mut running = std::collections::VecDeque::new();
+        let mut first_row = 0;
+        while first_row < y {
+            #[cfg(not(target_arch = "wasm32"))]
+            self.settle_bands(&kernel, &mut running);
+            let rows = self
+                .gpu
+                .costs
+                .band_rows(&kernel, x * z, y - first_row, pressed);
+            let uniform = self.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("band"),
+                contents: bytemuck::cast_slice(&[first_row, rows, 0, 0]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let band = self.gpu.device.band_group(&uniform);
+            let device = &self.gpu.device;
+            running.extend(self.encoder.dispatch(
+                kernel.0,
+                dispatch::Kind::Band {
+                    kernel: kernel.clone(),
+                    workgroups: x * rows * z,
+                },
+                |pass| pass.banded(device, pipeline, &band, &mut set),
+                |pass| pass.dispatch_workgroups(x, rows, z),
+            ));
+            first_row += rows;
+        }
+    }
+
+    /// Waits on `running`, the bands submitted before, until the next can be sized from a timed
+    /// one: the kernel's first band, and all but [`dispatch::BANDS_RUNNING`] after it, which is how
+    /// a slowdown arriving mid-dispatch shrinks the bands that follow it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn settle_bands(
+        &self,
+        kernel: &dispatch::Kernel,
+        running: &mut std::collections::VecDeque<wgpu::SubmissionIndex>,
+    ) {
+        if !self.gpu.timestamps {
+            return;
+        }
+        while running.len() >= dispatch::BANDS_RUNNING
+            || (!running.is_empty() && !self.gpu.costs.measured(kernel))
+        {
+            let Some(oldest) = running.pop_front() else {
+                return;
+            };
+            // A lost device answers with an error, which the next call notices through `lost`.
+            self.gpu
+                .device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(oldest),
+                    timeout: None,
+                })
+                .ok();
+        }
+    }
+
+    /// One render pass, in a submission of its own with everything recorded before it.
+    #[track_caller]
+    pub fn draw(
+        &mut self,
+        descriptor: &wgpu::RenderPassDescriptor<'_>,
+        draw: impl FnOnce(&mut wgpu::RenderPass<'_>),
+    ) {
+        self.encoder
+            .draw(std::panic::Location::caller(), descriptor, draw);
+    }
+
+    pub fn copy_buffer_to_buffer(
+        &mut self,
+        source: &wgpu::Buffer,
+        source_offset: u64,
+        destination: &wgpu::Buffer,
+        destination_offset: u64,
+        size: impl Into<Option<u64>>,
+    ) {
+        self.encoder.copy_buffer_to_buffer(
+            source,
+            source_offset,
+            destination,
+            destination_offset,
+            size,
+        );
+    }
+
+    pub fn clear_buffer(&mut self, buffer: &wgpu::Buffer, offset: u64, size: Option<u64>) {
+        self.encoder.clear_buffer(buffer, offset, size);
+    }
+
+    pub fn copy_texture_to_buffer(
+        &mut self,
+        source: wgpu::TexelCopyTextureInfo<'_>,
+        destination: wgpu::TexelCopyBufferInfo<'_>,
+        size: wgpu::Extent3d,
+    ) {
+        self.encoder
+            .copy_texture_to_buffer(source, destination, size);
     }
 
     /// Everything recorded so far, handed to the queue.
@@ -895,9 +1113,7 @@ impl<'a> Recording<'a> {
     /// need a second pool for the second half.
     #[track_caller]
     pub fn submit(&mut self) {
-        if let Some(encoder) = self.encoder.take() {
-            self.gpu.queue.submit([encoder.finish()]);
-        }
+        self.encoder.submit(std::panic::Location::caller());
     }
 
     pub fn gpu(&self) -> &'a Gpu {
@@ -1032,13 +1248,7 @@ impl Gpu {
         recording.holding(&buffer);
         if let Some(room) = room {
             recording.holding(room);
-            recording.encoder().copy_buffer_to_buffer(
-                room,
-                0,
-                &buffer,
-                0,
-                crate::print::CALIBRATION_BYTES,
-            );
+            recording.copy_buffer_to_buffer(room, 0, &buffer, 0, crate::print::CALIBRATION_BYTES);
         }
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print lamp"),
@@ -1060,18 +1270,17 @@ impl Gpu {
             ],
         });
         let map = self.print_environment_group(environment);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_bind_group(0, &group, &[]);
-            pass.set_bind_group(1, &map, &[]);
-            pass.set_pipeline(&self.print_material().light);
-            pass.dispatch_workgroups(1, 1, 1);
-            if room.is_none() {
-                pass.set_pipeline(&self.print_material().room);
-                pass.dispatch_workgroups(1, 1, 1);
-            }
+        let mut light = |pipeline: &wgpu::ComputePipeline| {
+            recording.dispatch([1, 1, 1], dispatch::Whole::Fixed, |pass| {
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_bind_group(1, &map, &[]);
+                pass.set_pipeline(pipeline);
+            });
+        };
+        light(&self.print_material().light);
+        if room.is_none() {
+            light(&self.print_material().room);
         }
-        recording.submit();
         buffer
     }
 
@@ -1107,19 +1316,26 @@ impl Gpu {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_bind_group(0, &group, &[]);
-            pass.set_pipeline(&self.print_material().tabulate);
-            pass.dispatch_workgroups(
+        recording.dispatch(
+            [
                 crate::print::ALBEDO_VIEWS.div_ceil(64),
                 crate::print::ALBEDO_ROUGHNESSES,
                 1,
-            );
-            pass.set_pipeline(&self.print_material().average);
-            pass.dispatch_workgroups(crate::print::ALBEDO_ROUGHNESSES.div_ceil(64), 1, 1);
-        }
-        recording.submit();
+            ],
+            dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_pipeline(&self.print_material().tabulate);
+            },
+        );
+        recording.dispatch(
+            [crate::print::ALBEDO_ROUGHNESSES.div_ceil(64), 1, 1],
+            dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_pipeline(&self.print_material().average);
+            },
+        );
         buffer
     }
 
@@ -1205,6 +1421,35 @@ impl Gpu {
         self.id
     }
 
+    /// Cuts the bands dispatched from `at`, as `file:line`, smaller: a device was lost after a
+    /// submission from there.
+    pub fn split_bands(&self, at: &str) {
+        self.costs.split_named(at);
+    }
+
+    /// Whether a device has been lost since this one opened, which leaves this one unusable.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn lost(&self) -> bool {
+        dispatch::LOSSES.load(std::sync::atomic::Ordering::Relaxed) > self.opened_after
+    }
+
+    /// Hands what this lost device learned to the one opened in its place, with the bands of every
+    /// site it recently submitted from cut smaller.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn succeeded_by(&self, next: &mut Gpu) {
+        // Every site, not the last: the device runs behind the submissions, so the one that hung
+        // may be several back.
+        for at in self.queue.recent_sites() {
+            crate::warn(&format!(
+                "rawshim gpu: the device was lost after a submission from {}:{}",
+                at.file(),
+                at.line()
+            ));
+            self.costs.split(at);
+        }
+        next.costs = self.costs.clone();
+    }
+
     fn print_environment_pipelines(&self) -> &print_environment::Pipelines {
         self.print_environment
             .get_or_init(|| print_environment::Pipelines::new(&self.device))
@@ -1281,11 +1526,11 @@ impl Gpu {
         })
     }
 
-    /// One submission, and the pool everything it reads is allocated from.
+    /// A run of submissions, and the pool everything they read is allocated from.
     pub fn record(&self) -> Recording<'_> {
         Recording {
             gpu: self,
-            encoder: None,
+            encoder: dispatch::Encoder::new(self),
             held: Vec::new(),
         }
     }
@@ -1371,15 +1616,11 @@ impl Gpu {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        recording.dispatch([across, down, 1], dispatch::Whole::Measured, |pass| {
             pass.set_pipeline(pack);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(across, down, 1);
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
+        });
+        recording.copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
         recording.submit();
         read_back(self, &read, take).await
     }
@@ -1477,7 +1718,6 @@ impl Gpu {
     }
 
     pub fn own_buffer_init(&self, descriptor: &wgpu::util::BufferInitDescriptor<'_>) -> Buffer {
-        use wgpu::util::DeviceExt;
         let buffer = self.device.create_buffer_init(descriptor);
         let bytes = buffer.size();
         Buffer(counted(buffer, bytes))
@@ -1496,7 +1736,6 @@ impl Gpu {
         order: wgpu::util::TextureDataOrder,
         data: &[u8],
     ) -> Texture {
-        use wgpu::util::DeviceExt;
         Texture(counted(
             self.device
                 .create_texture_with_data(&self.queue, descriptor, order, data),
@@ -1519,7 +1758,7 @@ impl Gpu {
     /// The browser's own `GPUDevice` under this one.
     #[cfg(target_arch = "wasm32")]
     pub fn webgpu_device(&self) -> Option<wasm_bindgen::JsValue> {
-        self.device.as_webgpu().map(|device| device.clone().into())
+        self.device.webgpu_device()
     }
 
     pub fn nudge(&self) {
@@ -1672,6 +1911,9 @@ impl Gpu {
         device: wgpu::Device,
         queue: wgpu::Queue,
     ) -> Gpu {
+        let device = dispatch::Device::new(device);
+        #[cfg(not(target_arch = "wasm32"))]
+        device.count_loss();
         let info = wgpu_adapter.get_info();
         let adapter = format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type);
         // Thirty-two apiece is 128 workgroups for a four-channel reduction, a couple per core on
@@ -1728,6 +1970,12 @@ impl Gpu {
                 cache: None,
             })
         };
+        let banded = |label: &str,
+                      module: &wgpu::ShaderModule,
+                      group: &wgpu::BindGroupLayout,
+                      entry_point: &str| {
+            device.create_banded_pipeline(label, module, &[group], entry_point, &[])
+        };
         let detail_shrink_layout = group_layout("detail shrink", &DETAIL_SHRINK_BINDINGS);
         let detail_moments_layout = group_layout("detail moments", &DETAIL_MOMENTS_BINDINGS);
         let detail_box_layout = group_layout("detail box", &DETAIL_BOX_BINDINGS);
@@ -1737,26 +1985,26 @@ impl Gpu {
             label: Some("detail"),
             source: wgpu::ShaderSource::Wgsl(DETAIL_WGSL.into()),
         });
-        let detail_shrink = compute("shrink", &detail_module, &detail_shrink_layout, "shrink");
-        let detail_moments = compute(
+        let detail_shrink = banded("shrink", &detail_module, &detail_shrink_layout, "shrink");
+        let detail_moments = banded(
             "moments_of",
             &detail_module,
             &detail_moments_layout,
             "moments_of",
         );
-        let detail_coefficients = compute(
+        let detail_coefficients = banded(
             "coefficients",
             &detail_module,
             &detail_box_layout,
             "coefficients",
         );
-        let detail_window_mean = compute(
+        let detail_window_mean = banded(
             "window_mean",
             &detail_module,
             &detail_mean_layout,
             "window_mean",
         );
-        let detail_apply = compute(
+        let detail_apply = banded(
             "apply_guided",
             &detail_module,
             &detail_apply_layout,
@@ -1782,7 +2030,7 @@ impl Gpu {
             label: Some("mean_frame"),
             source: wgpu::ShaderSource::Wgsl(MEAN_FRAME_WGSL.into()),
         });
-        let mean_pipeline = compute("mean_frame", &mean_module, &mean_layout, "mean");
+        let mean_pipeline = banded("mean_frame", &mean_module, &mean_layout, "mean");
 
         let chroma_model_layout = group_layout("chroma model", &CHROMA_MODEL_BINDINGS);
         let chroma_blur_layout = group_layout(
@@ -1797,15 +2045,15 @@ impl Gpu {
             label: Some("chroma_smooth"),
             source: wgpu::ShaderSource::Wgsl(CHROMA_SMOOTH_WGSL.into()),
         });
-        let chroma_model = compute(
+        let chroma_model = banded(
             "chroma model",
             &chroma_module,
             &chroma_model_layout,
             "model",
         );
-        let chroma_blur = compute("chroma blur", &chroma_module, &chroma_blur_layout, "blur");
+        let chroma_blur = banded("chroma blur", &chroma_module, &chroma_blur_layout, "blur");
 
-        let pipeline = compute("encode", &module, &layout, "encode");
+        let encode = banded("encode", &module, &layout, "encode");
         let print_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("print"),
             entries: &[
@@ -1864,30 +2112,22 @@ impl Gpu {
                 resource: nits_of_code.as_entire_binding(),
             }],
         });
-        let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&compute(
-                "pq_table",
-                &decode_module,
-                &decode_layout,
-                "pq_table",
-            ));
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((PQ_CODES / 64) as u32, 1, 1);
-        }
-        queue.submit([encoder.finish()]);
+        let pq_table = compute("pq_table", &decode_module, &decode_layout, "pq_table");
 
-        Gpu {
+        let gpu = Gpu {
             adapter,
             wgpu_adapter,
             backend: info.backend,
             reduction_slices,
-            device,
+            timestamps: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+            costs: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            opened_after: dispatch::LOSSES.load(std::sync::atomic::Ordering::Relaxed),
             queue: Queue::new(queue),
+            device,
             instance,
             layout,
-            pipeline,
+            encode,
             frame_module: module,
             draw_layout,
             draw_from_frame: PipelineCell::new(),
@@ -1936,7 +2176,16 @@ impl Gpu {
             chroma_blur,
             sampler,
             nits_of_code,
-        }
+        };
+        gpu.record().dispatch(
+            [(PQ_CODES / 64) as u32, 1, 1],
+            dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_pipeline(&pq_table);
+                pass.set_bind_group(0, &group, &[]);
+            },
+        );
+        gpu
     }
 
     /// The largest binding one frame needs: `encode`'s output, two `u16` components to a
@@ -2144,8 +2393,8 @@ impl Stage {
             return;
         }
         match &mut self.target {
-            StageTarget::Surface(surface, _) => surface.configure(
-                &gpu.device,
+            StageTarget::Surface(surface, _) => gpu.device.configure(
+                surface,
                 &wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     format: CANVAS_FORMAT,
@@ -3126,9 +3375,7 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
+        recording.copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
         recording.submit();
         read_back(self, &staging, |mapped| {
             f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
@@ -3465,13 +3712,11 @@ impl Gpu {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.mean_pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(cells.0.div_ceil(8), cells.1.div_ceil(8), 1);
-        }
-        recording.submit();
+        recording.banded(
+            &self.mean_pipeline,
+            [cells.0.div_ceil(8), cells.1.div_ceil(8), 1],
+            |pass| pass.set_bind_group(0, &group, &[]),
+        );
         texture
     }
 
@@ -3627,15 +3872,13 @@ impl Gpu {
                 blur(&mut recording, &across, &smoothed, 0),
             ),
         ];
-        // A pass each: every one reads the texture the one before it wrote, and a pass is
-        // where wgpu puts the barrier for that.
         for (pipeline, group) in &passes {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(size.width.div_ceil(8), size.height.div_ceil(8), 1);
+            recording.banded(
+                pipeline,
+                [size.width.div_ceil(8), size.height.div_ceil(8), 1],
+                |pass| pass.set_bind_group(0, group, &[]),
+            );
         }
-        recording.submit();
         smoothed
     }
 
@@ -3765,10 +4008,10 @@ impl Gpu {
                 },
             ],
         });
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&self.balance_pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
+        recording.dispatch([1, 1, 1], dispatch::Whole::Fixed, |pass| {
+            pass.set_pipeline(&self.balance_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
 
     pub(crate) fn balance_buffer(&self) -> Buffer {
@@ -3887,7 +4130,6 @@ impl Gpu {
         // texture a pass reads follows from the sequence rather than being written beside it.
         let mut held = &moments;
         let mut spare = &spare_moments;
-        let encoder = recording.encoder();
         for name in DETAIL_PASSES {
             let (pipeline, group) = match name {
                 "shrink" => (&self.detail_shrink, shrink.clone()),
@@ -3963,12 +4205,12 @@ impl Gpu {
                     (&self.detail_coefficients, group)
                 }
             };
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(size.width.div_ceil(8), size.height.div_ceil(8), 1);
+            recording.banded(
+                pipeline,
+                [size.width.div_ceil(8), size.height.div_ceil(8), 1],
+                |pass| pass.set_bind_group(0, &group, &[]),
+            );
         }
-        recording.submit();
         (kept, detail)
     }
 
@@ -4265,34 +4507,30 @@ impl Uploaded<'_> {
         } else {
             &self.histogram
         };
-        let encoder = recording.encoder();
-        encoder.clear_buffer(counted, cleared.start, Some(cleared.end - cleared.start));
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_bind_group(0, &group, &[]);
-            match route {
-                PeakRoute::WholeSample => {
-                    pass.set_pipeline(&self.gpu.peak_measure);
-                    pass.dispatch_workgroups(over_the_sample.0, over_the_sample.1, 1);
-                }
-                PeakRoute::KeptCandidates => {
-                    pass.set_pipeline(&self.gpu.peak_remeasure);
-                    pass.dispatch_workgroups((PEAK_CANDIDATES as u32).div_ceil(64), 1, 1);
-                }
-                PeakRoute::Collect => {
-                    pass.set_pipeline(&self.gpu.peak_collect);
-                    pass.dispatch_workgroups(over_the_sample.0, over_the_sample.1, 1);
-                }
-            }
-            if route.reaches_the_quantile() {
-                // One workgroup: the search is over bins, not pixels.
+        recording.clear_buffer(counted, cleared.start, Some(cleared.end - cleared.start));
+        let (pipeline, workgroups) = match route {
+            PeakRoute::WholeSample => (&self.gpu.peak_measure, over_the_sample),
+            PeakRoute::KeptCandidates => (
+                &self.gpu.peak_remeasure,
+                ((PEAK_CANDIDATES as u32).div_ceil(64), 1),
+            ),
+            PeakRoute::Collect => (&self.gpu.peak_collect, over_the_sample),
+        };
+        recording.dispatch(
+            [workgroups.0, workgroups.1, 1],
+            dispatch::Whole::Fixed,
+            |pass| {
+                pass.set_bind_group(0, &group, &[]);
+                pass.set_pipeline(pipeline);
+            },
+        );
+        if route.reaches_the_quantile() {
+            // One workgroup: the search is over bins, not pixels.
+            recording.dispatch([1, 1, 1], dispatch::Whole::Fixed, |pass| {
+                pass.set_bind_group(0, &group, &[]);
                 pass.set_pipeline(&self.gpu.peak_quantile);
-                pass.dispatch_workgroups(1, 1, 1);
-            }
+            });
         }
-        // Submitted rather than waited on. `encode` reads `peak_out` on the GPU, and wgpu
-        // orders one submission against the next, so there is nothing to read back.
-        recording.submit();
     }
 
     /// The frame the last [`encode`](Self::encode) wrote, still on the device, for a measurement
@@ -4486,16 +4724,11 @@ impl Uploaded<'_> {
         // and the turn produce, and reads the frame wherever the geometry sends it.
         let pixels = out_width * out_height;
         let out_bytes = Gpu::binding_bytes(pixels);
-        {
-            let (x, y) = self.gpu.encode_groups(pixels);
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.gpu.pipeline);
+        let (x, y) = self.gpu.encode_groups(pixels);
+        recording.banded(&self.gpu.encode, [x, y, 1], |pass| {
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(counts, 0, readback, 0, out_bytes);
+        });
+        recording.copy_buffer_to_buffer(counts, 0, readback, 0, out_bytes);
         recording.submit();
 
         // Unmapped by `read_back` before the next rendition maps it again; a second `map_async` on
@@ -4592,7 +4825,7 @@ impl Uploaded<'_> {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_texture_to_buffer(
+        recording.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &canvas,
                 mip_level: 0,
@@ -4640,9 +4873,6 @@ impl Uploaded<'_> {
     /// took off its swapchain and presents it; a test hands it a texture it is about to read back.
     /// Neither knows anything the other does not, which is what stops the picture a reader sees
     /// from drifting from the picture a test measures.
-    ///
-    /// **One draw per recording.** The uniform and the balance belong to the upload rather than to
-    /// the call, so two draws recorded before a submit would both read the second one's grade.
     pub fn draw_into(
         &self,
         recording: &mut Recording<'_>,
@@ -4835,24 +5065,9 @@ impl Uploaded<'_> {
             })
         });
 
-        let mut pass = recording
-            .encoder()
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("draw"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
         let flat = print
             .is_some_and(|scene| matches!(scene.presentation, crate::print::Presentation::Flat));
-        pass.set_pipeline(if pigment {
+        let pipeline = if pigment {
             self.gpu.drawing(true, "fs_print_pigment")
         } else if flat && !pq {
             self.gpu.drawing(true, "fs_print_flat")
@@ -4864,13 +5079,31 @@ impl Uploaded<'_> {
             self.gpu.drawing(true, "fs")
         } else {
             self.gpu.drawing(false, "fs")
-        });
-        pass.set_bind_group(0, &group, &[]);
-        if let Some(group) = print_group.as_ref() {
-            pass.set_bind_group(1, group, &[]);
-        }
-        // One triangle covering the target, as `vs` builds it from the vertex index alone.
-        pass.draw(0..3, 0..1);
+        };
+        recording.draw(
+            &wgpu::RenderPassDescriptor {
+                label: Some("draw"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            },
+            |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                if let Some(group) = print_group.as_ref() {
+                    pass.set_bind_group(1, group, &[]);
+                }
+                // One triangle covering the target, as `vs` builds it from the vertex index alone.
+                pass.draw(0..3, 0..1);
+            },
+        );
     }
 
     fn print_albedo_for(&self, eta: f32) -> Buffer {
@@ -5376,7 +5609,6 @@ fn half(v: f32) -> [u8; 2] {
 #[cfg(test)]
 mod tests {
     use crate::light::{Light, Stops};
-    use wgpu::util::DeviceExt;
 
     #[test]
     fn renditions_defer_canvas_and_print_pipelines_and_draws_reuse_them() {
@@ -5429,10 +5661,16 @@ mod tests {
     fn the_queue_remembers_where_its_last_submissions_were_made() {
         let gpu = super::Gpu::new().expect("a GPU adapter");
         for _ in 0..super::SUBMISSIONS_KEPT {
-            gpu.queue.submit([]);
+            gpu.queue.submit_from(std::panic::Location::caller(), []);
         }
         let mut recording = gpu.record();
-        recording.encoder();
+        let buffer = recording.buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        recording.clear_buffer(&buffer, 0, None);
         let line = line!() + 1;
         recording.submit();
         let recent = gpu.queue.recent_submissions();
@@ -7388,15 +7626,13 @@ mod tests {
                         },
                     ],
                 });
-                let mut encoder = device.create_command_encoder(&Default::default());
-                {
-                    let mut pass = encoder.begin_compute_pass(&Default::default());
+                let mut recording = gpu.record();
+                recording.dispatch([1, 1, 1], super::dispatch::Whole::Fixed, |pass| {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
-                    pass.dispatch_workgroups(1, 1, 1);
-                }
-                encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, 8);
-                gpu.queue.submit([encoder.finish()]);
+                });
+                recording.copy_buffer_to_buffer(&out, 0, &readback, 0, 8);
+                recording.submit();
                 let slice = readback.slice(..);
                 slice.map_async(wgpu::MapMode::Read, |_| {});
                 device
@@ -7618,15 +7854,17 @@ mod tests {
                 ],
             });
 
-            let mut encoder = device.create_command_encoder(&Default::default());
-            {
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(pixels.div_ceil(64) as u32, 1, 1);
-            }
-            encoder.copy_buffer_to_buffer(&probe, 0, &readback, 0, bytes);
-            gpu.queue.submit([encoder.finish()]);
+            let mut recording = gpu.record();
+            recording.dispatch(
+                [pixels.div_ceil(64) as u32, 1, 1],
+                super::dispatch::Whole::Measured,
+                |pass| {
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &group, &[]);
+                },
+            );
+            recording.copy_buffer_to_buffer(&probe, 0, &readback, 0, bytes);
+            recording.submit();
             let slice = readback.slice(..);
             slice.map_async(wgpu::MapMode::Read, |_| {});
             device

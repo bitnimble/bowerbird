@@ -135,9 +135,7 @@ fn read_bytes(rig: &Rig, buffer: &gpu::Buffer, bytes: usize) -> Vec<u8> {
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes as u64);
+    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes as u64);
     recording.submit();
     pollster::block_on(gpu::read_back(rig.gpu, &readback, <[u8]>::to_vec))
         .expect("a readable buffer")

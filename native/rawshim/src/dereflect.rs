@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu};
 use crate::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 use crate::resident::Resident;
@@ -702,8 +703,17 @@ impl Remover {
             params,
             bound,
             pixels,
+            Whole::Fixed,
         );
-        kernels.dispatch(gpu, &mut recording, &kernels.white_find, params, bound, 1);
+        kernels.dispatch(
+            gpu,
+            &mut recording,
+            &kernels.white_find,
+            params,
+            bound,
+            1,
+            Whole::Fixed,
+        );
         kernels.dispatch(
             gpu,
             &mut recording,
@@ -711,8 +721,8 @@ impl Remover {
             params,
             bound,
             plane_width * plane_height,
+            Whole::Fixed,
         );
-        recording.submit();
         Layer {
             coded: self.predict(gpu, &planes, plane_width, plane_height),
             white,
@@ -782,8 +792,8 @@ impl Layer {
             params,
             bound,
             window.words(),
+            Whole::Measured,
         );
-        recording.submit();
     }
 }
 
@@ -922,8 +932,7 @@ fn frame_kernels(gpu: &'static Gpu) -> &'static FrameKernels {
 }
 
 impl FrameKernels {
-    /// One kernel over `threads`, in a pass of its own: `white_find` reads every count
-    /// `white_count` adds, and `ingest` the white it finds.
+    #[track_caller]
     fn dispatch(
         &self,
         gpu: &Gpu,
@@ -932,6 +941,7 @@ impl FrameKernels {
         params: FrameParams,
         bound: [&Buffer; 5],
         threads: usize,
+        because: Whole,
     ) {
         let groups = threads.div_ceil(THREADS);
         let wide = groups.clamp(1, 65535);
@@ -962,10 +972,14 @@ impl FrameKernels {
             layout: &self.layout,
             entries: &entries,
         });
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(wide as u32, groups.div_ceil(wide) as u32, 1);
+        recording.dispatch(
+            [wide as u32, groups.div_ceil(wide) as u32, 1],
+            because,
+            |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &group, &[]);
+            },
+        );
     }
 }
 
@@ -2081,7 +2095,6 @@ impl<'a> Run<'a> {
         self.threads_bound("widen", params, bound, from.len());
     }
 
-    /// Every op recorded since the last, in one compute pass of one submission.
     fn flush(&self) {
         let ops = std::mem::take(&mut *self.ops.borrow_mut());
         if ops.is_empty() {
@@ -2136,14 +2149,11 @@ impl<'a> Run<'a> {
                 recording.holding(buffer);
             }
         }
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            for (i, (op, group)) in ops.iter().zip(&groups).enumerate() {
+        for (i, (op, group)) in ops.iter().zip(&groups).enumerate() {
+            recording.dispatch([op.groups.0, op.groups.1, 1], Whole::Fixed, |pass| {
                 pass.set_pipeline(&remover.pipelines[op.kernel]);
                 pass.set_bind_group(0, group, &[(i * stride) as u32]);
-                pass.dispatch_workgroups(op.groups.0, op.groups.1, 1);
-            }
+            });
         }
-        recording.submit();
     }
 }

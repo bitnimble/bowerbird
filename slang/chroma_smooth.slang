@@ -17,6 +17,7 @@
 //
 // Once per upload, beside `mean_frame`: `matched_scene` is the frame and the fit alone.
 import prelude;
+import band;
 import edit;
 import colour;
 import px;
@@ -73,8 +74,9 @@ float3 chroma_of(float3 encoded)
 /// average the same pixels into every texel they share (`mean_frame.slang`).
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void model(uint3 id : SV_DispatchThreadID)
+void model(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     // **Measured, not written down.** The shrink is a share of the photograph in the pixels of
     // the frame this dispatch is over (`gpu::chroma_shrink`), and `Output` has no `exact` - so a
     // constant four here would not compile, which is the whole of what the module is for.
@@ -103,8 +105,9 @@ void model(uint3 id : SV_DispatchThreadID)
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void blur(uint3 id : SV_DispatchThreadID)
+void blur(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     if (id.x >= pc.width || id.y >= pc.height) { return; }
     let mine = chroma_of(from.Load(int3(int2(id.xy), 0)).rgb);
     var sum = float3(0.0);

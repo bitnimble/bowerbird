@@ -189,39 +189,39 @@ pub fn draw(
             },
         ],
     });
-    {
-        let mut pass = recording
-            .encoder()
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("stage"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-        pass.set_viewport(
-            left as f32,
-            top as f32,
-            width as f32,
-            height as f32,
-            0.0,
-            1.0,
-        );
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.draw(0..3, 0..1);
-    }
+    recording.draw(
+        &wgpu::RenderPassDescriptor {
+            label: Some("stage"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: red,
+                        g: green,
+                        b: blue,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        },
+        |pass| {
+            pass.set_viewport(
+                left as f32,
+                top as f32,
+                width as f32,
+                height as f32,
+                0.0,
+                1.0,
+            );
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+        },
+    );
     recording.submit();
 }
 
@@ -485,7 +485,7 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_texture_to_buffer(
+        recording.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
                 mip_level: 0,

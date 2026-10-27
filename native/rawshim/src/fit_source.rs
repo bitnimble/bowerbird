@@ -6,13 +6,14 @@
 //! levels; the plane and the render stay where they were written, and every reader binds them
 //! there.
 
+use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
 use crate::resident::Resident;
 
 /// The three floats `fit_scan` writes, which is all of the histogram that crosses to the host.
 const LEVEL_BYTES: u64 = 12;
 
-/// Everything the fit needs off the frame, in one submit.
+/// Everything the fit needs off the frame, in one round trip.
 pub struct Prepared {
     pub plane: crate::hdr_fit::Source,
     pub rendered: Rendered,
@@ -254,36 +255,32 @@ async fn run(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_bind_group(0, &group, &[]);
-        if wanted {
+    let over_plane = [(wide as u32).div_ceil(16), (tall as u32).div_ceil(16), 1];
+    if wanted {
+        recording.dispatch(over_plane, Whole::Measured, |pass| {
+            pass.set_bind_group(0, &group, &[]);
             pass.set_pipeline(&built.resize);
-            pass.dispatch_workgroups((wide as u32).div_ceil(16), (tall as u32).div_ceil(16), 1);
-        }
-        pass.set_pipeline(&built.levels);
-        pass.dispatch_workgroups((counted as u32).div_ceil(64), 1, 1);
+        });
     }
-    // Its own pass, which is what orders the walk after the counting: within one pass two
-    // dispatches may overlap, and a walk that starts on a half-counted histogram reads two marks
-    // that are nobody's quantile.
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch(
+        [(counted as u32).div_ceil(64), 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&built.levels);
+        },
+    );
+    recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
         pass.set_bind_group(0, &group, &[]);
         pass.set_pipeline(&built.scan);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
-    // And its own again, for the same reason one step further on: the render divides by the white
-    // the walk above just wrote.
+    });
     if wanted {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_bind_group(0, &group, &[]);
-        pass.set_pipeline(&built.render);
-        pass.dispatch_workgroups((wide as u32).div_ceil(16), (tall as u32).div_ceil(16), 1);
+        recording.dispatch(over_plane, Whole::Fixed, |pass| {
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&built.render);
+        });
     }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&levels, 0, &levels_out, 0, LEVEL_BYTES);
+    recording.copy_buffer_to_buffer(&levels, 0, &levels_out, 0, LEVEL_BYTES);
     recording.submit();
 
     let measured = crate::gpu::read_back(gpu, &levels_out, |mapped| {
@@ -346,9 +343,7 @@ async fn read_plane(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&plane.buffer, 0, &out, 0, bytes);
+    recording.copy_buffer_to_buffer(&plane.buffer, 0, &out, 0, bytes);
     recording.submit();
     let data = crate::gpu::read_back(gpu, &out, |mapped| {
         mapped
@@ -401,9 +396,7 @@ pub async fn read_render(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&render.buffer, 0, &out, 0, bytes);
+    recording.copy_buffer_to_buffer(&render.buffer, 0, &out, 0, bytes);
     recording.submit();
     let data = crate::gpu::read_back(gpu, &out, |mapped| {
         mapped
@@ -424,8 +417,8 @@ pub async fn read_render(
 
 #[cfg(test)]
 mod tests {
-    /// `fit_render` against the arithmetic it took over, on the plane and the white the same submit
-    /// produced.
+    /// `fit_render` against the arithmetic it took over, on the plane and the white the same round
+    /// trip produced.
     ///
     /// **The host copy exists for this and for building fixtures, nothing else** - the fit reads the
     /// device buffer, and this test is the only thing that brings the plane back. What it pins is

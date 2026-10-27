@@ -184,7 +184,7 @@ impl Resident {
     pub fn duplicate(&self) -> Resident {
         let copy = Resident::empty(self.gpu, self.width, self.height);
         let mut recording = self.gpu.record();
-        recording.encoder().copy_buffer_to_buffer(
+        recording.copy_buffer_to_buffer(
             &self.buffer,
             0,
             &copy.buffer,
@@ -214,9 +214,6 @@ impl Resident {
     }
 
     /// Submits `recording` and copies the frame back over `samples`.
-    ///
-    /// Takes the recording rather than making one so a stage's own passes are submitted with the
-    /// copy that reads their result, which is one submit instead of two.
     pub async fn read_into(
         &self,
         recording: &mut crate::gpu::Recording<'_>,
@@ -229,9 +226,7 @@ impl Resident {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.buffer, 0, &readback, 0, bytes);
+        recording.copy_buffer_to_buffer(&self.buffer, 0, &readback, 0, bytes);
         recording.submit();
 
         crate::gpu::read_back(self.gpu, &readback, |mapped| {

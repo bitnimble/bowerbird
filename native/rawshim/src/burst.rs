@@ -183,9 +183,7 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+        recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
         recording.submit();
         pollster::block_on(crate::gpu::read_back(gpu, &readback, |mapped| {
             bytemuck::cast_slice::<u8, f32>(mapped).to_vec()

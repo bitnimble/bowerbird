@@ -28,6 +28,7 @@
 // The two whole-frame reductions are here - the radial sums the slope is fitted from, and the
 // residual histograms each channel's noise sigma is a median of - and nothing else is.
 // `base::measure_defocus` holds the six-number fit those feed, and says where the line is drawn.
+import band;
 import lanes;
 import packed;
 import px;
@@ -88,8 +89,9 @@ float luma_at(uint x, uint y)
 /// because the stencil has no room there.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void defocus_bins(uint3 id : SV_DispatchThreadID)
+void defocus_bins(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let segment = linear(id);
     if (segment >= params.rows * params.segments) { return; }
     let y = 1 + times(segment / params.segments, STRIDE);
@@ -142,8 +144,9 @@ void defocus_bins(uint3 id : SV_DispatchThreadID)
 /// less than a second whole-frame buffer to hold the intermediate in.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void defocus_residuals(uint3 id : SV_DispatchThreadID)
+void defocus_residuals(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
     let x = at % params.width;

@@ -19,7 +19,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(super) fn new(device: &super::dispatch::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print environment"),
             source: wgpu::ShaderSource::Wgsl(
@@ -213,16 +213,19 @@ impl Gpu {
                     ],
                 })
             };
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(if level == 0 {
-                &pipelines.unpack
-            } else {
-                &pipelines.shrink
-            });
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            recording.dispatch(
+                [width.div_ceil(8), height.div_ceil(8), 1],
+                super::dispatch::Whole::Fixed,
+                |pass| {
+                    pass.set_pipeline(if level == 0 {
+                        &pipelines.unpack
+                    } else {
+                        &pipelines.shrink
+                    });
+                    pass.set_bind_group(0, &group, &[]);
+                },
+            );
         }
-        recording.submit();
         Ok(texture)
     }
 

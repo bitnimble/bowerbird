@@ -13,6 +13,7 @@
 
 mod support;
 
+use rawshim::gpu::dispatch::Whole;
 use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
 use rawshim::lattice::LutAxes;
 
@@ -307,15 +308,11 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
             ],
         });
 
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
+        });
+        recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
         recording.submit();
 
         let got = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
@@ -402,15 +399,11 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
+    });
+    recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
     recording.submit();
 
     let got: Vec<u32> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
@@ -496,15 +489,15 @@ fn the_half_conversion_rounds_alike_on_every_adapter() {
             resource: words.as_entire_binding(),
         }],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(fed.len().div_ceil(64) as u32, 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
+    recording.dispatch(
+        [fed.len().div_ceil(64) as u32, 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
     recording.submit();
     let got: Vec<u16> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
         mapped

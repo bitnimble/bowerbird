@@ -458,6 +458,13 @@ pub fn announce_panics() {
     }));
 }
 
+/// How long a call that lost the GPU waits before each run again, and so how many it gets.
+#[cfg(not(target_arch = "wasm32"))]
+const GPU_LOST_RETRIES: [std::time::Duration; 2] = [
+    std::time::Duration::from_secs(2),
+    std::time::Duration::from_secs(8),
+];
+
 /// Runs `body`, turning a panic into `fallback` rather than letting it out of the
 /// library.
 ///
@@ -475,8 +482,20 @@ pub fn announce_panics() {
 /// pointers that are already the caller's responsibility. What it gives up - seeing a
 /// half-updated value after a panic - is not available here anyway: every one of these
 /// reports failure and hands back nothing.
-pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+///
+/// A call that loses the device it ran on runs again, after [`GPU_LOST_RETRIES`], on the device
+/// [`gpu::device`] opens in its place: whatever it returned came off a GPU that stopped partway.
+pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnMut() -> T) -> T {
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = rerun_on_loss(
+        what,
+        || gpu::dispatch::LOSSES.load(std::sync::atomic::Ordering::Relaxed),
+        &GPU_LOST_RETRIES,
+        body,
+    );
+    #[cfg(target_arch = "wasm32")]
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    match outcome {
         Ok(value) => value,
         Err(panicked) => {
             let why = panicked
@@ -489,6 +508,29 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
             ));
             fallback
         }
+    }
+}
+
+/// `body`, run again after each of `waits` for as long as `losses` moves while it runs.
+#[cfg(not(target_arch = "wasm32"))]
+fn rerun_on_loss<T>(
+    what: &str,
+    losses: impl Fn() -> u64,
+    waits: &[std::time::Duration],
+    mut body: impl FnMut() -> T,
+) -> std::thread::Result<T> {
+    let mut waits = waits.iter();
+    loop {
+        let before = losses();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut body));
+        let Some(wait) = (losses() != before).then(|| waits.next()).flatten() else {
+            return outcome;
+        };
+        warn(&format!(
+            "rawshim: {what} lost the GPU; running it again in {}s",
+            wait.as_secs()
+        ));
+        std::thread::sleep(*wait);
     }
 }
 
@@ -1051,6 +1093,39 @@ mod fixture_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_that_loses_the_gpu_runs_again_and_one_that_keeps_losing_it_stops() {
+        let losses = std::cell::Cell::new(0);
+        let lose_first = std::cell::Cell::new(true);
+        let mut runs = 0;
+        let outcome = rerun_on_loss(
+            "test",
+            || losses.get(),
+            &[std::time::Duration::ZERO; 2],
+            || {
+                runs += 1;
+                if lose_first.replace(false) {
+                    losses.set(losses.get() + 1);
+                }
+                runs
+            },
+        );
+        assert_eq!(outcome.expect("no panic"), 2);
+
+        let mut runs = 0;
+        let outcome = rerun_on_loss(
+            "test",
+            || losses.get(),
+            &[std::time::Duration::ZERO; 2],
+            || {
+                runs += 1;
+                losses.set(losses.get() + 1);
+                runs
+            },
+        );
+        assert_eq!(outcome.expect("no panic"), 3);
+    }
 
     /// What a loupe tile would cost with no cache at all: open, unpack, demosaic and denoise,
     /// every one of them per request.

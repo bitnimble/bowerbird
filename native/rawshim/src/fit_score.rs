@@ -4,6 +4,8 @@
 //! uploading the pairs once for a stage that will ask many probes, and folding the per-block
 //! partials in block order (`hdr_fit::folded`).
 
+use crate::gpu::dispatch::Whole;
+
 /// `hdr_fit::BIAS_BUCKETS`, which the shader states for itself and
 /// `the_shader_pools_the_buckets_the_host_folds` holds the two together - a count that differed
 /// would pool the bias over a different number of buckets on each side.
@@ -314,12 +316,10 @@ impl Scoring {
         if pairs > 0 {
             scoring.describe(0, &Shape::Saturation);
             let mut recording = gpu.record();
-            {
-                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            recording.dispatch([blocks as u32, 1, 1], Whole::Fixed, |pass| {
                 pass.set_pipeline(&kernel(gpu).target);
                 pass.set_bind_group(0, &scoring.group, &[]);
-                pass.dispatch_workgroups(blocks as u32, 1, 1);
-            }
+            });
             recording.submit();
         }
         scoring
@@ -380,25 +380,17 @@ impl Scoring {
         }
 
         let mut recording = first.gpu.record();
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernel(first.gpu).score);
-            for scoring in &asked {
-                let units = probes.len() * scoring.blocks;
-                assert!(units <= 65535, "{units} blocks overrun a dispatch");
+        for scoring in &asked {
+            let units = probes.len() * scoring.blocks;
+            assert!(units <= 65535, "{units} blocks overrun a dispatch");
+            recording.dispatch([units as u32, 1, 1], Whole::Fixed, |pass| {
+                pass.set_pipeline(&kernel(first.gpu).score);
                 pass.set_bind_group(0, &scoring.group, &[]);
-                pass.dispatch_workgroups(units as u32, 1, 1);
-            }
+            });
         }
         for scoring in &asked {
             let bytes = (probes.len() * scoring.blocks * PARTIAL * 4) as u64;
-            recording.encoder().copy_buffer_to_buffer(
-                &scoring.partials,
-                0,
-                &scoring.staging,
-                0,
-                bytes,
-            );
+            recording.copy_buffer_to_buffer(&scoring.partials, 0, &scoring.staging, 0, bytes);
         }
         recording.submit();
     }

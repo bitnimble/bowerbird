@@ -4,6 +4,7 @@
 //! block's partials summed in block order, in `f64` - and the solve the fold feeds, which is a
 //! pass over 256 bins rather than over a picture.
 
+use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
 
 /// Workgroups the binning is split across, which is also how many partials come back.
@@ -211,18 +212,16 @@ pub(crate) async fn binned(
             },
         ],
     });
-    // A pass each: the weighting reads what the level count wrote, and the binning reads what the
-    // weighting wrote.
     let over_blocks = BLOCKS as u32;
     for (pipeline, groups) in [
         (&built.levels, over_blocks),
         (&built.weights, 1),
         (&built.bins, over_blocks),
     ] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(groups, 1, 1);
+        recording.dispatch([groups, 1, 1], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
     let out = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit curve out"),
@@ -230,9 +229,7 @@ pub(crate) async fn binned(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&partials, 0, &out, 0, (partial_words * 4) as u64);
+    recording.copy_buffer_to_buffer(&partials, 0, &out, 0, (partial_words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {

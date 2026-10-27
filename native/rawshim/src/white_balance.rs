@@ -14,6 +14,8 @@
 //! rather than one of the closed-form CCT approximations, which agree with it near daylight
 //! and drift by hundreds of Kelvin at the ends of the slider.
 
+use crate::gpu::dispatch::Whole;
+
 /// The illuminant, as the reader's two sliders.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,15 +144,11 @@ async fn solved(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&solved, 0, &readback, 0, SOLVED * 4);
+    });
+    recording.copy_buffer_to_buffer(&solved, 0, &readback, 0, SOLVED * 4);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &readback, |mapped| {
