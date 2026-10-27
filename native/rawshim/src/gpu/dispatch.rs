@@ -467,10 +467,6 @@ impl BandedPass<'_, '_> {
     pub fn set_bind_group(&mut self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) {
         self.0.set_bind_group(index, group, offsets);
     }
-
-    pub fn set_immediates(&mut self, offset: u32, data: &[u8]) {
-        self.0.set_immediates(offset, data);
-    }
 }
 
 /// What each banded kernel's workgroups have cost on this adapter, kept across the devices opened

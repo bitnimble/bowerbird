@@ -1187,7 +1187,6 @@ async fn tallied(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording.submit();
     // A slice each rather than one running sum: a tile's photosites fill an `int` to about half.
     for (slice, tile) in edges.iter().enumerate() {
         let mut recording = gpu.record();

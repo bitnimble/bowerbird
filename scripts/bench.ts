@@ -268,8 +268,19 @@ function main(): void {
   const rest = first.offered.filter((a) => a !== first.adapter);
   const runs = [first, ...rest.map((want) => render(burst, want))];
 
+  // **These stages share a CPU and one integrated GPU with whatever else is running**, so a build
+  // or a browser suite alongside them moves every number at once: measured here, one run put
+  // `frame` at +1.7% and the next, against the same binary, at +41.7%. Neither reading is about
+  // the code, so a busy machine reports rather than judges - the same argument the adapter check
+  // below makes - and cannot record a budget at all, since that would bake the contention in and
+  // loosen the gate for good.
+  const load = loadavg()[0] ?? 0;
+  const busy = load > cpus().length / 2;
+
+  // A CPU rasteriser runs every dispatch long and no driver watchdog times it.
+  const timed = runs.filter((run) => !/\(Cpu,|SwiftShader/.test(run.adapter));
   const long = new Map(
-    runs.flatMap((run) =>
+    timed.flatMap((run) =>
       run.long.map((l) => [
         `${run.adapter} ${l.slice(l.lastIndexOf(': '))}`,
         `${run.adapter}: ${l}`,
@@ -280,17 +291,8 @@ function main(): void {
     console.error(
       `dispatches run whole for too long; band them:\n${[...long.values()].join('\n')}`,
     );
-    process.exit(1);
+    if (!busy) process.exit(1);
   }
-
-  // **These stages share a CPU and one integrated GPU with whatever else is running**, so a build
-  // or a browser suite alongside them moves every number at once: measured here, one run put
-  // `frame` at +1.7% and the next, against the same binary, at +41.7%. Neither reading is about
-  // the code, so a busy machine reports rather than judges - the same argument the adapter check
-  // below makes - and cannot record a budget at all, since that would bake the contention in and
-  // loosen the gate for good.
-  const load = loadavg()[0] ?? 0;
-  const busy = load > cpus().length / 2;
 
   if (process.env.BOWERBIRD_WRITE_BUDGET) {
     if (busy) {

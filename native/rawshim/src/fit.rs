@@ -1429,8 +1429,8 @@ async fn grids_from_preview(
     render: &crate::fit_source::Rendered,
     preview: &crate::hdr_fit::Source,
 ) -> Option<(Grids, crate::hdr_fit::Source)> {
-    // Already f32 and already on the device: `fit_render` wrote it in the submit that made the
-    // plane, so this is the buffer itself rather than a copy of one.
+    // Already f32 and already on the device, where `fit_render` wrote it, so this is the buffer
+    // itself rather than a copy of one.
     let render = Sampled {
         buffer: render.buffer.clone(),
         width: render.width,

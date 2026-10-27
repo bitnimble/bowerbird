@@ -322,6 +322,13 @@ export class EditPresenter {
     while (this.writing != null) await this.writing;
   }
 
+  /** Stores what the reader has done and not yet stored, a drag included, before the page goes. */
+  async flush(): Promise<void> {
+    await this.drained();
+    if (this.locallyEdited) await this.commit();
+    await this.drained();
+  }
+
   private async exclusively(write: () => Promise<void>): Promise<void> {
     const writing = write().finally(() => {
       this.writing = null;

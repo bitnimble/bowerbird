@@ -433,10 +433,6 @@ fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
 /// as many strips is decoded five times over. A twenty-six frame pan of a 33804x9376 canvas
 /// rendered at 16384 took 180 rows a strip, and so twenty-six strips of 676 decodes; it takes 910
 /// rows and five, at 130.
-///
-/// Order is unchanged and so is the arithmetic: the adds are the same passes over the same
-/// accumulator in the same sequence, submitted one at a time rather than recorded together, and
-/// submissions to one queue run in the order they were made.
 pub struct Blending {
     gpu: &'static crate::gpu::Gpu,
     base: &'static crate::base::Base,

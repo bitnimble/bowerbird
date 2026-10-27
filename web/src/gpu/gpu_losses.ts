@@ -7,10 +7,7 @@ const LOSS_WINDOW_MS = 10 * 60_000;
 const LossesSchema = z.object({ at: z.array(z.number()), sites: z.array(z.string()) });
 type Losses = z.infer<typeof LossesSchema>;
 
-/**
- * The GPU devices this tab lost, kept across the reload that replaces one, so the next worker cuts
- * the bands dispatched from where they were submitting smaller (`splitBands`).
- */
+/** The GPU devices this tab lost, kept across the reload that replaces one. */
 export class GpuLosses {
   /** `storage` is asked on each use, since reading `sessionStorage` itself throws where storage is blocked. */
   constructor(private readonly storage: () => Pick<Storage, 'getItem' | 'setItem'>) {}

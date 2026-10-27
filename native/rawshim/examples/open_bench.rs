@@ -388,7 +388,8 @@ fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32
 
 /// What each dispatch in the chain costs, by running the chain truncated at every length.
 ///
-/// Nothing outside can see one dispatch's cost, because the whole chain is one recording.
+/// Nothing outside can see one dispatch's cost, because the chain runs without waiting between
+/// dispatches.
 ///
 /// **Read the spread before believing a delta.** Each figure is a difference of two whole runs, so
 /// it carries both runs' variance, and every run re-allocates the frame's buffers before it

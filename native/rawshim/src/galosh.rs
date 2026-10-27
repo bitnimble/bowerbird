@@ -1907,8 +1907,7 @@ async fn run(
     }
     lap("record");
     recording.submit();
-    // Before anything below, so the lap that says "dispatch" is the dispatch. It is also what
-    // bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
+    // Bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
     // still pending, so without a wait here the next tile allocates while this one's gigabyte is
     // still owed - which at 61MP is every tile's planes resident at once.
     crate::gpu::finished(gpu)

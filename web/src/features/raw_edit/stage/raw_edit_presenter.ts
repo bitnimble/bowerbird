@@ -152,6 +152,7 @@ export class RawEditPresenter {
   private closed = false;
   private remembersProof = false;
   private readonly followPeak: IReactionDisposer;
+  private readonly unflush: () => void;
 
   private photoId: string | null = null;
 
@@ -248,6 +249,7 @@ export class RawEditPresenter {
       showReach: (shown) => this.showReach(shown),
     });
     this.edit = new EditPresenter(editStore, this, this.repair);
+    this.unflush = surface.beforeReload(() => this.edit.flush());
     this.followPeak = reaction(
       () => this.shownPeakNits(),
       () => this.request(),
@@ -1097,6 +1099,7 @@ export class RawEditPresenter {
     this.repair.close();
     this.reflection.close();
     this.colourWheel.close();
+    this.unflush();
     this.edit.close();
 
     this.closed = true;

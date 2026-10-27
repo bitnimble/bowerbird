@@ -456,10 +456,10 @@ fn reopened(lost: &'static Gpu) -> Opened {
         crate::warn("rawshim gpu: the device was lost too often; no other is opened yet");
         return Opened::Lost(lost);
     }
-    reopened.push(crate::clock::Mark::now());
     let Some(mut next) = Gpu::new() else {
         return Opened::Lost(lost);
     };
+    reopened.push(crate::clock::Mark::now());
     lost.succeeded_by(&mut next);
     Opened::Open(Box::leak(Box::new(next)))
 }
@@ -1004,6 +1004,9 @@ impl<'a> Recording<'a> {
         [x, y, z]: [u32; 3],
         mut set: impl FnMut(&mut dispatch::BandedPass<'_, '_>),
     ) {
+        if x * z == 0 {
+            return;
+        }
         let kernel: dispatch::Kernel = (std::panic::Location::caller(), pipeline.name.clone());
         let pressed = self.gpu.device.vram_pressed();
         let mut running = std::collections::VecDeque::new();
@@ -1912,6 +1915,9 @@ impl Gpu {
         queue: wgpu::Queue,
     ) -> Gpu {
         let device = dispatch::Device::new(device);
+        // Before the callback, so a loss during the build below counts against this device.
+        #[cfg(not(target_arch = "wasm32"))]
+        let opened_after = dispatch::LOSSES.load(std::sync::atomic::Ordering::Relaxed);
         #[cfg(not(target_arch = "wasm32"))]
         device.count_loss();
         let info = wgpu_adapter.get_info();
@@ -2122,7 +2128,7 @@ impl Gpu {
             timestamps: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
             costs: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            opened_after: dispatch::LOSSES.load(std::sync::atomic::Ordering::Relaxed),
+            opened_after,
             queue: Queue::new(queue),
             device,
             instance,

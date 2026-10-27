@@ -75,7 +75,7 @@ static KEPT: std::sync::Mutex<Vec<(&'static str, String, f64)>> = std::sync::Mut
 
 /// Whether a reader is watching the laps closely enough to be worth stalling the device for.
 ///
-/// A lap around recorded-but-unsubmitted GPU work times the recording, not the work: measured on a
+/// A lap around GPU work nothing has waited on times the submitting, not the work: measured on a
 /// 61MP rendition, the coding, the defringe and the warp reported 3.4ms between them and the grade
 /// that followed reported 421, because the grade was the first thing in the job to wait on the
 /// queue. `Gpu::settle` is what closes that, and this is how it knows to.

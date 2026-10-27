@@ -126,6 +126,14 @@ or the filmstrip, keeps what the next open would otherwise rebuild or remount:
 The worker frees a session's picture only once no ask on it is still running: a tick suspended
 inside a freed picture throws when it resumes, outside any ask, and takes the worker down.
 
+**A lost device reloads the page.** A wasm call into a lost device can trap mid-write, so the worker
+is not reused: it posts where it recently submitted from, `GpuThread` records those sites in
+sessionStorage (`gpu_losses.ts`, 3 reloads in 10 minutes at most), waits for the editor to store
+what it holds (`beforeReload`, `EditPresenter.flush`) and reloads. The next worker hands the sites
+to `splitBands`, which cuts the bands dispatched from each 8 times smaller per loss
+(`gpu/dispatch.rs`). Every dispatch is its own submission, and one that follows the picture's size
+runs as bands sized to about 50ms, so Windows' 2s watchdog (TDR) is not reached.
+
 Page retains open header for the panel. Its `stage_resolution.ts` decides backing-store
 dimensions from layout size and device pixel ratio.
 

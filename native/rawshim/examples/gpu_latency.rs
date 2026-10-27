@@ -31,7 +31,9 @@ fn main() {
     let scratch = held.buffer(&wgpu::BufferDescriptor {
         label: Some("latency scratch"),
         size: 256,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let staging = held.buffer(&wgpu::BufferDescriptor {
