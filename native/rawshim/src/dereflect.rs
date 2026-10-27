@@ -5,9 +5,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{Buffer, Gpu};
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
+use gpu::{Buffer, Gpu};
 use units::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 
 const WGSL: &str = shaders::DEREFLECT.source;
@@ -874,7 +874,7 @@ struct FrameKernels {
 }
 
 fn frame_kernels(gpu: &'static Gpu) -> &'static FrameKernels {
-    static BUILT: crate::gpu::Cache<FrameKernels> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<FrameKernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -934,7 +934,7 @@ impl FrameKernels {
     fn dispatch(
         &self,
         gpu: &Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
+        recording: &mut gpu::Recording<'_>,
         pipeline: &wgpu::ComputePipeline,
         params: FrameParams,
         bound: [&Buffer; 5],

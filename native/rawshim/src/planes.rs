@@ -4,7 +4,7 @@
 //! and hands back its planes rather than RGB; where there is none, `native/avif_planes` does. `planes.slang` is the conversion libavif does on the
 //! server, so what [`crate::linearise::Picture`] holds is the same either way.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 use serde::Deserialize;
 
 /// The planes as `VideoFrame.copyTo` laid them out.
@@ -32,8 +32,8 @@ pub(crate) struct Kernel {
     pipeline: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -77,7 +77,7 @@ pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 
 /// The picture as interleaved RGB codes at sixteen bits, on the device.
 pub fn codes(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     samples: &[u8],
     layout: &Layout,
 ) -> Result<crate::resident::Resident, String> {
@@ -124,7 +124,7 @@ pub fn codes(
             },
         ],
     });
-    let (x, y) = crate::base::groups(out.words());
+    let (x, y) = gpu::compute::groups(out.words());
     recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);

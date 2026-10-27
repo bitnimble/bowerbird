@@ -606,16 +606,16 @@ mod tests {
         1.0 + crate::image::spline_at(&curve[channel], 1.0)
     }
 
-    fn framed(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> crate::tca_device::Frame {
+    fn framed(gpu: &'static gpu::Gpu, image: &Rgb) -> crate::tca_device::Frame {
         let render = crate::fit_source::uploaded_render(gpu, image.as_ref());
         pollster::block_on(crate::tca_device::frame(gpu, &render)).expect("a frame")
     }
 
-    fn regression(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
+    fn regression(gpu: &'static gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
         pollster::block_on(regressed(&framed(gpu, image)))
     }
 
-    fn measured(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
+    fn measured(gpu: &'static gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
         pollster::block_on(measure(&framed(gpu, image)))
     }
 
@@ -624,7 +624,7 @@ mod tests {
         // The check the module is worth having: a known misregistration has to come back
         // as itself. Three search-based estimators answered ~0 on a frame carrying a
         // real one, which is exactly what this would have caught.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = checks(900, 600);
@@ -643,7 +643,7 @@ mod tests {
     /// easy thing to get backwards here and a sign error reads as a plausible scale.
     #[test]
     fn applying_the_estimate_cancels_the_aberration() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let aberrated = inject(&checks(900, 600), 0, 1.0015);
@@ -663,7 +663,7 @@ mod tests {
     fn tells_red_from_blue() {
         // One channel moved must not be reported against the other, or a correction
         // lands on the channel that was already registered.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let moved = inject(&checks(900, 600), 2, 1.0015);
@@ -680,7 +680,7 @@ mod tests {
     /// thing `supplied_curve` promises, and why nothing refits its strength.
     #[test]
     fn a_supplied_curve_is_applied_as_recorded() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const KNOTS: usize = 8;
@@ -772,7 +772,7 @@ mod tests {
         // `slopes` counts zero samples and `estimate` declines before it has read anything
         // about colour at all. This test passed for a while with `estimate` returning None
         // unconditionally, which is worth exactly nothing.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let clean = checks(900, 600);
@@ -834,7 +834,7 @@ mod tests {
         // `checks` rather than `starfield`, for the reason recorded on the colour-cast
         // test above: a starfield gives `slopes` nothing that clears `MIN_EDGE`, so the
         // decline says nothing about noise.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let clean = checks(900, 600);
@@ -859,7 +859,7 @@ mod tests {
         // point sources, and the frame was then judged on the colour of a bridge. A thin
         // bright line falls away in every direction at any radius wider than the line, so
         // isolation alone passes it and only compactness rejects it.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (w, h) = (600usize, 400usize);
@@ -899,7 +899,7 @@ mod tests {
         // fires on frames with no aberration and overshoots by 2-3x on those it reads,
         // leaving them worse than untouched. Nothing downstream noticed, because nothing
         // downstream looked.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let aberrated = framed(gpu, &inject(&starfield(1200, 900), 0, 1.0015));
@@ -932,7 +932,7 @@ mod tests {
         // A portrait or a flat wall offers no point sources. Refusing those would disable
         // the correction almost everywhere it is wanted, so they pass unverified - absence
         // of evidence is not evidence of harm.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let flat_frame = Rgb {
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn the_regression_is_kept_only_where_point_sources_confirm_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let unjudged = framed(gpu, &inject(&checks(900, 600), 0, 1.0015));
@@ -994,7 +994,7 @@ mod tests {
         // only the one this test calls. A supplied curve pointing the wrong way is the
         // case that shipped: the Sony tag was read backwards for a while and nothing
         // rejected it.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let aberrated = framed(gpu, &inject(&starfield(1200, 900), 0, 1.0015));
@@ -1039,7 +1039,7 @@ mod tests {
         // The check the regression never passed and this exists to replace it: a known
         // misregistration has to come back as itself, on a frame built to look like what
         // the measurement actually runs on.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = wide_starfield(1600, 1200);
@@ -1074,7 +1074,7 @@ mod tests {
     /// a different scale for every radius.
     #[test]
     fn a_large_aberration_is_measured_rather_than_aliased() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = wide_starfield(1600, 1200);
@@ -1100,7 +1100,7 @@ mod tests {
         // readable red correction away with the unreadable blue one - the wrong way round,
         // red being most of what the eye sees here. Blue is starved by
         // giving it nothing to measure: only red is displaced.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = wide_starfield(1600, 1200);
@@ -1116,7 +1116,7 @@ mod tests {
     fn the_measurement_declines_a_registered_frame() {
         // Where the regression manufactured a scale from scene edges, this has to report
         // nothing at all - which is most of the point of replacing it.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         assert!(measured(gpu, &wide_starfield(1600, 1200)).is_none());
@@ -1129,7 +1129,7 @@ mod tests {
         // frames of a lens whose own recorded profile says it has almost none. A lateral
         // aberration is a magnification difference and cannot be flat, so fitting through
         // the origin has to decline this rather than fit a curve to it.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = wide_starfield(1600, 1200);
@@ -1194,7 +1194,7 @@ mod tests {
     fn declines_a_frame_that_carries_nothing() {
         // A registered frame must report None rather than a scale of noise, so the warp
         // keeps its shared-ratio path and no pixel is resampled for nothing.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         assert!(regression(gpu, &checks(900, 600)).is_none());
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn declines_a_frame_with_no_edges_to_read() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let flat = Rgb {

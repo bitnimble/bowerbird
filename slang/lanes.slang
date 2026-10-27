@@ -12,7 +12,7 @@ module lanes;
 /// Workgroups to a row of the dispatch, which the host splits at and this folds back in.
 ///
 /// **The host must dispatch `x` at exactly this when it dispatches `y` above one**, which
-/// `base::ROW_GROUPS` does and `the_shaders_split_a_dispatch_where_the_host_does` holds it to. A
+/// `gpu::compute::ROW_GROUPS` does and `the_shaders_split_a_dispatch_where_the_host_does` holds it to. A
 /// row narrower than the host's leaves every row after the first reading another row's samples,
 /// which is a picture assembled out of the wrong pixels rather than a failure.
 public static const uint ROW_GROUPS = 1024;

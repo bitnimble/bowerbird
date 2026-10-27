@@ -27,7 +27,7 @@ fn probe(path: &str) -> Result<(), String> {
     let opened = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()
         .ok_or("the decode declined it")?;
-    let gpu = rawshim::gpu::device().ok_or("an adapter")?;
+    let gpu = gpu::device().ok_or("an adapter")?;
     let resident = opened
         .frame
         .on_device(gpu)
@@ -71,7 +71,7 @@ fn probe(path: &str) -> Result<(), String> {
 
 fn report(label: &str, render: &units::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
     let stride = (((preview.width * preview.height) as f64 / POINTS as f64).sqrt() as usize).max(1);
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let ours = hdr_fit::Source {
         buffer: hdr_fit::levelled_source(gpu, render.as_ref()),
         width: render.width,

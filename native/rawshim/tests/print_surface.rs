@@ -450,7 +450,7 @@ fn linear(coded: f32) -> f64 {
 }
 
 fn draw(frame: &[u16], grade: &Grade<'_>, scene: Option<&Scene>) -> Vec<f32> {
-    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
     let pyramid = rawshim::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
     let peak = rawshim::grade::device(gpu).scene_peak();

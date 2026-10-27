@@ -6,9 +6,9 @@
 //! `CompositeRequest::mask` asks the gather for.
 
 use crate::composite_tile::Layer;
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{self, Gpu};
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
+use gpu::{self, Gpu};
 use units::px::{Composite, Rect};
 
 /// `composite_gather.slang`'s own sentinel, pinned against it by
@@ -34,9 +34,9 @@ pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
-fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    crate::hdr_fit::kernel(
+fn built(gpu: &'static Gpu, entry: &str) -> gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    gpu::compute::kernel(
         gpu,
         entry,
         shaders::ASSEMBLY_BLEND.source,
@@ -54,13 +54,13 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
     )
 }
 
-fn adding(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn adding(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_add"))
 }
 
-fn resolving(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn resolving(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_resolve"))
 }
 
@@ -155,7 +155,7 @@ impl Banding {
         recording.holding(layer.rgb.buffer());
         recording.holding(&layer.weight);
         recording.holding(&self.lowpass[slot]);
-        let (x, y) = crate::base::groups(self.pixels);
+        let (x, y) = gpu::compute::groups(self.pixels);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -182,7 +182,7 @@ impl Banding {
             self.out.buffer().as_entire_binding(),
         );
         recording.holding(self.out.buffer());
-        let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
+        let (x, y) = gpu::compute::groups(self.pixels.div_ceil(2));
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -193,7 +193,7 @@ impl Banding {
 
     fn bind(
         &self,
-        kernel: &crate::hdr_fit::Kernel,
+        kernel: &gpu::compute::Kernel,
         layer: wgpu::BindingResource<'_>,
         weight: wgpu::BindingResource<'_>,
         lowpass: wgpu::BindingResource<'_>,

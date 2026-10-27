@@ -5,7 +5,7 @@
 //! the same numbers itself. The 3x3 solve stays on the host: it reads those and nothing else, so
 //! a dispatch for it would be all round trip and no work.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
 pub(crate) const MOMENT_WORDS: usize = 36;
@@ -15,8 +15,8 @@ pub(crate) struct Kernel {
     moments: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -69,9 +69,9 @@ pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 /// Returned rather than folded here so the caller sums them in the order it chose, which is what
 /// makes the answer the same on every adapter.
 pub(crate) async fn partials(
-    gpu: &'static crate::gpu::Gpu,
-    below: &crate::gpu::Buffer,
-    target: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    below: &gpu::Buffer,
+    target: &gpu::Buffer,
     pairs: usize,
     block: usize,
     matrices: &[[[f64; 3]; 3]],
@@ -165,7 +165,7 @@ pub(crate) async fn partials(
     recording.copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &staging, |mapped| {
+    let read = gpu::read_back(gpu, &staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))

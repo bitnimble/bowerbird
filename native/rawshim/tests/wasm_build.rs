@@ -249,7 +249,7 @@ fn the_demosaic_reconstructs_the_field_it_interpolates_under() {
     let interior =
         || (margin..h - margin).flat_map(move |r| (margin..w - margin).map(move |c| (r, c)));
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no adapter: the demosaic was not checked against the field it reconstructs");
         return;
     };

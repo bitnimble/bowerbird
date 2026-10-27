@@ -6,7 +6,7 @@ use units::px::Size;
 
 #[test]
 fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
-    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("the source pyramid");
     let size = 1024;
     let canvas = 384;

@@ -469,7 +469,7 @@ fn hdr_match(
     linear: &Frame,
     spec: &GradeSpec,
 ) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
-    let gpu = crate::gpu::device().ok_or("the fit needs an adapter")?;
+    let gpu = gpu::device().ok_or("the fit needs an adapter")?;
     let frame = linear.on_device(gpu).ok_or("the frame could not be read")?;
     Ok(crate::fit_hdr_for(
         &frame,
@@ -599,7 +599,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     below.push((linear(sample(image.as_ref(), u, v)), 0.0));
                 }
             }
-            let gpu = crate::gpu::device().ok_or("the colour distance is a shader")?;
+            let gpu = gpu::device().ok_or("the colour distance is a shader")?;
             let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
             let mut mean_delta_e = Vec::with_capacity(images.len());
             for below in &ours {

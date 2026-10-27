@@ -110,7 +110,7 @@ fn main() -> Result<(), String> {
         },
         support::STRENGTHS.sharpen,
     )?;
-    let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
+    let gpu = gpu::device().ok_or("print requires Vulkan")?;
     let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let display = Scene {

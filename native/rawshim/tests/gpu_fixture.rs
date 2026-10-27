@@ -83,7 +83,7 @@ fn stored(level: f64) -> u16 {
 }
 
 fn levels(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     samples: &[u16],
     width: usize,
     height: usize,
@@ -143,7 +143,7 @@ fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths
         prepared.levels.anchored(),
         grade.reference_white_nits,
     );
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let base = rawshim::base::device(gpu).expect("the base pipelines");
     pollster::block_on(rawshim::base::sharpen_base(
         gpu,
@@ -573,7 +573,7 @@ fn the_peak_reads_the_pixels_it_always_did() {
 /// The frame the editor's open hands the grade: coded, then sharpened.
 #[test]
 fn the_prepare_reproduces_the_recorded_frame() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the prepare was not run against its snapshot.");
         return;
     };
@@ -599,7 +599,7 @@ fn the_prepare_reproduces_the_recorded_frame() {
 /// `gpu::the_kept_candidates_answer_as_the_whole_sample_does`.
 #[test]
 fn the_encode_pass_reproduces_the_recorded_frame() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so `encode` was not run against its fixture.");
         return;
     };
@@ -665,7 +665,7 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
 /// output every encoder reads.
 #[test]
 fn the_rolled_arm_reproduces_the_recorded_grade() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!(
             "SKIPPED: no adapter answered, so the rolled arm was not run against its fixture."
         );
@@ -833,7 +833,7 @@ fn split_ground() -> Vec<u16> {
 /// `Rolled` rather than PQ, so a difference in counts is a difference in light: the transfer
 /// would compress the shadows and flatter every claim either of them makes.
 fn graded_banded(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     haze: f64,
     adjust: rawshim::grade::Adjust,
 ) -> Vec<u16> {
@@ -854,7 +854,7 @@ fn graded_banded(
 /// nothing but the wave left in it.
 #[test]
 fn clarity_leaves_the_finest_band_to_texture() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the presence sliders were not run.");
         return;
     };
@@ -908,7 +908,7 @@ fn clarity_leaves_the_finest_band_to_texture() {
 }
 
 fn graded_frame(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: Vec<u16>,
     width: usize,
     height: usize,
@@ -919,7 +919,7 @@ fn graded_frame(
 
 /// `graded_frame` through the matched arm where `colour` is given.
 fn graded_frame_as(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: Vec<u16>,
     width: usize,
     height: usize,
@@ -933,7 +933,7 @@ fn graded_frame_as(
 
 /// `samples` coded as the shipped grade codes them, and that grade.
 fn coded_grade<'a>(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     samples: &mut [u16],
     width: usize,
     height: usize,
@@ -982,7 +982,7 @@ fn coded_grade<'a>(
 /// share perfectly.
 #[test]
 fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -1096,7 +1096,7 @@ fn three_grounds() -> Vec<u16> {
 /// job; the inversion this guards is in the weighting, and the dark band is where it shows.
 #[test]
 fn highlights_reaches_furthest_into_what_is_most_blown() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -1190,7 +1190,7 @@ fn four_grounds() -> Vec<u16> {
 fn the_inner_pair_leave_middle_grey_to_the_exposure() {
     const REACH: f64 = 5.0;
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -1297,7 +1297,7 @@ fn blacks_reaches_the_bottom_of_a_hazy_frame() {
     const MOVES_ITS_OWN_END: f64 = 0.25;
     const LEAVES_WHAT_IT_IS_NOT_NAMED_FOR: f64 = 5.0;
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -1413,7 +1413,7 @@ fn hard_edge(haze: f64) -> Vec<u16> {
 /// field and the eye finds those at well under a percent.
 #[test]
 fn a_tone_control_leaves_no_band_along_an_edge() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -1509,7 +1509,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
 /// diffuse white the reader had just shifted.
 #[test]
 fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the white balance was not run.");
         return;
     };
@@ -1597,7 +1597,7 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
 
 #[test]
 fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the colour edits were not run.");
         return;
     };
@@ -1648,7 +1648,7 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
 
 #[test]
 fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the colour edits were not run.");
         return;
     };
@@ -1702,7 +1702,7 @@ fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
 
 #[test]
 fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the colour probe was not run.");
         return;
     };
@@ -1844,7 +1844,7 @@ fn blue_over_red(pixels: &[[f64; 3]]) -> f64 {
 /// is not true and is not made.
 #[test]
 fn the_presence_sliders_act_on_the_bands_they_name() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the presence sliders were not run.");
         return;
     };
@@ -1955,7 +1955,7 @@ fn clearing_the_haze_changes_what_shadows_is_worth() {
     // the room they are meant to have.
     const MOVED: f64 = 0.10;
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -2018,7 +2018,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
     // A twentieth, against ratios that would otherwise sit a quarter and a half apart.
     const FLAT: f64 = 0.05;
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
@@ -2063,7 +2063,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
 /// Its own test because the peak differs, and with it every value in the frame.
 #[test]
 fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the sRGB arm was not run against its fixture.");
         return;
     };
@@ -2139,7 +2139,7 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
 /// fails by moving the whole rectangle rather than by a count.
 #[test]
 fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         return;
     };
 
@@ -2316,7 +2316,7 @@ fn read_codes(frame: &Resident) -> Vec<u16> {
 /// first reaches, ground only the second reaches, and an overlap the feather has to decide.
 #[test]
 fn a_panorama_window_reproduces_the_recorded_frame() {
-    let Some(_) = rawshim::gpu::device() else {
+    let Some(_) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the panorama window was not run.");
         return;
     };
@@ -2473,7 +2473,7 @@ fn assembly_request<'a>(
 /// either.
 #[test]
 fn an_assembly_reproduces_the_recorded_frame() {
-    let Some(_) = rawshim::gpu::device() else {
+    let Some(_) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the assembly was not run against its fixture.");
         return;
     };

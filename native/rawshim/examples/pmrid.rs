@@ -42,7 +42,7 @@ fn main() {
     );
     std::fs::create_dir_all(&out).expect("the output directory");
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let bytes = std::fs::read(&path).expect("read the raw");
     let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
     let cfa = held.cfa();

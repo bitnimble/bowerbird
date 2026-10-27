@@ -281,7 +281,7 @@ impl Held {
         let Held::Mosaic(held) = self else {
             return None;
         };
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         crate::dust::detect(gpu, held.device_mosaic(), &held.glass()).await
     }
 

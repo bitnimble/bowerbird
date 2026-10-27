@@ -70,7 +70,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let (clean, noisy) = frames();
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let galosh = rawshim::galosh::device(gpu).expect("the kernels built");
     let uploaded = Mosaic::upload(gpu, &noisy, WIDTH, HEIGHT);
     let fit = pollster::block_on(denoise(

@@ -191,7 +191,7 @@ fn repeat(label: &str, mut run: impl FnMut()) -> u128 {
 
 /// The stages that run on the mosaic, timed apart from the decode that feeds them.
 fn mosaic_stages(width: usize, height: usize) {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no GPU: skipping the mosaic stages");
         return;
     };
@@ -374,7 +374,7 @@ fn block<T>(work: impl std::future::Future<Output = T>) -> T {
 }
 
 fn upload(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     values: &[f32],
     width: usize,
     height: usize,
@@ -382,7 +382,7 @@ fn upload(
     rawshim::condition::Mosaic::upload(gpu, values, width, height)
 }
 
-fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
+fn read(gpu: &gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
     block(mosaic.read(gpu)).expect("the mosaic reads back")
 }
 
@@ -400,7 +400,7 @@ fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32
 /// Handed no fit, the sweep covers the reductions a measuring run opens with, which no caller can
 /// otherwise separate from the filtering.
 fn kernel_by_kernel(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     kernels: &'static rawshim::galosh::Galosh,
     mosaic: &rawshim::condition::Mosaic,
     cfa: &rawshim::cfa::Cfa,
@@ -480,7 +480,7 @@ fn floats(bytes: &[u8]) -> Vec<f32> {
 /// the comparison asks is whether the two agree exactly, since RCD is a pure local map and so it
 /// should: anything above zero is a reach that does not compose the way §10 says it does.
 fn tiled(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &rawshim::condition::Mosaic,
     width: usize,

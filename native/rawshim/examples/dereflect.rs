@@ -11,8 +11,8 @@
 //! document's strokes, and writes the reflection the stage takes out of it, linear, at full size.
 //! `DEREFLECT_CELLS=half` holds the network in `half` cells (`shader-f16`).
 
+use gpu::{Buffer, Gpu};
 use rawshim::dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
-use rawshim::gpu::{Buffer, Gpu};
 
 const TIMED_RUNS: usize = 5;
 
@@ -117,7 +117,7 @@ fn opened(bundle: &str) -> (&'static Gpu, Remover) {
         std::fs::read(&path).unwrap_or_else(|error| panic!("{path}: {error}"))
     };
     let manifest = String::from_utf8(read("weights.json")).expect("weights.json is text");
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let cells = match std::env::var("DEREFLECT_CELLS").as_deref() {
         Ok("half") => Cells::Half,
         Ok("float") | Err(_) => Cells::Float,
@@ -138,5 +138,5 @@ fn read(gpu: &'static Gpu, buffer: &Buffer, size: usize) -> Vec<u8> {
     let mut recording = gpu.record();
     recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
     recording.submit();
-    pollster::block_on(rawshim::gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("reads back")
+    pollster::block_on(gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("reads back")
 }

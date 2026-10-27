@@ -55,7 +55,7 @@ fn main() {
     };
     println!("pattern {pw}x{ph}, white {white}, gains {gains:?}");
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
 
     for (wx, wy, side) in windows {

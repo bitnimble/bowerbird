@@ -441,7 +441,7 @@ mod tests {
         )))
     }
 
-    fn scanned(gpu: &'static crate::gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
+    fn scanned(gpu: &'static gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
         let resident = crate::resident::Resident::upload(gpu, samples, samples.len() / 3, 1);
         pollster::block_on(crate::fit_source::levels(gpu, &resident, quantile))
             .expect("the device read the levels off the frame")
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn the_peak_is_read_above_diffuse_white() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let out = scanned(gpu, &frame((0..3000).map(|i| i * 20)), 0.9);
@@ -464,7 +464,7 @@ mod tests {
     /// dark ground and the anchor is held to three stops under the lights instead.
     #[test]
     fn diffuse_white_is_read_no_lower_than_three_stops_under_the_peak() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let night = frame((0..10_000).map(|i| if i % 10 == 0 { 40_000 } else { 400 }));
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn a_reconstructed_sun_past_full_scale_leaves_diffuse_white_alone() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let sun = 8 * usize::from(u16::MAX);

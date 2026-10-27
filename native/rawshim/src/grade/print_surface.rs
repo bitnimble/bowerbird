@@ -16,7 +16,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
+    pub(super) fn new(device: &gpu::Describing<'_>) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print surface"),
             source: wgpu::ShaderSource::Wgsl(
@@ -437,7 +437,7 @@ impl Uploaded<'_> {
                 extent.height.div_ceil(8),
                 extent.depth_or_array_layers,
             ],
-            crate::gpu::dispatch::Whole::Measured,
+            gpu::dispatch::Whole::Measured,
             |pass| {
                 pass.set_pipeline(&self.grader.print_surface().field);
                 pass.set_bind_group(0, &group, &[]);

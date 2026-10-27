@@ -6,8 +6,8 @@
 //! source because both sides of a seam have to read the same width or `smoothstep` is not symmetric.
 
 use crate::assembly::Drawing;
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{self, Gpu};
+use gpu::dispatch::Whole;
+use gpu::{self, Gpu};
 use units::px::{Composite, Rect};
 
 /// `Assembly::feather` where a recipe names none.
@@ -132,12 +132,12 @@ pub(crate) fn params_block() -> usize {
 /// **Only those**, because the four together bind eleven storage buffers and a stage is allowed nine
 /// (`gpu::MOST_STORAGE_BUFFERS`).
 struct Entry {
-    kernel: crate::hdr_fit::Kernel,
+    kernel: gpu::compute::Kernel,
     uses: &'static [u32],
 }
 
 fn built(gpu: &'static Gpu, entry: &str, uses: &'static [u32]) -> Entry {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
+    use gpu::compute::{READ, UNIFORM, WRITE};
     // The polygons are uploaded and only read; everything past them is a field some entry writes.
     let bindings: Vec<_> = std::iter::once((0, UNIFORM))
         .chain(
@@ -145,28 +145,27 @@ fn built(gpu: &'static Gpu, entry: &str, uses: &'static [u32]) -> Entry {
                 .map(|&at| (at, if at <= 3 { READ } else { WRITE })),
         )
         .collect();
-    let kernel =
-        crate::hdr_fit::kernel(gpu, entry, shaders::ASSEMBLY_WEIGHT.source, &bindings, &[]);
+    let kernel = gpu::compute::kernel(gpu, entry, shaders::ASSEMBLY_WEIGHT.source, &bindings, &[]);
     Entry { kernel, uses }
 }
 
 fn owning(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Entry> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_owner", &[1, 2, 3, 4, 5, 10]))
 }
 
 fn seeding(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Entry> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_seed", &[4, 5, 6]))
 }
 
 fn flooding(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Entry> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_flood", &[6, 7]))
 }
 
 fn settling(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Entry> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_settle", &[4, 6, 8, 9, 10, 11]))
 }
 
@@ -369,7 +368,7 @@ pub async fn weights(
         owning(gpu),
         block(0, 0),
         &entries(true),
-        crate::base::groups(grid_pixels),
+        gpu::compute::groups(grid_pixels),
     );
 
     // `EVERY_SLOT` first - the width field every source reads - then a field a slot.
@@ -379,7 +378,7 @@ pub async fn weights(
             seeding(gpu),
             block(slot, 0),
             &entries(true),
-            crate::base::groups(grid_pixels),
+            gpu::compute::groups(grid_pixels),
         );
         let mut step = (grid.0.max(grid.1) as u32).next_power_of_two() / 2;
         let mut from_is_ping = true;
@@ -389,7 +388,7 @@ pub async fn weights(
                 flooding(gpu),
                 block(slot, step),
                 &entries(from_is_ping),
-                crate::base::groups(grid_pixels),
+                gpu::compute::groups(grid_pixels),
             );
             from_is_ping = !from_is_ping;
             step /= 2;
@@ -399,7 +398,7 @@ pub async fn weights(
             settling(gpu),
             block(slot, 0),
             &entries(from_is_ping),
-            crate::base::groups(pixels),
+            gpu::compute::groups(pixels),
         );
     }
 

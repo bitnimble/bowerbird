@@ -101,7 +101,7 @@ pub fn hold(bytes: &[u8]) -> Result<Held, String> {
 /// turned upright by `decode_rawler::upright_preview_rgb`, is a finished picture that never was a
 /// file. Re-encoding one to hand it to `hold` costs a full-size encode and a second decode.
 pub fn holding(read: Read) -> Result<Held, String> {
-    let gpu = crate::gpu::device()
+    let gpu = gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a finished picture"))?;
     let picture = crate::linearise::Picture::upload(
         gpu,
@@ -128,7 +128,7 @@ pub fn hold_planes(
     planes: &[u8],
     layout: &crate::planes::Layout,
 ) -> Result<Held, String> {
-    let gpu = crate::gpu::device()
+    let gpu = gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a decoded rendition"))?;
     let primary = read_heif(avif)?.primary;
     let codes = crate::planes::codes(gpu, planes, layout)?;
@@ -198,7 +198,7 @@ impl Held {
         window: units::px::Rect<units::px::Photograph>,
         scale: crate::view::Scale,
     ) -> Option<crate::frame::Frame> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let resident = self
             .picture
             .window(gpu, crate::linearise::device(gpu), window, scale)?;

@@ -26,7 +26,7 @@ struct Frame {
 }
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let scratch = std::env::temp_dir().join("bb-thumbnail-descriptors");
     std::fs::create_dir_all(&scratch).expect("scratch dir");
     let mut paths = Vec::new();
@@ -146,7 +146,7 @@ fn raws_under(path: &std::path::Path, out: &mut Vec<String>) {
     }
 }
 
-fn frame(gpu: &'static rawshim::gpu::Gpu, scratch: &std::path::Path, path: &str) -> Option<Frame> {
+fn frame(gpu: &'static gpu::Gpu, scratch: &std::path::Path, path: &str) -> Option<Frame> {
     let name = std::path::Path::new(path)
         .file_name()?
         .to_string_lossy()
@@ -181,11 +181,7 @@ fn frame(gpu: &'static rawshim::gpu::Gpu, scratch: &std::path::Path, path: &str)
     })
 }
 
-fn describe_jpeg(
-    gpu: &'static rawshim::gpu::Gpu,
-    jpeg: &[u8],
-    long_edge: usize,
-) -> Option<Vec<u8>> {
+fn describe_jpeg(gpu: &'static gpu::Gpu, jpeg: &[u8], long_edge: usize) -> Option<Vec<u8>> {
     let rgb = rawshim::jpeg::decode_tile(jpeg, long_edge).ok()?;
     describe(gpu, rgb.as_ref())
 }

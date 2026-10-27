@@ -475,7 +475,7 @@ pub fn ten_bit_copy(
     let (samples, light) = match matching {
         crate::sdr_match::SdrMatch::Still => (samples, tags.light),
         _ => {
-            let gpu = crate::gpu::device().ok_or("no Vulkan adapter to rematch the copy on")?;
+            let gpu = gpu::device().ok_or("no Vulkan adapter to rematch the copy on")?;
             let rematched =
                 pollster::block_on(crate::pq_rematch::rematched(gpu, &samples, matching))
                     .ok_or("the rematched copy did not read back")?;
@@ -1218,7 +1218,7 @@ mod tests {
     /// mockup opens from one and the server's prepare from the other.
     #[test]
     fn planes_convert_to_the_codes_libavif_decodes() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the plane conversion was not run.");
             return;
         };
@@ -1600,7 +1600,7 @@ mod tests {
 
     #[test]
     fn an_sdr_roll_keeps_hdr_source_orientation_and_builds_a_shareable_gain_map() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let (width, height) = (64usize, 48usize);

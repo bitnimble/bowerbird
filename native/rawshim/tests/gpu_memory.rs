@@ -35,12 +35,12 @@ fn textured() -> Vec<f32> {
 ///
 /// A warm-up first, and then the measured runs: anything a stage builds on its first call and keeps
 /// for the life of the process is a hold rather than a leak, and would otherwise be indexed as one.
-fn gives_it_back(gpu: &rawshim::gpu::Gpu, what: &str, mut once: impl FnMut()) {
+fn gives_it_back(gpu: &gpu::Gpu, what: &str, mut once: impl FnMut()) {
     // Counted once the device is idle: a dispatch's timestamps are read back after its recording
     // drops, and their buffer is held until that read lands.
     let settled = || {
         gpu.block_until_done();
-        rawshim::gpu::live_bytes()
+        gpu::live_bytes()
     };
     once();
     let before = settled();
@@ -58,7 +58,7 @@ fn gives_it_back(gpu: &rawshim::gpu::Gpu, what: &str, mut once: impl FnMut()) {
 
 #[test]
 fn every_stage_hands_its_working_planes_back() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so nothing here was run.");
         return;
     };

@@ -175,6 +175,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 # so the Android and wasm builds link neither it nor its ~3.6MB of XML.
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
+gpu = { path = "../gpu" }
 shaders = { path = "../shaders" }
 trace = { path = "../trace" }
 units = { path = "../units" }

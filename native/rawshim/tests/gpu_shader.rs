@@ -13,7 +13,7 @@
 
 mod support;
 
-use rawshim::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
 use rawshim::lattice::LutAxes;
 
@@ -201,7 +201,7 @@ fn bin_centre(bin: u32) -> f32 {
 /// no decode and no browser can say anything about a scan over 8192 counts.
 #[test]
 fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the peak's scan was not run.");
         return;
     };
@@ -304,7 +304,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
         recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
         recording.submit();
 
-        let got = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+        let got = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
             f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
         }))
         .expect("the readback mapped");
@@ -330,7 +330,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
 /// to the bin, since every pixel is then clamped to what it says.
 #[test]
 fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so `bin_of` was not run.");
         return;
     };
@@ -395,7 +395,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
     recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
     recording.submit();
 
-    let got: Vec<u32> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+    let got: Vec<u32> = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u32)
@@ -422,7 +422,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
 /// the driver's own conversion does: radv truncates, so a frame stored there read darker.
 #[test]
 fn the_half_conversion_rounds_alike_on_every_adapter() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so `half_bits` was not run.");
         return;
     };
@@ -488,7 +488,7 @@ fn the_half_conversion_rounds_alike_on_every_adapter() {
     );
     recording.copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
     recording.submit();
-    let got: Vec<u16> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+    let got: Vec<u16> = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u16)

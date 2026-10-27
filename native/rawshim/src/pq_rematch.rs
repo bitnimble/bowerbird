@@ -1,19 +1,19 @@
 //! A PQ still's light as a platform shows a PQ video's, on the device (`slang/pq_rematch.slang`).
 
-use crate::gpu::Gpu;
-use crate::gpu::dispatch::Whole;
 use crate::sdr_match::SdrMatch;
+use gpu::Gpu;
+use gpu::dispatch::Whole;
 
 const SAMPLES_PER_WORD: usize = 2;
 
-fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn kernel(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
-        crate::hdr_fit::kernel(
+        gpu::compute::kernel(
             gpu,
             "rematch_pq",
             shaders::PQ_REMATCH.source,
-            &[(0, crate::hdr_fit::WRITE), (1, crate::hdr_fit::UNIFORM)],
+            &[(0, gpu::compute::WRITE), (1, gpu::compute::UNIFORM)],
             &[],
         )
     })
@@ -22,7 +22,7 @@ fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
 /// `samples`, sixteen-bit full-range PQ codes of a still, as the codes `matching` shows it at.
 pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -> Option<Vec<u16>> {
     let words = samples.len().div_ceil(SAMPLES_PER_WORD) as u32;
-    let (across, down) = crate::base::groups(words as usize);
+    let (across, down) = gpu::compute::groups(words as usize);
 
     let mut recording = gpu.record();
     let codes = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -77,7 +77,7 @@ pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -
     });
     recording.copy_buffer_to_buffer(&codes, 0, &read, 0, bytes);
     recording.submit();
-    let mut out = crate::gpu::read_back(gpu, &read, |mapped| {
+    let mut out = gpu::read_back(gpu, &read, |mapped| {
         bytemuck::pod_collect_to_vec::<u8, u16>(mapped)
     })
     .await?;
@@ -94,7 +94,7 @@ mod tests {
     /// included, through shadows the macOS match bends and highlights it only scales.
     #[test]
     fn a_rematched_code_is_its_light_as_the_platform_shows_it() {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let samples: Vec<u16> = (0..1001).map(|at| (at * 65) as u16).collect();
         let matching = SdrMatch::MacVideo;
         let got = pollster::block_on(super::rematched(gpu, &samples, matching))

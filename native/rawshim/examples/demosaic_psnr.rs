@@ -41,7 +41,7 @@ fn main() {
         return;
     }
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no GPU adapter");
         return;
     };

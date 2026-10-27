@@ -7,9 +7,9 @@
 use crate::align::{Exposure, Field};
 use crate::condition::Mosaic;
 use crate::galosh::NoiseModel;
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{Buffer, Gpu, Recording};
-use crate::hdr_fit::Kernel;
+use gpu::compute::Kernel;
+use gpu::dispatch::Whole;
+use gpu::{Buffer, Gpu, Recording};
 use units::px::{At, Sensor};
 
 #[repr(C)]
@@ -177,9 +177,9 @@ enum Entry {
 }
 
 fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BUILT: [crate::gpu::Cache<Kernel>; Entry::Remosaic as usize + 1] =
-        [const { crate::gpu::Cache::new() }; Entry::Remosaic as usize + 1];
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    static BUILT: [gpu::Cache<Kernel>; Entry::Remosaic as usize + 1] =
+        [const { gpu::Cache::new() }; Entry::Remosaic as usize + 1];
     let index = entry as usize;
     let (name, bindings): (&str, &[(u32, wgpu::BufferBindingType)]) = match entry {
         Entry::Shape => ("shape", &[(0, UNIFORM), (3, READ), (4, WRITE)]),
@@ -257,7 +257,7 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
         ),
     };
     BUILT[index].get(gpu, || {
-        crate::hdr_fit::kernel(gpu, name, shaders::MERGE.source, bindings, &[])
+        gpu::compute::kernel(gpu, name, shaders::MERGE.source, bindings, &[])
     })
 }
 

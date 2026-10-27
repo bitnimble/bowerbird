@@ -19,7 +19,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
+    pub(super) fn new(device: &gpu::Describing<'_>) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print environment"),
             source: wgpu::ShaderSource::Wgsl(
@@ -212,7 +212,7 @@ impl super::Grader {
             };
             recording.dispatch(
                 [width.div_ceil(8), height.div_ceil(8), 1],
-                crate::gpu::dispatch::Whole::Fixed,
+                gpu::dispatch::Whole::Fixed,
                 |pass| {
                     pass.set_pipeline(if level == 0 {
                         &pipelines.unpack

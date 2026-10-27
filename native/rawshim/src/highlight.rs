@@ -4,8 +4,8 @@
 //! A region measures the field its tile shares with the frame only over `reach` around the tile,
 //! starting on `grid`; anything smaller is a different field.
 
-use crate::gpu::Gpu;
-use crate::gpu::dispatch::Whole;
+use gpu::Gpu;
+use gpu::dispatch::Whole;
 use units::px::{At, Sensor, Span};
 
 const CELL_SITES: usize = 4;
@@ -62,7 +62,7 @@ pub(crate) struct Kernels {
 }
 
 pub(crate) fn device(gpu: &'static Gpu) -> Option<&'static Kernels> {
-    static BUILT: crate::gpu::Cache<Option<Kernels>> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Option<Kernels>> = gpu::Cache::new();
     BUILT.get(gpu, || Kernels::new(gpu)).as_ref()
 }
 
@@ -157,7 +157,7 @@ impl Colouring {
 /// The filled colour share at every level-0 cell of a mosaic.
 #[derive(Clone)]
 pub struct Field {
-    pub(crate) buffer: crate::gpu::Buffer,
+    pub(crate) buffer: gpu::Buffer,
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) cell: Span<Sensor>,

@@ -22,7 +22,7 @@ use rawshim::composite_tile::{Blending, Layer, SourceFile};
 fn main() {
     let args = Args::parse();
     std::fs::create_dir_all(&args.out).expect("the output directory");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let base = rawshim::base::device(gpu).expect("the base pipelines");
 
     let planes_from: Vec<Option<String>> = args
@@ -78,7 +78,7 @@ fn main() {
 /// intersection crop, the plane gather and the seam field stitched together. Each `--draw`
 /// rectangle then seeds a tile taking `--pick`.
 fn auto(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static rawshim::base::Base,
     sources: &[rawshim::composite_align::AlignSource<'_>],
     args: &Args,
@@ -188,7 +188,7 @@ fn auto(
 /// the planes composited through the pieces with the pieces outlined and the seeds in a second
 /// colour.
 fn solved(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static rawshim::base::Base,
     analysed: &rawshim::assembly_analysis::Analysed,
     planes: &[Plane],
@@ -420,7 +420,7 @@ fn through_the_render(
 /// rendition does, and because the weight field is four bytes a pixel a slot.
 const STRIP_ROWS: usize = 512;
 
-fn weights_of(gpu: &'static rawshim::gpu::Gpu, values: &[f32]) -> rawshim::gpu::Buffer {
+fn weights_of(gpu: &'static gpu::Gpu, values: &[f32]) -> gpu::Buffer {
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("assemble mask"),

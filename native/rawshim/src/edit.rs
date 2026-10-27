@@ -424,7 +424,7 @@ pub async fn from_frame(
         // Shrunk before the open defringes the frame in place, as `job::Base::built` shrinks it.
         let looked = match (reflection.takes_out(), &request.found) {
             (true, None) => {
-                let gpu = crate::gpu::device()
+                let gpu = gpu::device()
                     .ok_or_else(|| crate::base::without_a_device("the reflection removal"))?;
                 crate::dereflect::ready(gpu)
                     .then(|| crate::dereflect::looked(gpu, resident))
@@ -459,7 +459,7 @@ pub async fn from_frame(
             blur,
         } = crate::open::measure(resident, &opening).await?;
         lap("defringe, camera match, levels");
-        let removal = match (&request.found, crate::gpu::device()) {
+        let removal = match (&request.found, gpu::device()) {
             _ if !reflection.takes_out() => None,
             (Some(layer), _) => Some(crate::dereflect::Removal {
                 layer: layer.clone(),

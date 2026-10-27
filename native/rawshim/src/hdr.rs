@@ -84,7 +84,7 @@ pub struct Source<'a> {
 /// them off the frame once.
 #[cfg(feature = "renditions")]
 pub async fn fit_match(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw_path: &str,
     frame: &crate::resident::Resident,
     quantile: f64,
@@ -96,7 +96,7 @@ pub async fn fit_match(
 }
 
 pub async fn fit_match_from(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: &crate::resident::Resident,
     quantile: f64,
     preview: &units::rgb::Rgb,
@@ -158,7 +158,7 @@ pub async fn fit_match_from(
 /// when there were too few usable pairs - in each case the caller grades neutrally.
 #[cfg(feature = "renditions")]
 pub async fn fit_all(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw_path: &str,
     frame: &crate::resident::Resident,
     quantile: f64,
@@ -193,7 +193,7 @@ pub async fn fit_all(
 
 /// `fit_all` off a preview the caller decoded, with the levels the match was fitted against.
 pub async fn fit_all_from_preview(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: &crate::resident::Resident,
     quantile: f64,
     geometry: crate::fit::Geometry,
@@ -261,7 +261,7 @@ pub struct Prepared {
 
 /// The downscale of a coded frame, on the device the pipeline requires anyway (DESIGN 2.1).
 fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Option<Vec<u16>> {
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let base = crate::base::device(gpu)?;
     let frame = crate::resident::Resident::upload(gpu, samples, source.0, source.1);
     let smaller = crate::base::resize(gpu, base, &frame, out);
@@ -280,10 +280,10 @@ pub fn code_base(
     levels: tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) {
-    let coded = crate::gpu::device()
+    let coded = gpu::device()
         .and_then(crate::base::device)
         .and_then(|base| {
-            let gpu = crate::gpu::device()?;
+            let gpu = gpu::device()?;
             pollster::block_on(crate::base::encode_base(
                 gpu,
                 base,
@@ -298,7 +298,7 @@ pub fn code_base(
 
 /// The frame's levels, for a caller holding samples on the host.
 pub fn levels_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     samples: &[u16],
     width: usize,
     height: usize,
@@ -359,7 +359,7 @@ pub fn graded_under(
     output: crate::grade::Output,
     intent: crate::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
-    let gpu = crate::gpu::device().expect(
+    let gpu = gpu::device().expect(
         "no Vulkan adapter answered, not even a software one. The grade runs on the GPU so \
          that the editor and a rendition cannot drift apart, and there is no CPU copy to \
          fall back to. On a machine with no GPU, `bun run get:swiftshader` fetches a CPU \
@@ -398,16 +398,12 @@ pub fn graded_under(
 
 /// One `encode` dispatch over the cut, wherever its frame is - resident where the render
 /// loop left it, host where a window arrived that way.
-pub fn encode_cut(
-    gpu: &'static crate::gpu::Gpu,
-    cut: &Cut,
-    grade: &crate::grade::Grade<'_>,
-) -> Vec<u16> {
+pub fn encode_cut(gpu: &'static gpu::Gpu, cut: &Cut, grade: &crate::grade::Grade<'_>) -> Vec<u16> {
     upload_cut(gpu, cut, grade).encode(grade)
 }
 
 pub fn upload_cut(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     cut: &Cut,
     grade: &crate::grade::Grade<'_>,
 ) -> crate::grade::Uploaded<'static> {
@@ -469,7 +465,7 @@ fn neutral_scene<'a>(
 /// No defringe: it is a shader on the linear frame (`base::prepare`) and neither of these paths
 /// runs it, where `job::Base::build` does.
 fn cut_for(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mut samples: Vec<u16>,
     width: usize,
     height: usize,
@@ -803,7 +799,7 @@ pub fn encode_still(
     matched: Option<&HdrMatch>,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Result<(), String> {
-    let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
+    let gpu = gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let levels = levels_of(gpu, &samples, width, height, options.grade.white_quantile)
         .ok_or("the frame's levels could not be measured")?
         .anchored();

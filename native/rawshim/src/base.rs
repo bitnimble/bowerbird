@@ -14,7 +14,8 @@
 //! Its own module rather than more of `grade.rs` for the reason `demosaic.rs` is its own: the denoise
 //! sits between them, and this one's frame is the demosaiced one.
 
-use crate::gpu::dispatch::{Banded, Whole};
+use gpu::compute::groups;
+use gpu::dispatch::{Banded, Whole};
 
 fn source() -> String {
     shaders::BASE.source.to_string()
@@ -40,9 +41,9 @@ pub struct Base {
     ///
     /// The resize's, and the process's: it is the PQ curve inverted and nothing about a particular
     /// frame, so it is built once beside the pipelines rather than per render. 256kB.
-    light_of_code: crate::gpu::Buffer,
+    light_of_code: gpu::Buffer,
     /// The same for a frame that has not been coded, which is the ramp. 256kB.
-    light_of_level: crate::gpu::Buffer,
+    light_of_level: gpu::Buffer,
     resize_layout: wgpu::BindGroupLayout,
     resize: wgpu::ComputePipeline,
     resize_scene: wgpu::ComputePipeline,
@@ -61,8 +62,8 @@ pub struct Base {
     content_light: wgpu::ComputePipeline,
 }
 
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
-    static BUILT: crate::gpu::Cache<Option<Base>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Base> {
+    static BUILT: gpu::Cache<Option<Base>> = gpu::Cache::new();
     BUILT.get(gpu, || Base::new(gpu)).as_ref()
 }
 
@@ -83,7 +84,7 @@ pub fn without_a_device(stages: &str) -> String {
 }
 
 impl Base {
-    fn new(gpu: &crate::gpu::Gpu) -> Option<Base> {
+    fn new(gpu: &gpu::Gpu) -> Option<Base> {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("base"),
@@ -367,7 +368,7 @@ impl Base {
         })
     }
 
-    pub fn light_of_code(&self) -> &crate::gpu::Buffer {
+    pub fn light_of_code(&self) -> &gpu::Buffer {
         &self.light_of_code
     }
 }
@@ -382,7 +383,7 @@ impl Base {
 ///
 /// Built in `f64` for the reason `coding_curve` is: this is the table the round trip is held exact
 /// against, and a `f32` curve would put the search a count out on the codes where PQ is steepest.
-fn light_of_code(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
+fn light_of_code(gpu: &gpu::Gpu) -> gpu::Buffer {
     table_buffer(gpu, "light of code", &light_of_code_table())
 }
 
@@ -404,7 +405,7 @@ fn light_of_code_table() -> Vec<f32> {
 ///
 /// Normalised the same way, so `code_of_level_light`'s search over it lands back on the sample it
 /// came from and a flat field survives the round trip.
-fn light_of_level(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
+fn light_of_level(gpu: &gpu::Gpu) -> gpu::Buffer {
     table_buffer(gpu, "light of level", &light_of_level_table())
 }
 
@@ -420,7 +421,7 @@ fn light_of_level_table() -> Vec<f32> {
         .collect()
 }
 
-fn table_buffer(gpu: &crate::gpu::Gpu, label: &str, table: &[f32]) -> crate::gpu::Buffer {
+fn table_buffer(gpu: &gpu::Gpu, label: &str, table: &[f32]) -> gpu::Buffer {
     let bytes: Vec<u8> = table.iter().flat_map(|light| light.to_le_bytes()).collect();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
@@ -551,7 +552,7 @@ impl<'de> serde::Deserialize<'de> for Defringe {
 /// warp it separately - which is the two extra transfers this function exists to delete, 361MB each
 /// way at 61MP.
 pub async fn prepare(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: crate::resident::Resident,
     gather: Gather,
@@ -725,7 +726,7 @@ impl Reduction {
     }
 }
 
-fn reduction(recording: &mut crate::gpu::Recording<'_>, block: &Reduction) -> crate::gpu::Buffer {
+fn reduction(recording: &mut gpu::Recording<'_>, block: &Reduction) -> gpu::Buffer {
     recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("reduction"),
         contents: &block.bytes(),
@@ -743,7 +744,7 @@ fn reduction(recording: &mut crate::gpu::Recording<'_>, block: &Reduction) -> cr
 /// None where there is nothing to do - the sizes match, or the caller asked to enlarge, which this
 /// declines: it exists to avoid work rather than to invent detail.
 pub fn resize(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     out: (usize, usize),
@@ -768,7 +769,7 @@ pub fn resize(
 /// **The whole frame's footprints**, so the rectangle is those pixels of the whole resize to the
 /// bit: a band that divided its own sizes would sit on a grid of its own.
 pub fn resize_window(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     region: &crate::resident::Resident,
     region_at: units::px::At<units::px::Decoded>,
@@ -832,7 +833,7 @@ fn resize_scale(source: (usize, usize), out: (usize, usize)) -> (f64, f64) {
 /// it was being measured for 5% high, and how far it reaches is the local contrast's to decide
 /// rather than bounded by anything.
 pub fn resize_scene(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     out: (usize, usize),
@@ -852,12 +853,12 @@ pub fn resize_scene(
 }
 
 fn resized_through(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     block: &Reduction,
     pipeline: &wgpu::ComputePipeline,
-    light_of_sample: &crate::gpu::Buffer,
+    light_of_sample: &gpu::Buffer,
 ) -> crate::resident::Resident {
     let out = block.out;
     let pixels = out.0 * out.1;
@@ -912,7 +913,7 @@ fn resized_through(
 /// Starts at half resolution, so the frame is not stored twice, and the level that leaves out is the
 /// one a draw reads straight from the buffer.
 pub fn pyramid(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
     source: (usize, usize),
@@ -932,7 +933,7 @@ pub fn pyramid(
 /// What the editor builds from: its frame stays up for the life of an open, so uploading a copy
 /// to average would be the transfer the whole path exists to avoid.
 pub fn pyramid_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     source: (usize, usize),
@@ -1041,7 +1042,7 @@ pub fn pyramid_of(
 
 /// The chain of averaged levels a zoomed-out draw reads, on the device.
 pub struct Pyramid {
-    texture: crate::gpu::Texture,
+    texture: gpu::Texture,
     /// `edit.max_lod` is this: `lod` 0 is the frame's own buffer, so the levels here are 1..=levels.
     pub levels: u32,
     /// Level 0's size, the frame halved.
@@ -1054,7 +1055,7 @@ impl Pyramid {
     }
 
     /// The mips themselves, for a submission that binds a view onto them and has to keep them.
-    pub fn texture(&self) -> &crate::gpu::Texture {
+    pub fn texture(&self) -> &gpu::Texture {
         &self.texture
     }
 
@@ -1065,7 +1066,7 @@ impl Pyramid {
     /// Every level on the host, for the test that holds them against the resize.
     pub async fn levels_host(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
     ) -> Option<Vec<(Vec<u16>, (usize, usize))>> {
         // Every level into one staging buffer in a single submit: a readback per level would be a
         // device poll per level, and the whole chain is smaller than the frame it came from.
@@ -1121,7 +1122,7 @@ impl Pyramid {
                 (vec![0u16; size.0 * size.1 * 3], size)
             })
             .collect();
-        crate::gpu::read_back(gpu, &staged, |mapped| {
+        gpu::read_back(gpu, &staged, |mapped| {
             for (level, (out, size)) in built.iter_mut().enumerate() {
                 let stride = strides[level];
                 let at = offsets[level] as usize;
@@ -1171,7 +1172,7 @@ fn padded_row(width: usize) -> usize {
 ///
 /// Returns the pair it used, for `prepare` and for the analysis file.
 pub async fn correct(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     strengths: crate::image::Strengths,
@@ -1218,7 +1219,7 @@ pub async fn correct(
 ///
 /// `defocus` is [`measure_defocus`]'s pair, already scaled by the setting.
 pub async fn defringe(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
     width: usize,
@@ -1257,10 +1258,10 @@ fn defringes(samples: usize, width: usize, height: usize, defocus: (f32, f32)) -
 
 /// Records the correction against a frame already in VRAM. `defringes` is its precondition.
 fn defringe_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    recording: &mut crate::gpu::Recording<'_>,
-    frame: &crate::gpu::Buffer,
+    recording: &mut gpu::Recording<'_>,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
     defocus: (f32, f32),
@@ -1333,16 +1334,16 @@ pub(crate) fn sharpens(samples: usize, width: usize, height: usize, amount: f64)
 /// Four dispatches per iteration over ping-pong luma planes, then the neighbourhood range and the
 /// limit-and-blend write.
 pub(crate) fn sharpen_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    recording: &mut crate::gpu::Recording<'_>,
-    frame: &crate::gpu::Buffer,
+    recording: &mut gpu::Recording<'_>,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
     amount: f64,
     sigma: crate::image::SharpenSigma,
     noise: crate::image::SharpenNoise,
-    jacobian: Option<&crate::gpu::Buffer>,
+    jacobian: Option<&gpu::Buffer>,
 ) {
     let pixels = width * height;
 
@@ -1492,44 +1493,13 @@ fn sharpen_noise_bytes(noise: crate::image::SharpenNoise) -> Vec<u8> {
     out
 }
 
-/// Invocations per workgroup, and the pair every kernel here is dispatched over.
-const LANES: u32 = 64;
-
-/// Workgroups to a row of a two-dimensional dispatch, which `lanes.slang`'s `ROW_GROUPS` is the
-/// shader's copy of.
-///
-/// **Only meaningful because `groups` below dispatches `x` at exactly this whenever `y` exceeds
-/// one.** The shaders fold `y` back in by multiplying by this rather than by asking how wide the
-/// dispatch actually was, so the two numbers are one number and
-/// `the_shaders_split_a_dispatch_where_the_host_does` refuses a build where they drift.
-///
-/// Narrow, because a row is the least [`crate::gpu::Recording::banded`] can submit at once.
-pub(crate) const ROW_GROUPS: u32 = 1024;
-
-/// Workgroups for `count` invocations, spread over two dimensions.
-///
-/// **A dispatch dimension stops at 65535**, which one dimension of 64-wide groups reaches at 4.19M
-/// invocations - a 61MP frame is fourteen times that, and the driver refuses the whole command
-/// buffer rather than clamping. Every kernel here indexes by a linear id, so the second dimension
-/// is a carry rather than a shape and `lanes.slang`'s `linear` undoes it.
-///
-/// Found by wiring the warp into a real render: the tests all ran on synthetic frames of a few
-/// hundred pixels a side, where a dispatch is hundreds of groups and this is invisible.
-pub fn groups(count: usize) -> (u32, u32) {
-    let groups = (count as u32).div_ceil(LANES).max(1);
-    // `min`, so a dispatch that fits one row is not padded out to a full one. The shader's fold is
-    // still exact there: `y` is 1, so the term it would multiply is zero.
-    let across = groups.min(ROW_GROUPS);
-    (across, groups.div_ceil(across))
-}
-
 /// The sharpen alone, over a frame on the host.
 ///
 /// Takes and returns the frame rather than leaving it on the GPU, as [`encode_base`] below
 /// does: this spelling is what lets the fixtures and the pins drive the one implementation
 /// without assembling the whole prepare around it.
 pub async fn sharpen_base(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
     width: usize,
@@ -1567,7 +1537,7 @@ pub async fn sharpen_base(
 /// Takes and returns the frame rather than leaving it on the GPU, which [`prepare`] is the version
 /// that does not: this spelling is what lets the coding be held against ST 2084 on its own.
 pub async fn encode_base(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
     levels: crate::tone::Anchored,
@@ -1748,10 +1718,10 @@ pub fn luma_noise_in_light(
 /// Records the coding against a frame already in VRAM, `count` samples of it.
 #[track_caller]
 fn encode_base_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    recording: &mut crate::gpu::Recording<'_>,
-    frame: &crate::gpu::Buffer,
+    recording: &mut gpu::Recording<'_>,
+    frame: &gpu::Buffer,
     count: usize,
     levels: crate::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
@@ -1837,10 +1807,10 @@ pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
 }
 
 pub(crate) fn float_storage(
-    recording: &mut crate::gpu::Recording<'_>,
+    recording: &mut gpu::Recording<'_>,
     label: &str,
     values: &[f32],
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len() * 4);
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -1954,12 +1924,12 @@ impl Gather {
 /// Bicubic. The fit gathers its own planes through `fit_warp.slang`'s bilinear, over f32 RGB
 /// that never reaches this buffer layout.
 pub fn warp_lens(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
     gather: Gather,
     lens: &crate::fit::Lens,
-) -> Option<(crate::resident::Resident, crate::gpu::Buffer)> {
+) -> Option<(crate::resident::Resident, gpu::Buffer)> {
     if !warps(frame.samples(), gather.source.raw(), gather.out.raw(), lens) {
         return None;
     }
@@ -1986,7 +1956,7 @@ pub fn warp_lens(
 /// The lens gather and then the sharpen, over a frame already coded and defringed: what a rendition
 /// runs after its resize, over the whole frame or a window of it.
 pub fn gather_and_sharpen(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: crate::resident::Resident,
     gather: Gather,
@@ -2056,14 +2026,14 @@ fn warps(
 /// Jacobian plane the sharpen scales its sigma by. `warps` is its precondition.
 #[track_caller]
 fn warp_lens_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    recording: &mut crate::gpu::Recording<'_>,
-    frame: &crate::gpu::Buffer,
-    warped: &crate::gpu::Buffer,
+    recording: &mut gpu::Recording<'_>,
+    frame: &gpu::Buffer,
+    warped: &gpu::Buffer,
     gather: Gather,
     lens: &crate::fit::Lens,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     let (sw, sh) = gather.source.raw();
     let (width, height) = gather.out.raw();
     let pixels = width * height;
@@ -2170,7 +2140,7 @@ const DEFOCUS_PER_SEGMENT: usize = 64;
 /// None where there is nothing to fit: too few samples, too few bins that resolve, a coefficient
 /// past what a lens does, or two channels that disagree in sign.
 pub async fn measure_defocus(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
     width: usize,
@@ -2194,9 +2164,9 @@ pub async fn measure_defocus(
 /// the number means the blur the sharpen will actually meet. [`crate::image::EDGE_SPREAD_BINS`]
 /// and the decile are on the host so that the shader stays a vote and nothing else.
 pub async fn measure_edge_spread(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    frame: &crate::gpu::Buffer,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
 ) -> Option<f32> {
@@ -2292,9 +2262,9 @@ const CHROMA_LEAK_TILE: usize = 32;
 /// `chroma_leak.slang` has the arithmetic. The worst tile rather than the frame, because a
 /// subject is small and a frame is large; the host walks tiles, never pixels.
 pub async fn chroma_leak(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    frame: &crate::gpu::Buffer,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
 ) -> Option<f64> {
@@ -2399,9 +2369,9 @@ pub async fn chroma_leak(
 /// The brightest pixel of a PQ frame on the device and the sum of its pixels, each at its largest
 /// channel, in nits: `content_light.slang` per 16x16 tile, and the host folds the tiles.
 pub async fn content_light(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    frame: &crate::gpu::Buffer,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
 ) -> Option<crate::hdr_args::LightTally> {
@@ -2479,7 +2449,7 @@ pub async fn content_light(
 
 /// [`chroma_leak`] over a frame on the host, for the harness and the pins.
 pub async fn chroma_leak_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
     width: usize,
@@ -2495,9 +2465,9 @@ pub async fn chroma_leak_of(
 /// recording: the answer is a host computation over what the kernels write, so this has to submit
 /// and map before it can return one, and what the caller records next depends on the answer.
 async fn measure_defocus_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     base: &Base,
-    frame: &crate::gpu::Buffer,
+    frame: &gpu::Buffer,
     width: usize,
     height: usize,
     noise: Option<crate::galosh::NoiseFit>,
@@ -2757,8 +2727,8 @@ async fn measure_defocus_into(
 
 /// Brings every result back in one round trip, since no kernel here reads what another writes.
 async fn read_all<const N: usize>(
-    recording: &mut crate::gpu::Recording<'_>,
-    sources: [(&crate::gpu::Buffer, usize); N],
+    recording: &mut gpu::Recording<'_>,
+    sources: [(&gpu::Buffer, usize); N],
 ) -> Option<[Vec<u8>; N]> {
     let gpu = recording.gpu();
     let staged = sources.map(|(source, bytes)| {
@@ -2775,7 +2745,7 @@ async fn read_all<const N: usize>(
 
     let mut read = Vec::with_capacity(N);
     for readback in &staged {
-        read.push(crate::gpu::read_back(gpu, readback, <[u8]>::to_vec).await);
+        read.push(gpu::read_back(gpu, readback, <[u8]>::to_vec).await);
     }
     read.into_iter()
         .collect::<Option<Vec<_>>>()?
@@ -2803,7 +2773,7 @@ mod tests {
         sigma: f32,
         amount: f64,
     ) -> Option<Vec<u16>> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let base = super::device(gpu)?;
         let mut frame = samples.to_vec();
         pollster::block_on(super::sharpen_base(
@@ -2820,7 +2790,7 @@ mod tests {
         amount: f64,
         noise: crate::image::SharpenNoise,
     ) -> Option<Vec<u16>> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let base = super::device(gpu)?;
         let frame = crate::resident::Resident::upload(gpu, samples, width, height);
         let mut recording = gpu.record();
@@ -2928,7 +2898,7 @@ mod tests {
         };
         let want = (crossing(0.9) - crossing(0.1)) / crate::image::EDGE_SPREAD_PER_SIGMA;
 
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3195,7 +3165,7 @@ mod tests {
     /// thirds of that to red.
     #[test]
     fn the_leak_counts_the_blocks_a_decode_would_get_wrong() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let base = super::device(gpu).expect("the pipelines");
@@ -3234,7 +3204,7 @@ mod tests {
     /// edges cut short.
     #[test]
     fn the_content_light_is_the_brightest_channel_of_every_pixel() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let base = super::device(gpu).expect("the pipelines");
@@ -3339,7 +3309,7 @@ mod tests {
     /// sharpened at the wrong width.
     #[test]
     fn the_warp_hands_the_sharpen_the_derivative_of_its_own_mapping() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3364,7 +3334,7 @@ mod tests {
         });
         recording.copy_buffer_to_buffer(&jacobian, 0, &out, 0, (w * h * 4) as u64);
         recording.submit();
-        let words = pollster::block_on(crate::gpu::read_back(gpu, &out, <[u8]>::to_vec))
+        let words = pollster::block_on(gpu::read_back(gpu, &out, <[u8]>::to_vec))
             .expect("the jacobian maps");
         warped.reclaim();
 
@@ -3402,7 +3372,7 @@ mod tests {
     /// nowhere near the centre, where the derivative is one.
     #[test]
     fn a_stretched_corner_is_sharpened_at_its_own_width() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3615,7 +3585,7 @@ mod tests {
     /// [`super::resize`] from host samples and back, which is what a test has rather than a frame
     /// already on the device.
     fn resized(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         base: &'static super::Base,
         samples: &[u16],
         source: (usize, usize),
@@ -3629,7 +3599,7 @@ mod tests {
 
     /// The same for [`super::resize_scene`].
     fn resized_scene(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         base: &'static super::Base,
         samples: &[u16],
         source: (usize, usize),
@@ -3643,7 +3613,7 @@ mod tests {
 
     /// The same, for [`super::warp_lens`].
     fn warped(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         base: &'static super::Base,
         samples: &[u16],
         gather: super::Gather,
@@ -3660,7 +3630,7 @@ mod tests {
     /// rectangle of the whole frame resized: what lets a render too large to hold be cut in bands.
     #[test]
     fn a_band_resized_on_its_own_is_those_rows_of_the_whole() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3731,7 +3701,7 @@ mod tests {
     /// odd sample count leaves behind is exercised rather than assumed.
     #[test]
     fn the_coding_is_st_2084_exactly() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3842,7 +3812,7 @@ mod tests {
     ///   estimate saturates at 0.02 and every bin falls out on `square <= 0`.
     #[test]
     fn the_defringe_takes_off_a_focus_difference_it_was_given() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -3989,67 +3959,6 @@ mod tests {
         down
     }
 
-    /// Every dispatch a real sensor asks for is one a driver will accept.
-    ///
-    /// **Nothing else here can see this.** The parity tests run on frames a few hundred pixels a
-    /// side, where a dispatch is hundreds of groups in one dimension and the ceiling is four
-    /// orders of magnitude away; the warp reached a render before anyone noticed, and the driver
-    /// refused the whole command buffer with "must be less or equal to 65535". So the sizes are
-    /// asserted against the limit directly rather than against a frame that happens to be small.
-    #[test]
-    fn a_sensor_sized_dispatch_is_one_a_driver_will_take() {
-        // 61MP, and a frame far past any sensor, which nothing bounds now that the open takes
-        // whatever the tab hands it.
-        for pixels in [24_240_576usize, 60_217_344, 100_000 * 100_000 / 8] {
-            for count in [pixels, pixels * 3, pixels.div_ceil(2)] {
-                let (x, y) = super::groups(count);
-                assert!(x <= 65535 && y <= 65535, "{count} dispatches {x}x{y}");
-                let covered = u64::from(x) * u64::from(y) * u64::from(super::LANES);
-                assert!(covered >= count as u64, "{count} covered by only {covered}");
-            }
-        }
-        // And a frame small enough to fit one dimension still gets one, so the common case is not
-        // paying for a second.
-        assert_eq!(super::groups(64 * 100).1, 1);
-    }
-
-    /// The row width the shaders fold `y` back in at, against the one the host splits at.
-    ///
-    /// Two spellings of one number, and the failure they guard is silent: a shader multiplying by
-    /// more than the host dispatched reads a later row's samples for every row after the first, so
-    /// the picture is assembled out of the wrong pixels and nothing reports it. Asserted as text
-    /// because that is the only thing this side can see of the shader.
-    #[test]
-    fn the_shaders_split_a_dispatch_where_the_host_does() {
-        let line = format!(
-            "public static const uint ROW_GROUPS = {};",
-            super::ROW_GROUPS
-        );
-        assert!(
-            include_str!("../../../slang/lanes.slang").contains(&line),
-            "slang/lanes.slang does not say `{line}`",
-        );
-
-        // Every dispatch the shaders undo has to be exactly that wide, or one row short of it.
-        // Narrower with rows above it and the fold reads past its own row.
-        for count in [
-            64usize,
-            64 * 1024,
-            64 * 1025,
-            24_240_576,
-            60_217_344,
-            183_000_000,
-        ] {
-            let (x, y) = super::groups(count);
-            assert!(
-                y == 1 || x == super::ROW_GROUPS,
-                "{count} dispatches {x}x{y}, and the shaders fold at {}",
-                super::ROW_GROUPS,
-            );
-            assert!(y <= 65535, "{count} dispatches {y} rows");
-        }
-    }
-
     /// A frame with as much curvature as the format allows, since that is what the correction is
     /// proportional to.
     ///
@@ -4089,7 +3998,7 @@ mod tests {
     /// is readable as a displacement rather than as noise.
     #[test]
     fn the_resize_weights_a_fractional_footprint() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4138,7 +4047,7 @@ mod tests {
     /// It averages rather than sampling, and declines to enlarge.
     #[test]
     fn the_resize_averages_and_will_not_enlarge() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4178,7 +4087,7 @@ mod tests {
     /// the lights no table holds.
     #[test]
     fn the_code_searches_land_where_a_whole_table_search_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let device = gpu.describing();
@@ -4230,7 +4139,7 @@ mod tests {
             });
             recording.dispatch(
                 [lights.len().div_ceil(64) as u32, 1, 1],
-                crate::gpu::dispatch::Whole::Fixed,
+                gpu::dispatch::Whole::Fixed,
                 |pass| {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
@@ -4238,7 +4147,7 @@ mod tests {
             );
             recording.copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
             recording.submit();
-            pollster::block_on(crate::gpu::read_back(gpu, &readback, |mapped| {
+            pollster::block_on(gpu::read_back(gpu, &readback, |mapped| {
                 mapped
                     .chunks_exact(4)
                     .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -4295,7 +4204,7 @@ mod tests {
     /// wrong, which is a bug nothing else in a picture would show.
     #[test]
     fn scene_and_coded_resizes_decode_their_own_input_domains() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4342,7 +4251,7 @@ mod tests {
 
     #[test]
     fn pyramid_averages_hdr_light_and_preserves_flat_fields() {
-        let gpu = crate::gpu::device().expect("the pyramid requires Vulkan");
+        let gpu = gpu::device().expect("the pyramid requires Vulkan");
         let base = super::device(gpu).expect("the pyramid pipeline");
         let frame: Vec<u16> = (0..16)
             .flat_map(|pixel| {
@@ -4365,7 +4274,7 @@ mod tests {
 
     #[test]
     fn every_pyramid_level_is_a_mean_of_the_four_above_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4450,7 +4359,7 @@ mod tests {
     /// which output pixels are written.
     #[test]
     fn a_window_of_the_gather_is_the_frame_it_was_cut_from() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4519,7 +4428,7 @@ mod tests {
     /// ramp rises towards the middle, so reading further out - towards the edge - reads darker.
     #[test]
     fn a_lateral_scale_moves_each_channel_the_way_it_was_told_to() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4577,7 +4486,7 @@ mod tests {
     /// ratchet: a change widening the gap says so here rather than in a photograph.
     #[test]
     fn the_staged_pipeline_places_a_pixel_where_one_fused_gather_would() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4722,7 +4631,7 @@ mod tests {
     /// Both branches, because which buffer holds the answer is what the warp's absence changes.
     #[test]
     fn prepare_is_the_three_stages_over_one_buffer() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4940,7 +4849,7 @@ mod tests {
     /// sum built from the stencil by another.
     #[test]
     fn the_defocus_fit_recovers_the_softness_it_was_given() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {
@@ -4990,7 +4899,7 @@ mod tests {
     /// many times it ran.
     #[test]
     fn a_frame_corrected_before_the_fit_is_not_corrected_again() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(base) = super::device(gpu) else {

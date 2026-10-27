@@ -15,7 +15,7 @@ fn main() {
     let out = args.next().expect("out dir");
 
     let opened = support::Open::shipped(&path, 0).run().expect("decode");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let matched = opened.measured.matched.as_ref().expect("hdr fit");
 
     // SDR, which is the same grade with the peak at diffuse white and the sRGB transfer on

@@ -179,7 +179,7 @@ struct Report {
 
 fn measure(path: &str) -> Option<Report> {
     let opened = support::Open::shipped(path, VIEWED_EDGE).run()?;
-    let gpu = rawshim::gpu::device()?;
+    let gpu = gpu::device()?;
     let matched = opened.measured.matched.as_ref()?;
 
     let options = EncodeOptions {
@@ -242,7 +242,7 @@ fn against_camera(
     // primaries and the transfer on this side.
     let (coded, width, height) =
         support::graded_under(opened, options, rawshim::grade::Output::Srgb, intent);
-    let gpu = rawshim::gpu::device()?;
+    let gpu = gpu::device()?;
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and

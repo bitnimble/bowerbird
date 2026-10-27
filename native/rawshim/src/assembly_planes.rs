@@ -70,7 +70,7 @@ pub async fn analysis_planes(
     sources: &[SourceFile<'_>],
 ) -> Result<Vec<Plane>, String> {
     let refused = || crate::base::without_a_device("the analysis planes");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     let [w, h] = spec.canvas;
     let request = CompositeRequest {
@@ -156,7 +156,7 @@ mod tests {
     /// [`correlated_samples`]: super::correlated_samples
     #[test]
     fn a_plane_averages_the_measured_number_of_independent_samples() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = crate::demosaic::device(gpu) else {

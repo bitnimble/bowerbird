@@ -14,7 +14,7 @@
 //! rather than one of the closed-form CCT approximations, which agree with it near daylight
 //! and drift by hundreds of Kelvin at the ends of the slider.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// The illuminant, as the reader's two sliders.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -44,7 +44,7 @@ pub const RENDERED_WHITE: Illuminant = Illuminant {
 /// file has an illuminant and this run failed to read it, and what the caller stores is kept for
 /// the life of the photograph. It says so on the way out rather than passing for a lens cap.
 pub async fn as_shot(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     cam_mul: &[f32; 4],
     cam_xyz: &[[f32; 3]; 4],
 ) -> Option<Illuminant> {
@@ -85,7 +85,7 @@ pub async fn as_shot(
 ///
 /// None where the device declined the readback or the colour is not one an illuminant can make.
 pub async fn illuminant_for(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     from: Illuminant,
     white: [units::light::Gain; 3],
 ) -> Option<Illuminant> {
@@ -104,7 +104,7 @@ pub async fn illuminant_for(
 /// One of the two solves, read back: the outer None is a readback the device declined, the inner a
 /// question with no illuminant for an answer.
 async fn solved(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pipeline: &wgpu::ComputePipeline,
     layout: &wgpu::BindGroupLayout,
     words: &[f32; 16],
@@ -151,7 +151,7 @@ async fn solved(
     recording.copy_buffer_to_buffer(&solved, 0, &readback, 0, SOLVED * 4);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &readback, |mapped| {
+    let read = gpu::read_back(gpu, &readback, |mapped| {
         let word = |at: usize| {
             f32::from_le_bytes([mapped[at], mapped[at + 1], mapped[at + 2], mapped[at + 3]])
         };
@@ -182,8 +182,8 @@ pub(crate) struct Solver {
 
 /// Infallible, as `condition::device` is: these kernels ask for nothing beyond two storage
 /// buffers, and a shader that would not build is a panic through `on_uncaptured_error`.
-pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
-    static BUILT: crate::gpu::Cache<Solver> = crate::gpu::Cache::new();
+pub(crate) fn device(gpu: &'static gpu::Gpu) -> &'static Solver {
+    static BUILT: gpu::Cache<Solver> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -233,7 +233,7 @@ mod tests {
 
     /// A chromaticity through the whole path, as the camera that reports XYZ outright would have
     /// recorded it: the multipliers that neutralise the illuminant, and the identity for a matrix.
-    fn illuminant(gpu: &'static crate::gpu::Gpu, x: f64, y: f64) -> Illuminant {
+    fn illuminant(gpu: &'static gpu::Gpu, x: f64, y: f64) -> Illuminant {
         let identity = [
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -259,7 +259,7 @@ mod tests {
     /// locus by a known amount, so they check the tint arm too.
     #[test]
     fn the_standard_illuminants_land_where_they_are_named() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!(
                 "SKIPPED: no adapter answered, so the locus was not read. Nothing else checks \
                  that a named illuminant lands on the Kelvin it is named for.",
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn a_finished_pictures_white_is_d65_as_the_shader_reads_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the rendered white was not read.");
             return;
         };
@@ -314,7 +314,7 @@ mod tests {
     /// Warmer light reads as a lower number, which is the direction the whole slider hangs on.
     #[test]
     fn a_warmer_illuminant_reads_as_fewer_kelvin() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the slider's direction was not checked.");
             return;
         };
@@ -333,7 +333,7 @@ mod tests {
     /// illuminant outright and the answer is checkable by hand.
     #[test]
     fn the_camera_neutral_becomes_the_illuminant_that_produced_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!(
                 "SKIPPED: no adapter answered, so a camera's multipliers were not solved into \
                  the illuminant that produced them.",
@@ -362,7 +362,7 @@ mod tests {
     /// A file with nothing usable in it declines rather than inventing a baseline.
     #[test]
     fn a_file_with_no_multipliers_has_no_illuminant() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!(
                 "SKIPPED: no adapter answered, so a file with no illuminant was not refused.",
             );

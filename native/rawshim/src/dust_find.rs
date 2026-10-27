@@ -7,7 +7,7 @@
 //! the flood fill's mask and its heights in one plane, and the fitted spots, which are twenty-odd
 //! kilobytes. The mosaic itself never leaves the device.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Log-spaced bins the texture's floor is taken from. `HIST_BINS` in the shader, which is where the
 /// quantile over them is worked out; this side only sizes the buffer.
@@ -63,13 +63,13 @@ const WORKGROUP_STORAGE: u32 = (2 * crate::dust::BINS as u32 + 1) * 64 * 4 + 64;
 ///
 /// None where the adapter cannot hold that. The caller's answer is to leave the photograph's
 /// particles where they are, which is a far better outcome than a failed decode.
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Find> {
-    static BUILT: crate::gpu::Cache<Option<Find>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Find> {
+    static BUILT: gpu::Cache<Option<Find>> = gpu::Cache::new();
     BUILT.get(gpu, || Find::new(gpu)).as_ref()
 }
 
 impl Find {
-    fn new(gpu: &crate::gpu::Gpu) -> Option<Find> {
+    fn new(gpu: &gpu::Gpu) -> Option<Find> {
         let device = gpu.describing();
         if device.limits().max_compute_workgroup_storage_size < WORKGROUP_STORAGE {
             return None;
@@ -264,8 +264,8 @@ pub struct Search {
     /// way - and decoding a 61MP frame's worth to find a few hundred blobs would cost more than the
     /// readback. [`decoded`] converts the handful that turn out to be a blob's height.
     pub masked: Vec<u16>,
-    planes: Vec<crate::gpu::Buffer>,
-    uniforms: crate::gpu::Buffer,
+    planes: Vec<gpu::Buffer>,
+    uniforms: gpu::Buffer,
     fits_slot: u32,
 }
 
@@ -274,7 +274,7 @@ pub struct Search {
 /// One readback: the mask's floor is a quantile of a plane this sweep writes, and it
 /// is worked out on the device rather than fetched, so nothing here waits on the host.
 pub async fn sweep(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     kernels: &Find,
     mosaic: &crate::condition::Mosaic,
     shape: &Shape,
@@ -302,7 +302,7 @@ pub async fn sweep(
             mapped_at_creation: false,
         })
     };
-    let planes: Vec<crate::gpu::Buffer> = [
+    let planes: Vec<gpu::Buffer> = [
         "dust log mean",
         "dust surround",
         "dust red / score / masked",
@@ -355,16 +355,16 @@ pub async fn sweep(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
-    let bind = |layout: &wgpu::BindGroupLayout, buffers: &[(u32, &crate::gpu::Buffer)]| {
+    let bind = |layout: &wgpu::BindGroupLayout, buffers: &[(u32, &gpu::Buffer)]| {
         bound(gpu, &uniforms, layout, buffers)
     };
 
-    let run = |recording: &mut crate::gpu::Recording<'_>,
+    let run = |recording: &mut gpu::Recording<'_>,
                pipeline: &wgpu::ComputePipeline,
                group: &wgpu::BindGroup,
                slot: u32,
                items: usize| {
-        let (x, y) = crate::base::groups(items);
+        let (x, y) = gpu::compute::groups(items);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[slot]);
@@ -380,9 +380,7 @@ pub async fn sweep(
     let words = count / 2;
     let down = |hw: usize, hh: usize| hw / 2 * hh.div_ceil(SEGMENT);
     let tiles = shape.hw.div_ceil(PATCH) * shape.hh.div_ceil(PATCH) * 64;
-    let blur = |recording: &mut crate::gpu::Recording<'_>,
-                plane: &crate::gpu::Buffer,
-                window: (u32, u32)| {
+    let blur = |recording: &mut gpu::Recording<'_>, plane: &gpu::Buffer, window: (u32, u32)| {
         let out = bind(&kernels.separable, &[(10, plane), (11, scratch)]);
         let back = bind(&kernels.separable, &[(10, scratch), (11, plane)]);
         let laid = [
@@ -490,7 +488,7 @@ pub async fn sweep(
     // divided would drain the device and stall everything after it - and the only thing the threshold
     // wants of them is one float, which a single lane can work out where they lie.
     let counts = bind(&kernels.quantile.layout, &[(52, &histogram)]);
-    let (x, y) = crate::base::groups(1);
+    let (x, y) = gpu::compute::groups(1);
     recording.dispatch([x, y, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernels.quantile.pipeline);
         pass.set_bind_group(0, &counts, &[plain]);
@@ -526,12 +524,7 @@ impl Search {
     /// Every blob's ellipse, profile and confidence, and whether the gates kept it.
     ///
     /// One `SPOT_WORDS + 1` run per blob, the last word being the flag.
-    pub async fn fits(
-        &self,
-        gpu: &crate::gpu::Gpu,
-        kernels: &Find,
-        blobs: &[Blob],
-    ) -> Option<Vec<f32>> {
+    pub async fn fits(&self, gpu: &gpu::Gpu, kernels: &Find, blobs: &[Blob]) -> Option<Vec<f32>> {
         if blobs.is_empty() {
             return Some(Vec::new());
         }
@@ -583,10 +576,10 @@ impl Search {
 }
 
 fn bound(
-    gpu: &crate::gpu::Gpu,
-    uniforms: &crate::gpu::Buffer,
+    gpu: &gpu::Gpu,
+    uniforms: &gpu::Buffer,
     layout: &wgpu::BindGroupLayout,
-    buffers: &[(u32, &crate::gpu::Buffer)],
+    buffers: &[(u32, &gpu::Buffer)],
 ) -> wgpu::BindGroup {
     let mut entries: Vec<_> = buffers
         .iter()
@@ -610,7 +603,7 @@ fn bound(
     })
 }
 
-async fn mapped(gpu: &crate::gpu::Gpu, from: &crate::gpu::Buffer, bytes: u64) -> Option<Vec<u8>> {
+async fn mapped(gpu: &gpu::Gpu, from: &gpu::Buffer, bytes: u64) -> Option<Vec<u8>> {
     let mut recording = gpu.record();
     let readback = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("dust find readback"),
@@ -620,7 +613,7 @@ async fn mapped(gpu: &crate::gpu::Gpu, from: &crate::gpu::Buffer, bytes: u64) ->
     });
     recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
     recording.submit();
-    crate::gpu::read_back(gpu, &readback, <[u8]>::to_vec).await
+    gpu::read_back(gpu, &readback, <[u8]>::to_vec).await
 }
 
 /// One half float, as `pack2x16float` wrote it.
@@ -643,11 +636,7 @@ pub fn decoded(bits: u16) -> f32 {
     }
 }
 
-async fn read_halves(
-    gpu: &crate::gpu::Gpu,
-    from: &crate::gpu::Buffer,
-    count: usize,
-) -> Option<Vec<u16>> {
+async fn read_halves(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option<Vec<u16>> {
     let bytes = mapped(gpu, from, (count * 2) as u64).await?;
     Some(
         bytes
@@ -657,11 +646,7 @@ async fn read_halves(
     )
 }
 
-async fn read_f32(
-    gpu: &crate::gpu::Gpu,
-    from: &crate::gpu::Buffer,
-    count: usize,
-) -> Option<Vec<f32>> {
+async fn read_f32(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option<Vec<f32>> {
     let bytes = mapped(gpu, from, (count * 4) as u64).await?;
     Some(
         bytes

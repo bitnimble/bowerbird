@@ -6,8 +6,8 @@
 //! grid, and drops that region before the next source is decoded.
 
 use crate::composition::{Composition, Projection, SourceSpec};
-use crate::gpu::dispatch::Whole;
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
 use units::px::{Drawn, Rect, Size};
 
 /// How a canvas coordinate reaches a source's own pixels.
@@ -36,7 +36,7 @@ pub struct Gathered<'a> {
 pub struct Layer {
     pub rgb: Resident,
     /// One float an output pixel: the feather, and zero where this source does not reach.
-    pub weight: crate::gpu::Buffer,
+    pub weight: gpu::Buffer,
 }
 
 impl Layer {
@@ -48,19 +48,19 @@ impl Layer {
     }
 }
 
-fn gather_kernel(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn gather_kernel(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "composite_gather"))
 }
 
-fn probe_kernel(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn probe_kernel(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "composite_probe"))
 }
 
-fn built(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    crate::hdr_fit::kernel(
+fn built(gpu: &'static gpu::Gpu, entry: &str) -> gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    gpu::compute::kernel(
         gpu,
         entry,
         shaders::COMPOSITE_GATHER.source,
@@ -247,10 +247,7 @@ pub(crate) fn params_block() -> usize {
 }
 
 /// The three tables the gather reads for a source, or a stub where it reads none.
-fn tables(
-    recording: &mut crate::gpu::Recording<'_>,
-    from: &Gathered<'_>,
-) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
+fn tables(recording: &mut gpu::Recording<'_>, from: &Gathered<'_>) -> (gpu::Buffer, gpu::Buffer) {
     let lens = match from.through {
         Through::Corrected => crate::fit::Lens::none(),
         Through::Lens => from.source.lens.to_lens(),
@@ -269,10 +266,10 @@ fn tables(
 #[derive(Clone, Copy)]
 pub struct Masked<'a> {
     /// The signed distance field, and the per-pixel tile index beside it.
-    pub signed: &'a crate::gpu::Buffer,
-    pub tile_of: &'a crate::gpu::Buffer,
+    pub signed: &'a gpu::Buffer,
+    pub tile_of: &'a gpu::Buffer,
     /// Every tile's §3.7a correction, which the index above picks from.
-    pub warps: &'a crate::gpu::Buffer,
+    pub warps: &'a gpu::Buffer,
     pub stride: u32,
     pub slot: u32,
 }
@@ -286,7 +283,7 @@ pub struct Masked<'a> {
 /// `Masked`, the weight is read from §5.2's field rather than computed as a feather, and the warp is
 /// the owning tile's rather than the source's.
 pub fn gather_layer(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     from: &Gathered<'_>,
     p: &Composition,
     window: Rect<units::px::Composite>,
@@ -382,7 +379,7 @@ pub fn gather_layer(
             },
         ],
     });
-    let (x, y) = crate::base::groups(pixels.div_ceil(2));
+    let (x, y) = gpu::compute::groups(pixels.div_ceil(2));
     recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -391,9 +388,9 @@ pub fn gather_layer(
     Layer { rgb, weight }
 }
 
-fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    crate::hdr_fit::kernel(
+fn blend_kernel(gpu: &'static gpu::Gpu, entry: &str) -> gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    gpu::compute::kernel(
         gpu,
         entry,
         shaders::COMPOSITE_BLEND.source,
@@ -410,13 +407,13 @@ fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::K
     )
 }
 
-fn adding(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn adding(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || blend_kernel(gpu, "composite_add"))
 }
 
-fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn resolving(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || blend_kernel(gpu, "composite_resolve"))
 }
 
@@ -434,19 +431,19 @@ fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
 /// rendered at 16384 took 180 rows a strip, and so twenty-six strips of 676 decodes; it takes 910
 /// rows and five, at 130.
 pub struct Blending {
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static crate::base::Base,
     out: Resident,
-    alpha: crate::gpu::Buffer,
-    accumulator: crate::gpu::Buffer,
-    uniform: crate::gpu::Buffer,
+    alpha: gpu::Buffer,
+    accumulator: gpu::Buffer,
+    uniform: gpu::Buffer,
     pixels: usize,
     added: usize,
 }
 
 impl Blending {
     pub fn over(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         base: &'static crate::base::Base,
         window: Rect<units::px::Composite>,
     ) -> Blending {
@@ -499,7 +496,7 @@ impl Blending {
         );
         recording.holding(layer.rgb.buffer());
         recording.holding(&layer.weight);
-        let (x, y) = crate::base::groups(self.pixels);
+        let (x, y) = gpu::compute::groups(self.pixels);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -512,7 +509,7 @@ impl Blending {
     }
 
     /// The accumulator as the picture it adds up to, and where anything covered it.
-    pub fn resolve(self) -> (Resident, crate::gpu::Buffer) {
+    pub fn resolve(self) -> (Resident, gpu::Buffer) {
         let kernel = resolving(self.gpu);
         let mut recording = self.gpu.record();
         let stub = stub_buffer(&mut recording);
@@ -525,7 +522,7 @@ impl Blending {
         );
         recording.holding(self.out.buffer());
         recording.holding(&self.alpha);
-        let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
+        let (x, y) = gpu::compute::groups(self.pixels.div_ceil(2));
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -536,7 +533,7 @@ impl Blending {
 
     fn bind(
         &self,
-        kernel: &crate::hdr_fit::Kernel,
+        kernel: &gpu::compute::Kernel,
         layer: wgpu::BindingResource<'_>,
         weight: wgpu::BindingResource<'_>,
         out: wgpu::BindingResource<'_>,
@@ -592,13 +589,13 @@ pub(crate) fn blend_block() -> usize {
 }
 
 /// Somewhere for a binding this pass does not use to point: the layout names all six either way.
-fn stub_buffer(recording: &mut crate::gpu::Recording<'_>) -> crate::gpu::Buffer {
+fn stub_buffer(recording: &mut gpu::Recording<'_>) -> gpu::Buffer {
     stub_of(recording, 4)
 }
 
 /// A binding nothing reads still has to be at least one element of what the shader declares it as,
 /// so the warp table's stub is a whole `TileWarp` where the rest are a word.
-fn stub_of(recording: &mut crate::gpu::Recording<'_>, size: u64) -> crate::gpu::Buffer {
+fn stub_of(recording: &mut gpu::Recording<'_>, size: u64) -> gpu::Buffer {
     recording.buffer(&wgpu::BufferDescriptor {
         label: Some("pano stub"),
         size,
@@ -641,10 +638,10 @@ pub const NOT_REACHED: f32 = -1e30;
 #[derive(Clone, Copy)]
 pub struct Mask<'a> {
     /// One f32 an output pixel a slot, slot-minor: `assembly_weight::Weights::signed`.
-    pub signed: &'a crate::gpu::Buffer,
+    pub signed: &'a gpu::Buffer,
     /// `assembly_weight::Weights::tile_of` and the table it indexes.
-    pub tile_of: &'a crate::gpu::Buffer,
-    pub warps: &'a crate::gpu::Buffer,
+    pub tile_of: &'a gpu::Buffer,
+    pub warps: &'a gpu::Buffer,
     /// The same warps the device reads, in canvas pixels about the canvas origin, and which slot
     /// each tile belongs to. Read by [`footprint`], which has to decode whatever any of this
     /// source's tiles will ask it for.
@@ -909,7 +906,7 @@ async fn prepared_with(
     merging: Option<Merging<'_>>,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     if spec.sources.len() != request.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
@@ -1009,7 +1006,7 @@ struct Taken {
 /// One source decoded with the request's strengths and detail, coded against `anchor`, and
 /// gathered through the recipe's lens onto `request.window`. None where it does not reach it.
 async fn taken(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static crate::base::Base,
     spec: &Composition,
     request: &CompositeRequest<'_>,
@@ -1258,7 +1255,7 @@ pub async fn layers_of(
     mut take: impl FnMut(usize, Layer, Arrived) -> Result<(), String>,
 ) -> Result<Option<crate::tone::Anchored>, String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     if spec.sources.len() != request.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
@@ -1581,7 +1578,7 @@ fn footprint_of(
 /// The pin's half of the mapping, and it reads no picture, so it answers for a window of a source
 /// that was never decoded.
 pub async fn probe_layer(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     from: &Gathered<'_>,
     p: &Composition,
     window: Rect<units::px::Composite>,
@@ -1689,7 +1686,7 @@ pub async fn probe_layer(
     recording.copy_buffer_to_buffer(&probe, 0, &staging, 0, (pixels * 3 * 4) as u64);
     recording.submit();
 
-    crate::gpu::read_back(gpu, &staging, |mapped| {
+    gpu::read_back(gpu, &staging, |mapped| {
         mapped
             .chunks_exact(12)
             .map(|word| {
@@ -1713,8 +1710,8 @@ mod tests {
     use super::*;
     use crate::composition::{LensSpec, VERSION, canvas_to_ray, ray_to_source};
 
-    fn drawing() -> &'static crate::gpu::Gpu {
-        crate::gpu::device().expect("an adapter for the panorama gather")
+    fn drawing() -> &'static gpu::Gpu {
+        gpu::device().expect("an adapter for the panorama gather")
     }
 
     fn levels(white: f64, peak: f64) -> crate::tone::Levels {
@@ -1924,15 +1921,11 @@ mod tests {
 
         let (blended, alpha) = blending.resolve();
         let row = pollster::block_on(read_row(gpu, &blended, across));
-        let covered = pollster::block_on(crate::gpu::read_back(
-            gpu,
-            &copied(gpu, &alpha, across),
-            |m| {
-                m.chunks_exact(4)
-                    .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
-                    .collect::<Vec<_>>()
-            },
-        ))
+        let covered = pollster::block_on(gpu::read_back(gpu, &copied(gpu, &alpha, across), |m| {
+            m.chunks_exact(4)
+                .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+                .collect::<Vec<_>>()
+        }))
         .expect("the alpha reads back");
 
         let light = |code: u16| {
@@ -1967,7 +1960,7 @@ mod tests {
 
     /// A frame every sample of which is the same code, which is what makes a blend's answer
     /// readable: whatever comes back is the mix and not the picture.
-    fn flat_frame(gpu: &'static crate::gpu::Gpu, nits: f64) -> Resident {
+    fn flat_frame(gpu: &'static gpu::Gpu, nits: f64) -> Resident {
         let signal = crate::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
             nits,
         ));
@@ -1980,11 +1973,7 @@ mod tests {
         )
     }
 
-    fn copied(
-        gpu: &'static crate::gpu::Gpu,
-        buffer: &crate::gpu::Buffer,
-        words: usize,
-    ) -> crate::gpu::Buffer {
+    fn copied(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, words: usize) -> gpu::Buffer {
         let mut recording = gpu.record();
         let staging = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("pano readback"),
@@ -1998,9 +1987,9 @@ mod tests {
     }
 
     /// The green channel along the first row of a composite.
-    async fn read_row(gpu: &'static crate::gpu::Gpu, frame: &Resident, across: usize) -> Vec<u16> {
+    async fn read_row(gpu: &'static gpu::Gpu, frame: &Resident, across: usize) -> Vec<u16> {
         let staging = copied(gpu, frame.buffer(), (across * 3).div_ceil(2));
-        crate::gpu::read_back(gpu, &staging, |mapped| {
+        gpu::read_back(gpu, &staging, |mapped| {
             let samples = crate::resident::samples_of(mapped);
             (0..across).map(|x| samples[x * 3 + 1]).collect()
         })

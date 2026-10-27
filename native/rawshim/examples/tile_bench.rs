@@ -6,7 +6,7 @@
 use rawshim::galosh::UNGAINED;
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let galosh = rawshim::galosh::device(gpu).expect("the denoise");
     let amounts = rawshim::galosh::Amounts::from_sliders(40.0, 40.0);
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");

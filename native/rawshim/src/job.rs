@@ -536,7 +536,7 @@ fn describe_if_grid(image: units::rgb::RgbRef<'_>, target: &Target, outcome: &mu
     if target.rendition != Rendition::Grid {
         return;
     }
-    let Some(gpu) = crate::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         trace::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
         return;
     };
@@ -785,7 +785,7 @@ impl Base {
         };
 
         let refused = || crate::base::without_a_device("the coding and the defringe");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         // Shrunk off the frame before the open defringes it in place: the network learned on
         // frames as the demosaic leaves them.
         let looked = match job.reflection.takes_out() && crate::dereflect::ready(gpu) {
@@ -1159,7 +1159,7 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     )
     .ok()?;
     let scene = window.scene(job.exposure, job.adjust.clone());
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let grade = window.grade(
         &scene,
         crate::grade::Output::Pq.mastered(job.grade.reference_white_nits),
@@ -1242,7 +1242,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
 /// frame once per set of strokes: a tile has no frame to find it in.
 #[cfg(feature = "renditions")]
 pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     if !job.reflection.takes_out() || !crate::dereflect::ready(gpu) {
         return None;
     }
@@ -1333,7 +1333,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         use crate::composite_job::Want;
         let answered = match &pano.want {
             Want::Align { shape } => {
-                let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
+                let gpu = gpu::device().ok_or(NO_ADAPTER)?;
                 Some((crate::composite_job::align(gpu, pano, *shape)?, "align"))
             }
             Want::Analyse { volume_path } => {
@@ -1493,7 +1493,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // Asked for below the loop above, so a job that renders nothing needs no adapter: a scan that
     // read a header, or one whose only target was lifted whole out of the camera's JPEG, is not a
     // photograph this refuses to catalogue on a machine with no Vulkan.
-    crate::gpu::device().ok_or(NO_ADAPTER)?;
+    gpu::device().ok_or(NO_ADAPTER)?;
     let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
     crate::progress::advance();
@@ -1712,7 +1712,7 @@ pub(crate) async fn graded_bands(
     pixels: usize,
 ) -> Result<Graded, String> {
     let (known, scene_peak) = (&measured.known, measured.peak);
-    let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
+    let gpu = gpu::device().ok_or(NO_ADAPTER)?;
     let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
     let photograph = held.size().raw();
     let options = encode_options(job, target, &target.output_path);
@@ -1822,7 +1822,7 @@ pub(crate) async fn render(
     mut wrote: impl FnMut(&Target, Coded, usize, usize, &EncodeOptions) -> Result<(), String>,
 ) -> Result<Rendered, String> {
     let mut lap = trace::clock::laps("  job ");
-    let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
+    let gpu = gpu::device().ok_or(NO_ADAPTER)?;
 
     // No `width`/`height`: a cut carries its own now, whichever arm below produced it.
     let Base {
@@ -2561,7 +2561,7 @@ mod tests {
     #[cfg(feature = "renditions")]
     #[test]
     fn a_turned_jpeg_describes_as_its_upright_picture() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (width, height) = (320, 200);

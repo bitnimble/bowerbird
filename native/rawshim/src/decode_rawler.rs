@@ -245,7 +245,7 @@ pub(crate) async fn decode_tile_source(
         Region::Mosaic(region) => region,
         Region::Linear(frame) => return Some(frame),
     };
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
     let built = region.built(gpu, rcd).await?;
     Some(region.frame(built))
@@ -330,7 +330,7 @@ pub(crate) async fn decode_merged_tile(
     else {
         return None;
     };
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
     reference.noise = given.or(reference.noise);
     if taken == crate::burst::Taken::Placed {
@@ -613,7 +613,7 @@ impl RegionMosaic {
 
     async fn built(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         rcd: &'static crate::demosaic::Rcd,
     ) -> Option<crate::resident::Resident> {
         demosaic_at(
@@ -720,7 +720,7 @@ async fn region_mosaic(
     // which period that is is the file's to say.
     let cfa = cfa_of(&shape)?;
     let halo = crate::tile_halo(halo);
-    let reach = RCD_MARGIN + detailed_halo(crate::gpu::device(), detail, &cfa, halo) + extra.raw();
+    let reach = RCD_MARGIN + detailed_halo(gpu::device(), detail, &cfa, halo) + extra.raw();
     let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
     let (left, top) = (
         (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
@@ -798,7 +798,7 @@ async fn region_mosaic(
     let (region_w, region_h) = (right - left, bottom - top);
 
     let cfa = cfa_of(image)?;
-    let gpu = crate::gpu::device();
+    let gpu = gpu::device();
     let maps = gain_maps(decoder.as_ref());
     let field_mosaic = condition(
         gpu,
@@ -1020,7 +1020,7 @@ pub fn decode_bytes(
 /// The same, awaited, which is the only spelling a browser can take.
 ///
 /// The chain's one readback is the demosaic's, and wgpu's WebGPU backend cannot be blocked for a
-/// map ([`crate::gpu::read_back`]). Native drives this to completion without ever suspending, which
+/// map ([`gpu::read_back`]). Native drives this to completion without ever suspending, which
 /// is what lets every blocking entry point above stay exactly as blocking as it was.
 pub async fn decode_bytes_async(
     bytes: &[u8],
@@ -1176,8 +1176,7 @@ async fn linear(
     mut image: rawler::RawImage,
     upright: rawler::decoders::Orientation,
 ) -> Result<crate::decode_rendered::Held, String> {
-    let gpu = crate::gpu::device()
-        .ok_or_else(|| crate::base::without_a_device("reading a linear DNG"))?;
+    let gpu = gpu::device().ok_or_else(|| crate::base::without_a_device("reading a linear DNG"))?;
     let (width, height) = (image.width, image.height);
     let values = width * height * 3;
     let stored = match &image.data {
@@ -1730,7 +1729,7 @@ async fn hold(
         return None;
     }
 
-    let gpu = crate::gpu::device();
+    let gpu = gpu::device();
     let maps = gain_maps(decoder);
     let mosaic = condition(
         gpu,
@@ -1856,7 +1855,7 @@ impl Held {
     /// None for a pattern GALOSH does not filter, which is a photograph with no mosaic noise to
     /// report rather than one measured wrong ([`crate::galosh::filters`]).
     pub async fn fit(&self) -> Option<crate::galosh::NoiseFit> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let kernels = crate::galosh::device(gpu)?;
         crate::galosh::filters(&self.sensor.cfa).then_some(())?;
         Some(
@@ -1939,7 +1938,7 @@ impl Held {
         halo: usize,
         dust: crate::dust::Known<'_>,
     ) -> Option<Frame> {
-        let gpu = crate::gpu::device();
+        let gpu = gpu::device();
         let whole = &self.mosaic;
         let Sensor {
             width: frame_w,
@@ -2060,7 +2059,7 @@ impl Held {
         dust: crate::dust::Wanted<'_>,
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
-        let copy = self.mosaic.duplicate(crate::gpu::device()?);
+        let copy = self.mosaic.duplicate(gpu::device()?);
         Held {
             mosaic: copy,
             sensor: self.sensor.clone(),
@@ -2084,7 +2083,7 @@ impl Held {
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let mut lap = trace::clock::laps("  decode ");
-        let gpu = crate::gpu::device();
+        let gpu = gpu::device();
         let glass = self.sensor.glass();
         let Sensor {
             width,
@@ -2328,7 +2327,7 @@ fn spans_of(total: usize, tile: usize) -> impl Iterator<Item = (usize, usize)> {
 /// same fit - GALOSH filters on it, PMRID converts it into the anchor its weights were trained at -
 /// so the choice reaches only as far as the filtering itself. `gains` are the conditioning's own.
 async fn denoise_over(
-    gpu: Option<&'static crate::gpu::Gpu>,
+    gpu: Option<&'static gpu::Gpu>,
     mosaic: &mut crate::condition::Mosaic,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
@@ -2459,7 +2458,7 @@ fn declined_galosh(
 
 /// The mosaic denoise, tile by tile, at the halo this caller grew its region by.
 async fn denoise_in_tiles(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     kernels: &'static crate::galosh::Galosh,
     mosaic: &mut crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -2505,7 +2504,7 @@ fn reduced_span(of: usize, by: usize) -> usize {
 /// cache line, and 61MP costs 1409ms against 860ms.
 #[allow(clippy::too_many_arguments)]
 async fn reduced_into(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     mosaic: &crate::condition::Mosaic,
     crop: (usize, usize, usize, usize),
@@ -2573,7 +2572,7 @@ pub fn reduction(cfa: &crate::cfa::Cfa) -> Option<usize> {
 /// each tile needs is that rectangle in sensor coordinates grown by RCD's own margin. Whole-frame
 /// RCD holds thirteen planes at once - 3.1GB at 61MP - which is the allocation this removes.
 async fn demosaic_in_tiles(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -2601,7 +2600,7 @@ async fn demosaic_in_tiles(
 /// lies in the sensor's mosaic, which is `frame` photosites across.
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_detailed(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     mosaic: &crate::condition::Mosaic,
     origin: (usize, usize),
@@ -2668,7 +2667,7 @@ pub async fn demosaic_as_decoded(
     colour: crate::demosaic::Colour,
     by: usize,
 ) -> Option<crate::resident::Resident> {
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
     let field = crate::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
     let detail = crate::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
@@ -2695,7 +2694,7 @@ pub async fn demosaic_as_decoded(
 /// mosaic, or under the upscaler boxed down from its full-size demosaic over the same sites.
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_at(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     mosaic: &crate::condition::Mosaic,
     origin: (usize, usize),
@@ -2765,7 +2764,7 @@ const UPSCALE_TILE: usize = RENDER_TILE / 2;
 /// the network's and [`HALVING_REACH`], each rounded out to a whole site, so that a loupe tile is
 /// the whole frame's.
 fn detailed_halo(
-    gpu: Option<&'static crate::gpu::Gpu>,
+    gpu: Option<&'static gpu::Gpu>,
     detail: crate::galosh::Detail,
     cfa: &crate::cfa::Cfa,
     halo: usize,
@@ -2790,7 +2789,7 @@ fn detailed_halo(
 /// the next tile owns.
 #[allow(clippy::too_many_arguments)]
 async fn upscaled_in_tiles(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     upscaler: &'static crate::upscale::Upscaler,
     photo: &crate::upscale::Photo,
@@ -2904,14 +2903,14 @@ async fn upscaled_in_tiles(
 }
 
 /// A tile's RCD plane, and the rectangle of the mosaic it covers as `(left, top, width, height)`.
-type Settle<'a> = dyn Fn(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer, (usize, usize, usize, usize))
-    + 'a;
+type Settle<'a> =
+    dyn Fn(&mut gpu::Recording<'static>, &gpu::Buffer, (usize, usize, usize, usize)) + 'a;
 
 /// [`demosaic_in_tiles`], with each tile's plane handed to `settle` before it is coloured
 /// (`demosaic::demosaic_settled_into`).
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_settled_in_tiles(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -3082,7 +3081,7 @@ fn staggered(camera: &rawler::decoders::Camera) -> bool {
 /// None where no adapter answered, which is a decode that reads nothing rather than one that reads
 /// a second arithmetic (DESIGN 2.1). The caller says so; this only declines.
 fn condition(
-    gpu: Option<&'static crate::gpu::Gpu>,
+    gpu: Option<&'static gpu::Gpu>,
     samples: &[u16],
     width: usize,
     height: usize,
@@ -3456,7 +3455,7 @@ fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
 /// exactly what rawler carries, so this is a shape conversion and not a second implementation -
 /// the temperature and tint a photograph reports must not depend on which decoder read it.
 async fn as_shot_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     image: &rawler::RawImage,
 ) -> Option<crate::white_balance::Illuminant> {
     let wb = image.wb_coeffs;
@@ -3744,7 +3743,7 @@ mod tests {
     /// run, nowhere in a masked border the run starts in, and never past the channel's ceiling.
     #[test]
     fn the_kernel_shades_each_photosite_by_its_gain_map() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -3979,7 +3978,7 @@ mod tests {
     /// it where a count past white would have clipped. A NaN reads as black rather than as noise.
     #[test]
     fn a_floating_point_dng_keeps_what_it_holds_above_white() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             eprintln!("SKIPPED: no adapter answered, so the float DNG was not decoded.");
             return;
         }
@@ -4217,7 +4216,7 @@ mod tests {
     /// anything about.
     #[test]
     fn the_kernel_conditions_every_sample_at_its_own_position() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let kernels = crate::condition::device(gpu);

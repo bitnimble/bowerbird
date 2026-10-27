@@ -226,7 +226,7 @@ pub fn draw(
 }
 
 pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
-    static MODULE: crate::gpu::Cache<wgpu::ShaderModule> = crate::gpu::Cache::new();
+    static MODULE: gpu::Cache<wgpu::ShaderModule> = gpu::Cache::new();
     static BUILT: std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>> =
         std::sync::Mutex::new(Vec::new());
     let mut built = BUILT
@@ -507,7 +507,7 @@ mod tests {
             },
         );
         recording.submit();
-        pollster::block_on(crate::gpu::read_back(gpu, &staged, |bytes| {
+        pollster::block_on(gpu::read_back(gpu, &staged, |bytes| {
             [0, 2, 4].map(|at| {
                 half::f16::from_bits(u16::from_le_bytes([bytes[at], bytes[at + 1]])).to_f32()
             })
@@ -546,7 +546,7 @@ mod tests {
     /// colour comes out in the same primaries.
     #[test]
     fn the_window_is_drawn_the_light_the_browser_stage_draws() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the stage was not drawn.");
             return;
         };
@@ -602,7 +602,7 @@ mod tests {
     /// page's ink, lit at the window's white, as the page shows around the stage.
     #[test]
     fn a_picture_is_drawn_inside_its_letterbox() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the stage was not drawn.");
             return;
         };

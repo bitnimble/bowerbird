@@ -17,7 +17,7 @@ use wasm_bindgen::prelude::*;
 /// reader is told is that their file could not be read, which sends them looking at the photograph
 /// instead of at the browser.
 async fn needs_webgpu() -> Result<(), JsValue> {
-    match crate::gpu::page_device().await {
+    match gpu::page_device().await {
         Some(_) => Ok(()),
         None => Err(JsValue::from_str(
             "rawshim: this pipeline runs entirely on the GPU and this browser offered no WebGPU \
@@ -31,16 +31,16 @@ async fn needs_webgpu() -> Result<(), JsValue> {
 /// null where there is no adapter.
 #[wasm_bindgen(js_name = pageDevice)]
 pub async fn page_device() -> JsValue {
-    crate::gpu::page_device()
+    gpu::page_device()
         .await
-        .and_then(crate::gpu::Gpu::webgpu_device)
+        .and_then(gpu::Gpu::webgpu_device)
         .unwrap_or(JsValue::NULL)
 }
 
 /// Builds every pipeline the editor can dispatch, once [`page_device`] has opened a device.
 #[wasm_bindgen(js_name = buildEveryPipeline)]
 pub fn build_every_pipeline() {
-    if let Some(gpu) = crate::gpu::device() {
+    if let Some(gpu) = gpu::device() {
         crate::pipelines::build_every_pipeline(gpu);
     }
 }
@@ -48,14 +48,14 @@ pub fn build_every_pipeline() {
 /// Where the device's last few submissions were made, oldest first.
 #[wasm_bindgen(js_name = recentSubmissions)]
 pub fn recent_submissions() -> Vec<String> {
-    crate::gpu::device().map_or_else(Vec::new, |gpu| gpu.queue.recent_submissions())
+    gpu::device().map_or_else(Vec::new, |gpu| gpu.queue.recent_submissions())
 }
 
 /// Cuts the bands dispatched from each of `sites`, as [`recent_submissions`] names them, smaller:
 /// a device this page had before was lost after a submission from there.
 #[wasm_bindgen(js_name = splitBands)]
 pub fn split_bands(sites: Vec<String>) {
-    if let Some(gpu) = crate::gpu::device() {
+    if let Some(gpu) = gpu::device() {
         for at in &sites {
             gpu.split_bands(at);
         }
@@ -494,9 +494,9 @@ pub async fn render_rendition(bytes: &[u8], job: &str) -> Result<Vec<u8>, JsValu
 
 #[wasm_bindgen(js_name = finishDraw)]
 pub async fn finish_draw() -> Result<(), JsValue> {
-    let gpu = crate::gpu::device()
+    let gpu = gpu::device()
         .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
-    crate::gpu::finished(gpu)
+    gpu::finished(gpu)
         .await
         .ok_or_else(|| JsValue::from_str("rawshim: the GPU did not finish the draw"))?;
     refused()
@@ -504,7 +504,7 @@ pub async fn finish_draw() -> Result<(), JsValue> {
 
 /// A refusal the device reported since the last draw.
 fn refused() -> Result<(), JsValue> {
-    match crate::gpu::refusal() {
+    match gpu::refusal() {
         Some(said) => Err(JsValue::from_str(&said)),
         None => Ok(()),
     }
@@ -1047,7 +1047,7 @@ impl HeldRaw {
     /// until then, so a reader who never touches those sliders never pays for it.
     fn hold_drawing(&self, opened: crate::edit::Opened) -> Result<(), JsValue> {
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         let base = crate::base::device(gpu).ok_or_else(refused)?;
         let (width, height) = (opened.header.width, opened.header.height);
         // The buffer's own, and the shader agrees: `geometry_at` takes the window's origin off
@@ -1218,7 +1218,7 @@ impl HeldRaw {
                 .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
         let frame = frame.into_frame();
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         let scene = window.scene(None, crate::grade::Adjust::none());
         let grade = window.grade(
             &scene,
@@ -1423,7 +1423,7 @@ impl HeldRaw {
             return Ok(());
         };
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         let base = crate::base::device(gpu).ok_or_else(refused)?;
         let (picture_w, picture_h) = drawing.picture();
         let grade = crate::grade::Grade {
@@ -1629,7 +1629,7 @@ impl HeldRaw {
         size: (usize, usize),
     ) -> Result<(), JsValue> {
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         let ((left, top), (right, bottom)) = tiles_over(at, size, level);
         let (first, _) = tile_rect(left, top, level);
         let (last_at, last_size) = tile_rect(right, bottom, level);
@@ -1738,7 +1738,7 @@ impl HeldRaw {
         asked: &[((usize, usize), (usize, usize))],
     ) -> Result<(), JsValue> {
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         let placed = header.window;
         let level = placed.map_or((header.width, header.height), |it| it.canvas);
         let origin = placed.map_or((0, 0), |it| it.origin);
@@ -1835,7 +1835,7 @@ impl HeldRaw {
         height: u32,
         video: Option<String>,
     ) -> Result<(), JsValue> {
-        let gpu = crate::gpu::device()
+        let gpu = gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let video = video
             .map(|name| {
@@ -1867,7 +1867,7 @@ impl HeldRaw {
         else {
             return Ok(None);
         };
-        let gpu = crate::gpu::device()
+        let gpu = gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let read = match video {
             Some(matching) => crate::grade::device(gpu).pq420(&drawn, matching).await,
@@ -1881,7 +1881,7 @@ impl HeldRaw {
     /// The backing store the reader's box asks for, which a resize or a density change moves.
     #[wasm_bindgen(js_name = resizeStage)]
     pub fn resize_stage(&self, width: u32, height: u32) {
-        if let (Some(gpu), Some(stage)) = (crate::gpu::device(), self.stage.borrow_mut().as_mut()) {
+        if let (Some(gpu), Some(stage)) = (gpu::device(), self.stage.borrow_mut().as_mut()) {
             stage.resize(gpu, width, height);
         }
     }
@@ -1918,7 +1918,7 @@ impl HeldRaw {
         width: u32,
         height: u32,
     ) -> Result<(), JsValue> {
-        let gpu = crate::gpu::device()
+        let gpu = gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         self.overview
             .borrow_mut()
@@ -1993,7 +1993,7 @@ impl HeldRaw {
             .borrow()
             .as_ref()
             .and_then(crate::grade::Stage::drawn);
-        let gpu = crate::gpu::device()
+        let gpu = gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         match drawn {
             Some((texture, _)) => crate::grade::device(gpu).srgb8(&texture).await,
@@ -2041,7 +2041,7 @@ impl HeldRaw {
                 photograph: units::px::Size::exact(pw, ph),
                 origin: at,
             };
-            let gpu = crate::gpu::device().ok_or_else(|| {
+            let gpu = gpu::device().ok_or_else(|| {
                 JsValue::from_str("rawshim: this browser offered no WebGPU adapter")
             })?;
             // Against the peak the stage already claimed, as a loupe tile is, so the part is graded
@@ -2086,7 +2086,7 @@ impl HeldRaw {
     /// `selected` is a `lattice::ColourNode` as JSON.
     #[wasm_bindgen(js_name = drawWheel)]
     pub fn draw_wheel(&self, lightness: f64, selected: Option<String>) -> Result<(), JsValue> {
-        let gpu = crate::gpu::device()
+        let gpu = gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let selected = colour_node_of(selected)?;
         let wheel = self.wheel.borrow();
@@ -2479,7 +2479,7 @@ impl HeldRaw {
             }));
         }
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
-        let gpu = crate::gpu::device().ok_or_else(refused)?;
+        let gpu = gpu::device().ok_or_else(refused)?;
         if !crate::dereflect::ready(gpu) {
             return Ok(None);
         }
@@ -2584,8 +2584,8 @@ impl HeldRaw {
 pub struct UpscaleTrial {
     upscaler: crate::upscale::Upscaler,
     photo: crate::upscale::Photo,
-    mosaic: crate::gpu::Buffer,
-    into: crate::gpu::Buffer,
+    mosaic: gpu::Buffer,
+    into: gpu::Buffer,
     width: usize,
     height: usize,
 }
@@ -2608,9 +2608,7 @@ impl UpscaleTrial {
         half: bool,
     ) -> Result<UpscaleTrial, JsValue> {
         needs_webgpu().await?;
-        let gpu = crate::gpu::page_device()
-            .await
-            .ok_or("rawshim: no device")?;
+        let gpu = gpu::page_device().await.ok_or("rawshim: no device")?;
         let arm = match half {
             true => crate::upscale::Arm::Half,
             false => crate::upscale::Arm::Float,
@@ -2655,9 +2653,7 @@ impl UpscaleTrial {
 
     /// One upscale, resolved once the device has finished it.
     pub async fn run(&self) -> Result<(), JsValue> {
-        let gpu = crate::gpu::page_device()
-            .await
-            .ok_or("rawshim: no device")?;
+        let gpu = gpu::page_device().await.ok_or("rawshim: no device")?;
         self.upscaler
             .upscale(
                 gpu,
@@ -2672,7 +2668,7 @@ impl UpscaleTrial {
                 None,
             )
             .map_err(|e| JsValue::from_str(&e))?;
-        crate::gpu::finished(gpu)
+        gpu::finished(gpu)
             .await
             .ok_or("rawshim: the device did not finish")?;
         Ok(())
@@ -2680,9 +2676,7 @@ impl UpscaleTrial {
 
     /// The last [`UpscaleTrial::run`]'s answer.
     pub async fn answer(&self) -> Result<Vec<f32>, JsValue> {
-        let gpu = crate::gpu::page_device()
-            .await
-            .ok_or("rawshim: no device")?;
+        let gpu = gpu::page_device().await.ok_or("rawshim: no device")?;
         let mut recording = gpu.record();
         let staging = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("upscale trial read"),
@@ -2692,7 +2686,7 @@ impl UpscaleTrial {
         });
         recording.copy_buffer_to_buffer(&self.into, 0, &staging, 0, self.into.size());
         recording.submit();
-        crate::gpu::read_back(gpu, &staging, |bytes| {
+        gpu::read_back(gpu, &staging, |bytes| {
             bytemuck::cast_slice::<u8, f32>(bytes).to_vec()
         })
         .await

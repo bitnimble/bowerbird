@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn the_band_binds_where_the_shaders_read_it() {
-        let source = include_str!("../../../../slang/band.slang");
+        let source = include_str!("../../../slang/band.slang");
         let binding = format!("[[vk::binding(0, {BAND_GROUP})]]");
         assert!(
             source.contains(&binding),

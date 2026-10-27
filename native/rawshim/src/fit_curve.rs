@@ -4,8 +4,8 @@
 //! block's partials summed in block order, in `f64` - and the solve the fold feeds, which is a
 //! pass over 256 bins rather than over a picture.
 
-use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
+use gpu::dispatch::Whole;
 
 /// Workgroups the binning is split across, which is also how many partials come back.
 ///
@@ -34,8 +34,8 @@ pub(crate) struct Kernels {
     bins: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -93,14 +93,14 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 
 /// The planes and the mask the binning reads, uploaded once and asked about every round.
 pub(crate) struct Evidence {
-    pub render: crate::gpu::Buffer,
-    pub jpeg: crate::gpu::Buffer,
-    pub bits: crate::gpu::Buffer,
+    pub render: gpu::Buffer,
+    pub jpeg: gpu::Buffer,
+    pub bits: gpu::Buffer,
     pub pixels: usize,
 }
 
 pub(crate) async fn binned(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     evidence: &Evidence,
     hue_weights: &[f64],
     ceiling: f64,
@@ -114,7 +114,7 @@ pub(crate) async fn binned(
     recording.holding(&evidence.jpeg);
     recording.holding(&evidence.bits);
 
-    let held = |recording: &mut crate::gpu::Recording<'_>, label, words: usize, usage| {
+    let held = |recording: &mut gpu::Recording<'_>, label, words: usize, usage| {
         recording.buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: (words * 4).max(4) as u64,
@@ -230,7 +230,7 @@ pub(crate) async fn binned(
     recording.copy_buffer_to_buffer(&partials, 0, &out, 0, (partial_words * 4) as u64);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &out, |mapped| {
+    let read = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn the_bins_hold_what_a_serial_walk_does() {
         use crate::hdr_fit::{BINS, HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS, srgb_oetf};
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let pixels = super::BLOCKS * 150 + 37;

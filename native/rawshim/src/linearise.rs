@@ -10,7 +10,7 @@
 //! re-prepares a photograph a band at a time, a loupe asks for tile after tile of one open, and a
 //! rendition job asks for every size in turn. Each of those is this pass over a rectangle.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 use units::px::{At, Photograph, Rect, Size};
 
 pub struct Linearise {
@@ -20,13 +20,13 @@ pub struct Linearise {
 
 /// Infallible for [`crate::condition::device`]'s reason: the kernel asks for nothing beyond storage
 /// buffers, so a shader that would not build is a panic rather than a `None` anybody could handle.
-pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Linearise {
-    static BUILT: crate::gpu::Cache<Linearise> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> &'static Linearise {
+    static BUILT: gpu::Cache<Linearise> = gpu::Cache::new();
     BUILT.get(gpu, || Linearise::new(gpu))
 }
 
 impl Linearise {
-    fn new(gpu: &crate::gpu::Gpu) -> Linearise {
+    fn new(gpu: &gpu::Gpu) -> Linearise {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("linearise"),
@@ -164,8 +164,8 @@ impl Reconstruction {
 /// does not fit.
 pub struct Picture {
     samples: Samples,
-    table: crate::gpu::Buffer,
-    gain: crate::gpu::Buffer,
+    table: gpu::Buffer,
+    gain: gpu::Buffer,
     gain_size: (usize, usize),
     terms: Option<GainMap>,
     /// The picture as its bytes are laid out, before the turn: the whole raster, or the part of it
@@ -192,7 +192,7 @@ struct Samples {
 /// uploaded a band's rows at a time.
 enum Raster {
     Codes(crate::resident::Resident),
-    Float(crate::gpu::Buffer),
+    Float(gpu::Buffer),
     HostCodes(Vec<u16>),
     HostFloat(Vec<f32>),
 }
@@ -202,12 +202,7 @@ const DEVICE_RASTER_BYTES: u64 = 1 << 30;
 const STRIP_BYTES: usize = 256 << 20;
 
 impl Samples {
-    fn codes(
-        gpu: &'static crate::gpu::Gpu,
-        codes: Vec<u16>,
-        width: usize,
-        height: usize,
-    ) -> Samples {
+    fn codes(gpu: &'static gpu::Gpu, codes: Vec<u16>, width: usize, height: usize) -> Samples {
         let raster = match Samples::bound_whole(gpu, codes.len() * 2) {
             true => Raster::Codes(crate::resident::Resident::upload(
                 gpu, &codes, width, height,
@@ -223,7 +218,7 @@ impl Samples {
     }
 
     fn floats(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: Vec<f32>,
         width: usize,
         height: usize,
@@ -241,7 +236,7 @@ impl Samples {
         }
     }
 
-    fn bound_whole(gpu: &crate::gpu::Gpu, bytes: usize) -> bool {
+    fn bound_whole(gpu: &gpu::Gpu, bytes: usize) -> bool {
         bytes as u64 <= gpu.most_bound().min(DEVICE_RASTER_BYTES)
     }
 
@@ -254,11 +249,7 @@ impl Samples {
 
     /// The raster's `rect` where a dispatch can bind it, and the rectangle the binding holds: all of
     /// it for a raster on the device, `rect` alone for one on the host.
-    fn strip(
-        &self,
-        gpu: &'static crate::gpu::Gpu,
-        rect: crate::Tile,
-    ) -> (crate::gpu::Buffer, crate::Tile) {
+    fn strip(&self, gpu: &'static gpu::Gpu, rect: crate::Tile) -> (gpu::Buffer, crate::Tile) {
         let whole = crate::Tile {
             left: 0,
             top: 0,
@@ -290,7 +281,7 @@ impl Samples {
     }
 }
 
-fn float_buffer(gpu: &crate::gpu::Gpu, samples: &[f32]) -> crate::gpu::Buffer {
+fn float_buffer(gpu: &gpu::Gpu, samples: &[f32]) -> gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("linearise float samples"),
         contents: bytemuck::cast_slice(samples),
@@ -311,7 +302,7 @@ impl Picture {
     /// `codes` is interleaved RGB at `coding.depth` bits, left-aligned in nothing - a code is the
     /// value the decoder produced, and the table is indexed by it directly.
     pub fn upload(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         codes: Vec<u16>,
         width: usize,
         height: usize,
@@ -337,7 +328,7 @@ impl Picture {
 
     /// The same, for codes already on the device.
     pub fn on_device(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         codes: crate::resident::Resident,
         coding: crate::transfer::Coding,
         upright: rawler::decoders::Orientation,
@@ -357,7 +348,7 @@ impl Picture {
     /// A linear DNG's counts, interleaved RGB of a `width` by `height` raster: `crop` of it, read
     /// through a table the caller conditioned rather than through the coding's transfer.
     pub fn camera(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         codes: Vec<u16>,
         width: usize,
         height: usize,
@@ -373,7 +364,7 @@ impl Picture {
     /// The same stored as floating point: a float sample past the white level is highlight the
     /// file kept, where a count past it is a clipped photosite.
     pub fn camera_float(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: Vec<f32>,
         width: usize,
         height: usize,
@@ -387,7 +378,7 @@ impl Picture {
     }
 
     fn built(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: Samples,
         crop: Rect<Photograph>,
         coding: crate::transfer::Coding,
@@ -444,7 +435,7 @@ impl Picture {
     /// this names a region in (`crate::view`).
     pub fn window(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         kernels: &Linearise,
         window: Rect<Photograph>,
         scale: crate::view::Scale,
@@ -549,7 +540,7 @@ impl Picture {
                     },
                 ],
             });
-            let (x, y) = crate::base::groups(words.1 - words.0);
+            let (x, y) = gpu::compute::groups(words.1 - words.0);
             recording.dispatch([x, y, 1], Whole::Measured, |pass| {
                 pass.set_pipeline(&kernels.pipeline);
                 pass.set_bind_group(0, &group, &[]);
@@ -562,7 +553,7 @@ impl Picture {
     /// Output rows a dispatch writes: all of them for a raster on the device, and for one on the
     /// host as many as read `strip_bytes` of it, or what the adapter binds if that is less. Even,
     /// so every band starts on a whole word.
-    fn band_rows(&self, gpu: &crate::gpu::Gpu, out_w: usize, out_h: usize, step: usize) -> usize {
+    fn band_rows(&self, gpu: &gpu::Gpu, out_w: usize, out_h: usize, step: usize) -> usize {
         if let Raster::Codes(_) | Raster::Float(_) = self.samples.raster {
             return out_h;
         }
@@ -680,7 +671,7 @@ impl Picture {
 /// What [`Picture::block`] writes, for `wgsl_layout` to hold against the shader's own struct.
 pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 32;
 
-fn float_storage(gpu: &crate::gpu::Gpu, values: &[f32]) -> crate::gpu::Buffer {
+fn float_storage(gpu: &gpu::Gpu, values: &[f32]) -> gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len().max(1) * 4);
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -695,7 +686,7 @@ fn float_storage(gpu: &crate::gpu::Gpu, values: &[f32]) -> crate::gpu::Buffer {
     })
 }
 
-fn packed_storage(gpu: &crate::gpu::Gpu, samples: &[u16]) -> crate::gpu::Buffer {
+fn packed_storage(gpu: &gpu::Gpu, samples: &[u16]) -> gpu::Buffer {
     let mut bytes = Vec::with_capacity(samples.len().div_ceil(2) * 4);
     for sample in samples {
         bytes.extend_from_slice(&sample.to_le_bytes());
@@ -730,7 +721,7 @@ mod tests {
     /// part of the raster its crop keeps.
     #[test]
     fn a_camera_picture_reads_its_crop_a_channel_at_a_time() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the camera picture was not read.");
             return;
         };
@@ -782,7 +773,7 @@ mod tests {
     /// crop keeps rather than ones at the raster's own corner.
     #[test]
     fn a_crop_is_halved_and_turned_inside_itself() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the cropped picture was not read.");
             return;
         };
@@ -846,7 +837,7 @@ mod tests {
     /// bound whole, whichever way up it is and whether or not it is halved.
     #[test]
     fn a_picture_read_in_strips_is_the_picture_read_whole() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the strips were not read.");
             return;
         };
@@ -907,7 +898,7 @@ mod tests {
     /// carries wide primaries.
     #[test]
     fn a_colour_outside_rec2020_comes_back_pulled_towards_its_luma() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the gamut pull was not run.");
             return;
         };

@@ -6,7 +6,7 @@
 //! row of the reduce, three channel sums and the one word saying how many point sources the scan
 //! found - never the picture, in either direction.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Stepped positions one workgroup of the scan takes.
 ///
@@ -39,8 +39,8 @@ pub(crate) struct Kernels {
     slopes: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -134,16 +134,16 @@ impl Ask {
 /// The render where `fit_render` left it, the point sources found in it, and the reduce the
 /// estimate reads.
 pub struct Frame {
-    gpu: &'static crate::gpu::Gpu,
-    image: crate::gpu::Buffer,
-    small: crate::gpu::Buffer,
-    counts: crate::gpu::Buffer,
-    at: crate::gpu::Buffer,
-    splits: crate::gpu::Buffer,
-    halos: crate::gpu::Buffer,
-    rows: crate::gpu::Buffer,
-    curves: crate::gpu::Buffer,
-    tally: crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    image: gpu::Buffer,
+    small: gpu::Buffer,
+    counts: gpu::Buffer,
+    at: gpu::Buffer,
+    splits: gpu::Buffer,
+    halos: gpu::Buffer,
+    rows: gpu::Buffer,
+    curves: gpu::Buffer,
+    tally: gpu::Buffer,
     width: usize,
     height: usize,
     out_width: usize,
@@ -154,11 +154,11 @@ pub struct Frame {
 }
 
 fn held(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     label: &str,
     words: usize,
     usage: wgpu::BufferUsages,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: (words * 4).max(4) as u64,
@@ -167,11 +167,8 @@ fn held(
     })
 }
 
-async fn read_words(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
-) -> Option<Vec<u32>> {
-    crate::gpu::read_back(gpu, staging, |mapped| {
+async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
+    gpu::read_back(gpu, staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
@@ -180,11 +177,8 @@ async fn read_words(
     .await
 }
 
-async fn read_floats(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
-) -> Option<Vec<f64>> {
-    crate::gpu::read_back(gpu, staging, |mapped| {
+async fn read_floats(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<f64>> {
+    gpu::read_back(gpu, staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))
@@ -230,7 +224,7 @@ impl Frame {
         words
     }
 
-    fn group(&self, push: &crate::gpu::Buffer) -> wgpu::BindGroup {
+    fn group(&self, push: &gpu::Buffer) -> wgpu::BindGroup {
         self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tca"),
             layout: &kernels(self.gpu).layout,
@@ -534,7 +528,7 @@ impl Frame {
 /// it reads. Scanning per caller would be the same walk twice over the same picture, since the
 /// only thing a scan's floor changes is which points it admits.
 pub(crate) async fn frame(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &crate::fit_source::Rendered,
 ) -> Option<Frame> {
     let (width, height) = (render.width, render.height);

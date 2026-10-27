@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Their calibration's anchor, from `run_benchmark.py`: `K(1600)` and `Sigma(1600)` of the
 /// polynomials fitted to the sensor PMRID was trained on.
@@ -522,7 +522,7 @@ pub struct Pmrid {
     layout: wgpu::BindGroupLayout,
     /// In the order [`SPATIAL_16`] and its neighbours say.
     pipelines: Vec<wgpu::ComputePipeline>,
-    weights: crate::gpu::Buffer,
+    weights: gpu::Buffer,
     /// The matrix units, where this device has them, for the two thirds of the network they take.
     coop: Option<Coop>,
     net: Net,
@@ -540,7 +540,7 @@ struct Coop {
     pointwise: Vec<wgpu::ComputePipeline>,
     upsample: Vec<wgpu::ComputePipeline>,
     /// The pointwise weights in `half`, each layer's held a fragment at a time.
-    weights: crate::gpu::Buffer,
+    weights: gpu::Buffer,
     /// Where each layer's weights are in that buffer, `usize::MAX` for a layer this is not one of.
     weights_at: Vec<usize>,
     /// [`SPIRV_FRAGMENT`] or [`METAL_FRAGMENT`], whichever this adapter's kernel was built for.
@@ -553,8 +553,8 @@ struct Coop {
 /// buffer, and a browser's buffer is neither `Send` nor `Sync`, so the page holds what it built
 /// where it built it.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
-    static BUILT: crate::gpu::Cache<Option<Pmrid>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Pmrid> {
+    static BUILT: gpu::Cache<Option<Pmrid>> = gpu::Cache::new();
     BUILT
         .get(gpu, || Some(build_kernels(gpu, weights()?, Arm::Matrix)))
         .as_ref()
@@ -567,7 +567,7 @@ thread_local! {
 
 /// `None` until the page has handed over what it fetched, which is the one way this answers `None`.
 #[cfg(target_arch = "wasm32")]
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Pmrid> {
     if let Some(built) = BUILT.with(std::cell::Cell::get) {
         return Some(built);
     }
@@ -577,7 +577,7 @@ pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
 }
 
 /// The forward pass on the fastest [`Arm`] this device offers that is no faster than `fastest`.
-fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest: Arm) -> Pmrid {
+fn build_kernels(gpu: &'static gpu::Gpu, weights: &'static [u8], fastest: Arm) -> Pmrid {
     let manifest: serde_json::Value =
         serde_json::from_str(MANIFEST).expect("the weights manifest parses");
     let offsets: HashMap<String, usize> = manifest["tensors"]
@@ -759,7 +759,7 @@ fn passthrough(
 /// hand a driver a kernel of its own, so what a page runs is the WGSL pass over a `float` arena -
 /// the same network, a dispatch for each depthwise and each 1x1 - and the two arms are pinned
 /// against each other by a test rather than trusted.
-fn coop_kernels(gpu: &crate::gpu::Gpu, net: &Net, weights: &[u8]) -> Option<Coop> {
+fn coop_kernels(gpu: &gpu::Gpu, net: &Net, weights: &[u8]) -> Option<Coop> {
     let device = gpu.describing();
     if !device.features().contains(tensor_features()) {
         return None;
@@ -985,7 +985,7 @@ pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
 /// positions either way, and a reader moving between the two denoisers is choosing a different
 /// filter, not the same filter at a different strength.
 pub fn denoise(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
     mosaic: &mut crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1000,7 +1000,7 @@ pub fn denoise(
 /// [`denoise`] through a window of the caller's, as mosaic `(width, height)`.
 #[allow(clippy::too_many_arguments)]
 fn denoise_through(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
     mosaic: &mut crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1036,7 +1036,7 @@ fn denoise_through(
 /// How far the network moves this frame's photosites on average, in noise sigmas at their level:
 /// above zero where `fit` says the frame is quieter than the network finds it, below where noisier.
 pub async fn lift(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1168,7 +1168,7 @@ type Bins = [[i64; LIFT_BINS]; 4];
 /// What `tally` summed over every tile: the residual in quanta, and the photosites, by plane and
 /// bin.
 async fn tallied(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
     held: &Session,
     edges: &[Edges],
@@ -1192,7 +1192,7 @@ async fn tallied(
         recording.copy_buffer_to_buffer(&held.tally, 0, &readback, slice as u64 * words, words);
         recording.submit();
     }
-    crate::gpu::read_back(gpu, &readback, |bytes| {
+    gpu::read_back(gpu, &readback, |bytes| {
         let (mut sum, mut count) = ([[0i64; LIFT_BINS]; 4], [[0i64; LIFT_BINS]; 4]);
         for slice in bytes.chunks_exact(LIFT_WORDS * 4) {
             let word = |at: usize| {
@@ -1225,7 +1225,7 @@ async fn tallied(
 /// fill the card. So the window is cut to the frame rather than the frame to a window, as large as
 /// the arena allows - which is not the same answer on both hosts, a browser binding 128MB where a
 /// native rendition holds [`ARENA_CELLS_MOST`].
-fn window(gpu: &crate::gpu::Gpu, pmrid: &Pmrid, width: usize, height: usize) -> (usize, usize) {
+fn window(gpu: &gpu::Gpu, pmrid: &Pmrid, width: usize, height: usize) -> (usize, usize) {
     let bound = gpu.limits().max_storage_buffer_binding_size as usize / pmrid.cell;
     let most = ARENA_CELLS_MOST.min(bound) as u64;
     // Linear in the packed area, which the halvings divide, so one plane of them says it for all.
@@ -1394,12 +1394,12 @@ pub fn arenas_held() -> bool {
 struct Session {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     shape: (usize, usize, Arm),
-    arena: crate::gpu::Buffer,
-    edges: crate::gpu::Buffer,
+    arena: gpu::Buffer,
+    edges: gpu::Buffer,
     /// `tally_sums` in `slang/pmrid.slang`.
-    tally: crate::gpu::Buffer,
+    tally: gpu::Buffer,
     /// Held because a bind group does not: dropping these destroys the buffers under it.
-    _uniforms: Vec<crate::gpu::Buffer>,
+    _uniforms: Vec<gpu::Buffer>,
     groups: Vec<wgpu::BindGroup>,
     at: Vec<usize>,
     /// Which of [`TILES`] each 1x1 layer is dispatched in.
@@ -1413,7 +1413,7 @@ struct Session {
 
 impl Session {
     /// An idle arena of this shape where one is kept, or a new one.
-    fn take(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
+    fn take(gpu: &'static gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(kept) = kept().take((pw, ph, pmrid.arm)) {
             return kept;
@@ -1433,7 +1433,7 @@ impl Session {
         }
     }
 
-    fn hold(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
+    fn hold(gpu: &'static gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         let net = &pmrid.net;
         let (at, cells) = lay_out(net, pmrid.prediction, pw, ph);
         let mut recording = gpu.record();
@@ -1541,7 +1541,7 @@ impl Session {
     /// none, so they are dispatched with the first layer's.
     fn bind(
         &mut self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         pmrid: &Pmrid,
         mosaic: &crate::condition::Mosaic,
         filtered: &crate::condition::Mosaic,
@@ -1614,7 +1614,7 @@ impl Session {
     /// One tile: the window packed, the ninety-two layers, and then `step` over the prediction.
     fn run(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         pmrid: &Pmrid,
         edges: &Edges,
         (pw, ph): (usize, usize),
@@ -2020,7 +2020,7 @@ mod tests {
     /// never written.
     #[test]
     fn a_photosite_is_denoised_once() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let network = super::device(gpu).expect("the network built");
@@ -2091,7 +2091,7 @@ mod tests {
     /// Luminance alone moves every photosite of a site by the same amount once white balanced.
     #[test]
     fn luminance_alone_leaves_colour_where_it_was() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let network = super::device(gpu).expect("the network built");
@@ -2143,7 +2143,7 @@ mod tests {
     /// A frame denoised in an arena another frame left behind comes out as it does in a new one.
     #[test]
     fn a_kept_arena_denoises_what_a_new_one_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let network = super::device(gpu).expect("the network built");
@@ -2196,7 +2196,7 @@ mod tests {
     #[cfg(feature = "fixtures")]
     #[test]
     fn the_fit_leaves_the_network_nothing_to_lift() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let network = super::device(gpu).expect("the network built");
@@ -2241,7 +2241,7 @@ mod tests {
     fn pmrid_arms_on_a_photograph() {
         use std::io::Write;
         const RUNS: usize = 5;
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let weights = super::weights().expect("the weights");
@@ -2386,7 +2386,7 @@ mod tests {
     /// own.
     #[test]
     fn every_arm_denoises_what_the_float_arm_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let weights = super::weights().expect("the weights");

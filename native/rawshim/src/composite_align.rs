@@ -229,7 +229,7 @@ impl Kind {
 /// `untold` is how far the solve may move a focal no file stated, which only the caller knows:
 /// a pan sees enough perspective to solve for one, near-identical frames do not.
 pub async fn align(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
     untold: Leash,
     kind: Kind,
@@ -367,7 +367,7 @@ pub async fn align(
 
 /// The pairs of a pan that overlap, searched every one against every other.
 async fn panned(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pyramids: &[Pyramid],
     lap: &mut impl FnMut(&str),
 ) -> Result<Vec<Pair>, String> {
@@ -501,7 +501,7 @@ async fn panned(
 
 /// The frame a stack is placed on.
 async fn chosen(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
     pyramids: &[Pyramid],
     reference: Reference,
@@ -535,7 +535,7 @@ async fn chosen(
 /// Each frame placed on `reference`'s by `align::measure`, as the matches a solve takes: one tile
 /// a match, every frame paired with the reference and no other.
 async fn stacked(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     pyramids: &[Pyramid],
     reference: usize,
 ) -> Result<Vec<Pair>, String> {
@@ -654,7 +654,7 @@ const MOST_NEIGHBOURS: usize = 6;
 /// Public for the probe that prints what the pairs measure: an align that refuses says one
 /// sentence, which is right for a toast and no use for finding out why.
 pub async fn previews(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
 ) -> Result<Vec<crate::hdr_fit::Source>, String> {
     previews_at(gpu, sources, crate::hdr_fit::sample_long_edge()).await
@@ -670,7 +670,7 @@ pub async fn previews(
 /// **The tolerances travel with it**, `across` being a share of the long edge rather than a count
 /// of pixels, which is the failure `px.rs` opens on and the reason that function exists.
 pub async fn previews_at(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
     long: usize,
 ) -> Result<Vec<crate::hdr_fit::Source>, String> {
@@ -726,7 +726,7 @@ fn plane_edge(bound: usize) -> usize {
 /// two comparable to each other at all - and why `preview_path`, where the caller has one, is
 /// allowed to stand in for the RAW: it names a copy of that same JPEG.
 async fn preview_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     source: &AlignSource<'_>,
     wide: usize,
 ) -> Result<crate::hdr_fit::Source, String> {
@@ -1130,7 +1130,7 @@ pub(crate) mod tests {
 
     /// Two views 20 degrees apart, aligned into a recipe.
     fn merged(name: &str) -> (Composition, Vec<String>) {
-        let gpu = crate::gpu::device().expect("an adapter for the composite");
+        let gpu = gpu::device().expect("an adapter for the composite");
         let pan = |degrees: f64| from_axis_angle([0.0, degrees.to_radians(), 0.0]);
         let paths = fixtures(name, &[pan(-10.0), pan(10.0)]);
         let aligned = pollster::block_on(align(gpu, &offered(&paths), Leash::Free, Kind::Pan))
@@ -1189,7 +1189,7 @@ pub(crate) mod tests {
     /// alignment never seeing a mosaic or a camera match.
     #[test]
     fn six_views_of_one_world_align() {
-        let gpu = crate::gpu::device().expect("an adapter for the alignment");
+        let gpu = gpu::device().expect("an adapter for the alignment");
         let truth = rig();
         let paths = fixtures("align", &truth);
         let sources = offered(&paths);
@@ -1264,7 +1264,7 @@ pub(crate) mod tests {
     #[test]
     fn a_stack_is_placed_on_its_sharpest_frame_where_each_hand_put_it() {
         use crate::burst_scene::{Burst, Scene, Shake};
-        let gpu = crate::gpu::device().expect("an adapter for the alignment");
+        let gpu = gpu::device().expect("an adapter for the alignment");
         let shakes = vec![
             Shake {
                 shift: [3.0, 2.0],

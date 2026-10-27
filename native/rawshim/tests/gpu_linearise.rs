@@ -24,7 +24,7 @@ fn linearised(
     window: Rect<Photograph>,
     scale: Scale,
 ) -> Option<(Vec<f32>, usize, usize)> {
-    let gpu = rawshim::gpu::device()?;
+    let gpu = gpu::device()?;
     let frame = picture.window(gpu, rawshim::linearise::device(gpu), window, scale)?;
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
@@ -61,7 +61,7 @@ fn ramp(width: usize, height: usize, depth: u32) -> Vec<u16> {
 
 #[test]
 fn the_kernel_undoes_the_transfer_the_table_states() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the linearise kernel was not run.");
         return;
     };
@@ -102,7 +102,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
 /// A 10-bit PQ picture puts diffuse white at full scale and carries highlights above it.
 #[test]
 fn a_pq_picture_keeps_its_headroom() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the PQ scale was not run.");
         return;
     };
@@ -138,7 +138,7 @@ fn a_pq_picture_keeps_its_headroom() {
 /// The brightest a PQ master can state, ten thousand nits, is carried rather than clipped.
 #[test]
 fn a_pq_picture_carries_its_whole_range() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the PQ range was not run.");
         return;
     };
@@ -164,7 +164,7 @@ fn a_pq_picture_carries_its_whole_range() {
 /// cast, and nothing about the picture says so.
 #[test]
 fn the_primaries_conversion_is_the_hosts() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the matrix was not run.");
         return;
     };
@@ -210,7 +210,7 @@ fn the_primaries_conversion_is_the_hosts() {
 /// turn is neither the same corner nor the same axes.
 #[test]
 fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the turn was not run.");
         return;
     };
@@ -262,7 +262,7 @@ fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
 /// every edge darkened and nothing to say why.
 #[test]
 fn halving_averages_light_rather_than_code_values() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the halving was not run.");
         return;
     };
@@ -300,7 +300,7 @@ fn halving_averages_light_rather_than_code_values() {
 /// not the other.
 #[test]
 fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the turned halving was not run.");
         return;
     };
@@ -358,7 +358,7 @@ fn two_stops() -> Reconstruction {
 /// none where it reads zero.
 #[test]
 fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map was not run.");
         return;
     };
@@ -405,7 +405,7 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
 /// stops" says "lift it by nothing" - 255 out of 65535 is a recovery of 0.004.
 #[test]
 fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map depth was not run.");
         return;
     };
@@ -453,7 +453,7 @@ fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
 /// stop dark, which is the sort of wrong that looks like a grade rather than a bug.
 #[test]
 fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so Apple's arm was not run.");
         return;
     };
@@ -511,7 +511,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
 /// that differ from each other.
 #[test]
 fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map terms were not run.");
         return;
     };
@@ -579,7 +579,7 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
 /// and all: a composite of these rolls off from it.
 #[test]
 fn a_gain_maps_stated_peak_is_its_brightest_pixel() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map peak was not run.");
         return;
     };

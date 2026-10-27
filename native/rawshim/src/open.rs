@@ -113,7 +113,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         false => None,
         true => {
             let refused = || crate::base::without_a_device("the defringe before the camera match");
-            let gpu = crate::gpu::device().ok_or_else(refused)?;
+            let gpu = gpu::device().ok_or_else(refused)?;
             let base = crate::base::device(gpu).ok_or_else(refused)?;
             crate::base::correct(
                 gpu,
@@ -148,7 +148,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let blur = match stored.from_raw.capture_sigma.is_none() {
         false => None,
         true => {
-            let gpu = crate::gpu::device();
+            let gpu = gpu::device();
             let base = gpu.and_then(crate::base::device);
             match (gpu, base) {
                 (Some(gpu), Some(base)) => {
@@ -183,7 +183,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
             || (Some(matched.clone()), None),
             |(matched, levels)| (Some(matched), Some(levels)),
         ),
-        (Fitting::Preview(bytes), None) => match crate::gpu::device() {
+        (Fitting::Preview(bytes), None) => match gpu::device() {
             Some(gpu) => {
                 fit_from_preview(
                     gpu,
@@ -218,7 +218,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         Some(levels) => levels,
         None => {
             let refused = || crate::base::without_a_device("the frame's own levels");
-            let gpu = crate::gpu::device().ok_or_else(refused)?;
+            let gpu = gpu::device().ok_or_else(refused)?;
             crate::fit_source::levels(gpu, frame, how.grade.white_quantile)
                 .await
                 .ok_or("the frame's levels could not be measured")?
@@ -268,7 +268,7 @@ async fn stated_match(
         return None;
     }
     let colour = stated
-        .colour(crate::gpu::device()?, levels, neutral_ceiling)
+        .colour(gpu::device()?, levels, neutral_ceiling)
         .await?;
     Some(crate::hdr_fit::HdrMatch {
         lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(crate::fit::Lens::none),
@@ -283,7 +283,7 @@ async fn complete_colour(
     matched: &crate::hdr_fit::HdrMatch,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu::device()?;
     let preview = match fitting {
         Fitting::None => return None,
         Fitting::Preview(bytes) => crate::hdr::match_preview_from_bytes(bytes)?,
@@ -306,7 +306,7 @@ async fn complete_colour(
 /// Declining is not an error: `hdr::fit_all_from_preview` returns None for a file with no embedded
 /// preview and for one whose fit found too few usable pairs.
 async fn fit_from_preview(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw: &[u8],
     frame: &Resident,
     quantile: f64,

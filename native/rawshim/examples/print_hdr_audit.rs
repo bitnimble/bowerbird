@@ -30,7 +30,7 @@ fn main() -> Result<(), String> {
         },
         support::STRENGTHS.sharpen,
     )?;
-    let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
+    let gpu = gpu::device().ok_or("print requires Vulkan")?;
     let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let analysis = header
@@ -196,14 +196,14 @@ fn main() -> Result<(), String> {
                         },
                     ],
                 });
-                recording.dispatch([1, 1, 1], rawshim::gpu::dispatch::Whole::Fixed, |pass| {
+                recording.dispatch([1, 1, 1], gpu::dispatch::Whole::Fixed, |pass| {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
                 });
                 recording.copy_buffer_to_buffer(&result, 0, &readback, 0, 64);
                 recording.submit();
                 let statistics: [f32; 16] =
-                    pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {
+                    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
                         std::array::from_fn(|index| {
                             f32::from_le_bytes(
                                 bytes[index * 4..index * 4 + 4].try_into().expect("float"),

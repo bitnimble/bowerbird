@@ -15,13 +15,13 @@
 
 use crate::assembly_seam::{MinCut, NEIGHBOURS, SeamField, TIE, along_an_edge, differ};
 use crate::assembly_tiles::{simplify, trace};
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{self, Gpu};
 use crate::patch_search::Patch;
 use crate::repair::{
     FEATHER_CELLS, MOST_GAIN, MOST_VERTICES, Params, Repair, bounds, cell, entry, offered_feather,
 };
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
+use gpu::{self, Gpu};
 use units::light::{Gain, Stops};
 use units::px::{At, Coordinate, Drawn, Extent, Point, Rect, Size, Stored};
 

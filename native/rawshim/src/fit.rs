@@ -17,8 +17,8 @@
 // capacities "all land within 1.5 of each other" - does not stand, being a small
 // difference read off the blind measure described at the `deltaE` section below.
 
-use crate::gpu::dispatch::Whole;
 use crate::image::polynomial_knots;
+use gpu::dispatch::Whole;
 #[cfg(test)]
 use units::rgb::RgbRef;
 
@@ -216,7 +216,7 @@ impl Profile {
 /// candidate the search scores is the render through a different lens, and the objective that
 /// scores it is `slang/fit_objective.slang`. Neither side comes back.
 struct Grid {
-    source: crate::gpu::Buffer,
+    source: gpu::Buffer,
     source_size: (usize, usize),
     jpeg: Sampled,
     /// The objective's buffers for a single candidate, kept because the refine asks about fifty of
@@ -226,7 +226,7 @@ struct Grid {
 
 impl Grid {
     /// The render through each candidate, at the JPEG's size, in one round trip.
-    fn warped(&self, gpu: &'static crate::gpu::Gpu, lenses: &[Lens]) -> Vec<crate::gpu::Buffer> {
+    fn warped(&self, gpu: &'static gpu::Gpu, lenses: &[Lens]) -> Vec<gpu::Buffer> {
         let size = (self.jpeg.width, self.jpeg.height);
         crate::hdr_fit::warped_planes(gpu, &self.source, self.source_size, lenses, size)
     }
@@ -236,7 +236,7 @@ impl Grid {
     }
 
     /// Room for one candidate's pairs, made once and asked about many times.
-    fn alone(&self, gpu: &'static crate::gpu::Gpu) -> &crate::fit_objective::Paired {
+    fn alone(&self, gpu: &'static gpu::Gpu) -> &crate::fit_objective::Paired {
         self.alone
             .get_or_init(|| crate::fit_objective::paired(gpu, 1, &self.jpeg.buffer, self.size()))
     }
@@ -273,8 +273,8 @@ pub(crate) struct Resamplers {
     box_blur_windowed: wgpu::ComputePipeline,
 }
 
-pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
-    static BUILT: crate::gpu::Cache<Resamplers> = crate::gpu::Cache::new();
+pub(crate) fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
+    static BUILT: gpu::Cache<Resamplers> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -329,7 +329,7 @@ pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
 /// A plane a pass reads or wrote: interleaved f32 RGB in 0..1, or the bytes an 8-bit plane was
 /// uploaded as.
 pub(crate) struct Sampled {
-    pub(crate) buffer: crate::gpu::Buffer,
+    pub(crate) buffer: gpu::Buffer,
     pub(crate) width: usize,
     pub(crate) height: usize,
     /// 8-bit, four samples to a word, which the shader reads through 1/255.
@@ -350,8 +350,8 @@ impl Sampled {
 /// One `fit_grids.slang` pass.
 #[track_caller]
 pub(crate) fn pass(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
     pipeline: &wgpu::ComputePipeline,
     source: &Sampled,
     (width, height): (usize, usize),
@@ -375,8 +375,8 @@ pub(crate) fn pass(
 #[allow(clippy::too_many_arguments)]
 #[track_caller]
 fn pass_over(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
     pipeline: &wgpu::ComputePipeline,
     source: &Sampled,
     (width, height): (usize, usize),
@@ -457,8 +457,8 @@ fn pass_over(
 /// Vertical first, which is the order `fast_image_resize` takes an 8-bit plane in: the two axes
 /// would otherwise commute, but each pass writes through a clamp and a Lanczos window overshoots.
 fn reduced(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
     source: &Sampled,
     (width, height): (usize, usize),
 ) -> Sampled {
@@ -483,8 +483,8 @@ fn reduced(
 /// still describe the picture it is fitted on; `the_blur_is_the_triangular_window_it_claims`
 /// holds the kernel itself.
 fn blurred(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
     source: &Sampled,
     sigma: f64,
 ) -> Sampled {
@@ -506,14 +506,14 @@ const BOX_PASSES: usize = 3;
 /// The colour fit's prefilter: three passes of a truncated box an axis, over a plane whose values
 /// may run past one.
 pub(crate) fn box_blurred(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
     source: &Sampled,
     radius: usize,
 ) -> Sampled {
     let kernels = resamplers(gpu);
     let size = (source.width, source.height);
-    let sweep = |recording: &mut crate::gpu::Recording<'_>, from: &Sampled, axis: usize| {
+    let sweep = |recording: &mut gpu::Recording<'_>, from: &Sampled, axis: usize| {
         if radius < BOX_WINDOWED_FROM {
             return pass(gpu, recording, &kernels.box_blur, from, size, axis, radius);
         }
@@ -556,7 +556,7 @@ const BOX_WINDOWED_FROM: usize = 16;
 /// Only the tests that look at a resampled grid want either: the fit uploads its preview once,
 /// through `hdr_fit::preview_planes`, and reads no grid back at all.
 #[cfg(test)]
-fn uploaded(recording: &mut crate::gpu::Recording<'_>, label: &str, plane: RgbRef<'_>) -> Sampled {
+fn uploaded(recording: &mut gpu::Recording<'_>, label: &str, plane: RgbRef<'_>) -> Sampled {
     Sampled {
         buffer: recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some(label),
@@ -570,7 +570,7 @@ fn uploaded(recording: &mut crate::gpu::Recording<'_>, label: &str, plane: RgbRe
 }
 
 #[cfg(test)]
-fn staged(recording: &mut crate::gpu::Recording<'_>, plane: &Sampled) -> crate::gpu::Buffer {
+fn staged(recording: &mut gpu::Recording<'_>, plane: &Sampled) -> gpu::Buffer {
     let bytes = (plane.width * plane.height * 3 * 4) as u64;
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit grid out"),
@@ -584,12 +584,12 @@ fn staged(recording: &mut crate::gpu::Recording<'_>, plane: &Sampled) -> crate::
 
 #[cfg(test)]
 async fn read_rgb(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    staging: &gpu::Buffer,
     plane: &Sampled,
 ) -> Option<units::rgb::Rgb> {
     use crate::parallel::*;
-    let data: Vec<u8> = crate::gpu::read_back(gpu, staging, |mapped| {
+    let data: Vec<u8> = gpu::read_back(gpu, staging, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| {
@@ -896,7 +896,7 @@ const GAIN_MARGIN: f64 = 0.04;
 /// exists because the first round's curve still had some of the falloff in it.
 async fn fit_gain(
     paired: &crate::fit_objective::Paired,
-    warped: &[crate::gpu::Buffer],
+    warped: &[gpu::Buffer],
     phase: Phase,
     admitted: usize,
 ) -> Option<Gain> {
@@ -1028,7 +1028,7 @@ async fn residuals(
 }
 
 async fn residual_for(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     grid: &Grid,
     knots: &[f64],
     crop: f64,
@@ -1074,7 +1074,7 @@ fn luma8(r: u8, g: u8, b: u8) -> u8 {
 /// whichever the work-stealing tree paired last, so the same build fitted IMG_5360 two different
 /// ways depending on how many cores were free.
 async fn scan<T: Send + Sync + Copy>(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     grid: &Grid,
     candidates: &[T],
     knots_of: impl Fn(T) -> Vec<f64>,
@@ -1107,7 +1107,7 @@ async fn scan<T: Send + Sync + Copy>(
 ///
 /// Returns the winning knots, its crop and the residual it left.
 async fn fit_family(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     grids: &Grids,
     family: impl Fn(f64) -> Vec<f64>,
     coarse: &[f64],
@@ -1211,7 +1211,7 @@ const SETTLE_RIDGE: f64 = 1e-6;
 /// The knots the camera's own picture asks for, starting from whatever curve a family
 /// search settled on: the family picks the neighbourhood, the measurement picks the curve.
 async fn settled_on_registration(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &crate::hdr_fit::Source,
     preview: &crate::hdr_fit::Source,
     knots: &[f64],
@@ -1337,7 +1337,7 @@ fn nudged(knots: &[f64], measured: &crate::hdr_fit::Registration, feedback: f64)
 /// It is not nothing: the ~0.4-0.5% rescale between a render and the camera's own JPEG
 /// shows up on bodies with unrelated optics - ILCE-6300 frames land on crop 0.996 and
 /// EOS R8 frames on 0.995 - which is what makes it look like framing rather than a lens.
-async fn fit_scale(gpu: &'static crate::gpu::Gpu, grids: &Grids) -> Option<(Vec<f64>, f64, f64)> {
+async fn fit_scale(gpu: &'static gpu::Gpu, grids: &Grids) -> Option<(Vec<f64>, f64, f64)> {
     fit_family(gpu, grids, |_| Vec::new(), &[0.0], 0.0).await
 }
 
@@ -1349,7 +1349,7 @@ async fn fit_scale(gpu: &'static crate::gpu::Gpu, grids: &Grids) -> Option<(Vec<
 /// all, when the scale on its own was worth 0.22 deltaE76. Gain 0 is exactly that
 /// candidate, so the search now contains the fallback rather than falling back to it.
 async fn with_curve(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     grids: &Grids,
     knots: Vec<f64>,
     baseline: f64,
@@ -1399,7 +1399,7 @@ fn chosen(
 /// preview is DCT-shrunk only to 1500 and brought to 1280 by a real reduce, leaving this
 /// a properly filtered resize down to its own 640 rather than a DCT approximation of one.
 pub async fn fit_from_preview(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &crate::fit_source::Rendered,
     preview: &crate::hdr_fit::Source,
     geometry: Geometry,
@@ -1423,7 +1423,7 @@ pub async fn fit_from_preview(
 /// None where the device declined, which is a frame with no fit rather than a frame fitted some
 /// other way.
 async fn grids_from_preview(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &crate::fit_source::Rendered,
     preview: &crate::hdr_fit::Source,
 ) -> Option<(Grids, crate::hdr_fit::Source)> {
@@ -1522,7 +1522,7 @@ fn halved(plane: &Sampled) -> (usize, usize) {
 }
 
 async fn fit_grids(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     grids: Grids,
     geometry: Geometry,
     render: &crate::hdr_fit::Source,
@@ -1642,7 +1642,7 @@ async fn fit_grids(
 /// 640px and blurred at sigma 3, which is where three earlier attempts to fit this through
 /// the search went wrong (`tca.rs`). So it is read at full size, here.
 pub async fn with_lateral(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     profile: &mut Profile,
     render: &crate::fit_source::Rendered,
     recorded: Option<[Vec<f64>; 2]>,
@@ -1753,11 +1753,7 @@ mod tests {
         }
     }
 
-    fn blurred_on_device(
-        gpu: &'static crate::gpu::Gpu,
-        source: RgbRef<'_>,
-        sigma: f64,
-    ) -> Option<Rgb> {
+    fn blurred_on_device(gpu: &'static gpu::Gpu, source: RgbRef<'_>, sigma: f64) -> Option<Rgb> {
         let mut recording = gpu.record();
         let held = uploaded(&mut recording, "test source", source);
         let out = blurred(gpu, &mut recording, &held, sigma);
@@ -1767,7 +1763,7 @@ mod tests {
     }
 
     fn reduced_on_device(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         source: RgbRef<'_>,
         size: (usize, usize),
     ) -> Option<Rgb> {
@@ -1795,7 +1791,7 @@ mod tests {
 
     #[test]
     fn blur_flattens_detail_without_shifting_the_average() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = textured(64, 64);
@@ -1828,7 +1824,7 @@ mod tests {
     /// move a fitted falloff with nothing else reporting it.
     #[test]
     fn the_blur_is_the_triangular_window_it_claims() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         // A single lit column on black: what comes back is the kernel itself, one row of it.
@@ -1877,7 +1873,7 @@ mod tests {
     /// hundred source pixels at this ratio, which is not a reduce at all.
     #[test]
     fn a_reduce_averages_the_pixels_it_skips() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         // Alternating columns: any filter with support averages them to the midpoint, while a
@@ -1919,7 +1915,7 @@ mod tests {
     /// carries its taps as fixed point where this works in floats throughout.
     #[test]
     fn the_device_reduce_lands_where_the_host_resize_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = textured(300, 200);
@@ -1946,7 +1942,7 @@ mod tests {
     /// that the difference stays under the byte.
     #[test]
     fn a_reduce_onto_its_own_size_gives_the_plane_back() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let source = textured(61, 43);
@@ -1967,7 +1963,7 @@ mod tests {
         // of `with_lateral` to `profile.tca = None` left the whole suite green, and so did
         // deleting the crop division - so neither the curve reaching the profile nor the
         // room the widest channel needs was pinned anywhere.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let render = scene(96, 72);
@@ -2040,9 +2036,9 @@ mod tests {
     /// Two grids where the camera's side is a stated mapping of ours, in flat patches so the
     /// gate's gradient test has an interior to admit.
     fn mapped_grids(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         mapping: impl Fn(u8) -> u8,
-    ) -> (crate::gpu::Buffer, crate::gpu::Buffer, (usize, usize)) {
+    ) -> (gpu::Buffer, gpu::Buffer, (usize, usize)) {
         const PATCH: usize = 8;
         const ACROSS: usize = 16;
         let (width, height) = (ACROSS * PATCH, ACROSS * PATCH);
@@ -2080,7 +2076,7 @@ mod tests {
     /// a mapping stated outright.
     #[test]
     fn a_luma_score_bottoms_out_when_the_curve_maps_every_pair() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (ours, theirs, size) = mapped_grids(gpu, tone_mapped);
@@ -2193,7 +2189,7 @@ mod tests {
     /// make of it by hand; a candidate with nothing the gate admits answers no residual at all.
     #[test]
     fn the_objective_scores_each_candidate_as_its_pairs_say() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let upload = |label, values: &[f32]| {
@@ -2210,7 +2206,7 @@ mod tests {
             let empty = vec![0.0f32; first.len()];
             let planes = [&first, &second, &empty];
             let paired = crate::fit_objective::paired(gpu, 3, &upload("theirs", &theirs), size);
-            let warped: Vec<crate::gpu::Buffer> =
+            let warped: Vec<gpu::Buffer> =
                 planes.iter().map(|plane| upload("ours", plane)).collect();
             let scored = pollster::block_on(paired.scored(&warped, Phase::Train, None))
                 .expect("the device scored");
@@ -2249,7 +2245,7 @@ mod tests {
     /// does, and asked again about other lenses it answers those, not the last call's.
     #[test]
     fn scoring_through_lenses_answers_what_warping_them_first_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let size = (160, 120);
@@ -2381,7 +2377,7 @@ mod tests {
             .collect();
         let start: Vec<f64> = truth.iter().map(|knot| knot * 0.5).collect();
 
-        let gpu = crate::gpu::device().expect("an adapter for the fit's search");
+        let gpu = gpu::device().expect("an adapter for the fit's search");
         let source = crate::hdr_fit::Source {
             buffer: crate::hdr_fit::levelled_source(gpu, render.as_ref()),
             width,

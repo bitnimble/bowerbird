@@ -2,7 +2,7 @@
 //! "the noise it sits in" mean the same thing in every test that says them.
 #![allow(dead_code)]
 
-use rawshim::gpu::{self, Gpu};
+use gpu::{self, Gpu};
 use rawshim::lattice::{ChromaMap, Kernel, generator_of};
 use rawshim::resident::Resident;
 use rawshim::tone;

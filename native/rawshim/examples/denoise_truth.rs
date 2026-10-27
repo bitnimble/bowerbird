@@ -42,7 +42,7 @@ fn main() {
     let denoisers: Vec<String> = args.collect();
     std::fs::create_dir_all(&out).expect("the output directory");
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
     let held = |path: &str| {
         let bytes = std::fs::read(path).expect("read the raw");
@@ -323,7 +323,7 @@ fn median(values: &[f32]) -> f32 {
 }
 
 fn write_png(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     cfa: &rawshim::cfa::Cfa,
     samples: &[f32],
     side: usize,

@@ -143,8 +143,8 @@ const MAX_HELD_OUT_DELTA_E: f64 = 7.0;
 /// that wants a gain has to inject one rather than fit the fixture and hope.
 /// The device the fit's correspondence search runs on. A fixture test with no adapter has nothing
 /// to measure, and saying so beats a `None` that reads as a fit declining.
-fn adapter() -> &'static crate::gpu::Gpu {
-    crate::gpu::device().expect("an adapter for the fit's search")
+fn adapter() -> &'static gpu::Gpu {
+    gpu::device().expect("an adapter for the fit's search")
 }
 
 fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
@@ -316,7 +316,7 @@ fn rendition(
         panic!("a whole-frame build leaves its frame on the device")
     };
     let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma, noise);
-    let gpu = crate::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let grade = scene
         .gpu_grade(cut.width, cut.height, crate::grade::Output::Pq)
         .showing(job.pixel_geometry());
@@ -755,7 +755,7 @@ mod decode_geometry {
         )
         .expect("the frame decodes");
         let samples = frame.samples16().expect("16-bit");
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let levels = crate::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
             .expect("the frame has levels");
         let white = levels.white.raw();
@@ -2123,7 +2123,7 @@ mod loupe_tile {
                 job.adjust.clone(),
                 base.as_shot,
             );
-            let gpu = crate::gpu::device().expect("an adapter");
+            let gpu = gpu::device().expect("an adapter");
             let mut grade = scene
                 .gpu_grade(cut.width, cut.height, crate::grade::Output::Pq)
                 .showing(pixel_geometry);
@@ -3489,7 +3489,7 @@ mod hdr_grade {
         // ratio has to be read in light rather than in codes, which is the claim anyway: a
         // falloff correction is a multiplication of light whatever the buffer holds.
         let mut samples = frame.samples16().expect("a 16-bit decode").to_vec();
-        let gpu = crate::gpu::device().expect("an adapter");
+        let gpu = gpu::device().expect("an adapter");
         let levels = crate::hdr::levels_of(gpu, &samples, width, height, QUANTILE)
             .expect("levels")
             .anchored();
@@ -3823,7 +3823,7 @@ mod hdr_grade {
     /// Graded through the shader both ways, since that is the only grade there is.
     #[test]
     fn a_rendition_cut_from_a_larger_frame_is_the_picture_it_would_have_been() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no GPU adapter, so the grade could not run");
             return;
         };
@@ -3925,7 +3925,7 @@ mod hdr_grade {
         use crate::snapshot::{Frame, Snapshot, Tolerance};
         let frame = linear();
         let fitted = matched(&frame);
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         // Measured against radv: the matched cases are 5.8 codes out on average and 1735 at worst,
         // the chroma lattice's filter weights rounding differently by vendor over a real photo; the
         // neutral ones, which read no lattice, 0.13 and 18. A wrong matrix row or a moved knee moves
@@ -4745,7 +4745,7 @@ mod tone_domain {
     /// against the picture it was handed. Every band at once because the decode and the match
     /// either side of it are seconds, and both tests read two.
     fn response(path: &PathBuf, mut adjust: crate::grade::Adjust) -> Vec<f64> {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+        let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
         let matched = {
@@ -4806,7 +4806,7 @@ mod tone_domain {
     }
 
     fn graded(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: &[u16],
         frame: &crate::frame::Frame,
         colour: Option<&crate::hdr_fit::HdrColour>,
@@ -4986,7 +4986,7 @@ mod tone_domain {
     /// The block is `detail.slang`'s own footprint - a linear area mean of `detail_step` square,
     /// which is the thing a narrow gap of sky disappears into.
     fn by_surroundings(path: &PathBuf) -> (f64, f64) {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+        let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
         let (width, height) = (frame.width, frame.height);
@@ -5076,7 +5076,7 @@ mod tone_domain {
         for path in [sony(), canon(), clipped()] {
             let frame = decode(&path, 0);
             let samples = frame.samples16().expect("16-bit").to_vec();
-            let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+            let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
             let matched = {
                 let resident = frame.on_device(gpu).expect("the frame reaches the device");
                 crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE, frame.as_shot)

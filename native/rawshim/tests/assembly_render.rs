@@ -669,7 +669,7 @@ fn weight_of(
     window: Rect<Composite>,
     source: usize,
 ) -> Vec<f32> {
-    let mut held: Option<rawshim::gpu::Buffer> = None;
+    let mut held: Option<gpu::Buffer> = None;
     pollster::block_on(layers_of(spec, request, |i, layer, _| {
         let Layer { rgb, weight } = layer;
         if i == source {

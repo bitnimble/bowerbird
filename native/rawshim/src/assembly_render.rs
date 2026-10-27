@@ -42,7 +42,7 @@ pub async fn lowpass(
     request: &crate::composite_tile::CompositeRequest<'_>,
 ) -> Result<Lowpass, String> {
     let refused = || crate::base::without_a_device("the assembly's lowpass");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
 
     let spec = &recipe.spec;
@@ -126,7 +126,7 @@ pub async fn prepared(
     request: &crate::composite_tile::CompositeRequest<'_>,
 ) -> Result<(crate::resident::Resident, crate::tile::Prepared), String> {
     let refused = || crate::base::without_a_device("the assembly's render");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
 
     // Once for the window, not once a source: every source reads the same array at its own slot,

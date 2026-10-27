@@ -185,7 +185,7 @@ fn graded(
 ) -> (Vec<u8>, usize, usize, Vec<u16>) {
     let options = options(edge, stages);
     let frame = &opened.frame;
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let levels = opened.measured.levels.anchored();
     // The anchor and what the match made of it, because a render that came out the wrong colour

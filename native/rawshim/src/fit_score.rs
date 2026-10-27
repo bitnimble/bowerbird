@@ -4,7 +4,7 @@
 //! uploading the pairs once for a stage that will ask many probes, and folding the per-block
 //! partials in block order (`hdr_fit::folded`).
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// `hdr_fit::BIAS_BUCKETS`, which the shader states for itself and
 /// `the_shader_pools_the_buckets_the_host_folds` holds the two together - a count that differed
@@ -65,8 +65,8 @@ pub(crate) struct Kernel {
     score: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn kernel(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -142,10 +142,7 @@ fn packed(count: usize, fill: impl Fn(usize) -> [u8; 4] + Sync + Send) -> Vec<u8
 /// A `below` plane from colours the host holds: each pair's colour, and the luma beside it.
 ///
 /// One zeroed pair where there are none, since a binding cannot be empty.
-pub fn below_buffer(
-    gpu: &'static crate::gpu::Gpu,
-    below: &[([f64; 3], f64)],
-) -> crate::gpu::Buffer {
+pub fn below_buffer(gpu: &'static gpu::Gpu, below: &[([f64; 3], f64)]) -> gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_score below"),
         contents: &packed(below.len().max(1) * 4, |k| {
@@ -165,27 +162,27 @@ pub fn below_buffer(
 /// per-pair planes are the same five megabytes for every probe of a saturation sweep or a ridge
 /// scan, and there are about thirty of those in a fit.
 pub struct Scoring {
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     /// Bound once into `group` and never named again, and *held* rather than merely allocated:
     /// a `wgpu::BindGroup` keeps nothing alive that a browser will free, so dropping these here
     /// would destroy the buffers the group still points at.
     #[expect(dead_code)]
-    below: crate::gpu::Buffer,
+    below: gpu::Buffer,
     #[expect(dead_code)]
-    target: crate::gpu::Buffer,
+    target: gpu::Buffer,
     #[expect(dead_code)]
-    to_srgb: crate::gpu::Buffer,
+    to_srgb: gpu::Buffer,
     #[expect(dead_code)]
-    invariant: crate::gpu::Buffer,
+    invariant: gpu::Buffer,
     /// The four a call would otherwise create and destroy, and the bind group over them, so that
     /// asking again costs two `write_buffer`s and a dispatch.
     ///
     /// What a call costs beyond that is the arithmetic, and `examples/score_bench` is where to read
     /// it: the fixed part is about 0.24ms and everything above it scales with probes times pairs.
-    partials: crate::gpu::Buffer,
-    staging: crate::gpu::Buffer,
-    parameters: crate::gpu::Buffer,
-    push: crate::gpu::Buffer,
+    partials: gpu::Buffer,
+    staging: gpu::Buffer,
+    parameters: gpu::Buffer,
+    push: gpu::Buffer,
     group: wgpu::BindGroup,
     pairs: usize,
     blocks: usize,
@@ -200,8 +197,8 @@ impl Scoring {
     /// and `fit_target` put on the JPEG's own grid, and `balance` the hue weight beside it.
     /// `probes` is the most one call will ask about, which the held buffers are sized for.
     pub fn new(
-        gpu: &'static crate::gpu::Gpu,
-        below: crate::gpu::Buffer,
+        gpu: &'static gpu::Gpu,
+        below: gpu::Buffer,
         target: &[[f64; 3]],
         balance: &[f64],
         to_srgb: &[[f64; 3]; 3],
@@ -401,7 +398,7 @@ impl Scoring {
         let units = probes * self.blocks;
         // The buffer is sized for `capacity` and this call wrote `units` of it, so the tail
         // holds whatever the last call left.
-        let read = crate::gpu::read_back(self.gpu, &self.staging, |mapped| {
+        let read = gpu::read_back(self.gpu, &self.staging, |mapped| {
             mapped
                 .chunks_exact(PARTIAL * 4)
                 .take(units)
@@ -495,7 +492,7 @@ mod tests {
     /// its level by one is exactly the distance this asserts away.
     #[test]
     fn the_camera_lands_back_on_the_level_it_was_encoded_from() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -527,7 +524,7 @@ mod tests {
     /// a vivid and a deep class for every 30 degrees of Lab hue.
     #[test]
     fn a_pairs_error_lands_in_its_colours_class() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -590,7 +587,7 @@ mod tests {
     /// of a difference next to black, each as a share of CIEDE2000's; and a class holds the same.
     #[test]
     fn the_error_counts_what_an_eye_would_see() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -629,7 +626,7 @@ mod tests {
     /// a lane do, and a probe asked beside others answers what it does alone.
     #[test]
     fn the_sums_hold_whatever_the_blocking() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -726,7 +723,7 @@ mod tests {
     /// that alone: no deltaE, no place in the trusted count, its weight kept for the gamut sum.
     #[test]
     fn a_clipped_target_counts_for_the_gamut_and_nothing_else() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];

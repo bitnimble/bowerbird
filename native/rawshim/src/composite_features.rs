@@ -12,8 +12,9 @@
 //! something everywhere; this finds nothing where there is nothing, so a pair over thin content
 //! comes back with no opinion rather than a wrong one.
 
-use crate::gpu::dispatch::Whole;
-use crate::hdr_fit::{DevicePlane, Kernel, READ, UNIFORM, WRITE, kernel};
+use crate::hdr_fit::DevicePlane;
+use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel};
+use gpu::dispatch::Whole;
 
 /// `composite_features.slang`'s `SIDE` squared: the descriptor's length, which does not depend on
 /// how wide a window it reduced.
@@ -43,8 +44,8 @@ struct Kernels {
     describe: Kernel,
 }
 
-fn device(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+fn device(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         const WGSL: &str = shaders::COMPOSITE_FEATURES.source;
         const BINDINGS: &[(u32, wgpu::BufferBindingType)] =
@@ -87,7 +88,7 @@ fn block(width: usize, height: usize, bucket: usize, across: usize, points: usiz
 }
 
 /// The corners of `plane`, one per bucket that has one, and a description of each.
-pub async fn described(gpu: &'static crate::gpu::Gpu, plane: &DevicePlane) -> Option<Described> {
+pub async fn described(gpu: &'static gpu::Gpu, plane: &DevicePlane) -> Option<Described> {
     let across = plane.width.div_ceil(BUCKET);
     let down = plane.height.div_ceil(BUCKET);
     let buckets = across * down;
@@ -163,7 +164,7 @@ pub async fn described(gpu: &'static crate::gpu::Gpu, plane: &DevicePlane) -> Op
 
     // One candidate a bucket, which is what the device already reduced the picture to - so this is
     // a walk over a few thousand numbers rather than over a frame.
-    let mut ranked = crate::gpu::read_back(gpu, &staging, |mapped| {
+    let mut ranked = gpu::read_back(gpu, &staging, |mapped| {
         mapped
             .chunks_exact(12)
             .filter_map(|word| {
@@ -253,7 +254,7 @@ pub async fn described(gpu: &'static crate::gpu::Gpu, plane: &DevicePlane) -> Op
     recording.copy_buffer_to_buffer(&out, 0, &reading, 0, bytes);
     recording.submit();
 
-    let of = crate::gpu::read_back(gpu, &reading, |mapped| {
+    let of = gpu::read_back(gpu, &reading, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))

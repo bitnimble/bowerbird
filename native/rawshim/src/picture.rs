@@ -165,7 +165,7 @@ pub fn prepared(
         cut.release();
         cut = crate::hdr::Cut::device(cropped, width, height);
     }
-    if let Some(gpu) = crate::gpu::device() {
+    if let Some(gpu) = gpu::device() {
         gpu.settle();
     }
 

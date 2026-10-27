@@ -184,7 +184,7 @@ const DETAIL: Detail = Detail::AUTO.using(Denoiser::Pmrid);
 static PANICKED: Mutex<Option<String>> = Mutex::new(None);
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels built");
     let network = rawshim::pmrid::device(gpu).expect("the network built");
     let report = std::panic::take_hook();
@@ -277,7 +277,7 @@ fn panicked(doing: &str) -> String {
 }
 
 fn opened(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     kernels: &rawshim::galosh::Galosh,
     network: &rawshim::pmrid::Pmrid,
     path: &str,
@@ -365,7 +365,7 @@ fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Faile
 }
 
 fn developed(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     request: &Develop,
 ) -> Result<serde_json::Value, Failed> {
     let (width, height) = (request.width, request.height);
@@ -479,7 +479,7 @@ fn full_scale(bits: &[u16]) -> Vec<f32> {
 }
 
 fn denoised(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     network: &rawshim::pmrid::Pmrid,
     request: &Denoise,
 ) -> Result<serde_json::Value, Failed> {
@@ -519,7 +519,7 @@ fn denoised(
 }
 
 fn sharpened(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     request: &Sharpen,
 ) -> Result<serde_json::Value, Failed> {
     let (width, height) = (request.width, request.height);
@@ -657,7 +657,7 @@ fn measured(path: &str) -> Result<Measured, Failed> {
 /// An upscale demosaiced in the product's order: RCD at its size, halved before the colour pass.
 #[allow(clippy::too_many_arguments)]
 fn halved(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     halving: &rawshim::upscale::Halving,
     mosaic: &[f32],
@@ -709,7 +709,7 @@ fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
 }
 
 fn demosaic(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &[f32],
     cfa: &rawshim::cfa::Cfa,
@@ -739,7 +739,7 @@ fn demosaic(
 }
 
 fn highlight_field(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mosaic: &rawshim::condition::Mosaic,
     cfa: &rawshim::cfa::Cfa,
     colour: rawshim::demosaic::Colour,
@@ -765,7 +765,7 @@ impl Drop for Arenas {
 }
 
 fn filter(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     network: &rawshim::pmrid::Pmrid,
     mosaic: &mut rawshim::condition::Mosaic,
     cfa: &rawshim::cfa::Cfa,

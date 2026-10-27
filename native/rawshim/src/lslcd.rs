@@ -9,7 +9,7 @@
 //! from `slang/mosaic.slang`, shared with RCD.
 
 use crate::cfa::Cfa;
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Radius of the one-dimensional prototype, and so the margin the demultiplexing does not write
 /// (specification §3.1, §5). The horizontal pass reaches this far in `x` and the vertical this far
@@ -27,8 +27,8 @@ pub struct Lslcd {
     pipelines: Vec<wgpu::ComputePipeline>,
 }
 
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Lslcd> {
-    static BUILT: crate::gpu::Cache<Option<Lslcd>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Lslcd> {
+    static BUILT: gpu::Cache<Option<Lslcd>> = gpu::Cache::new();
     BUILT.get(gpu, || Lslcd::new(gpu)).as_ref()
 }
 
@@ -224,7 +224,7 @@ pub(crate) fn params_block() -> usize {
 }
 
 impl Lslcd {
-    fn new(gpu: &crate::gpu::Gpu) -> Option<Self> {
+    fn new(gpu: &gpu::Gpu) -> Option<Self> {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lslcd"),
@@ -307,7 +307,7 @@ impl Lslcd {
 /// interior at all - a decode that reads nothing rather than one that answers with a second
 /// arithmetic.
 pub fn record(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     lslcd: &Lslcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &Cfa,

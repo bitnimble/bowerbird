@@ -8,9 +8,10 @@
 // curve extrapolable, which is what lets the camera's rendering stop at diffuse white and
 // BT.2390 take over above it (10.7.1).
 
-use crate::gpu::dispatch::{Banded, Whole};
 use crate::lattice::{ChromaMap, LutAxes};
 use crate::parallel::*;
+use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel, kernel_layout};
+use gpu::dispatch::{Banded, Whole};
 use units::light::Light;
 use units::px::TUNED_ON;
 
@@ -1153,13 +1154,13 @@ pub enum Stage {
 /// A stage's output per sample, on the device: the colour, then its luma - the layout
 /// `fit_score.slang` reads as `below`.
 pub struct Evaluated {
-    pub buffer: crate::gpu::Buffer,
+    pub buffer: gpu::Buffer,
     count: usize,
 }
 
 impl Evaluated {
     /// The outputs back on the host, one `[r, g, b, luma]` per sample.
-    pub async fn read(&self, gpu: &'static crate::gpu::Gpu) -> Option<Vec<[f32; 4]>> {
+    pub async fn read(&self, gpu: &'static gpu::Gpu) -> Option<Vec<[f32; 4]>> {
         if self.count == 0 {
             return Some(Vec::new());
         }
@@ -1173,7 +1174,7 @@ impl Evaluated {
         });
         recording.copy_buffer_to_buffer(&self.buffer, 0, &staging, 0, bytes);
         recording.submit();
-        crate::gpu::read_back(gpu, &staging, |mapped| {
+        gpu::read_back(gpu, &staging, |mapped| {
             mapped
                 .par_chunks_exact(16)
                 .map(|word| {
@@ -1189,8 +1190,8 @@ impl Evaluated {
 }
 
 /// `fit_model.slang`'s bindings: `colour.slang`'s model, and the samples in and out.
-pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1281,7 +1282,7 @@ fn probe_grade(colour: &HdrColour) -> crate::grade::Grade<'_> {
 /// A sample is `(r, g, b, neighbourhood)`: the scene colour with diffuse white at 1.0, and the
 /// neighbourhood's brightness the lattice reads beside it (`neighbourhood_plane`).
 pub fn evaluate(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     samples: &[[f32; 4]],
     stage: Stage,
@@ -1308,9 +1309,9 @@ pub fn evaluate(
 /// Which is every caller inside the fit: `gathered` writes them off the plane the probe is about,
 /// and the fit asks dozens of probes about the same pairs.
 pub fn evaluate_over(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
-    input: &crate::gpu::Buffer,
+    input: &gpu::Buffer,
     count: usize,
     stage: Stage,
 ) -> Evaluated {
@@ -1398,7 +1399,7 @@ pub fn evaluate_over(
             },
         ],
     });
-    let (across, down) = crate::base::groups(count);
+    let (across, down) = gpu::compute::groups(count);
     recording.dispatch([across, down, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -1412,7 +1413,7 @@ pub fn evaluate_over(
 
 /// [`evaluate`], read back: the stage's colour and luma at each sample.
 pub async fn evaluated(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     samples: &[[f32; 4]],
     stage: Stage,
@@ -1420,8 +1421,8 @@ pub async fn evaluated(
     evaluate(gpu, colour, samples, stage).read(gpu).await
 }
 
-pub(crate) fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn gather_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -1434,7 +1435,7 @@ pub(crate) fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 }
 
 /// A resident plane on the host, for a caller that wants to look at one.
-pub async fn read_plane(gpu: &'static crate::gpu::Gpu, plane: &Source) -> Option<Plane> {
+pub async fn read_plane(gpu: &'static gpu::Gpu, plane: &Source) -> Option<Plane> {
     let mut recording = gpu.record();
     let out = staged(&mut recording, &plane.buffer, plane.pixels() * 3);
     recording.submit();
@@ -1444,7 +1445,7 @@ pub async fn read_plane(gpu: &'static crate::gpu::Gpu, plane: &Source) -> Option
 /// A plane where the passes that read it are: interleaved f32 RGB, never on the host.
 #[derive(Clone)]
 pub struct Source {
-    pub buffer: crate::gpu::Buffer,
+    pub buffer: gpu::Buffer,
     pub width: usize,
     pub height: usize,
 }
@@ -1460,12 +1461,12 @@ impl Source {
 /// `neighbourhood` is `None` for every probe below the lattice, which never reads the fourth
 /// component.
 fn gathered(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &Source,
-    at: &crate::gpu::Buffer,
+    at: &gpu::Buffer,
     count: usize,
-    neighbourhood: Option<&crate::gpu::Buffer>,
-) -> crate::gpu::Buffer {
+    neighbourhood: Option<&gpu::Buffer>,
+) -> gpu::Buffer {
     let samples = gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("fit gather samples"),
         size: (count.max(1) * 16) as u64,
@@ -1655,8 +1656,8 @@ pub fn srgb_oetf(value: f64) -> f64 {
 struct Pairs {
     at: Vec<usize>,
     /// `at` and `greys` on the device, which is where every probe gathers its samples from.
-    indices: crate::gpu::Buffer,
-    grey_indices: crate::gpu::Buffer,
+    indices: gpu::Buffer,
+    grey_indices: gpu::Buffer,
     /// The camera's rendering, in the render's own linear Rec.2020. `fit_score.slang` takes it
     /// to sRGB, onto the JPEG's 255 steps and to Lab once per upload, and every probe compares
     /// against that.
@@ -1669,7 +1670,7 @@ struct Pairs {
     greys: Vec<usize>,
     grey_target: [f64; 3],
     /// `target` and `balance` on the device, built the first time a kernel asks for them.
-    linear: std::cell::OnceCell<crate::gpu::Buffer>,
+    linear: std::cell::OnceCell<gpu::Buffer>,
 }
 
 impl Pairs {
@@ -1679,7 +1680,7 @@ impl Pairs {
     /// Lab before any probe sees it, and the normal equations want the linear Rec.2020 it was
     /// before. Held here rather than uploaded per call because neither the pairs nor their
     /// targets move while the fit alternates over them.
-    fn linear_on(&self, gpu: &'static crate::gpu::Gpu) -> &crate::gpu::Buffer {
+    fn linear_on(&self, gpu: &'static gpu::Gpu) -> &gpu::Buffer {
         self.linear.get_or_init(|| {
             let mut bytes = vec![0u8; self.at.len().max(1) * 16];
             for (word, (t, balance)) in bytes
@@ -1701,7 +1702,7 @@ impl Pairs {
 }
 
 /// A pixel list where the gather reads it.
-fn indices_on(gpu: &'static crate::gpu::Gpu, at: &[usize]) -> crate::gpu::Buffer {
+fn indices_on(gpu: &'static gpu::Gpu, at: &[usize]) -> gpu::Buffer {
     let mut bytes = vec![0u8; at.len().max(1) * 4];
     bytes
         .par_chunks_mut(4)
@@ -1741,7 +1742,7 @@ impl Pairs {
     /// better, moves the render 2%, makes the bird bath's cast 35% worse, and the number such a
     /// gate reads goes *down* through all of it. `DESIGN`'s falloff keeps its term on held-out
     /// pairs for the same reason.
-    fn split(&self, gpu: &'static crate::gpu::Gpu) -> (Pairs, Pairs) {
+    fn split(&self, gpu: &'static gpu::Gpu) -> (Pairs, Pairs) {
         let held = |k: usize| k % HOLDOUT_EVERY == 0;
         let take = |want_held: bool| {
             let at: Vec<usize> = self
@@ -1786,7 +1787,7 @@ impl Pairs {
     /// proportion to its trust, counting for the ones it stands in for - so every weighted sum over
     /// the sample is the same in expectation, where the dark pairs that say least stop costing a
     /// pass each.
-    fn thinned(&self, gpu: &'static crate::gpu::Gpu, weight: impl Fn(usize) -> f64) -> Pairs {
+    fn thinned(&self, gpu: &'static gpu::Gpu, weight: impl Fn(usize) -> f64) -> Pairs {
         // Systematic rather than drawn: a pair is kept each time the chances summed in pixel order
         // cross a whole number. The same expectation, and a matrix fitted off a night frame's
         // shadows moved by a coin's variance rather than by what the frame holds.
@@ -1817,7 +1818,7 @@ impl Pairs {
 
     /// Every `stride`th pair, for a probe whose answer is a choice between coarse alternatives
     /// rather than a number anything keeps.
-    fn every(&self, gpu: &'static crate::gpu::Gpu, stride: usize) -> Pairs {
+    fn every(&self, gpu: &'static gpu::Gpu, stride: usize) -> Pairs {
         let at: Vec<usize> = self.at.iter().step_by(stride).copied().collect();
         Pairs {
             indices: indices_on(gpu, &at),
@@ -1835,7 +1836,7 @@ impl Pairs {
     /// Every pixel of two planes as a pair, weighted alike: the shape a test builds when what it
     /// is measuring is a stage downstream of the selection rather than the selection.
     #[cfg(test)]
-    fn over(gpu: &'static crate::gpu::Gpu, render: &Plane, jpeg: &Plane) -> Pairs {
+    fn over(gpu: &'static gpu::Gpu, render: &Plane, jpeg: &Plane) -> Pairs {
         let neutral = |plane: &[f64], i: usize| {
             let t = [plane[i], plane[i + 1], plane[i + 2]];
             let high = t[0].max(t[1]).max(t[2]);
@@ -2021,7 +2022,7 @@ const BIAS_LAMBDA: f64 = 4.0;
 /// the pairs rejected, and the held-out wide samples - held on the device together, so a candidate
 /// costs one evaluation and a scoring of each.
 struct Judges {
-    samples: crate::gpu::Buffer,
+    samples: gpu::Buffer,
     count: usize,
     /// Each population's first sample in `samples`, its count, and its scoring.
     parts: [(usize, usize, Rescored); 3],
@@ -2039,15 +2040,15 @@ struct Judged {
 
 impl Judges {
     fn new(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         render: &Source,
-        neighbourhood: &crate::gpu::Buffer,
+        neighbourhood: &gpu::Buffer,
         [held, frame]: [&Pairs; 2],
         wides: &[WideSample],
     ) -> Judges {
         let wide_target: Vec<[f64; 3]> = wides.iter().map(|s| s.t).collect();
         let wide_hue: Vec<f64> = wides.iter().map(|s| s.hue).collect();
-        let populations: [(crate::gpu::Buffer, usize, &[[f64; 3]], &[f64]); 3] = [
+        let populations: [(gpu::Buffer, usize, &[[f64; 3]], &[f64]); 3] = [
             (
                 gathered(
                     gpu,
@@ -2116,7 +2117,7 @@ impl Judges {
     /// Both means, because the two answer different questions - what the camera does, and what
     /// the picture will look like - the stages here disagree about which one they are asking, and
     /// the one that wants both wants them for the same matrix.
-    async fn judge(&self, gpu: &'static crate::gpu::Gpu, colour: &HdrColour) -> Option<Judged> {
+    async fn judge(&self, gpu: &'static gpu::Gpu, colour: &HdrColour) -> Option<Judged> {
         let evaluated = evaluate_over(gpu, colour, &self.samples, self.count, Stage::Full);
         let neutral = [crate::fit_score::Probe::neutral()];
         let scorings: Vec<&crate::fit_score::Scoring> = self
@@ -2337,8 +2338,8 @@ pub(crate) const FRAME_STRIDE: usize = 4;
 /// Split from the choosing below so the scoring between them can be awaited: the six differ only
 /// in their matrix, which is a shape `fit_score` asks about in one dispatch.
 async fn ridge_candidates(
-    gpu: &'static crate::gpu::Gpu,
-    toned: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    toned: &gpu::Buffer,
     pairs: &Pairs,
     last: &mut Option<Ridges>,
 ) -> Option<Vec<[[f64; 3]; 3]>> {
@@ -2494,7 +2495,7 @@ const MATRIX_SETTLED: f64 = 0.02;
 /// The binning behind it - every usable channel of every usable pixel, weighted by hue and then by
 /// level - is `slang/fit_curve.slang`. `LEVEL_BALANCE_LIMIT` has why the second weighting exists.
 async fn fit_curves(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     evidence: &crate::fit_curve::Evidence,
     hue_weights: &[f64],
     ceiling: f64,
@@ -2526,7 +2527,7 @@ const NEUTRAL_PULL_MOST: units::light::Gain = units::light::Gain::of_ratio(1.1);
 ///
 /// Bounded per round, because a frame with few greys should nudge this rather than swing it.
 async fn neutral_pull(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     plane: &Source,
     pairs: &Pairs,
@@ -2566,20 +2567,20 @@ async fn neutral_pull(
 /// The gather and the targets depend on the plane and the indices and on nothing the rounds move,
 /// where the tone stage above it reads the curves and so has to run again each time.
 struct Gathered {
-    pairs: crate::gpu::Buffer,
-    frame: crate::gpu::Buffer,
+    pairs: gpu::Buffer,
+    frame: gpu::Buffer,
     scoring: [Rescored; 2],
 }
 
 /// A scoring held across candidates that each evaluate `below` afresh.
 struct Rescored {
-    below: crate::gpu::Buffer,
+    below: gpu::Buffer,
     scoring: crate::fit_score::Scoring,
 }
 
 impl Rescored {
     fn new(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         count: usize,
         target: &[[f64; 3]],
         balance: &[f64],
@@ -2605,11 +2606,11 @@ impl Rescored {
     }
 
     /// For the ridge candidates and the identity beside them.
-    fn of_candidates(gpu: &'static crate::gpu::Gpu, pairs: &Pairs) -> Rescored {
+    fn of_candidates(gpu: &'static gpu::Gpu, pairs: &Pairs) -> Rescored {
         Rescored::of(gpu, pairs, RIDGE_CANDIDATES.len() + 1)
     }
 
-    fn of(gpu: &'static crate::gpu::Gpu, pairs: &Pairs, probes: usize) -> Rescored {
+    fn of(gpu: &'static gpu::Gpu, pairs: &Pairs, probes: usize) -> Rescored {
         Rescored::new(
             gpu,
             pairs.at.len(),
@@ -2623,8 +2624,8 @@ impl Rescored {
     /// The scoring, over `count` samples of `evaluated` from `from` on.
     fn over(
         &self,
-        gpu: &'static crate::gpu::Gpu,
-        evaluated: &crate::gpu::Buffer,
+        gpu: &'static gpu::Gpu,
+        evaluated: &gpu::Buffer,
         from: usize,
         count: usize,
     ) -> &crate::fit_score::Scoring {
@@ -2643,7 +2644,7 @@ impl Rescored {
 ///
 /// `ridged` is the ridges the last call solved, which this one starts from and replaces.
 async fn fitted_matrix_for(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     pairs: &Pairs,
     frame: &Pairs,
@@ -2794,7 +2795,7 @@ const SWEEP_STRIDE: usize = 8;
 /// The stage is evaluated once and held on the device: the probes above it move nothing
 /// else, so the curves would otherwise be recomputed thirty times over for one result.
 async fn fitted_saturation(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     over: &SaturationPairs<'_>,
     stage: Stage,
@@ -2884,18 +2885,18 @@ fn prefers_first((first, at_first): (f64, f64), (second, at_second): (f64, f64))
 /// scored once.
 struct SaturationPairs<'a> {
     pairs: &'a Pairs,
-    gathered: crate::gpu::Buffer,
+    gathered: gpu::Buffer,
     scoring: Rescored,
     sample: Pairs,
-    sample_gathered: crate::gpu::Buffer,
+    sample_gathered: gpu::Buffer,
     sample_scoring: Rescored,
 }
 
 impl<'a> SaturationPairs<'a> {
     fn over(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         render: &Source,
-        neighbourhood: Option<&crate::gpu::Buffer>,
+        neighbourhood: Option<&gpu::Buffer>,
         pairs: &'a Pairs,
     ) -> SaturationPairs<'a> {
         let sample = pairs.every(gpu, SWEEP_STRIDE);
@@ -3270,77 +3271,6 @@ struct Wide {
     theirs: DevicePlane,
 }
 
-/// A compute kernel of the fit's, built once for the process.
-pub struct Kernel {
-    pub(crate) layout: wgpu::BindGroupLayout,
-    pub(crate) pipeline: wgpu::ComputePipeline,
-}
-
-pub fn kernel(
-    gpu: &'static crate::gpu::Gpu,
-    name: &str,
-    wgsl: &str,
-    bindings: &[(u32, wgpu::BufferBindingType)],
-    constants: &[(&str, f64)],
-) -> Kernel {
-    let device = gpu.describing();
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(name),
-        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-    });
-    let layout = kernel_layout(gpu, name, bindings);
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(name),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-    Kernel {
-        pipeline: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(name),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some(name),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants,
-                ..Default::default()
-            },
-            cache: None,
-        }),
-        layout,
-    }
-}
-
-fn kernel_layout(
-    gpu: &'static crate::gpu::Gpu,
-    name: &str,
-    bindings: &[(u32, wgpu::BufferBindingType)],
-) -> wgpu::BindGroupLayout {
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
-        .iter()
-        .map(|(binding, ty)| wgpu::BindGroupLayoutEntry {
-            binding: *binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: *ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        })
-        .collect();
-    gpu.describing()
-        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(name),
-            entries: &entries,
-        })
-}
-
-pub(crate) const READ: wgpu::BufferBindingType =
-    wgpu::BufferBindingType::Storage { read_only: true };
-pub(crate) const WRITE: wgpu::BufferBindingType =
-    wgpu::BufferBindingType::Storage { read_only: false };
-pub(crate) const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uniform;
-
 /// The search, in both of the forms `TABULATED` selects between.
 ///
 /// One layout, so a bind group made for either fits both, and the caller picks the pipeline off
@@ -3369,8 +3299,8 @@ impl Searching {
 const LANE_MOST_PATCH: isize = 3;
 const LANE_MOST_SEARCH: isize = 4;
 
-pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
-    static BUILT: crate::gpu::Cache<Searching> = crate::gpu::Cache::new();
+pub fn search_device(gpu: &'static gpu::Gpu) -> &'static Searching {
+    static BUILT: gpu::Cache<Searching> = gpu::Cache::new();
     BUILT.get(gpu, || {
         const WGSL: &str = shaders::CORRESPOND.source;
         const BINDINGS: &[(u32, wgpu::BufferBindingType)] = &[
@@ -3405,15 +3335,15 @@ const SHAPING_WGSL: &str = shaders::FIT_WARP.source;
 const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
-pub(crate) fn warp_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn warp_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[])
     })
 }
 
-pub(crate) fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[])
     })
@@ -3422,8 +3352,8 @@ pub(crate) fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(2, WRITE), (3, READ), (4, READ), (20, UNIFORM)];
 
-pub(crate) fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -3435,8 +3365,8 @@ pub(crate) fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kerne
     })
 }
 
-pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -3456,8 +3386,8 @@ pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel 
     })
 }
 
-pub(crate) fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+pub(crate) fn stats_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -3474,7 +3404,7 @@ pub(crate) fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 /// Built per call rather than held in a `static`: `wgpu::Buffer` is neither `Send` nor `Sync` on
 /// wasm, where it carries the `Rc` its map state lives behind, so a `static` of one refuses to
 /// compile for the browser at all.
-fn unused_buffer(recording: &mut crate::gpu::Recording<'_>) -> crate::gpu::Buffer {
+fn unused_buffer(recording: &mut gpu::Recording<'_>) -> gpu::Buffer {
     recording.buffer(&wgpu::BufferDescriptor {
         label: Some("unused"),
         size: 4,
@@ -3495,11 +3425,7 @@ fn rgb_words<T: Copy + Sync>(samples: &[T], to_f32: impl Fn(T) -> f32 + Sync) ->
     bytes
 }
 
-fn rgb_source(
-    recording: &mut crate::gpu::Recording<'_>,
-    label: &str,
-    words: &[u8],
-) -> crate::gpu::Buffer {
+fn rgb_source(recording: &mut gpu::Recording<'_>, label: &str, words: &[u8]) -> gpu::Buffer {
     recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: words,
@@ -3509,11 +3435,11 @@ fn rgb_source(
 
 /// Room for an f32 RGB plane a shader is about to write, readable back through `staged`.
 fn rgb_buffer(
-    recording: &mut crate::gpu::Recording<'_>,
+    recording: &mut gpu::Recording<'_>,
     label: &str,
     width: usize,
     height: usize,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     recording.buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: (width * height * 3 * 4) as u64,
@@ -3523,11 +3449,7 @@ fn rgb_buffer(
 }
 
 /// A copy of `plane` the host can map once the recording is submitted, for `plane_read`.
-fn staged(
-    recording: &mut crate::gpu::Recording<'_>,
-    plane: &crate::gpu::Buffer,
-    floats: usize,
-) -> crate::gpu::Buffer {
+fn staged(recording: &mut gpu::Recording<'_>, plane: &gpu::Buffer, floats: usize) -> gpu::Buffer {
     let bytes = (floats * 4) as u64;
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit plane out"),
@@ -3540,12 +3462,12 @@ fn staged(
 }
 
 async fn plane_read(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    staging: &gpu::Buffer,
     width: usize,
     height: usize,
 ) -> Option<Plane> {
-    let data = crate::gpu::read_back(gpu, staging, |mapped| {
+    let data = gpu::read_back(gpu, staging, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))
@@ -3604,11 +3526,11 @@ struct Shaping {
 
 impl Shaping {
     fn new(
-        gpu: &'static crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
-        source: &crate::gpu::Buffer,
+        gpu: &'static gpu::Gpu,
+        recording: &mut gpu::Recording<'_>,
+        source: &gpu::Buffer,
         (sw, sh): (usize, usize),
-        out: &crate::gpu::Buffer,
+        out: &gpu::Buffer,
         (width, height): (usize, usize),
         shape: Shape<'_>,
     ) -> Shaping {
@@ -3749,7 +3671,7 @@ impl Shaping {
     }
 
     #[track_caller]
-    fn dispatch(&self, recording: &mut crate::gpu::Recording<'_>, whole: Whole) {
+    fn dispatch(&self, recording: &mut gpu::Recording<'_>, whole: Whole) {
         let groups = [
             (self.width as u32).div_ceil(16),
             (self.height as u32).div_ceil(16),
@@ -3769,7 +3691,7 @@ impl Shaping {
 /// several more. The camera's plane never changes across a settle's rounds, so it is uploaded once
 /// and held here.
 pub struct DevicePlane {
-    pub(crate) buffer: crate::gpu::Buffer,
+    pub(crate) buffer: gpu::Buffer,
     /// `patch_stats` over this plane, where a caller asked for it. Only ever the plane being
     /// searched *into*, and only where the search is dense enough to reuse a window.
     stats: Option<Tabulated>,
@@ -3779,12 +3701,12 @@ pub struct DevicePlane {
 
 /// A plane's patch statistics.
 struct Tabulated {
-    buffer: crate::gpu::Buffer,
+    buffer: gpu::Buffer,
 }
 
 impl DevicePlane {
     /// Room for a plane a shader is about to write, rather than one the host already has.
-    fn empty(gpu: &'static crate::gpu::Gpu, width: usize, height: usize) -> DevicePlane {
+    fn empty(gpu: &'static gpu::Gpu, width: usize, height: usize) -> DevicePlane {
         DevicePlane {
             buffer: gpu.own_buffer(&wgpu::BufferDescriptor {
                 label: Some("correspond plane"),
@@ -3801,7 +3723,7 @@ impl DevicePlane {
     /// A plane the host already holds, for a test that wants to say what the search will read.
     #[cfg(test)]
     pub(crate) fn from_luma(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         luma: &[f32],
         width: usize,
         height: usize,
@@ -3839,7 +3761,7 @@ impl DevicePlane {
     /// So the plane arrives from `levelled_source` still coded, on purpose. Anything that wants the
     /// light those samples carried wants `linear_source` and a different function from this one.
     pub(crate) fn reduced_luma(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         source: &Source,
         width: usize,
         height: usize,
@@ -3881,7 +3803,7 @@ impl DevicePlane {
     /// The plane carrying the statistics of every window a search will read. `reach` has to be the
     /// one that search will use, since the statistics are of its window and no other.
     #[track_caller]
-    pub(crate) fn tabulated(mut self, gpu: &'static crate::gpu::Gpu, reach: Reach) -> DevicePlane {
+    pub(crate) fn tabulated(mut self, gpu: &'static gpu::Gpu, reach: Reach) -> DevicePlane {
         let mut recording = gpu.record();
         self.tabulate(gpu, &mut recording, reach);
         recording.submit();
@@ -3891,9 +3813,9 @@ impl DevicePlane {
     /// The luma of an f32 RGB `source` on the device, written by the pass this records.
     #[track_caller]
     fn luma_of(
-        gpu: &'static crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
-        source: &crate::gpu::Buffer,
+        gpu: &'static gpu::Gpu,
+        recording: &mut gpu::Recording<'_>,
+        source: &gpu::Buffer,
         width: usize,
         height: usize,
     ) -> DevicePlane {
@@ -3915,8 +3837,8 @@ impl DevicePlane {
     #[track_caller]
     fn tabulate(
         &mut self,
-        gpu: &'static crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
+        gpu: &'static gpu::Gpu,
+        recording: &mut gpu::Recording<'_>,
         reach: Reach,
     ) {
         let buffer = gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -3977,7 +3899,7 @@ impl DevicePlane {
 /// cannot await. So the points are gathered first, handed over in one dispatch outside any parallel
 /// region, and consumed afterwards. Nothing has to await inside a `par_iter`.
 pub async fn corresponded(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     ours: &DevicePlane,
     theirs: &DevicePlane,
     points: &[[i32; 2]],
@@ -3991,7 +3913,7 @@ pub async fn corresponded(
 /// the dispatch points at, and destroying either between the submit and the queue reaching it is
 /// the failure `Tabulated` records.
 fn corresponded_grid(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     ours: &DevicePlane,
     theirs: &DevicePlane,
     points: &[[i32; 2]],
@@ -4001,7 +3923,7 @@ fn corresponded_grid(
 
 /// `corresponded_grid`, with each point's search centred on an offset already believed.
 fn corresponded_grid_about(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     ours: &DevicePlane,
     theirs: &DevicePlane,
     points: &[[i32; 2]],
@@ -4092,7 +4014,7 @@ fn point_words(pairs: &[[i32; 2]]) -> Vec<u8> {
 /// from wants. The offsets come back relative to the point either way, so a belief the caller
 /// handed in is already in the answer.
 pub async fn corresponded_about(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     ours: &DevicePlane,
     theirs: &DevicePlane,
     points: &[[i32; 2]],
@@ -4139,7 +4061,7 @@ const CORRESPOND_GROUP: u32 = 64;
 
 /// Threads the correspondence search puts along x, the rest going to y.
 ///
-/// Rows are narrow so [`crate::gpu::Recording::banded`] can split the search finely, and widen
+/// Rows are narrow so [`gpu::Recording::banded`] can split the search finely, and widen
 /// only where there would be more than a dimension's 65535 workgroups of them.
 /// `correspond.slang` reconstructs the index as `id.y * span + id.x` and must agree.
 ///
@@ -4155,14 +4077,14 @@ fn dispatch_span(points: usize, per_group: usize) -> usize {
 /// One correspondence dispatch's own buffers, so a caller can record it beside whatever else it
 /// wanted done in the same round trip - the settle builds the plane it searches there too.
 struct Asking {
-    pub(crate) found: crate::gpu::Buffer,
-    staging: crate::gpu::Buffer,
+    pub(crate) found: gpu::Buffer,
+    staging: gpu::Buffer,
     /// Held rather than read, as `Tabulated`'s is and for the same reason. `filler` is bound at
     /// the stats slot for an untabulated plane, so it is one of these too.
     #[expect(dead_code)]
-    push: crate::gpu::Buffer,
+    push: gpu::Buffer,
     #[expect(dead_code)]
-    filler: crate::gpu::Buffer,
+    filler: gpu::Buffer,
     group: wgpu::BindGroup,
     points: usize,
     tabulated: bool,
@@ -4189,13 +4111,13 @@ impl Asking {
     }
 
     fn new(
-        gpu: &'static crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
+        gpu: &'static gpu::Gpu,
+        recording: &mut gpu::Recording<'_>,
         ours: &DevicePlane,
         theirs: &DevicePlane,
-        at: &crate::gpu::Buffer,
+        at: &gpu::Buffer,
         points: usize,
-        given: Option<&crate::gpu::Buffer>,
+        given: Option<&gpu::Buffer>,
         refine: i32,
         reach: Reach,
     ) -> Asking {
@@ -4208,13 +4130,13 @@ impl Asking {
     /// [`Asking::new`], searched by `correspond_lanes` or by `correspond` as `lanes` says.
     #[allow(clippy::too_many_arguments)]
     fn with_lanes(
-        gpu: &'static crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'_>,
+        gpu: &'static gpu::Gpu,
+        recording: &mut gpu::Recording<'_>,
         ours: &DevicePlane,
         theirs: &DevicePlane,
-        at: &crate::gpu::Buffer,
+        at: &gpu::Buffer,
         points: usize,
-        given: Option<&crate::gpu::Buffer>,
+        given: Option<&gpu::Buffer>,
         refine: i32,
         reach: Reach,
         lanes: bool,
@@ -4304,7 +4226,7 @@ impl Asking {
     }
 
     #[track_caller]
-    fn dispatch(&self, gpu: &'static crate::gpu::Gpu, recording: &mut crate::gpu::Recording<'_>) {
+    fn dispatch(&self, gpu: &'static gpu::Gpu, recording: &mut gpu::Recording<'_>) {
         let taken = per_group(self.lanes);
         let across = (dispatch_span(self.points, taken) / taken) as u32;
         let groups = self.points.div_ceil(taken).max(1) as u32;
@@ -4315,7 +4237,7 @@ impl Asking {
         );
     }
 
-    fn copy(&self, recording: &mut crate::gpu::Recording<'_>) {
+    fn copy(&self, recording: &mut gpu::Recording<'_>) {
         recording.copy_buffer_to_buffer(
             &self.found,
             0,
@@ -4325,8 +4247,8 @@ impl Asking {
         );
     }
 
-    async fn read(&self, gpu: &'static crate::gpu::Gpu) -> Option<Vec<Option<Found>>> {
-        crate::gpu::read_back(gpu, &self.staging, |mapped| {
+    async fn read(&self, gpu: &'static gpu::Gpu) -> Option<Vec<Option<Found>>> {
+        gpu::read_back(gpu, &self.staging, |mapped| {
             mapped
                 .par_chunks_exact(16)
                 .map(|word| {
@@ -4367,8 +4289,8 @@ pub struct Found {
 
 /// The fit's two planes after registration, where the stages downstream read them.
 struct Corresponded {
-    render: crate::gpu::Buffer,
-    jpeg: crate::gpu::Buffer,
+    render: gpu::Buffer,
+    jpeg: gpu::Buffer,
     width: usize,
     height: usize,
 }
@@ -4388,11 +4310,11 @@ struct Corresponded {
 /// between the fit reading corresponded pixels and the fit being *scored* on them: with
 /// the objective still measured against the blurred planes, every gate in the fit would be
 /// asking a smeared oracle whether a sharply-sampled correction was an improvement.
-async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option<Corresponded> {
+async fn registered(gpu: &'static gpu::Gpu, planes: &FitPlanes) -> Option<Corresponded> {
     let (width, height) = (planes.render.width, planes.render.height);
     let (ours, theirs) = (&planes.sharp.wide, &planes.sharp.camera);
     let scale = ours.width / width.max(1);
-    let held = |render: crate::gpu::Buffer, jpeg: crate::gpu::Buffer| {
+    let held = |render: gpu::Buffer, jpeg: gpu::Buffer| {
         Some(Corresponded {
             render,
             jpeg,
@@ -4441,19 +4363,19 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
 /// `ours` and `theirs` instead (`fit_register.slang`): ours where it is, the camera's at its found
 /// offset.
 fn sampled_at_found(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     [ours, theirs]: [&Source; 2],
     falloff: Option<(f64, f64)>,
-    found: &crate::gpu::Buffer,
-    blurred: [&crate::gpu::Buffer; 2],
+    found: &gpu::Buffer,
+    blurred: [&gpu::Buffer; 2],
     (width, height): (usize, usize),
-) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
+) -> (gpu::Buffer, gpu::Buffer) {
     let scale = ours.width / width.max(1);
     let mut recording = gpu.record();
     // Both outputs start as the prefiltered planes, so a position the search could not act on
     // keeps its blurred value by the kernel leaving it alone. Blur is a poor answer to
     // misregistration but it is a bounded one, where a sharp read at an unverified location is not.
-    let carried = |recording: &mut crate::gpu::Recording<'_>, from: &crate::gpu::Buffer| {
+    let carried = |recording: &mut gpu::Recording<'_>, from: &gpu::Buffer| {
         let bytes = (width * height * 3 * 4) as u64;
         let out = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("fit plane registered"),
@@ -4560,9 +4482,9 @@ fn sampled_at_found(
 /// Rec.2020's widest primary at diffuse white: past it live only colours the camera clipped on,
 /// where no node has data and the edge hold is the answer anyway.
 async fn chroma_span(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sharp: &Source,
-    evaluated: &crate::gpu::Buffer,
+    evaluated: &gpu::Buffer,
 ) -> Option<f64> {
     let widest = crate::lattice::widest_chroma();
     let samples = sharp.pixels();
@@ -4577,7 +4499,7 @@ async fn chroma_span(
 /// The neighbourhood in both the places that read it: the device, where every probe gathers it
 /// beside the colour, and the host, where the thumb the grade carries is sampled out of it.
 struct Neighbourhood {
-    buffer: crate::gpu::Buffer,
+    buffer: gpu::Buffer,
     of: Vec<f64>,
 }
 
@@ -4594,7 +4516,7 @@ struct Neighbourhood {
 /// coordinate only concentrates the model's untaught answer there. What the transition
 /// needs is teachers, not a finer address.
 async fn neighbourhood_plane(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &Source,
     width: usize,
     height: usize,
@@ -4613,7 +4535,7 @@ async fn neighbourhood_plane(
     let plane = DevicePlane::luma_of(gpu, &mut recording, &blurred.buffer, width, height);
     let out = staged(&mut recording, &plane.buffer, width * height);
     recording.submit();
-    let of = crate::gpu::read_back(gpu, &out, |mapped| {
+    let of = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))
@@ -4649,7 +4571,7 @@ struct WideSample {
 
 /// The wide planes' registered samples, gated and searched, ready to fit from or judge on.
 async fn wide_samples(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     sharp: &Sharp,
     resident: &Wide,
     // The fit grid, which every wide pixel's weight and neighbourhood are read at.
@@ -4842,10 +4764,10 @@ impl ChromaMoments {
 /// each sample is, what the camera made of it, its neighbourhood and its hue weight. On the device,
 /// and the same for every colour the lattice is fitted under.
 struct Landed {
-    samples: crate::gpu::Buffer,
-    target: crate::gpu::Buffer,
-    neighbourhood: crate::gpu::Buffer,
-    hue: crate::gpu::Buffer,
+    samples: gpu::Buffer,
+    target: gpu::Buffer,
+    neighbourhood: gpu::Buffer,
+    hue: gpu::Buffer,
     count: usize,
 }
 
@@ -4854,7 +4776,7 @@ impl Landed {
     /// rather than by pair, which is half what a full evaluated sample would cost coming down, and
     /// an upload rather than a stall.
     fn pairs(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         render: &Source,
         neighbourhood: &Neighbourhood,
         pairs: &Pairs,
@@ -4898,7 +4820,7 @@ impl Landed {
     /// At the hue weight the pairs carry; what a rung scales that by is how much they may outvote
     /// the pairs where both live, a cell only these samples reach being fully taught at any weight
     /// that clears `MAP_CONFIDENCE` - which is why the caller offers the gate a ladder of them.
-    fn wides(gpu: &'static crate::gpu::Gpu, wides: &[WideSample]) -> Landed {
+    fn wides(gpu: &'static gpu::Gpu, wides: &[WideSample]) -> Landed {
         Landed {
             samples: floats_on(
                 gpu,
@@ -4923,7 +4845,7 @@ impl Landed {
     /// the nodes what that lattice left: the colour after it, against the camera's.
     async fn moments(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         colour: &HdrColour,
         grid: &crate::fit_lattice::Grid,
         on_what_is_left: bool,
@@ -4952,10 +4874,10 @@ impl Landed {
 }
 
 fn floats_on(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     label: &str,
     values: impl Iterator<Item = f64>,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     let bytes: Vec<u8> = values.flat_map(|v| (v as f32).to_ne_bytes()).collect();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
@@ -4965,12 +4887,12 @@ fn floats_on(
 }
 
 async fn lattice_moments(
-    gpu: &'static crate::gpu::Gpu,
-    through: &crate::gpu::Buffer,
-    indexed: &crate::gpu::Buffer,
-    target: &crate::gpu::Buffer,
-    neighbourhood: &crate::gpu::Buffer,
-    weights: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    through: &gpu::Buffer,
+    indexed: &gpu::Buffer,
+    target: &gpu::Buffer,
+    neighbourhood: &gpu::Buffer,
+    weights: &gpu::Buffer,
     count: usize,
     grid: &crate::fit_lattice::Grid,
 ) -> Option<ChromaMoments> {
@@ -5181,7 +5103,7 @@ struct Sharp {
 
 impl Sharp {
     /// Every pixel of `wide` as a sample the colour model reads, the falloff lifted in.
-    fn lifted(&self, gpu: &'static crate::gpu::Gpu) -> crate::gpu::Buffer {
+    fn lifted(&self, gpu: &'static gpu::Gpu) -> gpu::Buffer {
         crate::fit_span::lifted(gpu, &self.wide, self.falloff)
     }
 
@@ -5189,9 +5111,9 @@ impl Sharp {
     /// looked up with.
     fn evaluated(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         colour: &HdrColour,
-        lifted: &crate::gpu::Buffer,
+        lifted: &gpu::Buffer,
     ) -> Evaluated {
         evaluate_over(gpu, colour, lifted, self.wide.pixels(), Stage::ToneMatrix)
     }
@@ -5201,7 +5123,7 @@ impl Sharp {
 const MIN_SPAN_SAMPLES: usize = 16;
 
 async fn fit_colour(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     planes: &Corresponded,
     sharp: &Sharp,
     wide: &Wide,
@@ -5458,10 +5380,10 @@ async fn fit_colour(
 /// The uniform part of the whole colour fit: the saturation that best takes the neutral arm at the
 /// camera's exposure and curve to what the match renders, over the picture.
 async fn global_saturation(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     source: &Source,
-    neighbourhood: &crate::gpu::Buffer,
+    neighbourhood: &gpu::Buffer,
     frame: &Pairs,
 ) -> Option<f64> {
     let count = frame.at.len();
@@ -5510,7 +5432,7 @@ fn perceptual_chroma(rgb: &[f64; 3]) -> f64 {
 /// What a lattice is fitted over that no matrix candidate moves.
 struct Lattice<'a> {
     sharp: &'a Sharp,
-    lifted: crate::gpu::Buffer,
+    lifted: gpu::Buffer,
     train: Landed,
     wide_train: Landed,
     held: Landed,
@@ -5537,7 +5459,7 @@ struct Taught {
 
 impl Taught {
     async fn on(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         colour: &HdrColour,
         on: &Lattice<'_>,
         grid: &crate::fit_lattice::Grid,
@@ -5639,11 +5561,7 @@ struct Pricing {
 }
 
 impl Pricing {
-    async fn of(
-        gpu: &'static crate::gpu::Gpu,
-        judges: Judges,
-        reference: &HdrColour,
-    ) -> Option<Pricing> {
+    async fn of(gpu: &'static gpu::Gpu, judges: Judges, reference: &HdrColour) -> Option<Pricing> {
         let reference = judges.judge(gpu, reference).await?;
         Some(Pricing { judges, reference })
     }
@@ -5652,7 +5570,7 @@ impl Pricing {
     /// are held near the reference's, because the wide samples score terribly without a map
     /// (saturated content is what the curves cannot say) and an unbounded sum would let a map buy
     /// a large wide win with the flats, which are most of the picture.
-    async fn cost(&self, gpu: &'static crate::gpu::Gpu, trial: &HdrColour) -> Option<(f64, Score)> {
+    async fn cost(&self, gpu: &'static gpu::Gpu, trial: &HdrColour) -> Option<(f64, Score)> {
         let judged = self.judges.judge(gpu, trial).await?;
         let reference = &self.reference;
         // The flats' budget is set against the reference, so two candidates cannot spend it twice
@@ -5683,7 +5601,7 @@ impl Pricing {
 /// Its kernels are narrowed to the colours that asked for them, so a correction one tight colour
 /// needs stays on that colour rather than reaching the neighbours a coarse node would have.
 async fn refined_lattice(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     on: &Lattice<'_>,
     fitted: &FittedLattice,
@@ -5724,7 +5642,7 @@ async fn refined_lattice(
 /// The chroma lattice `colour` would carry, the cost `cost` puts on the result, and its held
 /// pairs' score.
 async fn fitted_lattice(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
     on: &Lattice<'_>,
     cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
@@ -5827,7 +5745,7 @@ const WIDE_WEIGHTS: [f64; 3] = [0.0, 0.01, 0.25];
 pub(crate) const MARGIN_DARK: f64 = 0.004;
 
 async fn fit_model(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     source: &Source,
     evidence: &crate::fit_curve::Evidence,
     balance: &[f64],
@@ -5921,7 +5839,7 @@ async fn fit_model(
 /// `plane` as it would be lit by `to` rather than by `from`, the illuminant it was balanced for:
 /// the grade's own balance (`colour.slang`'s `lit_by_reader`) over every pixel.
 fn rebalanced(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &Source,
     from: crate::white_balance::Illuminant,
     to: crate::white_balance::Illuminant,
@@ -5986,7 +5904,7 @@ fn rebalanced(
             },
         ],
     });
-    let (across, down) = crate::base::groups(pixels);
+    let (across, down) = gpu::compute::groups(pixels);
     recording.dispatch([across, down, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -5999,8 +5917,8 @@ fn rebalanced(
     }
 }
 
-fn balance_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+fn balance_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -6031,7 +5949,7 @@ fn balance_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 /// `as_shot` is the illuminant `plane` was balanced for, which the match's own white balance moves
 /// away from; None fits no white balance.
 pub async fn fit(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &Source,
     levels: crate::tone::Levels,
     preview: &units::rgb::Rgb,
@@ -6056,7 +5974,7 @@ pub async fn fit(
 /// lands on a lit gradient as iso-level bands. The matrix waits until after the shrink: it is
 /// linear, so the two orders agree, and it runs over a thousandth of the pixels this way.
 pub async fn preview_planes(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     preview: &units::rgb::Rgb,
 ) -> Option<(Source, Source)> {
     let (w, h) = (preview.width, preview.height);
@@ -6122,7 +6040,7 @@ pub async fn preview_planes(
 
 /// `fit`, for a caller that took the preview through `preview_planes` already.
 pub async fn fit_linearised(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &Source,
     levels: crate::tone::Levels,
     wide_jpeg: Source,
@@ -6159,12 +6077,12 @@ const CAMERA_EXPOSURE_STEP: f64 = 0.01;
 const CAMERA_MIN_SLOPE: f64 = 0.02;
 const CAMERA_MIN_PIVOT_SHARE: units::light::Gain = units::light::Gain::of_ratio(1e-9);
 
-pub async fn camera_curve_error(gpu: &'static crate::gpu::Gpu, colour: &HdrColour) -> Option<f64> {
+pub async fn camera_curve_error(gpu: &'static gpu::Gpu, colour: &HdrColour) -> Option<f64> {
     Some(camera_curve(gpu, colour).await?.2)
 }
 
 pub(crate) async fn camera_curve(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     colour: &HdrColour,
 ) -> Option<(units::light::Stops, Vec<[f64; 2]>, f64)> {
     use units::light::{CurveCode, Gain, Stops};
@@ -6310,7 +6228,7 @@ struct FitPlanes {
 /// sides' luma for the search, and both sides box-averaged to the fit grid, prefiltered and with
 /// the lens's falloff already in ours.
 async fn prepared_planes(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     source: &Source,
     scale: f64,
     wide_jpeg: Source,
@@ -6378,7 +6296,7 @@ async fn prepared_planes(
     for shaping in &shapings {
         shaping.dispatch(&mut recording, Whole::Fixed);
     }
-    let prefiltered = |recording: &mut crate::gpu::Recording<'_>, plane: &crate::gpu::Buffer| {
+    let prefiltered = |recording: &mut gpu::Recording<'_>, plane: &gpu::Buffer| {
         let held = crate::fit::Sampled {
             buffer: plane.clone(),
             width: fit_wide,
@@ -6423,7 +6341,7 @@ async fn prepared_planes(
 }
 
 async fn fit_model_planes(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     source: &Source,
     scale: f64,
     wide_jpeg: Source,
@@ -6465,10 +6383,7 @@ pub struct Registration {
 
 /// An 8-bit plane on the device as the 0..1 f32 RGB `fit_warp.slang` reads, held for as long as
 /// the search asks about it.
-pub fn levelled_source(
-    gpu: &'static crate::gpu::Gpu,
-    plane: units::rgb::RgbRef<'_>,
-) -> crate::gpu::Buffer {
+pub fn levelled_source(gpu: &'static gpu::Gpu, plane: units::rgb::RgbRef<'_>) -> gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit warp source"),
         contents: &rgb_words(plane.data, |v| f32::from(v) / 255.0),
@@ -6483,17 +6398,17 @@ pub fn levelled_source(
 /// The planes stay on the device because the objective that reads them is
 /// `slang/fit_objective.slang`.
 pub(crate) fn warped_planes(
-    gpu: &'static crate::gpu::Gpu,
-    source: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    source: &gpu::Buffer,
     (sw, sh): (usize, usize),
     lenses: &[crate::fit::Lens],
     (width, height): (usize, usize),
-) -> Vec<crate::gpu::Buffer> {
+) -> Vec<gpu::Buffer> {
     if lenses.is_empty() {
         return Vec::new();
     }
     let mut recording = gpu.record();
-    let planes: Vec<crate::gpu::Buffer> = lenses
+    let planes: Vec<gpu::Buffer> = lenses
         .iter()
         .map(|_| rgb_buffer(&mut recording, "fit candidate", width, height))
         .collect();
@@ -6512,12 +6427,12 @@ pub(crate) fn warped_planes(
 
 /// [`warped_planes`], recorded into planes the caller holds, in the caller's recording.
 pub(crate) fn warped_into(
-    gpu: &'static crate::gpu::Gpu,
-    recording: &mut crate::gpu::Recording<'_>,
-    source: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    recording: &mut gpu::Recording<'_>,
+    source: &gpu::Buffer,
     source_size: (usize, usize),
     lenses: &[crate::fit::Lens],
-    planes: &[crate::gpu::Buffer],
+    planes: &[gpu::Buffer],
     size: (usize, usize),
 ) {
     recording.holding(source);
@@ -6551,8 +6466,8 @@ pub(crate) fn warped_into(
 /// are, and a candidate's plane is 820KB.
 #[cfg(test)]
 pub(crate) async fn warped_levels(
-    gpu: &'static crate::gpu::Gpu,
-    source: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    source: &gpu::Buffer,
     source_size: (usize, usize),
     lenses: &[crate::fit::Lens],
     (width, height): (usize, usize),
@@ -6567,7 +6482,7 @@ pub(crate) async fn warped_levels(
     let mut levels = Vec::with_capacity(out.len());
     for staging in &out {
         levels.push(
-            crate::gpu::read_back(gpu, staging, |mapped| {
+            gpu::read_back(gpu, staging, |mapped| {
                 mapped
                     .par_chunks_exact(4)
                     .map(|word| {
@@ -6587,7 +6502,7 @@ pub(crate) async fn warped_levels(
 /// crosses back.
 pub struct Settling {
     /// The render, levelled, on the device. Not warped: the warp is the only thing a round changes.
-    source: crate::gpu::Buffer,
+    source: gpu::Buffer,
     /// Where the warp writes and the search reads, reused by every round.
     ours: DevicePlane,
     width: usize,
@@ -6595,14 +6510,14 @@ pub struct Settling {
     theirs: DevicePlane,
     /// The strided grid the search asks about, which is the same grid every round.
     asked: Vec<[i32; 2]>,
-    points: crate::gpu::Buffer,
+    points: gpu::Buffer,
     preview_width: usize,
     preview_height: usize,
 }
 
 impl Settling {
     pub fn new(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         render: &Source,
         preview: &Source,
         stride: usize,
@@ -6668,7 +6583,7 @@ impl Settling {
 /// so the two are recorded together and waited on once: what crosses back is six thousand
 /// answers, not the plane they were found in.
 pub async fn registration(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     settling: &Settling,
     lens: &crate::fit::Lens,
     bins: usize,
@@ -6776,7 +6691,7 @@ pub async fn registration(
 /// side by side say which it was. `points` are in wide-plane coordinates, which is twice
 /// the fit grid.
 pub async fn correspondence_at(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     render: &units::rgb::Rgb,
     preview: &Source,
     lens: &crate::fit::Lens,
@@ -7180,7 +7095,7 @@ mod tests {
     /// bound, for every matrix it is asked about at once.
     #[test]
     fn the_device_adds_a_pair_as_the_host_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         for (count, block) in [(300, 64), (300, 192), (9000, 4096)] {
@@ -7188,11 +7103,7 @@ mod tests {
         }
     }
 
-    fn the_device_adds_pairs_in_blocks_of(
-        gpu: &'static crate::gpu::Gpu,
-        count: usize,
-        block: usize,
-    ) {
+    fn the_device_adds_pairs_in_blocks_of(gpu: &'static gpu::Gpu, count: usize, block: usize) {
         let pairs: Vec<([f64; 3], [f64; 3], f64)> = (0..count)
             .map(|k| {
                 let f = k as f64 / count as f64;
@@ -7771,7 +7682,7 @@ mod tests {
     /// Most of the pairs in one cell, as a dark frame puts them, so its run is cut into slices.
     #[test]
     fn the_device_lattice_sums_what_the_host_landing_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         the_device_lattice_sums_on(gpu, GridShape::COARSE, 2e-3);
@@ -7780,7 +7691,7 @@ mod tests {
         the_device_lattice_sums_on(gpu, GridShape::FINE, 2e-2);
     }
 
-    fn the_device_lattice_sums_on(gpu: &'static crate::gpu::Gpu, shape: GridShape, grazing: f64) {
+    fn the_device_lattice_sums_on(gpu: &'static gpu::Gpu, shape: GridShape, grazing: f64) {
         let axes = test_axes();
         let mut seed = 7u64;
         let mut next = || {
@@ -8115,7 +8026,7 @@ mod tests {
     /// vignette the falloff fit would then try to answer.
     #[test]
     fn the_prefilter_is_the_box_it_slides_over() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the prefilter never ran.");
             return;
         };
@@ -8194,8 +8105,8 @@ mod tests {
 
     /// The device the correspondence search runs on. A test with no adapter has nothing to measure,
     /// and saying so beats a `None` that reads as a fit declining.
-    fn searching() -> &'static crate::gpu::Gpu {
-        crate::gpu::device().expect("an adapter for the fit's search")
+    fn searching() -> &'static gpu::Gpu {
+        gpu::device().expect("an adapter for the fit's search")
     }
 
     /// A band-limited scene, sampled wherever a shifted copy is asked for.
@@ -8491,7 +8402,7 @@ mod tests {
 
     /// The colour model at each sample, on the device, or None where no adapter answered.
     fn through(colour: &HdrColour, stage: Stage, samples: &[[f64; 4]]) -> Option<Vec<[f64; 3]>> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let samples: Vec<[f32; 4]> = samples.iter().map(|s| s.map(|v| v as f32)).collect();
         let out = pollster::block_on(evaluated(gpu, colour, &samples, stage))
             .expect("the device evaluates the model");
@@ -8537,7 +8448,7 @@ mod tests {
     }
 
     /// A host plane where the probes read one.
-    fn source_of(gpu: &'static crate::gpu::Gpu, plane: &Plane) -> Source {
+    fn source_of(gpu: &'static gpu::Gpu, plane: &Plane) -> Source {
         Source {
             buffer: gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fit source test"),

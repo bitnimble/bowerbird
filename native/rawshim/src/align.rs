@@ -4,8 +4,8 @@
 //! sensor-anchored tiles measure whole-site tripod offsets and fractional handheld offsets.
 
 use crate::condition::Mosaic;
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{Buffer, Gpu};
+use gpu::dispatch::Whole;
+use gpu::{Buffer, Gpu};
 use units::px::{Sensor, Span};
 
 pub const TILE: Span<Sensor> = Span::exact(64);
@@ -135,12 +135,12 @@ pub(crate) fn align_block() -> usize {
     std::mem::size_of::<AlignParams>()
 }
 
-fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BLOCK: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static REDUCE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static SITE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static DETAIL: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    static BLOCK: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static REDUCE: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static SITE: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static DETAIL: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     let cell = match entry {
         "block_luma" => &BLOCK,
         "site_luma" => &SITE,
@@ -148,7 +148,7 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
         _ => &REDUCE,
     };
     cell.get(gpu, || {
-        crate::hdr_fit::kernel(
+        gpu::compute::kernel(
             gpu,
             entry,
             shaders::ALIGN_LUMA.source,
@@ -158,12 +158,12 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
     })
 }
 
-fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static ALIGN: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static REFINE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static REGULARIZE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
-    static FILL: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    static ALIGN: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static REFINE: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static REGULARIZE: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
+    static FILL: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     let cell = match entry {
         "align" => &ALIGN,
         "refine" => &REFINE,
@@ -171,7 +171,7 @@ fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_f
         _ => &REGULARIZE,
     };
     cell.get(gpu, || {
-        crate::hdr_fit::kernel(
+        gpu::compute::kernel(
             gpu,
             entry,
             shaders::ALIGN.source,
@@ -198,7 +198,7 @@ struct Plane {
 #[track_caller]
 fn plane(
     gpu: &'static Gpu,
-    recording: &mut crate::gpu::Recording<'static>,
+    recording: &mut gpu::Recording<'static>,
     source: &Buffer,
     width: usize,
     height: usize,
@@ -291,7 +291,7 @@ impl Pyramid {
 
     fn record(
         gpu: &'static Gpu,
-        recording: &mut crate::gpu::Recording<'static>,
+        recording: &mut gpu::Recording<'static>,
         mosaic: &Mosaic,
         exposure: Exposure,
     ) -> Pyramid {
@@ -460,7 +460,7 @@ pub(crate) async fn read_floats(
     });
     recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
     recording.submit();
-    crate::gpu::read_back(gpu, &readback, |mapped| {
+    gpu::read_back(gpu, &readback, |mapped| {
         bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
     })
     .await
@@ -641,7 +641,7 @@ pub fn measure(
 #[track_caller]
 fn dispatch(
     gpu: &'static Gpu,
-    recording: &mut crate::gpu::Recording<'static>,
+    recording: &mut gpu::Recording<'static>,
     entry: &'static str,
     params: &AlignParams,
     reference: &Buffer,

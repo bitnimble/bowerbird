@@ -8,8 +8,8 @@
 //! been counted and scanned: sizing it for every pixel instead would put an eight megabyte map at
 //! the end of a pass whose answer is a third of that.
 
-use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
+use gpu::dispatch::Whole;
 
 /// Buckets each half of the selection counts into.
 const HALF_BINS: usize = 65536;
@@ -29,11 +29,8 @@ const CEILING: usize = 4;
 const TOTAL: usize = 5;
 const HUES: usize = 6;
 
-async fn read_words(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
-) -> Option<Vec<u32>> {
-    crate::gpu::read_back(gpu, staging, |mapped| {
+async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
+    gpu::read_back(gpu, staging, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
@@ -61,7 +58,7 @@ pub(crate) struct Selected {
     pub hues: Vec<u8>,
     /// The mask beside it, in the same word, where the curve fit reads both. Nothing on the host
     /// reads the mask - the tests that look at what a pixel earned are the only ones that do.
-    pub words: crate::gpu::Buffer,
+    pub words: gpu::Buffer,
     #[cfg(test)]
     pub bits: Vec<u8>,
     /// Pixels usable for all three channels, per hue bucket, and summed over them.
@@ -95,8 +92,8 @@ pub(crate) struct Kernels {
     frame_write: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -197,9 +194,9 @@ pub(crate) fn params_block() -> usize {
 }
 
 pub(crate) async fn select(
-    gpu: &'static crate::gpu::Gpu,
-    render: &crate::gpu::Buffer,
-    jpeg: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    render: &gpu::Buffer,
+    jpeg: &gpu::Buffer,
     width: usize,
     height: usize,
 ) -> Option<Selected> {
@@ -233,7 +230,7 @@ pub(crate) async fn select(
     });
 
     let built = kernels(gpu);
-    let group = |pairs: &crate::gpu::Buffer| {
+    let group = |pairs: &gpu::Buffer| {
         gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fit_pairs"),
             layout: &built.layout,
@@ -298,18 +295,17 @@ pub(crate) async fn select(
             pass.set_bind_group(0, &selecting, &[]);
         });
     }
-    let staging =
-        |recording: &mut crate::gpu::Recording<'_>, from: &crate::gpu::Buffer, words: usize| {
-            let bytes = (words * 4).max(4) as u64;
-            let out = recording.buffer(&wgpu::BufferDescriptor {
-                label: Some("fit pairs out"),
-                size: bytes,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            recording.copy_buffer_to_buffer(from, 0, &out, 0, bytes);
-            out
-        };
+    let staging = |recording: &mut gpu::Recording<'_>, from: &gpu::Buffer, words: usize| {
+        let bytes = (words * 4).max(4) as u64;
+        let out = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("fit pairs out"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        recording.copy_buffer_to_buffer(from, 0, &out, 0, bytes);
+        out
+    };
     let bits_out = staging(&mut recording, &bits_words, pixels);
     let marks_out = staging(&mut recording, &marks, marks_words);
     recording.submit();

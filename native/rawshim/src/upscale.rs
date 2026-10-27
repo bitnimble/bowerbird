@@ -15,7 +15,7 @@
 
 use std::sync::Mutex;
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// What the forward pass computes on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -280,7 +280,7 @@ pub struct Upscaler {
     stabilising: Stabilising,
     /// The grain, as a share of the photo's noise variance, that looks like all of its noise.
     calibration: f32,
-    weights: crate::gpu::Buffer,
+    weights: gpu::Buffer,
     layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
     convs: Vec<wgpu::ComputePipeline>,
@@ -302,7 +302,7 @@ pub struct Halving {
 struct Coop {
     layout: wgpu::BindGroupLayout,
     convs: Vec<wgpu::ComputePipeline>,
-    blocks: crate::gpu::Buffer,
+    blocks: gpu::Buffer,
 }
 
 /// A tile's tensors, kept for the next rectangle whose region fits them.
@@ -310,13 +310,13 @@ struct Tensors {
     /// The largest region they hold, and the one last laid out in them.
     region: (usize, usize),
     laid: (usize, usize),
-    planes: crate::gpu::Buffer,
+    planes: gpu::Buffer,
     /// Each level's A, B and skip.
-    levels: Vec<[crate::gpu::Buffer; 3]>,
+    levels: Vec<[gpu::Buffer; 3]>,
 }
 
 impl Tensors {
-    fn of(&self, slot: Slot) -> &crate::gpu::Buffer {
+    fn of(&self, slot: Slot) -> &gpu::Buffer {
         match slot {
             Slot::Planes => &self.planes,
             Slot::A(level) => &self.levels[level][0],
@@ -341,7 +341,7 @@ impl Upscaler {
     /// The network `export` wrote, as `manifest` (`weights.json`) and `weights` (`weights.bin`), on
     /// `arm`; `None` where the device cannot run that arm.
     pub fn new(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         manifest: &str,
         weights: &[u8],
         arm: Arm,
@@ -478,7 +478,7 @@ impl Upscaler {
     /// The network on the fastest arm this device runs: the matrix units, then `half` WGSL, then
     /// `float`.
     pub fn fastest(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         manifest: &str,
         weights: &[u8],
     ) -> Result<Upscaler, String> {
@@ -551,10 +551,10 @@ impl Upscaler {
     /// Recorded and submitted, not waited for.
     pub fn upscale(
         &self,
-        gpu: &'static crate::gpu::Gpu,
-        mosaic: &crate::gpu::Buffer,
+        gpu: &'static gpu::Gpu,
+        mosaic: &gpu::Buffer,
         at: Placement,
-        into: &crate::gpu::Buffer,
+        into: &gpu::Buffer,
         photo: &Photo,
         tile: Option<usize>,
     ) -> Result<(), String> {
@@ -911,15 +911,15 @@ impl Upscaler {
     #[track_caller]
     pub fn halve(
         &self,
-        gpu: &crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'static>,
-        plane: &crate::gpu::Buffer,
+        gpu: &gpu::Gpu,
+        recording: &mut gpu::Recording<'static>,
+        plane: &gpu::Buffer,
         source: (usize, usize),
-    ) -> crate::gpu::Buffer {
+    ) -> gpu::Buffer {
         self.halving.halve(gpu, recording, plane, source)
     }
 
-    fn tensors(&self, gpu: &crate::gpu::Gpu, region: (usize, usize), cell: usize) -> Tensors {
+    fn tensors(&self, gpu: &gpu::Gpu, region: (usize, usize), cell: usize) -> Tensors {
         let mut recording = gpu.record();
         let mut tensor = |label: &str, level: usize, channels: usize| {
             let pixels = ((region.0 >> level) + 2) * ((region.1 >> level) + 2);
@@ -960,11 +960,11 @@ impl Halving {
     #[track_caller]
     pub fn halve(
         &self,
-        gpu: &crate::gpu::Gpu,
-        recording: &mut crate::gpu::Recording<'static>,
-        plane: &crate::gpu::Buffer,
+        gpu: &gpu::Gpu,
+        recording: &mut gpu::Recording<'static>,
+        plane: &gpu::Buffer,
         source: (usize, usize),
-    ) -> crate::gpu::Buffer {
+    ) -> gpu::Buffer {
         let out = (source.0 / 2, source.1 / 2);
         let smaller = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("halved plane"),
@@ -983,7 +983,7 @@ impl Halving {
             layout: &self.layout,
             entries: &[entry(0, &uniform), entry(1, plane), entry(2, &smaller)],
         });
-        let (x, y) = crate::base::groups(out.0 * out.1);
+        let (x, y) = gpu::compute::groups(out.0 * out.1);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -991,7 +991,7 @@ impl Halving {
         smaller
     }
 
-    pub fn new(gpu: &crate::gpu::Gpu) -> Halving {
+    pub fn new(gpu: &gpu::Gpu) -> Halving {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("supersample"),
@@ -1096,7 +1096,7 @@ pub fn hold_model(manifest: String, weights: Vec<u8>) {
 
 /// The network on its fastest arm, built on the first frame that asks for it and kept until a model
 /// replaces it. `None` in a page until it has handed over what it fetched.
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Upscaler> {
     with_model(|held| {
         if let Some(tried) = held.built {
             return tried;
@@ -1152,7 +1152,7 @@ fn reach(ops: &[Op]) -> usize {
     reach.next_multiple_of(COARSEST)
 }
 
-fn entry<'a>(binding: u32, buffer: &'a crate::gpu::Buffer) -> wgpu::BindGroupEntry<'a> {
+fn entry<'a>(binding: u32, buffer: &'a gpu::Buffer) -> wgpu::BindGroupEntry<'a> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
@@ -1400,7 +1400,7 @@ fn forward_pass(half: bool) -> &'static str {
 }
 
 /// The fragment this device's matrix units multiply, `None` where it has none this reaches.
-fn coop_fragment(gpu: &crate::gpu::Gpu) -> Option<usize> {
+fn coop_fragment(gpu: &gpu::Gpu) -> Option<usize> {
     if !gpu
         .describing()
         .features()
@@ -1416,7 +1416,7 @@ fn coop_fragment(gpu: &crate::gpu::Gpu) -> Option<usize> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn coop_kernels(gpu: &crate::gpu::Gpu, fragment: usize, blocks: &[u16]) -> Option<Coop> {
+fn coop_kernels(gpu: &gpu::Gpu, fragment: usize, blocks: &[u16]) -> Option<Coop> {
     let device = gpu.describing();
     let mut handed = wgpu::ShaderModuleDescriptorPassthrough {
         label: Some("upscale coop"),
@@ -1510,7 +1510,7 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, fragment: usize, blocks: &[u16]) -> Optio
 }
 
 #[cfg(target_arch = "wasm32")]
-fn coop_kernels(_gpu: &crate::gpu::Gpu, _fragment: usize, _blocks: &[u16]) -> Option<Coop> {
+fn coop_kernels(_gpu: &gpu::Gpu, _fragment: usize, _blocks: &[u16]) -> Option<Coop> {
     None
 }
 
@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn a_held_model_replaces_the_built_one() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(before) = super::device(gpu) else {
@@ -1555,7 +1555,7 @@ mod tests {
     /// grain still moves a photosite less than 6 of the photo's noise sigma.
     #[test]
     fn grain_at_black_stays_within_the_photos_noise() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(weights) = super::BUNDLED else {
@@ -1628,7 +1628,7 @@ mod tests {
     /// answer, grain and all, on every arm: what lets a loupe tile be the rendition.
     #[test]
     fn a_rectangle_is_the_whole_frames() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(weights) = super::BUNDLED else {

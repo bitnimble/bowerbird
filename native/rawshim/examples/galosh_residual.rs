@@ -30,7 +30,7 @@ fn main() {
         }
     }
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels");
     let before = frame(side, side, noise);
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, side, side);

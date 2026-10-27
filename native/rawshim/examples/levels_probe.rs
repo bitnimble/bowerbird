@@ -142,7 +142,7 @@ fn main() {
             println!("{name:<16} not 16-bit");
             continue;
         };
-        let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let Some(levels) = rawshim::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
         else {
             println!("{name:<16} no levels");

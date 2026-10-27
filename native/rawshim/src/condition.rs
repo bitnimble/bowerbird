@@ -17,7 +17,7 @@
 //! Its own module rather than more of `demosaic.rs` because the denoise sits between the two, and
 //! than more of `base.rs` because that one's frame is the demosaiced one.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 use rayon::prelude::*;
 
 pub struct Condition {
@@ -30,13 +30,13 @@ pub struct Condition {
 /// Infallible where `galosh::device` and `demosaic::device` are not: those decline an adapter under
 /// a limit they need, and these two kernels ask for nothing beyond a storage buffer. A shader that
 /// would not build is a panic through `on_uncaptured_error`, not a `None` anyone could handle.
-pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Condition {
-    static BUILT: crate::gpu::Cache<Condition> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> &'static Condition {
+    static BUILT: gpu::Cache<Condition> = gpu::Cache::new();
     BUILT.get(gpu, || Condition::new(gpu))
 }
 
 impl Condition {
-    fn new(gpu: &crate::gpu::Gpu) -> Condition {
+    fn new(gpu: &gpu::Gpu) -> Condition {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("condition"),
@@ -110,7 +110,7 @@ impl Condition {
 /// round trips of 241MB at 61MP for a frame none of them wants on the CPU. They take this
 /// instead, and the only thing that crosses back is what a caller asked for.
 pub struct Mosaic {
-    pub buffer: crate::gpu::Buffer,
+    pub buffer: gpu::Buffer,
     pub width: usize,
     pub height: usize,
 }
@@ -121,7 +121,7 @@ impl Mosaic {
     }
 
     /// Room for a frame of this size, zeroed.
-    pub fn plane(gpu: &crate::gpu::Gpu, width: usize, height: usize) -> Mosaic {
+    pub fn plane(gpu: &gpu::Gpu, width: usize, height: usize) -> Mosaic {
         let buffer = gpu.own_buffer(&wgpu::BufferDescriptor {
             label: Some("mosaic"),
             size: ((width * height).max(1) * 4) as u64,
@@ -142,7 +142,7 @@ impl Mosaic {
     /// For a caller that has to keep an unfiltered frame: the denoise writes where it reads, so
     /// filtering twice at two amounts means filtering two copies. A frame is four bytes a
     /// photosite - 96MB at 24MP - which is worth it to answer a slider without re-reading a file.
-    pub fn duplicate(&self, gpu: &crate::gpu::Gpu) -> Mosaic {
+    pub fn duplicate(&self, gpu: &gpu::Gpu) -> Mosaic {
         let copy = Mosaic::plane(gpu, self.width, self.height);
         let mut recording = gpu.record();
         recording.copy_buffer_to_buffer(
@@ -157,7 +157,7 @@ impl Mosaic {
     }
 
     /// A mosaic that is already on the host, for a caller that built one another way.
-    pub fn upload(gpu: &crate::gpu::Gpu, values: &[f32], width: usize, height: usize) -> Mosaic {
+    pub fn upload(gpu: &gpu::Gpu, values: &[f32], width: usize, height: usize) -> Mosaic {
         let mosaic = Mosaic::plane(gpu, width, height);
         // A megabyte at a time rather than one `Vec<u8>` of the frame, which at 61MP would be
         // 240MB held beside the buffer it is being copied into.
@@ -177,7 +177,7 @@ impl Mosaic {
     /// A rectangle of this one, densely packed, which is what every tiled stage reads.
     pub fn window(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         left: usize,
         top: usize,
         width: usize,
@@ -191,7 +191,7 @@ impl Mosaic {
     /// A rectangle of this one written into `into` at `at`.
     pub fn copy_rect(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         from: (usize, usize),
         into: &Mosaic,
         at: (usize, usize),
@@ -239,7 +239,7 @@ impl Mosaic {
                 },
             ],
         });
-        let (x, y) = crate::base::groups(width * height);
+        let (x, y) = gpu::compute::groups(width * height);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernels.copy_rect);
             pass.set_bind_group(0, &group, &[]);
@@ -248,7 +248,7 @@ impl Mosaic {
     }
 
     /// The whole frame back on the host, for the one caller that still wants it there.
-    pub async fn read(&self, gpu: &crate::gpu::Gpu) -> Option<Vec<f32>> {
+    pub async fn read(&self, gpu: &gpu::Gpu) -> Option<Vec<f32>> {
         self.read_rows(gpu, 0, self.height).await
     }
 
@@ -260,12 +260,7 @@ impl Mosaic {
     ///
     /// Rows are contiguous in the buffer, so a band is one range rather than a gathered rectangle -
     /// which is why this takes rows and not a rectangle.
-    pub async fn read_rows(
-        &self,
-        gpu: &crate::gpu::Gpu,
-        top: usize,
-        rows: usize,
-    ) -> Option<Vec<f32>> {
+    pub async fn read_rows(&self, gpu: &gpu::Gpu, top: usize, rows: usize) -> Option<Vec<f32>> {
         let rows = rows.min(self.height.checked_sub(top)?);
         let count = rows.checked_mul(self.width)?;
         let bytes = (count * 4) as u64;
@@ -288,7 +283,7 @@ impl Mosaic {
         );
         recording.submit();
 
-        crate::gpu::read_back(gpu, &readback, |mapped| {
+        gpu::read_back(gpu, &readback, |mapped| {
             let mut out = vec![0f32; count];
             out.par_chunks_mut(GRAIN)
                 .zip(mapped.par_chunks(GRAIN * 4))
@@ -382,7 +377,7 @@ impl Shading<'_> {
 /// None where the frame is empty, the samples are short of it, or the curve is not the whole
 /// domain - the caller's cue for the CPU, which answers those in microseconds.
 pub fn normalise(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     kernels: &Condition,
     samples: &[u16],
     width: usize,
@@ -462,7 +457,7 @@ pub fn normalise(
         ],
     });
 
-    let (x, y) = crate::base::groups(count);
+    let (x, y) = gpu::compute::groups(count);
     recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernels.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -480,9 +475,9 @@ pub fn normalise(
 /// `condition.slang`'s `GainMap` array and the gains it indexes into. Neither is ever empty, since
 /// a storage binding cannot be.
 fn shading_storage(
-    recording: &mut crate::gpu::Recording<'_>,
+    recording: &mut gpu::Recording<'_>,
     maps: &[GainMap],
-) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
+) -> (gpu::Buffer, gpu::Buffer) {
     let mut described: Vec<u8> = Vec::with_capacity(maps.len().max(1) * 64);
     let mut gains: Vec<f32> = Vec::new();
     for map in maps {
@@ -512,11 +507,7 @@ fn shading_storage(
     )
 }
 
-fn float_storage(
-    recording: &mut crate::gpu::Recording<'_>,
-    label: &str,
-    values: &[f32],
-) -> crate::gpu::Buffer {
+fn float_storage(recording: &mut gpu::Recording<'_>, label: &str, values: &[f32]) -> gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len() * 4);
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -538,7 +529,7 @@ const GRAIN: usize = 1 << 13;
 ///
 /// Chunked for the reason `base::upload` gives, and threaded because a serial `to_le_bytes` over 61
 /// million samples costs more than the dispatch it feeds.
-fn upload(recording: &mut crate::gpu::Recording<'_>, samples: &[u16]) -> crate::gpu::Buffer {
+fn upload(recording: &mut gpu::Recording<'_>, samples: &[u16]) -> gpu::Buffer {
     let words = samples.len().div_ceil(2);
     let gpu = recording.gpu();
     let buffer = recording.buffer(&wgpu::BufferDescriptor {

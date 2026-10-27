@@ -537,7 +537,7 @@ mod tests {
     }
 
     fn probe(scene: &Scene, entry: &str, probes: &[[f32; 8]]) -> Vec<[f32; 8]> {
-        let gpu = crate::gpu::device().expect("print requires Vulkan");
+        let gpu = gpu::device().expect("print requires Vulkan");
         let device = gpu.describing();
         let mut recording = gpu.record();
         let albedo = crate::grade::device(gpu).print_albedo_table(scene.refractive_index as f32);
@@ -640,7 +640,7 @@ mod tests {
             compilation_options: Default::default(),
             cache: None,
         });
-        let group = |layout, first: &crate::gpu::Buffer, second: &crate::gpu::Buffer| {
+        let group = |layout, first: &gpu::Buffer, second: &gpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("print optical checks"),
                 layout,
@@ -685,7 +685,7 @@ mod tests {
         });
         recording.dispatch(
             [probes.len() as u32, 1, 1],
-            crate::gpu::dispatch::Whole::Fixed,
+            gpu::dispatch::Whole::Fixed,
             |pass| {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &probes_group, &[]);
@@ -694,7 +694,7 @@ mod tests {
         );
         recording.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         recording.submit();
-        pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
+        pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
             bytes
                 .chunks_exact(32)
                 .map(|row| {
@@ -708,7 +708,7 @@ mod tests {
     }
 
     fn calibrated(scene: &Scene) -> [f32; 2] {
-        let gpu = crate::gpu::device().expect("print requires Vulkan");
+        let gpu = gpu::device().expect("print requires Vulkan");
         let environment = crate::grade::device(gpu)
             .print_environment(scene.environment)
             .expect("the print's environment");
@@ -727,7 +727,7 @@ mod tests {
         });
         recording.copy_buffer_to_buffer(&calibration, 0, &readback, 0, 8);
         recording.submit();
-        pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
+        pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
             std::array::from_fn(|i| {
                 f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("float"))
             })
@@ -1064,7 +1064,7 @@ mod tests {
         use crate::grade::{Canvas, Grade};
         use units::px::{Size, Span};
 
-        let gpu = crate::gpu::device().expect("print requires Vulkan");
+        let gpu = gpu::device().expect("print requires Vulkan");
         let base = crate::base::device(gpu).expect("the source pyramid");
         let (width, height) = (96, 64);
         let code = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(80.0)).raw()

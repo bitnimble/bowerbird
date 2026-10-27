@@ -6,9 +6,9 @@
 //! levels; the plane and the render stay where they were written, and every reader binds them
 //! there.
 
-use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
 
 /// The three floats `fit_scan` writes, which is all of the histogram that crosses to the host.
 const LEVEL_BYTES: u64 = 12;
@@ -23,7 +23,7 @@ pub struct Prepared {
 /// The plane as the geometry search and the lateral aberration read it: sRGB in 0..1, one float a
 /// component, where `fit_render` wrote it beside the plane.
 pub struct Rendered {
-    pub buffer: crate::gpu::Buffer,
+    pub buffer: gpu::Buffer,
     pub width: usize,
     pub height: usize,
 }
@@ -36,8 +36,8 @@ pub(crate) struct Kernels {
     render: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -101,7 +101,7 @@ pub fn plane_size(width: usize, height: usize, wide: usize) -> (usize, usize) {
 }
 
 pub async fn prepared(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: &Resident,
     wide: usize,
     quantile: f64,
@@ -116,7 +116,7 @@ pub async fn prepared(
 
 /// The quantile alone, for a caller that wants the anchor and no fit.
 pub async fn levels(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: &Resident,
     quantile: f64,
 ) -> Option<crate::tone::Levels> {
@@ -130,7 +130,7 @@ struct Taken {
 }
 
 async fn run(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     frame: &Resident,
     wide: Option<usize>,
     quantile: f64,
@@ -281,7 +281,7 @@ async fn run(
     recording.copy_buffer_to_buffer(&levels, 0, &levels_out, 0, LEVEL_BYTES);
     recording.submit();
 
-    let measured = crate::gpu::read_back(gpu, &levels_out, |mapped| {
+    let measured = gpu::read_back(gpu, &levels_out, |mapped| {
         let at = |i: usize| {
             f64::from(f32::from_ne_bytes([
                 mapped[i],
@@ -330,7 +330,7 @@ async fn run(
 /// A resident plane on the host, which only a test wants: everything else reads the buffer.
 #[cfg(test)]
 async fn read_plane(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &crate::hdr_fit::Source,
 ) -> Option<crate::hdr_fit::Plane> {
     let bytes = (plane.width * plane.height * 3 * 4) as u64;
@@ -343,7 +343,7 @@ async fn read_plane(
     });
     recording.copy_buffer_to_buffer(&plane.buffer, 0, &out, 0, bytes);
     recording.submit();
-    let data = crate::gpu::read_back(gpu, &out, |mapped| {
+    let data = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))
@@ -359,10 +359,7 @@ async fn read_plane(
 
 /// A render assembled from codes, for the tests that measure one rather than produce one.
 #[cfg(test)]
-pub(crate) fn uploaded_render(
-    gpu: &'static crate::gpu::Gpu,
-    image: units::rgb::RgbRef<'_>,
-) -> Rendered {
+pub(crate) fn uploaded_render(gpu: &'static gpu::Gpu, image: units::rgb::RgbRef<'_>) -> Rendered {
     let words: Vec<u8> = image
         .data
         .iter()
@@ -382,10 +379,7 @@ pub(crate) fn uploaded_render(
 /// The render as the codes it would quantise to. Nothing on the fit's path wants this - it is for
 /// the pin that holds `fit_render` against the arithmetic it took over, and for the examples that
 /// look at a match.
-pub async fn read_render(
-    gpu: &'static crate::gpu::Gpu,
-    render: &Rendered,
-) -> Option<units::rgb::Rgb> {
+pub async fn read_render(gpu: &'static gpu::Gpu, render: &Rendered) -> Option<units::rgb::Rgb> {
     let bytes = (render.width * render.height * 3 * 4) as u64;
     let mut recording = gpu.record();
     let out = recording.buffer(&wgpu::BufferDescriptor {
@@ -396,7 +390,7 @@ pub async fn read_render(
     });
     recording.copy_buffer_to_buffer(&render.buffer, 0, &out, 0, bytes);
     recording.submit();
-    let data = crate::gpu::read_back(gpu, &out, |mapped| {
+    let data = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .par_chunks_exact(4)
             .map(|word| {
@@ -427,7 +421,7 @@ mod tests {
     /// returning a fit - a slightly wrong one.
     #[test]
     fn the_rendered_plane_is_what_the_host_would_have_computed() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered, so the render was not read off the device.");
             return;
         };

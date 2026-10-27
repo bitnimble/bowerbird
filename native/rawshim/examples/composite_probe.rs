@@ -23,7 +23,7 @@ fn main() {
     // modules. A merge spawns one for the align and one per rendition, so this is charged three
     // times over where the probe charges it once.
     let starting = std::time::Instant::now();
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     println!(
         "gpu: ready in {:.0}ms",
         starting.elapsed().as_secs_f64() * 1000.0
@@ -622,7 +622,7 @@ impl Sheet<'_> {
 /// in two places, which is what a scene that repeats offers and what every measure in the table has
 /// to be argued about.
 fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usize, to: &str) {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let long = |at: usize| planes[at].width.max(planes[at].height);
     let Some(left) = rawshim::decode_rawler::upright_preview_rgb(
         &paths[a],

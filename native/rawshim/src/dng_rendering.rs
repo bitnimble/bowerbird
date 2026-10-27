@@ -79,7 +79,7 @@ impl Stated {
     /// `neutral_ceiling` of full scale.
     pub async fn colour(
         &self,
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         levels: &crate::tone::Levels,
         neutral_ceiling: f32,
     ) -> Option<HdrColour> {
@@ -260,7 +260,7 @@ mod tests {
     /// under the quantile's white.
     #[test]
     fn the_camera_exposure_is_the_clip_less_the_baseline() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let neutral_ceiling = 0.5;

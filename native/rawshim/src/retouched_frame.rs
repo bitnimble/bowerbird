@@ -12,9 +12,9 @@
 //! Held in memory for the life of an open and nowhere else: an original is what the tool shows as
 //! a removal's thumbnail and what a removal reopened is searched over, and both are the editor's.
 
-use crate::gpu::dispatch::Whole;
 use crate::repair::Repair;
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
 use units::px::{At, Drawn, Extent, Point, Rect, Size, Stored};
 
 /// The pixels under one repair's footprint - its seam and the feather outside it - before any
@@ -340,11 +340,11 @@ pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
-pub(crate) fn copying(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+pub(crate) fn copying(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
-        crate::hdr_fit::kernel(
+        gpu::compute::kernel(
             gpu,
             "copy_rect",
             shaders::COPY_RECT.source,
@@ -357,7 +357,7 @@ pub(crate) fn copying(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit:
 /// A `size` rectangle of one frame at its `At` copied over another at its own, recorded.
 #[track_caller]
 pub(crate) fn copy(
-    recording: &mut crate::gpu::Recording<'_>,
+    recording: &mut gpu::Recording<'_>,
     (src, src_at): (&Resident, At<Drawn>),
     (dst, dst_at): (&Resident, At<Drawn>),
     size: Size<Drawn>,
@@ -399,7 +399,7 @@ pub(crate) fn copy(
             crate::repair::entry(2, dst.buffer()),
         ],
     });
-    let (x, y) = crate::base::groups(words);
+    let (x, y) = gpu::compute::groups(words);
     recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -424,12 +424,7 @@ mod tests {
     }
 
     fn upload(samples: &[u16], rows: usize) -> Resident {
-        Resident::upload(
-            crate::gpu::device().expect("a device"),
-            samples,
-            SIZE.0,
-            rows,
-        )
+        Resident::upload(gpu::device().expect("a device"), samples, SIZE.0, rows)
     }
 
     fn host(frame: &Resident) -> Vec<u16> {

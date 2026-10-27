@@ -4,7 +4,7 @@
 //! model over them, and an exact rank of their chroma. What crosses back is one float, rather than
 //! a sample per pixel up and the whole evaluated plane down again.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Buckets each half of a selection counts into.
 const HALF_BINS: usize = 65536;
@@ -21,8 +21,8 @@ pub(crate) struct Kernels {
     finish: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -82,10 +82,10 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 /// Every pixel of `plane` as a sample the colour model reads, with the lens's falloff the plane
 /// does not carry lifted in.
 pub(crate) fn lifted(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &crate::hdr_fit::Source,
     falloff: Option<(f64, f64)>,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     let storage = wgpu::BufferUsages::STORAGE;
     let sized = |label, words: usize| {
         gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -160,11 +160,11 @@ pub(crate) fn lifted(
 }
 
 fn describing(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     plane: &crate::hdr_fit::Source,
     falloff: bool,
     rank: usize,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt().max(1.0);
     let block: Vec<u8> = [
@@ -188,8 +188,8 @@ fn describing(
 /// The ZCAM chroma of the sample at `rank`, over `evaluated`, which is the model's output over
 /// every pixel of `plane` as [`lifted`].
 pub(crate) async fn ranked_chroma(
-    gpu: &'static crate::gpu::Gpu,
-    evaluated: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    evaluated: &gpu::Buffer,
     plane: &crate::hdr_fit::Source,
     rank: usize,
 ) -> Option<f64> {
@@ -274,7 +274,7 @@ pub(crate) async fn ranked_chroma(
     recording.copy_buffer_to_buffer(&marks, 0, &out, 0, (MARKS * 4) as u64);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &out, |mapped| {
+    let read = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))

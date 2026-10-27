@@ -49,7 +49,7 @@ fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, us
 
 /// Every candidate the frame offers, with no reader's gate applied.
 fn candidates(path: &str) -> Vec<rawshim::dust::Spot> {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let bytes = std::fs::read(path).expect("the file");
     let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("a decoder");
     let sensor = held.glass();

@@ -25,7 +25,7 @@ mod support;
 /// toe at an input of a thousandth is saying near-black renders as grey. Measured that way the
 /// church interior reads 0.55 where a healthy frame reads a few hundredths, and the difference is
 /// visible as flat milky shadows with no separation in them.
-fn toe(gpu: &'static rawshim::gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) -> f64 {
+fn toe(gpu: &'static gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) -> f64 {
     let colour = matched.colour.as_ref().expect("colour");
     let bins: Vec<[f32; 4]> = [1.0f64, 15.0]
         .iter()
@@ -48,7 +48,7 @@ fn toe(gpu: &'static rawshim::gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) ->
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
     assert!(!paths.is_empty(), "anchor_sweep <raw>...");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
 
     println!(
         "{:<16} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}",

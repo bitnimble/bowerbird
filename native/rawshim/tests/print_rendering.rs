@@ -718,7 +718,7 @@ fn drawn_as(
     over_white: f64,
     colour: Option<&HdrColour>,
 ) -> Vec<f32> {
-    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
     let (output, peak_nits, intent) = match shown {
         Shown::Print(_) | Shown::Printed(..) => {

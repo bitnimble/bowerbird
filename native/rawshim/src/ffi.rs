@@ -123,7 +123,7 @@ pub unsafe extern "C" fn bb_describe_jpeg(
     let jpeg = unsafe { std::slice::from_raw_parts(jpeg, len) };
     let out = unsafe { std::slice::from_raw_parts_mut(out, cap) };
     crate::guard("bb_describe_jpeg", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
         let Ok(rgb) = crate::jpeg::decode_tile(jpeg, 0) else {
@@ -658,7 +658,7 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_gpu_adapter(out: *mut u8, out_cap: usize) -> isize {
-    let Some(gpu) = crate::guard("bb_gpu_adapter", None, crate::gpu::device) else {
+    let Some(gpu) = crate::guard("bb_gpu_adapter", None, gpu::device) else {
         return -1;
     };
     unsafe { reply(gpu.adapter.as_bytes(), out, out_cap) }

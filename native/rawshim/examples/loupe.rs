@@ -27,7 +27,7 @@ fn main() {
         side.parse().unwrap(),
     );
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let open_started = std::time::Instant::now();
     let support::Opened { frame, measured } = support::Open::shipped(raw, 0).run().expect("decode");
     let open_seconds = open_started.elapsed().as_secs_f64();

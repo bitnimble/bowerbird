@@ -13,7 +13,7 @@
 // there rather than unwanted.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
-use crate::gpu::{Buffer, Gpu, Recording, Texture, dispatch, read_back};
+use gpu::{Buffer, Gpu, Recording, Texture, dispatch, read_back};
 use crate::hdr_fit::{self, HdrColour};
 
 pub mod colour_wheel;
@@ -339,7 +339,7 @@ struct PrintMaterial {
 
 /// The grade on `gpu`, built on first use and again for each device opened after a loss.
 pub fn device(gpu: &'static Gpu) -> &'static Grader {
-    static BUILT: crate::gpu::Cache<Grader> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<Grader> = gpu::Cache::new();
     BUILT.get(gpu, || Grader::new(gpu))
 }
 
@@ -1045,7 +1045,7 @@ impl Grader {
     /// workgroup 64 of them, so a 61MP frame wants 476k of them against the 65535 a single
     /// dimension allows.
     fn encode_groups(&self, pixels: usize) -> (u32, u32) {
-        crate::base::groups(pixels.div_ceil(2))
+        gpu::compute::groups(pixels.div_ceil(2))
     }
 
     /// Whether a frame of this many pixels fits the adapter in one dispatch.
@@ -4437,7 +4437,7 @@ mod tests {
 
     #[test]
     fn renditions_defer_canvas_and_print_pipelines_and_draws_reuse_them() {
-        let grader = super::Grader::new(crate::gpu::device().expect("a GPU adapter"));
+        let grader = super::Grader::new(gpu::device().expect("a GPU adapter"));
         let grade = super::Grade::new(
             2,
             2,
@@ -4487,7 +4487,7 @@ mod tests {
     /// headroom and all: what a canvas the page draws itself is shown.
     #[test]
     fn a_packed_frame_is_the_frame_it_was_drawn_as() {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let drawn: [[f32; 3]; 6] = [
             [0.0, 0.0, 0.0],
             [0.5, 0.25, 0.125],
@@ -4516,7 +4516,7 @@ mod tests {
     /// PNG holds: neutral levels unmoved, and a primary at the edge of sRGB at sRGB's own primary.
     #[test]
     fn a_thumbnail_is_packed_as_the_srgb_it_was_proofed_to() {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let p3_of_srgb_red = {
             let to_rec2020 = crate::hdr_fit::srgb_to_rec2020();
             let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
@@ -4551,7 +4551,7 @@ mod tests {
     #[test]
     fn the_video_planes_code_what_the_canvas_would_show() {
         use units::light::{DisplayNits, Light};
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let (width, height) = (7u32, 5u32);
         // What `fs` writes: Display P3 over SDR white through the signed sRGB curve, past one for
         // highlights and below zero for a colour outside P3.
@@ -4711,7 +4711,7 @@ mod tests {
     /// geometry that sends each output row somewhere across the frame.
     #[test]
     fn a_grade_written_in_bands_is_the_grade_written_whole() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (width, height) = (53usize, 37usize);
@@ -5138,7 +5138,7 @@ mod tests {
 
     #[test]
     fn raising_the_curve_origin_lifts_black() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let frame = vec![0u16; 16 * 16 * 3];
         let render = |curve| {
             let grade = super::Grade {
@@ -5195,7 +5195,7 @@ mod tests {
     /// would be the cubic's own spread rather than anything the two hosts disagree about.
     #[test]
     fn the_draw_shows_what_the_rendition_ships() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -5336,7 +5336,7 @@ mod tests {
 
     #[test]
     fn the_reach_mask_darkens_what_the_edit_does_not_reach() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -5432,7 +5432,7 @@ mod tests {
     /// reading the level transposed lands in another block rather than the same value.
     #[test]
     fn the_zoomed_out_draw_reads_the_level_the_frame_would() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -5570,7 +5570,7 @@ mod tests {
     /// agree with a measurement of the whole frame after that compression.
     #[test]
     fn the_kept_candidates_answer_as_the_whole_sample_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
 
         let mut colour = crate::hdr_fit::HdrColour {
             curve: vec![[0.0, 0.0], [0.5, 0.43], [1.0, 0.83]],
@@ -5714,7 +5714,7 @@ mod tests {
     /// can tint this grey is having been read at the wrong level.
     #[test]
     fn the_exposure_does_not_move_which_lattice_node_the_match_reads() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
 
         let (width, height) = (32usize, 32usize);
         let frame: Vec<u16> = vec![24000; width * height * 3];
@@ -5782,7 +5782,7 @@ mod tests {
 
     #[test]
     fn the_cameras_own_curve_renders_the_match_as_fitted() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
 
         let (width, height) = (64usize, 64usize);
         // Every level from black past diffuse white, so each zone and the contrast's pivot are
@@ -5914,7 +5914,7 @@ mod tests {
     /// [`Uploaded`], which is the shape a tick has and the shape a rendition never has.
     #[test]
     fn the_balance_follows_the_slider_after_the_frame_is_up() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -5989,7 +5989,7 @@ mod tests {
     /// what has to be true is that the editor and a rendition are one implementation.
     #[test]
     fn a_neighbourhood_slider_reaches_a_frame_that_is_already_up() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -6161,7 +6161,7 @@ mod tests {
     /// balances and one that does not.
     #[test]
     fn a_temperature_drag_draws_what_a_rendition_of_it_renders() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
 
         let (width, height) = (64usize, 64usize);
         let mut frame: Vec<u16> = (0..width * height * 3)
@@ -6236,7 +6236,7 @@ mod tests {
 
     #[test]
     fn a_neutral_draw_over_a_matched_upload_is_the_neutral_picture() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = gpu::device() else { return };
         let Some(base) = crate::base::device(gpu) else {
             return;
         };
@@ -6317,7 +6317,7 @@ mod tests {
     /// happens to look plausible is exactly what this is trying not to accept.
     #[test]
     fn the_shader_solves_the_illuminant_this_crate_reads_back() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!(
                 "SKIPPED: no adapter answered, so the white balance maps were not compared. \
                  Nothing else checks that the shader and this crate agree about an illuminant.",
@@ -6490,7 +6490,7 @@ mod tests {
     /// straighten in both directions, each quarter turn, and the two composed.
     #[test]
     fn the_draw_places_a_pixel_where_the_gather_does() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!(
                 "SKIPPED: no adapter answered, so the editor's crop was not compared with the \
                  gather's. Nothing else checks that the preview is the picture.",

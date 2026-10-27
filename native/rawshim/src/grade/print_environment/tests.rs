@@ -1,12 +1,12 @@
 use super::*;
-use crate::gpu::Gpu;
 use crate::print::Scene;
 use crate::print::environment::ENVIRONMENTS;
+use gpu::Gpu;
 
 fn floats(
     gpu: &Gpu,
-    mut recording: crate::gpu::Recording<'_>,
-    from: &crate::gpu::Buffer,
+    mut recording: gpu::Recording<'_>,
+    from: &gpu::Buffer,
     count: usize,
 ) -> Vec<f32> {
     let bytes = (count * 4) as u64;
@@ -18,7 +18,7 @@ fn floats(
     });
     recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
     recording.submit();
-    pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
+    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
         bytes
             .chunks_exact(4)
             .map(|word| f32::from_le_bytes(word.try_into().expect("a float")))
@@ -96,7 +96,7 @@ fn measured(gpu: &Gpu, environment: Environment) -> (Vec<f32>, u32) {
             },
         ],
     });
-    recording.dispatch([1, 1, 1], crate::gpu::dispatch::Whole::Fixed, |pass| {
+    recording.dispatch([1, 1, 1], gpu::dispatch::Whole::Fixed, |pass| {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
     });
@@ -105,7 +105,7 @@ fn measured(gpu: &Gpu, environment: Environment) -> (Vec<f32>, u32) {
 
 #[test]
 fn each_environments_lamp_is_the_light_it_takes_out_of_its_map() {
-    let gpu = crate::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     for environment in ENVIRONMENTS {
         let (lamp, width) = measured(gpu, environment);
         let scene = Scene::default().in_environment(environment);
@@ -166,7 +166,7 @@ fn each_environments_lamp_is_the_light_it_takes_out_of_its_map() {
 
 #[test]
 fn another_lamp_in_the_same_room_calibrates_as_if_from_scratch() {
-    let gpu = crate::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     let words = (crate::print::CALIBRATION_BYTES / 4) as usize;
     let scene = Scene::default().in_environment(Environment::Hotel);
     let map = crate::grade::device(gpu)

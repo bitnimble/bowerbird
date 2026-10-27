@@ -312,7 +312,7 @@ mod tests {
         sigma_sq: 0.000001,
     };
 
-    fn read(gpu: &'static crate::gpu::Gpu, buffer: &crate::gpu::Buffer, count: usize) -> Vec<f32> {
+    fn read(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, count: usize) -> Vec<f32> {
         pollster::block_on(align::read_floats(gpu, buffer, count)).expect("read back")
     }
 
@@ -338,7 +338,7 @@ mod tests {
     }
 
     fn accuracy(case: Case) -> Option<Accuracy> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let burst = Burst {
             width: WIDTH,
             height: HEIGHT,
@@ -589,7 +589,7 @@ mod tests {
                 ceilings: [1.0; 4],
             },
         };
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let mut random = Random(0x5eed);
         let mut around = |reach: f64| (random.next() * 2.0 - 1.0) * reach;
         let shakes = (0..frames)
@@ -830,7 +830,7 @@ mod tests {
 
     #[test]
     fn a_merge_at_2x_remosaics_and_pastes_onto_the_magnified_region() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let quad = [0, 1, 1, 2];

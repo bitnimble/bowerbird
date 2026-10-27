@@ -1,6 +1,6 @@
-use crate::gpu::{self, Gpu, Texture};
 use crate::grade::{Canvas, Grade, Uploaded};
 use crate::print::{Presentation, Scene};
+use gpu::{self, Gpu, Texture};
 use units::light::{Light, SceneNits, Stops};
 use units::px::{Extent, Size};
 

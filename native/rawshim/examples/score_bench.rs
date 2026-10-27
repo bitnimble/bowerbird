@@ -31,7 +31,7 @@ const REPEATS: usize = 40;
 const BLOCK: usize = 256;
 
 fn main() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("score_bench: no adapter");
         std::process::exit(2);
     };
@@ -54,7 +54,7 @@ fn main() {
     }
 }
 
-fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
+fn scoring(gpu: &'static gpu::Gpu, pairs: usize) -> Scoring {
     // A spread rather than a constant: the neutral arm of `delta_e2000` is a different path, and a
     // frame is a mix of the two.
     let mut state = 0x2545_f491_4f6c_dd1du64;

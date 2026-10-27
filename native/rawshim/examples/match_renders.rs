@@ -37,7 +37,7 @@ fn main() {
         .collect();
     paths.sort();
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let options = EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),

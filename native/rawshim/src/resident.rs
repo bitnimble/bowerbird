@@ -12,8 +12,8 @@
 /// The dimensions travel with the buffer because every stage below needs them and a buffer that
 /// carries its own cannot be handed to a pass sized for a different frame.
 pub struct Resident {
-    gpu: &'static crate::gpu::Gpu,
-    buffer: crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    buffer: gpu::Buffer,
     pub width: usize,
     pub height: usize,
 }
@@ -112,7 +112,7 @@ impl Resident {
     /// `COPY_DST` as well as `COPY_SRC`, so one buffer serves a gather's destination and an
     /// upload's: distinguishing them buys a usage flag and costs a second type that every stage
     /// would have to be generic over.
-    pub fn empty(gpu: &'static crate::gpu::Gpu, width: usize, height: usize) -> Resident {
+    pub fn empty(gpu: &'static gpu::Gpu, width: usize, height: usize) -> Resident {
         let words = (width * height * 3).div_ceil(2);
         let buffer = gpu.own_buffer(&wgpu::BufferDescriptor {
             label: Some("frame"),
@@ -135,7 +135,7 @@ impl Resident {
     /// The entry to the resident half. Every stage after this one takes a `Resident`, so a
     /// pipeline uploads here and nowhere else.
     pub fn upload(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: &[u16],
         width: usize,
         height: usize,
@@ -156,12 +156,12 @@ impl Resident {
         frame
     }
 
-    pub fn gpu(&self) -> &'static crate::gpu::Gpu {
+    pub fn gpu(&self) -> &'static gpu::Gpu {
         self.gpu
     }
 
     /// The buffer itself, for a pass being recorded against it.
-    pub fn buffer(&self) -> &crate::gpu::Buffer {
+    pub fn buffer(&self) -> &gpu::Buffer {
         &self.buffer
     }
 
@@ -216,7 +216,7 @@ impl Resident {
     /// Submits `recording` and copies the frame back over `samples`.
     pub async fn read_into(
         &self,
-        recording: &mut crate::gpu::Recording<'_>,
+        recording: &mut gpu::Recording<'_>,
         samples: &mut [u16],
     ) -> Option<()> {
         let bytes = (self.words() * 4) as u64;
@@ -229,7 +229,7 @@ impl Resident {
         recording.copy_buffer_to_buffer(&self.buffer, 0, &readback, 0, bytes);
         recording.submit();
 
-        crate::gpu::read_back(self.gpu, &readback, |mapped| {
+        gpu::read_back(self.gpu, &readback, |mapped| {
             samples.copy_from_slice(&samples_of(mapped)[..samples.len()]);
         })
         .await
@@ -240,7 +240,7 @@ impl Resident {
     /// **Says the frame is finished with; does not wait for it to go.** `destroy` on a buffer whose
     /// last submission is still in flight only schedules the release against that submission, and
     /// `PollType::Poll` checks once without blocking - so a reclaim straight after a submit retires
-    /// nothing, and the memory comes back at whatever poll follows. [`crate::gpu::finished`] is the
+    /// nothing, and the memory comes back at whatever poll follows. [`gpu::finished`] is the
     /// spelling that waits, and costs a stall to do it.
     ///
     /// About *when*, not whether: the last handle releases it either way.

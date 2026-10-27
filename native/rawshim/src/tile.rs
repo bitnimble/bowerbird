@@ -225,7 +225,7 @@ pub fn prepared(source: Source<'_>, request: &TileRequest) -> Result<Prepared, S
 }
 
 /// The same, awaited: the readback below cannot be blocked for in a tab
-/// ([`crate::gpu::read_back`] says why).
+/// ([`gpu::read_back`] says why).
 pub async fn prepared_async(source: Source<'_>, request: &TileRequest) -> Result<Prepared, String> {
     let (frame, mut prepared) = prepared_on_device(source, request).await?;
     prepared.samples = frame
@@ -336,7 +336,7 @@ pub async fn prepared_on_device(
     let refused = || {
         crate::base::without_a_device("the coding, the defringe, the lens gather and the sharpen")
     };
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     // This crop's own, and the photograph's by construction: the matrix is built from the file's
     // illuminant and colour matrix (`decode_rawler::camera_to_rec2020`) rather than from any pixel,

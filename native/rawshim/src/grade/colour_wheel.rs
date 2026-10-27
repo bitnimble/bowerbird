@@ -31,7 +31,7 @@ const PROBE_BINDINGS: [(u32, Binding); 14] = [
 ];
 
 impl Pipelines {
-    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
+    pub(super) fn new(device: &gpu::Describing<'_>) -> Self {
         let wheel = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("colour wheel"),
             source: wgpu::ShaderSource::Wgsl(shaders::COLOUR_WHEEL.source.into()),
@@ -288,7 +288,7 @@ pub struct Probed {
 }
 
 pub struct Probing {
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     scatter: (Buffer, usize),
     field: (Buffer, usize),
 }
@@ -309,8 +309,8 @@ impl Probing {
             }
         };
         Some(Probed {
-            scatter: crate::gpu::read_back(self.gpu, &self.scatter.0, read(self.scatter.1)).await?,
-            field: crate::gpu::read_back(self.gpu, &self.field.0, read(self.field.1)).await?,
+            scatter: gpu::read_back(self.gpu, &self.scatter.0, read(self.scatter.1)).await?,
+            field: gpu::read_back(self.gpu, &self.field.0, read(self.field.1)).await?,
         })
     }
 }
@@ -432,7 +432,7 @@ impl Uploaded<'static> {
         let (scatter_group, field_group) = (group(&scattered.0), group(&fielded.0));
         recording.dispatch(
             [(dots as u32).div_ceil(64), 1, 1],
-            crate::gpu::dispatch::Whole::Fixed,
+            gpu::dispatch::Whole::Fixed,
             |pass| {
                 pass.set_pipeline(&built.scatter);
                 pass.set_bind_group(0, &scatter_group, &[]);
@@ -441,7 +441,7 @@ impl Uploaded<'static> {
         if !places.is_empty() {
             recording.dispatch(
                 [(places.len() as u32).div_ceil(64), 1, 1],
-                crate::gpu::dispatch::Whole::Fixed,
+                gpu::dispatch::Whole::Fixed,
                 |pass| {
                     pass.set_pipeline(&built.field);
                     pass.set_bind_group(0, &field_group, &[]);
@@ -485,7 +485,7 @@ mod tests {
     }
 
     /// Each pixel's coded P3, row by row.
-    fn drawn(gpu: &'static crate::gpu::Gpu, backdrop: &Backdrop) -> Vec<[f64; 3]> {
+    fn drawn(gpu: &'static gpu::Gpu, backdrop: &Backdrop) -> Vec<[f64; 3]> {
         let target = gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("wheel"),
             size: wgpu::Extent3d {
@@ -528,8 +528,8 @@ mod tests {
             target.size(),
         );
         recording.submit();
-        let bytes = pollster::block_on(crate::gpu::read_back(gpu, &staged, |b| b.to_vec()))
-            .expect("read back");
+        let bytes =
+            pollster::block_on(gpu::read_back(gpu, &staged, |b| b.to_vec())).expect("read back");
         (0..SIDE as usize * SIDE as usize)
             .map(|i| {
                 let at = (i / SIDE as usize) * row + (i % SIDE as usize) * 8;
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn the_backdrop_draws_each_place_at_its_colour() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let backdrop = backdrop(None);
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn a_selected_node_darkens_what_it_does_not_reach() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (x, y) = (24, 9);
@@ -627,7 +627,7 @@ mod tests {
             EDITOR.contains(&line),
             "colour_wheel_editor.tsx does not say `{line}`"
         );
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let ([a, b], [ta, tb]) = (out_at(24, 9), out_at(8, 8));
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn a_nodes_hue_reach_is_where_it_moves_half_as_far() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         // Mirrored across the axis, so one sits on the other's hue edge at its own chroma.

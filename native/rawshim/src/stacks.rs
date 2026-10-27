@@ -16,8 +16,8 @@
 //! perceptual hash survives none of it well enough to be worth a threshold; see
 //! the design document for the measurements that settled this shape.
 
-use crate::gpu::dispatch::Whole;
 use crate::image::LUMA;
+use gpu::dispatch::Whole;
 use units::rgb::RgbRef;
 
 /// Cells along one edge of the luma and chroma grids.
@@ -243,8 +243,8 @@ struct Kernels {
     cells: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -306,7 +306,7 @@ fn params_block(
 ///
 /// The frame goes up as its own bytes, four samples to a word: it is 8-bit interleaved RGB, and
 /// as floats it would be four times the transfer for a sum of small integers.
-async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<[Cells; 2]> {
+async fn accumulate(gpu: &'static gpu::Gpu, image: RgbRef<'_>) -> Option<[Cells; 2]> {
     let pixels = image.width * image.height;
     if pixels == 0 || image.data.len() < pixels * 3 {
         return None;
@@ -372,7 +372,7 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
     recording.copy_buffer_to_buffer(&sums, 0, &out, 0, sums_bytes);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &out, |mapped| {
+    let read = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
@@ -407,7 +407,7 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
 ///
 /// None where the device declined to hand the grids back, which leaves the photograph out of the
 /// stacking rather than out of the library.
-pub fn describe(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<Vec<u8>> {
+pub fn describe(gpu: &'static gpu::Gpu, image: RgbRef<'_>) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(DESCRIPTOR_BYTES);
     out.resize(HEADER, FORMAT);
     for cells in pollster::block_on(accumulate(gpu, image))? {
@@ -621,12 +621,7 @@ mod tests {
         data
     }
 
-    fn describe_frame(
-        gpu: &'static crate::gpu::Gpu,
-        width: usize,
-        height: usize,
-        data: &[u8],
-    ) -> Vec<u8> {
+    fn describe_frame(gpu: &'static gpu::Gpu, width: usize, height: usize, data: &[u8]) -> Vec<u8> {
         describe(
             gpu,
             RgbRef {
@@ -661,7 +656,7 @@ mod tests {
 
     #[test]
     fn descriptor_is_the_declared_size() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let data = scene(1.0, 0.0);
@@ -670,7 +665,7 @@ mod tests {
 
     #[test]
     fn a_frame_matches_itself_exactly() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let data = scene(1.0, 0.0);
@@ -682,7 +677,7 @@ mod tests {
     /// what lets a descriptor written months ago be compared against one taken now.
     #[test]
     fn describing_one_frame_twice_gives_the_same_bytes() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let data = scene(1.0, 0.0);
@@ -694,7 +689,7 @@ mod tests {
 
     #[test]
     fn each_cell_sums_the_pixels_the_cell_rule_puts_in_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (width, height) = (997, 613);
@@ -731,7 +726,7 @@ mod tests {
 
     #[test]
     fn similarity_is_symmetric() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (a, b) = (scene(1.0, 0.0), scene(0.7, 0.04));
@@ -746,7 +741,7 @@ mod tests {
     /// still reads as that scene: a monotonic curve cannot reorder the cells.
     #[test]
     fn exposure_change_leaves_the_descriptor_alone() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (bright, dark) = (scene(1.0, 0.0), scene(0.55, 0.0));
@@ -764,7 +759,7 @@ mod tests {
     /// Aspect is squashed, so a crop or a second body must not read as a change.
     #[test]
     fn aspect_ratio_alone_is_not_a_difference() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let wide = frame(200, 100, |_, y| [(220.0 - 160.0 * y) as u8; 3]);
@@ -784,7 +779,7 @@ mod tests {
     /// pictures, and the score has to say so well below any usable threshold.
     #[test]
     fn a_different_scene_scores_far_lower() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let sky = scene(1.0, 0.0);
@@ -804,7 +799,7 @@ mod tests {
 
     #[test]
     fn grouping_needs_two_to_make_a_stack() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let data = scene(1.0, 0.0);
@@ -814,7 +809,7 @@ mod tests {
 
     #[test]
     fn alike_and_adjacent_frames_stack() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(0.9, 0.01), scene(0.95, 0.0)];
@@ -829,7 +824,7 @@ mod tests {
     /// when they are otherwise identical.
     #[test]
     fn a_gap_wider_than_the_window_ends_a_stack() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0), scene(1.0, 0.0)];
@@ -844,7 +839,7 @@ mod tests {
     /// first, so the stack has to end rather than chain onto it.
     #[test]
     fn a_frame_unlike_the_first_member_starts_a_new_stack() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0)];
@@ -872,7 +867,7 @@ mod tests {
 
     #[test]
     fn a_repeating_pattern_still_matches_itself() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let data = striped();
@@ -883,7 +878,7 @@ mod tests {
     /// A pan, which the two directions weigh differently unless both are taken.
     #[test]
     fn similarity_is_symmetric_under_a_pan() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let base = scene(1.0, 0.0);
@@ -909,7 +904,7 @@ mod tests {
     /// which frame the walk reached first.
     #[test]
     fn grouping_does_not_depend_on_order() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(0.85, 0.03)];
@@ -934,7 +929,7 @@ mod tests {
     /// across the FFI boundary.
     #[test]
     fn an_extreme_timestamp_gap_is_not_adjacent() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0)];
@@ -950,7 +945,7 @@ mod tests {
 
     #[test]
     fn a_lower_threshold_admits_more() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let frames = [scene(1.0, 0.0), scene(0.4, 0.08)];

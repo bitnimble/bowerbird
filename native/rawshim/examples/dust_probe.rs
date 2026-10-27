@@ -37,7 +37,7 @@ fn main() {
         eprintln!("usage: dust_probe <raw>...");
         return;
     }
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no Vulkan adapter answered");
         return;
     };

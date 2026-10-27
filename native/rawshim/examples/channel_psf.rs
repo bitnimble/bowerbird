@@ -76,7 +76,7 @@ fn main() {
 
 /// What the shipping estimate makes of the same frame, off the pipeline's own decode.
 fn fitted(path: &str) -> String {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         return "no adapter".to_string();
     };
     let Some(base) = rawshim::base::device(gpu) else {

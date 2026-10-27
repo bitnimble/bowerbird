@@ -6,6 +6,11 @@
 //! through every caller, because the alternative is threading a device through
 //! `job::run` -> `hdr::graded` -> `tone` for a resource there is exactly one of.
 
+#![deny(unsafe_code)]
+#![deny(unfulfilled_lint_expectations)]
+#![deny(unsafe_op_in_unsafe_fn)]
+
+pub mod compute;
 pub mod dispatch;
 
 pub struct Gpu {
@@ -20,7 +25,7 @@ pub struct Gpu {
     /// machine that genuinely has no GPU.
     pub adapter: String,
     /// Which API answered, because one kernel is handed to the driver as it stands and a driver
-    /// takes only its own ([`crate::pmrid`]'s cooperative matrices, SPIR-V on Vulkan and MSL on
+    /// takes only its own (`pmrid`'s cooperative matrices, SPIR-V on Vulkan and MSL on
     /// Metal).
     pub backend: wgpu::Backend,
     /// How many workgroups a whole-frame reduction splits into to fill this device.
@@ -217,7 +222,7 @@ pub const MOST_STORAGE_BUFFERS: u32 = 9;
 ///
 /// Timestamps size [`Recording::banded`]'s bands; without them a band stays its first size.
 ///
-/// The other three are one thing: PMRID's 1x1 convolutions on the matrix units ([`crate::pmrid`]).
+/// The other three are one thing: PMRID's 1x1 convolutions on the matrix units (`pmrid`).
 /// WGSL cannot spell a cooperative matrix, so that kernel is handed to the driver in the driver's
 /// own language - SPIR-V on Vulkan, MSL on Metal - and dispatched with its shape in immediate data,
 /// and the whole arrangement is on *this* device rather than a second one, so the frame it filters
@@ -467,7 +472,7 @@ impl Describing<'_> {
     ///
     /// Nothing checks the module: what it declares has to be what the pipeline layout it is built
     /// with says, and a mismatch is undefined rather than refused. For the one kernel WGSL cannot
-    /// say ([`crate::pmrid`]'s cooperative matrices).
+    /// say (`pmrid`'s cooperative matrices).
     #[expect(unsafe_code)]
     pub unsafe fn create_shader_module_passthrough(
         &self,

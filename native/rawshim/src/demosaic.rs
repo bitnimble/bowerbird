@@ -8,7 +8,7 @@
 //! Six stages, each a pure map over its site set, so each is one dispatch and nothing inside a
 //! stage depends on anything else the same stage writes.
 
-use crate::gpu::dispatch::{Banded, Pass, Whole};
+use gpu::dispatch::{Banded, Pass, Whole};
 
 /// Pixels at the frame edge that RCD does not write, filled by a cheap interpolation instead.
 ///
@@ -47,8 +47,8 @@ pub struct Rcd {
     assemble_thirded: Banded,
 }
 
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Rcd> {
-    static BUILT: crate::gpu::Cache<Option<Rcd>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Rcd> {
+    static BUILT: gpu::Cache<Option<Rcd>> = gpu::Cache::new();
     BUILT.get(gpu, || Rcd::new(gpu)).as_ref()
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn assemble_block() -> usize {
 }
 
 impl Rcd {
-    fn new(gpu: &crate::gpu::Gpu) -> Option<Rcd> {
+    fn new(gpu: &gpu::Gpu) -> Option<Rcd> {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rcd"),
@@ -352,7 +352,7 @@ impl Placement {
                 (grid.across as u32).div_ceil(PATCH).max(1),
                 (grid.rows as u32).div_ceil(PATCH).max(1),
             ),
-            None => crate::base::groups(self.words().len()),
+            None => gpu::compute::groups(self.words().len()),
         }
     }
 
@@ -366,7 +366,7 @@ impl Placement {
             ),
             None => {
                 let words = self.words();
-                crate::base::groups((words.end - 1) / 3 - words.start / 3 + 1)
+                gpu::compute::groups((words.end - 1) / 3 - words.start / 3 + 1)
             }
         }
     }
@@ -533,14 +533,14 @@ fn assemble_params(at: &Placement, colour: Colour, seen: crate::highlight::Seen<
 /// it as `seen`'s `Colouring` keeps.
 #[allow(clippy::too_many_arguments)]
 pub async fn demosaic_into(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
     seen: crate::highlight::Seen<'_>,
-    into: &crate::gpu::Buffer,
+    into: &gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
     demosaic_settled_into(
@@ -562,16 +562,16 @@ pub async fn demosaic_into(
 /// the plane RCD wrote - three `f32` a site of `mosaic` - to rewrite in place.
 #[allow(clippy::too_many_arguments)]
 pub async fn demosaic_settled_into(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
     seen: crate::highlight::Seen<'_>,
-    into: &crate::gpu::Buffer,
+    into: &gpu::Buffer,
     shape_group: &wgpu::BindGroup,
-    settle: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer),
+    settle: impl FnOnce(&mut gpu::Recording<'static>, &gpu::Buffer),
 ) -> Option<()> {
     let Recorded {
         mut recording, rgb, ..
@@ -598,7 +598,7 @@ pub async fn demosaic_settled_into(
 /// `upscaled_shape` is the upscale's.
 #[allow(clippy::too_many_arguments)]
 pub async fn demosaic_halved_into(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     upscaled: &crate::condition::Mosaic,
     upscaled_shape: &wgpu::BindGroup,
@@ -606,9 +606,9 @@ pub async fn demosaic_halved_into(
     at: &Placement,
     colour: Colour,
     seen: crate::highlight::Seen<'_>,
-    into: &crate::gpu::Buffer,
+    into: &gpu::Buffer,
     shape_group: &wgpu::BindGroup,
-    halve: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer) -> crate::gpu::Buffer,
+    halve: impl FnOnce(&mut gpu::Recording<'static>, &gpu::Buffer) -> gpu::Buffer,
 ) -> Option<()> {
     let Recorded {
         mut recording, rgb, ..
@@ -633,15 +633,15 @@ pub async fn demosaic_halved_into(
 /// already holds.
 #[allow(clippy::too_many_arguments)]
 async fn assembled(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
-    mut recording: crate::gpu::Recording<'static>,
-    rgb: &crate::gpu::Buffer,
+    mut recording: gpu::Recording<'static>,
+    rgb: &gpu::Buffer,
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
     seen: crate::highlight::Seen<'_>,
-    into: &crate::gpu::Buffer,
+    into: &gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
     recording.holding(into);
@@ -734,7 +734,7 @@ async fn assembled(
     // sample of this tile and one of its neighbour, so it is read and put back rather than
     // overwritten - which is only safe if the neighbour's write has already landed.
     recording.submit();
-    crate::gpu::finished(gpu).await
+    gpu::finished(gpu).await
 }
 
 /// The reduced frame, read straight off the mosaic, with no demosaic between.
@@ -748,13 +748,13 @@ async fn assembled(
 /// It is the same destination write as [`demosaic_into`], down to the orientation and the shared
 /// boundary words; only the fetch differs, and `assemble.slang` keeps the two adjacent.
 pub async fn reduce_into(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     at: &Placement,
     colour: Colour,
     seen: crate::highlight::Seen<'_>,
-    into: &crate::gpu::Buffer,
+    into: &gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
     let mut recording = gpu.record();
@@ -798,11 +798,11 @@ pub async fn reduce_into(
         pass.set_bind_group(1, &group, &[]);
     });
     recording.submit();
-    crate::gpu::finished(gpu).await
+    gpu::finished(gpu).await
 }
 
 /// Room for a whole oriented frame, and the readback that empties it.
-pub fn frame_buffer(gpu: &crate::gpu::Gpu, pixels: usize) -> crate::gpu::Buffer {
+pub fn frame_buffer(gpu: &gpu::Gpu, pixels: usize) -> gpu::Buffer {
     gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("rcd rec2020"),
         size: (((pixels * 3).div_ceil(2) * 4).max(4)) as u64,
@@ -814,11 +814,7 @@ pub fn frame_buffer(gpu: &crate::gpu::Gpu, pixels: usize) -> crate::gpu::Buffer 
 }
 
 /// The finished frame, on the host.
-pub async fn read_frame(
-    gpu: &crate::gpu::Gpu,
-    frame: &crate::gpu::Buffer,
-    pixels: usize,
-) -> Option<Vec<u16>> {
+pub async fn read_frame(gpu: &gpu::Gpu, frame: &gpu::Buffer, pixels: usize) -> Option<Vec<u16>> {
     let bytes = ((pixels * 3).div_ceil(2) * 4).max(4) as u64;
     let mut recording = gpu.record();
     let readback = recording.buffer(&wgpu::BufferDescriptor {
@@ -831,7 +827,7 @@ pub async fn read_frame(
     recording.submit();
 
     let mut out = vec![0u16; pixels * 3];
-    crate::gpu::read_back(gpu, &readback, |mapped| {
+    gpu::read_back(gpu, &readback, |mapped| {
         for (sample, pair) in out.iter_mut().zip(mapped.chunks_exact(2)) {
             *sample = u16::from_le_bytes([pair[0], pair[1]]);
         }
@@ -847,7 +843,7 @@ pub async fn read_frame(
 /// the negatives a reconstruction is allowed to produce. Nothing that renders takes this route -
 /// it is the same dispatch, read one stage earlier.
 pub async fn demosaic_plane<T>(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -873,16 +869,16 @@ pub async fn demosaic_plane<T>(
     });
     recording.copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
     recording.submit();
-    crate::gpu::read_back(gpu, &readback, consume).await
+    gpu::read_back(gpu, &readback, consume).await
 }
 
 /// [`demosaic_plane`] left on the device, for a merge to gather its frames' residuals against.
 pub fn demosaic_resident(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
-) -> Option<crate::gpu::Buffer> {
+) -> Option<gpu::Buffer> {
     let margin = match cfa.is_bayer() {
         true => MARGIN,
         false => crate::lslcd::MARGIN,
@@ -903,7 +899,7 @@ pub fn demosaic_resident(
 /// demultiplexing answers for any period it can decompose, which today is X-Trans. A pattern neither
 /// takes is a decode that reads nothing rather than one that renders in the wrong colours.
 fn record(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -927,12 +923,12 @@ fn record(
 /// The buffer comes back with the group because it has to outlive it, and a recording's would not:
 /// each tile submits its own.
 pub fn shape_group(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     rcd: &Rcd,
     cfa: &crate::cfa::Cfa,
     mosaic: &crate::condition::Mosaic,
     margin: u32,
-) -> (crate::gpu::Buffer, wgpu::BindGroup) {
+) -> (gpu::Buffer, wgpu::BindGroup) {
     let shape = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("mosaic shape"),
         contents: bytemuck::bytes_of(&cfa.shape(mosaic.width, mosaic.height, margin)),
@@ -958,15 +954,15 @@ pub fn shape_group(
 /// A demosaic dispatched, with its recording still open: the plane it writes, and the description
 /// of the frame that `assemble.slang` reads next out of the same group 0.
 pub struct Recorded {
-    pub recording: crate::gpu::Recording<'static>,
-    pub rgb: crate::gpu::Buffer,
+    pub recording: gpu::Recording<'static>,
+    pub rgb: gpu::Buffer,
     pub width: usize,
     pub height: usize,
 }
 
 /// RCD's own dispatches, recorded into `recording`, with the plane they write.
 fn record_rcd(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &Rcd,
     mosaic: &crate::condition::Mosaic,
     shape_group: &wgpu::BindGroup,
@@ -1099,7 +1095,7 @@ mod tests {
     /// side, "comfortably more than the algorithm's own margin", which is exactly the band at issue.
     #[test]
     fn the_seam_reconstructs_as_well_as_the_interior() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1166,7 +1162,7 @@ mod tests {
     /// through the ratio where a low-pass sits at or below it.
     #[test]
     fn noise_about_black_demosaics_to_black() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1228,7 +1224,7 @@ mod tests {
     /// count (the tail word a pair-per-invocation kernel leaves half-written).
     #[test]
     fn the_assemble_pass_colours_and_crops_where_it_is_told() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1341,7 +1337,7 @@ mod tests {
     /// camera 3x3 mixes the channels and a neutral would no longer be three equal numbers.
     #[test]
     fn a_pixel_blown_in_every_channel_comes_back_neutral() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1385,7 +1381,7 @@ mod tests {
     /// its own - which the uncapped estimate rendered deep red where the camera renders orange.
     #[test]
     fn a_deep_orange_light_is_not_raised_past_its_ceilings() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1425,7 +1421,7 @@ mod tests {
     /// blue, which is a tungsten lamp's rim on a wall.
     #[test]
     fn a_blown_neutral_is_not_left_at_greens_ceiling() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1461,7 +1457,7 @@ mod tests {
     /// pixel than the one that scales its chroma toward its own luma until blue reaches the floor.
     #[test]
     fn a_colour_outside_rec2020_is_brought_in_without_turning() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1528,7 +1524,7 @@ mod tests {
     /// magenta ring where the second channel runs out.
     #[test]
     fn the_sun_comes_back_white_at_its_disc() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1554,7 +1550,7 @@ mod tests {
     /// green's ceiling, that is a magenta band a stop and a half wide around every blown patch.
     #[test]
     fn a_blown_rock_does_not_turn_magenta() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1575,7 +1571,7 @@ mod tests {
     /// chroma stage that blurs colour past what the sensor resolved washes out.
     #[test]
     fn painted_beams_keep_their_fine_colour() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1636,7 +1632,7 @@ mod tests {
         const INSET: usize = 16;
 
         fn read(
-            gpu: &'static crate::gpu::Gpu,
+            gpu: &'static gpu::Gpu,
             rcd: &'static super::Rcd,
             name: &str,
             (w, h): (usize, usize),
@@ -1720,7 +1716,7 @@ mod tests {
             census
         }
 
-        fn snapshot(&self, gpu: &'static crate::gpu::Gpu) -> crate::snapshot::Snapshot {
+        fn snapshot(&self, gpu: &'static gpu::Gpu) -> crate::snapshot::Snapshot {
             let levels = crate::hdr::levels_of(gpu, &self.rgb, self.width, self.height, 0.995)
                 .expect("the window has levels");
             let resident =
@@ -1786,7 +1782,7 @@ mod tests {
     /// Flat, so RCD reconstructs it exactly and what is measured is the colour pass rather than
     /// the interpolation under it.
     fn flat_field(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         rcd: &'static super::Rcd,
         colour: super::Colour,
         level: [f32; 3],
@@ -1815,7 +1811,7 @@ mod tests {
 
     /// `crop` of an RGGB `mosaic` through the demosaic and the colour pass, unturned, as stored.
     fn demosaiced(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         rcd: &'static super::Rcd,
         mosaic: &[f32],
         (w, h): (usize, usize),
@@ -1861,7 +1857,7 @@ mod tests {
     /// pale one, at the default Highlight recovery.
     #[test]
     fn a_blown_disc_takes_a_vivid_lights_colour_and_not_a_pale_ones() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
@@ -1884,7 +1880,7 @@ mod tests {
     /// The middle pixel of a disc on every ceiling, inside a flat `surround`, through the demosaic
     /// and the colour pass at the identity.
     fn blown_disc(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         rcd: &'static super::Rcd,
         surround: [f32; 3],
     ) -> [f32; 3] {
@@ -1931,7 +1927,7 @@ mod tests {
     /// way a square of flat blocks would.
     #[test]
     fn every_orientation_lands_where_the_host_permutation_did() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {

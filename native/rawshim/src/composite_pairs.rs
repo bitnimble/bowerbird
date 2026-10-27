@@ -7,10 +7,9 @@
 //! offset already believed, which is the only affordable way to answer the same question densely
 //! at a preview's own size.
 
-use crate::gpu::dispatch::Whole;
-use crate::hdr_fit::{
-    DevicePlane, Kernel, READ, Reach, Source, UNIFORM, WRITE, corresponded_about, kernel,
-};
+use crate::hdr_fit::{DevicePlane, Reach, Source, corresponded_about};
+use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel};
+use gpu::dispatch::Whole;
 
 /// The long edge both planes are reduced to for the coarse search, as `composite_coarse.slang` says.
 pub const COARSE_LONG: usize = 202;
@@ -33,8 +32,8 @@ pub struct Coarse {
     pub overlap: f64,
 }
 
-fn coarse_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+fn coarse_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+    static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
             gpu,
@@ -55,7 +54,7 @@ const COARSE_GROUP: u32 = 64;
 /// that fraction of an axis overlapping is not a panorama's neighbour, it is two frames of
 /// different things, and searching for it costs candidates that can only produce false peaks.
 pub async fn coarse(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     a: &DevicePlane,
     b: &DevicePlane,
     min_overlap: f64,
@@ -139,7 +138,7 @@ pub async fn coarse(
     // The maximum over candidates, on the host. A reduction over a hundred thousand scores is not
     // a walk over a picture: the pixels were reduced on the device, and what comes back is one
     // number per translation.
-    let best = crate::gpu::read_back(gpu, &staging, |mapped| {
+    let best = gpu::read_back(gpu, &staging, |mapped| {
         mapped
             .chunks_exact(12)
             .map(|word| {
@@ -187,7 +186,7 @@ fn levels_over(long: usize) -> usize {
 
 impl Pyramid {
     /// The levels of `source`, with the top one tabulated so a dense search into it is affordable.
-    pub fn of(gpu: &'static crate::gpu::Gpu, source: &Source) -> Pyramid {
+    pub fn of(gpu: &'static gpu::Gpu, source: &Source) -> Pyramid {
         let mut levels: Vec<DevicePlane> = (0..levels_over(source.width.max(source.height)))
             .rev()
             .map(|above| {
@@ -276,12 +275,7 @@ const TILE: usize = 32;
 ///
 /// `coarse` is in the coarse level's, as `coarse()` returns it: b's pixel (x, y) shows what a
 /// shows at (x + dx, y + dy), so a point of a is found in b at minus that.
-pub async fn refined(
-    gpu: &'static crate::gpu::Gpu,
-    a: &Pyramid,
-    b: &Pyramid,
-    from: Coarse,
-) -> Refined {
+pub async fn refined(gpu: &'static gpu::Gpu, a: &Pyramid, b: &Pyramid, from: Coarse) -> Refined {
     let mut belief = Field::uniform([-f64::from(from.dx), -f64::from(from.dy)]);
     let mut matches = Vec::new();
     let mut settled = Vec::new();
@@ -658,8 +652,8 @@ fn median(offsets: &[[f64; 2]]) -> Option<[f64; 2]> {
 mod tests {
     use super::*;
 
-    fn searching() -> &'static crate::gpu::Gpu {
-        crate::gpu::device().expect("an adapter for the panorama search")
+    fn searching() -> &'static gpu::Gpu {
+        gpu::device().expect("an adapter for the panorama search")
     }
 
     /// A lattice of values, deterministic and with nothing periodic about it.
@@ -759,7 +753,7 @@ mod tests {
 
     /// An RGB source on the device, as the previews arrive: the same value in all three channels,
     /// which is what the pyramid's luma reduces back to.
-    fn source(gpu: &'static crate::gpu::Gpu, grey: &[f32], width: usize, height: usize) -> Source {
+    fn source(gpu: &'static gpu::Gpu, grey: &[f32], width: usize, height: usize) -> Source {
         let bytes: Vec<u8> = grey
             .iter()
             .flat_map(|v| [*v; 3])

@@ -264,7 +264,7 @@ fn project(point: [f64; 3], scene: &Scene, shape: [f32; 2]) -> [f32; 2] {
 }
 
 fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
-    let gpu = crate::gpu::device().expect("print requires Vulkan");
+    let gpu = gpu::device().expect("print requires Vulkan");
     let device = gpu.describing();
     let mut recording = gpu.record();
     let inputs = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -330,7 +330,7 @@ fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
     });
     recording.dispatch(
         [probes.len() as u32, 1, 1],
-        crate::gpu::dispatch::Whole::Fixed,
+        gpu::dispatch::Whole::Fixed,
         |pass| {
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &probes_group, &[]);
@@ -339,7 +339,7 @@ fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
     );
     recording.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
     recording.submit();
-    pollster::block_on(crate::gpu::read_back(gpu, &readback, |bytes| {
+    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
         bytes
             .chunks_exact(64)
             .map(|row| {

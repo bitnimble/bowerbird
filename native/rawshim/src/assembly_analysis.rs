@@ -12,7 +12,7 @@ use crate::assembly_seam::shrunk_size;
 use crate::base::Base;
 use crate::composite_align::AlignSource;
 use crate::composition::Composition;
-use crate::gpu::Gpu;
+use gpu::Gpu;
 use units::px::{Analysis, Extent, Share, Shrunk, Span};
 
 /// The most pieces a seam solve may answer, and the most vertices across them.
@@ -98,7 +98,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
     let n = sources.len();
     crate::progress::begin(n + n.saturating_sub(1) + 1 + n + FIELD_STEPS);
     stopping()?;
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
 
     // A burst points every frame at the same place, so a focal no file stated is nearly

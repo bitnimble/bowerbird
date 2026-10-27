@@ -131,7 +131,7 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
         rawshim::edit::prepare_bytes(&file, &request(true), 0.0).expect("the rendition opens");
 
     let shown = |prepared: &rawshim::edit::Prepared| -> Vec<u8> {
-        let gpu = rawshim::gpu::device().expect("an adapter");
+        let gpu = gpu::device().expect("an adapter");
         let header = &prepared.header;
         let grade = rawshim::grade::Grade {
             output: rawshim::grade::Output::Srgb,

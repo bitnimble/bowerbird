@@ -26,7 +26,7 @@ pub unsafe extern "C" fn bb_stage_picture(
     }
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
     let picture = crate::guard("bb_stage_picture", None, || {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         crate::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
             .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()??
@@ -55,7 +55,7 @@ pub extern "C" fn bb_stage_warm(white: f32) -> c_int {
         return -1;
     }
     crate::guard("bb_stage_warm", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
         crate::grade::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
@@ -77,7 +77,7 @@ pub unsafe extern "C" fn bb_stage_flat(
         return std::ptr::null_mut();
     }
     let picture = crate::guard("bb_stage_flat", None, || {
-        Picture::flat(crate::gpu::device()?, f64::from(nits))
+        Picture::flat(gpu::device()?, f64::from(nits))
     });
     unsafe { handed(picture, width, height) }
 }
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn bb_stage_attach(
         return std::ptr::null_mut();
     };
     let stage = crate::guard("bb_stage_attach", None, || {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let size = Size::measured(width as usize, height as usize);
         // SAFETY: the caller's.
         unsafe { SurfaceStage::attach(gpu, window, size) }
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn bb_stage_present(
     };
     let (stage, picture) = unsafe { (&mut *stage, &*picture) };
     crate::guard("bb_stage_present", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
         stage.resize(gpu, Size::measured(width as usize, height as usize));

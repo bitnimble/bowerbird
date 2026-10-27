@@ -7,7 +7,7 @@
 //! slices of `SLICE`, and a thread per (slice, corner) walks one slice for one of the nodes it
 //! reaches.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
 pub(crate) const NODE_WORDS: usize = 35;
@@ -36,8 +36,8 @@ pub(crate) struct Kernels {
     fold: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -128,12 +128,12 @@ impl Grid {
 /// `indexed` is the colour each pair is landed by and `through` what the operator acts on: the
 /// same buffer, except where the lattice is fitted on what an earlier one left.
 pub(crate) async fn moments(
-    gpu: &'static crate::gpu::Gpu,
-    through: &crate::gpu::Buffer,
-    indexed: &crate::gpu::Buffer,
-    target: &crate::gpu::Buffer,
-    neighbourhood: &crate::gpu::Buffer,
-    weights: &crate::gpu::Buffer,
+    gpu: &'static gpu::Gpu,
+    through: &gpu::Buffer,
+    indexed: &gpu::Buffer,
+    target: &gpu::Buffer,
+    neighbourhood: &gpu::Buffer,
+    weights: &gpu::Buffer,
     pairs: usize,
     grid: &Grid,
 ) -> Option<Vec<[f64; NODE_WORDS]>> {
@@ -257,7 +257,7 @@ pub(crate) async fn moments(
     recording.copy_buffer_to_buffer(&totals, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &staging, |mapped| {
+    let read = gpu::read_back(gpu, &staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))

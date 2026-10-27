@@ -24,7 +24,7 @@
 //! knob: it is what confines the answer to the regions where the answer is trustworthy, and the
 //! correction is only sound where it has passed.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 use units::px::{Extent, Millimetre};
 
 /// Profile samples per spot, spanning [`SPAN`] elliptical radii. Matched in `dust.slang`.
@@ -513,7 +513,7 @@ fn working(sensor: &Sensor) -> (usize, usize) {
 ///
 /// None where the frame has no adapter, no usable aperture, or is too small to band-pass.
 pub async fn detect(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mosaic: &crate::condition::Mosaic,
     sensor: &Sensor,
 ) -> Option<Vec<Spot>> {
@@ -699,13 +699,13 @@ pub struct Dust {
     pipeline: wgpu::ComputePipeline,
 }
 
-pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Dust {
-    static BUILT: crate::gpu::Cache<Dust> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> &'static Dust {
+    static BUILT: gpu::Cache<Dust> = gpu::Cache::new();
     BUILT.get(gpu, || Dust::new(gpu))
 }
 
 impl Dust {
-    fn new(gpu: &crate::gpu::Gpu) -> Dust {
+    fn new(gpu: &gpu::Gpu) -> Dust {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dust"),
@@ -755,7 +755,7 @@ impl Dust {
 /// No origin: this takes the frame's own mosaic, so the frame's own corner is where it starts. A
 /// window goes through [`apply`].
 pub async fn run(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mosaic: &crate::condition::Mosaic,
     sensor: &Sensor,
     wanted: &Wanted<'_>,
@@ -788,7 +788,7 @@ pub async fn run(
 /// `origin` is where this buffer sits on the sensor, in photosites, which is what puts a stored spot
 /// on the right rows of a band or a loupe tile.
 pub fn apply(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mosaic: &crate::condition::Mosaic,
     known: &Known<'_>,
     origin: (usize, usize),
@@ -827,7 +827,7 @@ struct Params {
 /// against their own few hundred thousand photosites - a window that fitted its own would find a
 /// different set from the frame around it, and the strips would stop being one picture.
 pub fn correct(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     kernels: &Dust,
     mosaic: &crate::condition::Mosaic,
     spots: &[Spot],

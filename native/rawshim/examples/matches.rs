@@ -28,7 +28,7 @@ fn main() {
     let opened = support::Open::shipped(&path, support::FULL_RENDITION_SIZE)
         .run()
         .expect("decode");
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let resident = opened
         .frame
         .on_device(gpu)

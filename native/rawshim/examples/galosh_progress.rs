@@ -29,7 +29,7 @@ fn main() {
     let (width, height) = (prepared.header.width & !1, prepared.header.height & !1);
     drop(prepared);
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the denoise");
     let amounts = Amounts::from_sliders(50.0, 50.0);
 

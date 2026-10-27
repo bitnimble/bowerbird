@@ -13,7 +13,7 @@
 use rawshim::galosh::NoiseFit;
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels");
     let network = rawshim::pmrid::device(gpu).expect("the network's weights");
     println!(

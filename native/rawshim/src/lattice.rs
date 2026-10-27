@@ -6,9 +6,9 @@
 //! reaches along each axis, and the operator it applies there as a generator. Where kernels overlap
 //! their generators add, and the bake exponentiates the sum per texel.
 
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{Gpu, Texture};
 use crate::tone;
+use gpu::dispatch::Whole;
+use gpu::{Gpu, Texture};
 use units::light::{Light, Rendered};
 
 /// Floats a kernel occupies on the device, as `lattice_bake.slang` reads them.
@@ -357,7 +357,7 @@ struct Summed {
     axes: LutAxes,
     /// [`ColourNode::kernel`]s: solved to land exactly at their centres, and baked unexponentiated.
     moves: bool,
-    on: std::sync::OnceLock<(u64, crate::gpu::Buffer)>,
+    on: std::sync::OnceLock<(u64, gpu::Buffer)>,
 }
 
 impl Summed {
@@ -370,7 +370,7 @@ impl Summed {
         })
     }
 
-    fn buffer(&self, gpu: &'static Gpu) -> crate::gpu::Buffer {
+    fn buffer(&self, gpu: &'static Gpu) -> gpu::Buffer {
         let (on, buffer) = self.on.get_or_init(|| (gpu.id(), sum(gpu, self)));
         match *on == gpu.id() {
             true => buffer.clone(),
@@ -713,7 +713,7 @@ fn square_root(a: M3) -> Option<M3> {
 }
 
 pub(crate) fn bake_kernel(gpu: &'static Gpu) -> &'static BakeKernel {
-    static BUILT: crate::gpu::Cache<BakeKernel> = crate::gpu::Cache::new();
+    static BUILT: gpu::Cache<BakeKernel> = gpu::Cache::new();
     BUILT.get(gpu, || BakeKernel::new(gpu.describing()))
 }
 
@@ -728,7 +728,7 @@ pub(crate) struct BakeKernel {
 }
 
 impl BakeKernel {
-    fn new(device: crate::gpu::Describing<'_>) -> BakeKernel {
+    fn new(device: gpu::Describing<'_>) -> BakeKernel {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lattice_bake"),
             source: wgpu::ShaderSource::Wgsl(shaders::LATTICE_BAKE.source.into()),
@@ -850,7 +850,7 @@ fn params(kernels: usize, axes: LutAxes, scales: [f64; 2], feather: [f64; 4]) ->
 
 #[track_caller]
 fn dispatch(
-    recording: &mut crate::gpu::Recording<'_>,
+    recording: &mut gpu::Recording<'_>,
     pipeline: &wgpu::ComputePipeline,
     group: &wgpu::BindGroup,
 ) {
@@ -865,7 +865,7 @@ fn dispatch(
     });
 }
 
-fn sum(gpu: &'static Gpu, summed: &Summed) -> crate::gpu::Buffer {
+fn sum(gpu: &'static Gpu, summed: &Summed) -> gpu::Buffer {
     let texels = (SIZE.width * SIZE.height * SIZE.depth_or_array_layers) as usize;
     let out = gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("lattice sums"),
@@ -1077,7 +1077,7 @@ mod tests {
 
     #[test]
     fn a_node_reaching_nothing_still_moves_its_own_colour() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let node = ColourNode {
@@ -1109,7 +1109,7 @@ mod tests {
 
     #[test]
     fn a_node_moves_its_whole_reach_fully_and_falls_to_half_at_its_edge() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let axes = LutAxes::of_nodes();
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn overlapping_nodes_each_land_on_their_own_target() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let axes = LutAxes::of_nodes();
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[test]
     fn nodes_at_nearly_one_colour_asking_opposite_turns_stay_within_their_turns() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let node = |hue: f64, turn: f64| ColourNode {
@@ -1301,7 +1301,7 @@ mod tests {
     /// them: every texel still holds what the sum over every kernel says.
     #[test]
     fn the_bake_sums_every_kernel_that_reaches_a_texel() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let axes = ChromaMap::identity().axes;
@@ -1379,7 +1379,7 @@ mod tests {
     /// the colour that texel stands for, which only the shader's `rendered_of` can have found.
     #[test]
     fn the_bake_reads_each_texel_at_the_colour_it_stands_for() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let to_lightness = [0.5, -0.3];
@@ -1647,8 +1647,8 @@ mod tests {
             volume.size(),
         );
         recording.submit();
-        let bytes = pollster::block_on(crate::gpu::read_back(gpu, &staged, |b| b.to_vec()))
-            .expect("read back");
+        let bytes =
+            pollster::block_on(gpu::read_back(gpu, &staged, |b| b.to_vec())).expect("read back");
         (0..HUE_TEXELS * CHROMA_TEXELS * depth)
             .map(|texel| {
                 let (x, rows) = (texel % HUE_TEXELS, texel / HUE_TEXELS);

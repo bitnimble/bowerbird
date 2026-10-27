@@ -11,9 +11,9 @@
 //! leaves `base::prepare` sharpened (`tile::prepared_on_device`), and a whole rendition is
 //! sharpened per target (`hdr::Cut::from_base`).
 
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{self, Gpu};
 use crate::resident::Resident;
+use gpu::dispatch::Whole;
+use gpu::{self, Gpu};
 use units::light::Gain;
 use units::px::{
     At, Coordinate, Drawn, Extent, Point, Rect, STORED_LONG, Share, Size, Span, Stored,
@@ -315,22 +315,22 @@ pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
-fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
+fn built(gpu: &'static Gpu, entry: &str) -> gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
     let bindings: &[(u32, wgpu::BufferBindingType)] = match entry {
         "repair" => &[(0, UNIFORM), (1, WRITE), (2, READ), (3, READ), (4, READ)],
         _ => &[(0, UNIFORM), (1, WRITE), (3, READ), (5, WRITE)],
     };
-    crate::hdr_fit::kernel(gpu, entry, shaders::REPAIR.source, bindings, &[])
+    gpu::compute::kernel(gpu, entry, shaders::REPAIR.source, bindings, &[])
 }
 
-pub(crate) fn repairing(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+pub(crate) fn repairing(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "repair"))
 }
 
-pub(crate) fn averaging(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+pub(crate) fn averaging(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "repair_cells"))
 }
 
@@ -477,7 +477,7 @@ pub(crate) fn apply(
                 entry(4, &seam),
             ],
         });
-        dispatches.push((group, crate::base::groups(pixels.div_ceil(2))));
+        dispatches.push((group, gpu::compute::groups(pixels.div_ceil(2))));
     }
     for (group, (x, y)) in &dispatches {
         recording.dispatch([*x, *y, 1], Whole::Measured, |pass| {
@@ -693,7 +693,7 @@ pub(crate) mod tests {
         origin: (usize, usize),
         repairs: &[Repair],
     ) -> Vec<u16> {
-        let gpu = crate::gpu::device().expect("a device");
+        let gpu = gpu::device().expect("a device");
         let frame = Resident::upload(gpu, samples, size.0, size.1);
         apply(
             &frame,
@@ -849,7 +849,7 @@ pub(crate) mod tests {
     /// stripes and no disc - with the seam grown, and with the loop kept exactly as drawn.
     #[test]
     fn a_thing_drawn_around_is_removed() {
-        let gpu = crate::gpu::device().expect("a device");
+        let gpu = gpu::device().expect("a device");
         let size = (200usize, 160usize);
         let centre = (100.0, 80.0);
         let samples = striped_with_a_disc(size, centre);
@@ -908,7 +908,7 @@ pub(crate) mod tests {
     /// loop holds when there is ground there that matches.
     #[test]
     fn a_fill_is_read_from_where_the_reader_put_it() {
-        let gpu = crate::gpu::device().expect("a device");
+        let gpu = gpu::device().expect("a device");
         let size = (200usize, 160usize);
         let centre = (100.0, 80.0);
         let samples = striped_with_a_disc(size, centre);
@@ -952,7 +952,7 @@ pub(crate) mod tests {
     /// up to the edge, grown or not.
     #[test]
     fn a_loop_past_the_edge_removes_up_to_it() {
-        let gpu = crate::gpu::device().expect("a device");
+        let gpu = gpu::device().expect("a device");
         let size = (200usize, 120usize);
         let centre = (100.0, 3.0);
         let samples = striped_with_a_disc(size, centre);
@@ -999,7 +999,7 @@ pub(crate) mod tests {
     /// offered exactly what the whole frame is.
     #[test]
     fn a_window_holding_the_search_is_offered_what_the_frame_is() {
-        let gpu = crate::gpu::device().expect("a device");
+        let gpu = gpu::device().expect("a device");
         let size = (420usize, 300usize);
         let centre = (120.0, 90.0);
         let samples = striped_with_a_disc(size, centre);

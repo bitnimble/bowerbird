@@ -150,7 +150,7 @@ mod tests {
     }
 
     fn mosaic(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         cfa: &crate::cfa::Cfa,
         width: usize,
         height: usize,
@@ -170,11 +170,7 @@ mod tests {
         crate::condition::Mosaic::upload(gpu, &samples, width, height)
     }
 
-    fn floats(
-        gpu: &'static crate::gpu::Gpu,
-        buffer: &crate::gpu::Buffer,
-        count: usize,
-    ) -> Vec<f32> {
+    fn floats(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, count: usize) -> Vec<f32> {
         let bytes = (count * 4) as u64;
         let mut recording = gpu.record();
         let readback = recording.buffer(&wgpu::BufferDescriptor {
@@ -185,7 +181,7 @@ mod tests {
         });
         recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
         recording.submit();
-        pollster::block_on(crate::gpu::read_back(gpu, &readback, |mapped| {
+        pollster::block_on(gpu::read_back(gpu, &readback, |mapped| {
             bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
         }))
         .unwrap()
@@ -193,7 +189,7 @@ mod tests {
 
     #[test]
     fn alignment_recovers_fractional_translation_from_imperfect_prior() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -241,7 +237,7 @@ mod tests {
 
     #[test]
     fn alignment_recovers_integer_shift_from_imperfect_prior() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -272,7 +268,7 @@ mod tests {
 
     #[test]
     fn flat_tiles_keep_their_sensor_anchored_priors() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (width, height) = (768, 640);

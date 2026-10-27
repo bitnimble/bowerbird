@@ -62,7 +62,7 @@ fn a_spot(x: f32, y: f32) -> Spot {
 
 #[test]
 fn the_kernel_divides_the_shadow_it_was_given_back_out() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the dust kernel was not run.");
         return;
     };
@@ -170,7 +170,7 @@ fn found_in(
     sensor: &rawshim::dust::Sensor,
     spots: &[(f32, f32, f32, f32)],
 ) -> Option<Vec<Spot>> {
-    let gpu = rawshim::gpu::device()?;
+    let gpu = gpu::device()?;
     let samples = planted(plane, spots);
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
     pollster::block_on(rawshim::dust::detect(gpu, &mosaic, sensor))
@@ -415,7 +415,7 @@ fn a_picture_inside_a_larger_plane_is_read_from_where_it_starts() {
 /// worth 8 points of residual over a circle on the reference frame, which is worth an assertion.
 #[test]
 fn an_elongated_particle_is_divided_out_at_its_own_angle() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the dust kernel's ellipse was not run.");
         return;
     };
@@ -458,7 +458,7 @@ fn an_elongated_particle_is_divided_out_at_its_own_angle() {
 /// rejects has to leave the picture exactly as it found it.
 #[test]
 fn a_spot_below_the_reader_bar_is_left_alone() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the dust kernel's gate was not run.");
         return;
     };
@@ -491,7 +491,7 @@ fn a_spot_below_the_reader_bar_is_left_alone() {
 /// on every band but the first, which is exactly what a whole-frame test cannot see.
 #[test]
 fn a_window_corrects_where_the_frame_would_have() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the dust kernel's origin was not run.");
         return;
     };
@@ -550,7 +550,7 @@ fn a_window_corrects_where_the_frame_would_have() {
 /// multiply by something very close to one.
 #[test]
 fn no_intensity_is_no_change_at_all() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the dust kernel's intensity was not run.");
         return;
     };

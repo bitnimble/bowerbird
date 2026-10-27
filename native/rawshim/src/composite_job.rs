@@ -331,11 +331,7 @@ pub(crate) fn sources_of<'a>(
 }
 
 /// A set of photographs searched for the recipe that composites them (`Want::Align`).
-pub fn align(
-    gpu: &'static crate::gpu::Gpu,
-    pano: &CompositeJob,
-    shape: Shape,
-) -> Result<String, String> {
+pub fn align(gpu: &'static gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Result<String, String> {
     let (headers, models) = headers_of(pano);
     let sources = sources_of(pano, &headers, &models)?;
 
@@ -411,7 +407,7 @@ pub fn align(
 /// samples and answers in a fraction of what one strip costs. Once for the job rather than once per
 /// strip.
 fn whole_levels(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
     spec: &crate::composition::Composition,
     files: &[crate::composite_tile::SourceFile<'_>],
@@ -571,7 +567,7 @@ thread_local! {
 /// With the illuminant the `reference` source was balanced for, which the canvas is graded against,
 /// and each source's noise fit over its whole mosaic.
 fn stacked_sources(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static crate::base::Base,
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
@@ -677,7 +673,7 @@ fn stacked_sources(
 /// None where the sources do not share a width - a set shot on two bodies - and the caller then
 /// combines their own levels instead.
 fn union_levels(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
     stacked: &crate::resident::Resident,
 ) -> Option<crate::tone::Anchored> {
@@ -707,7 +703,7 @@ fn union_levels(
 /// recipe on the way onto the canvas, so the composite has none left to correct and carries
 /// [`crate::fit::Lens::none`], which is what the reference's match was already reduced to.
 fn union_match(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
     stacked: &crate::resident::Resident,
@@ -840,7 +836,7 @@ pub(crate) fn base(
         return Err("the recipe and the files it names disagree".into());
     }
     let refused = || crate::base::without_a_device("the composite's stages");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
 
     let (canvas_w, canvas_h, scale) = sized(spec, size);
     // **The buffer is the window's, the picture is the canvas's, and the two are different
@@ -1339,7 +1335,7 @@ mod tests {
     /// the anchor's.
     #[test]
     fn a_composite_of_a_camera_s_picture_is_that_picture() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (wide, tall) = (
@@ -1724,7 +1720,7 @@ mod tests {
     /// answer is also *kept* is `a_composite_reads_what_it_was_measured_as`'s claim, not this one's.
     #[test]
     fn every_level_of_a_prepared_picture_is_one_photograph() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-levels");
@@ -1812,7 +1808,7 @@ mod tests {
     /// against a first call that also pays for every pipeline it is the first to reach.
     #[test]
     fn a_composite_reads_what_it_was_measured_as() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-reuse");
@@ -1920,7 +1916,7 @@ mod tests {
     /// windows of one level decode the same way as each other.
     #[test]
     fn a_window_of_a_level_is_that_rectangle_of_it() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-window");
@@ -2072,7 +2068,7 @@ mod tests {
     /// lens, and the identity rotation - so what is left between the two answers is the filter.
     #[test]
     fn the_gather_undersamples_a_reduction_by_this_much() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let base = crate::base::device(gpu).expect("the base pipelines");

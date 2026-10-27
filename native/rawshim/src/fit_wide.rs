@@ -5,7 +5,7 @@
 //! tiling between the two walks, which is index bookkeeping over a few thousand probes rather than
 //! work on a picture.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Stepped positions one workgroup of the gate takes.
 const BLOCK: usize = 256;
@@ -42,8 +42,8 @@ pub(crate) struct Kernels {
     gather: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -104,7 +104,7 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 /// gather reads them where they are.
 pub(crate) struct Admitted {
     pub at: Vec<[i32; 2]>,
-    on_device: crate::gpu::Buffer,
+    on_device: gpu::Buffer,
 }
 
 /// What `block` writes, for `wgsl_layout`, which holds it against the struct its own shader
@@ -187,7 +187,7 @@ fn columns(planes: &Planes<'_>) -> usize {
         .div_ceil(crate::hdr_fit::WIDE_STRIDE)
 }
 
-fn gains_of(gpu: &'static crate::gpu::Gpu, falloff: Option<(f64, f64)>) -> crate::gpu::Buffer {
+fn gains_of(gpu: &'static gpu::Gpu, falloff: Option<(f64, f64)>) -> gpu::Buffer {
     let contents: Vec<u8> = match falloff {
         None => vec![0u8; 4],
         Some((a, b)) => (0..=u8::MAX)
@@ -202,14 +202,14 @@ fn gains_of(gpu: &'static crate::gpu::Gpu, falloff: Option<(f64, f64)>) -> crate
 }
 
 fn bound(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     planes: &Planes<'_>,
-    gains: &crate::gpu::Buffer,
-    found: &crate::gpu::Buffer,
-    counts: &crate::gpu::Buffer,
-    at: &crate::gpu::Buffer,
-    samples: &crate::gpu::Buffer,
-    push: &crate::gpu::Buffer,
+    gains: &gpu::Buffer,
+    found: &gpu::Buffer,
+    counts: &gpu::Buffer,
+    at: &gpu::Buffer,
+    samples: &gpu::Buffer,
+    push: &gpu::Buffer,
 ) -> wgpu::BindGroup {
     gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fit_wide"),
@@ -252,7 +252,7 @@ fn bound(
 }
 
 /// Which positions the pass will teach the lattice from.
-pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
+pub(crate) async fn admit(gpu: &'static gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
     let stepped = rows(planes) * columns(planes);
     let blocks = stepped.div_ceil(BLOCK).max(1);
     assert!(blocks <= 65535, "{blocks} blocks overrun a dispatch");
@@ -339,10 +339,10 @@ pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) ->
 /// `None` where the position did not survive the gather's own re-tests, which are asked of the
 /// pixel the search landed on rather than the one the gate looked at.
 pub(crate) async fn gather(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     planes: &Planes<'_>,
     admitted: &Admitted,
-    found: &crate::gpu::Buffer,
+    found: &gpu::Buffer,
 ) -> Option<Vec<Option<([f64; 3], [f64; 3])>>> {
     let count = admitted.at.len();
     let words = (count * SAMPLE_WORDS).max(1);
@@ -395,7 +395,7 @@ pub(crate) async fn gather(
     recording.copy_buffer_to_buffer(&samples, 0, &out, 0, (words * 4) as u64);
     recording.submit();
 
-    let read = crate::gpu::read_back(gpu, &out, |mapped| {
+    let read = gpu::read_back(gpu, &out, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
@@ -415,11 +415,8 @@ pub(crate) async fn gather(
     )
 }
 
-async fn read_words(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
-) -> Option<Vec<u32>> {
-    crate::gpu::read_back(gpu, staging, |mapped| {
+async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
+    gpu::read_back(gpu, staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))

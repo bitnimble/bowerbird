@@ -209,7 +209,7 @@ impl Frame {
     /// For the callers that hold a decode on the host and want a stage that only runs on the
     /// device - the tests, the examples, and `debug`. The shipped path never uploads here: the
     /// decode leaves the frame resident and every stage after it takes it as it stands.
-    pub fn on_device(&self, gpu: &'static crate::gpu::Gpu) -> Option<OnDevice<'_>> {
+    pub fn on_device(&self, gpu: &'static gpu::Gpu) -> Option<OnDevice<'_>> {
         match &self.pixels {
             Pixels::Resident(frame) => Some(OnDevice::Held(frame)),
             _ => Some(OnDevice::Uploaded(crate::resident::Resident::upload(

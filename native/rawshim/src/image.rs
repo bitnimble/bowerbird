@@ -1887,7 +1887,7 @@ mod tests {
     /// is `* 257`, which is exact and leaves every threshold in the normalised scale it is written
     /// against.
     fn fitted(frame: &[u8], width: usize, height: usize) -> Option<(f32, f32)> {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let base = crate::base::device(gpu)?;
         let wide = crate::resident::samples_of_levels(frame.iter().map(|&b| f32::from(b) * 257.0));
         pollster::block_on(crate::base::measure_defocus(
@@ -1898,7 +1898,7 @@ mod tests {
     /// Whether there is a device to fit on at all, so a test can decline rather than read a
     /// missing adapter as the estimator answering `None`.
     fn fits() -> bool {
-        crate::gpu::device().and_then(crate::base::device).is_some()
+        gpu::device().and_then(crate::base::device).is_some()
     }
 
     #[test]
@@ -2146,7 +2146,7 @@ mod tests {
         // The bug this guards: a lensfun profile with a +1.7% corner was applied at a
         // crop that did not fill, and the corners showed the black the warp sampled from
         // outside the frame.
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let (width, height) = (120usize, 80usize);

@@ -131,7 +131,7 @@ impl Snapshot {
 
     /// Rectangles of a mosaic at 1:1, each photosite drawn in its own filter's colour.
     pub fn mosaic<S>(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         mosaic: &Mosaic,
         cfa: &crate::cfa::Cfa,
         anchoring: Anchoring,
@@ -332,11 +332,7 @@ impl Frame<'_> {
     }
 }
 
-fn code_scene(
-    gpu: &'static crate::gpu::Gpu,
-    mut samples: Vec<u16>,
-    anchoring: Anchoring,
-) -> Vec<u16> {
+fn code_scene(gpu: &'static gpu::Gpu, mut samples: Vec<u16>, anchoring: Anchoring) -> Vec<u16> {
     let base = crate::base::device(gpu).expect("the base kernels");
     pollster::block_on(crate::base::encode_base(
         gpu,
@@ -769,7 +765,7 @@ mod tests {
 
     #[test]
     fn frames_on_the_device_become_snapshots_of_the_asked_shape() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered");
             return;
         };

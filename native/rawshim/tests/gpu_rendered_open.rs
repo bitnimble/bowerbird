@@ -48,7 +48,7 @@ fn png(width: usize, height: usize) -> Vec<u8> {
 
 #[test]
 fn a_png_opens_through_the_chain_a_raw_opens_through() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }
@@ -120,7 +120,7 @@ fn graded(
     temperature: Option<f64>,
     tint: Option<f64>,
 ) -> Vec<u16> {
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let header = &opened.header;
     let grade = rawshim::grade::Grade {
         adjust: rawshim::grade::Adjust {
@@ -146,7 +146,7 @@ fn graded(
 
 #[test]
 fn a_jpegs_white_balance_moves_away_from_the_picture_as_it_was_rendered() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }
@@ -217,7 +217,7 @@ fn a_jpegs_white_balance_moves_away_from_the_picture_as_it_was_rendered() {
 /// a demosaiced frame would also do.
 #[test]
 fn the_detail_sliders_do_nothing_to_a_picture_with_no_mosaic() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }

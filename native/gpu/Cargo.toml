@@ -1,0 +1,21 @@
+[package]
+name = "gpu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+trace = { path = "../trace" }
+# The backends are the ones `device` asks its instance for, and `webgpu` is the editor's.
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+pollster = "0.4"
+
+# Reads the memory budget Vulkan reports, which wgpu does not pass on. Not on wasm, where it does
+# not compile: it loads the Vulkan loader through `libloading`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ash = "0.38"
+
+# wgpu's own version, so cargo unifies to one copy: `Device::as_webgpu` returns a handle built by
+# wgpu's wasm-bindgen, and a second copy makes that a different crate's `JsValue`.
+[target.wasm32-unknown-unknown.dependencies]
+wasm-bindgen = "0.2.108"

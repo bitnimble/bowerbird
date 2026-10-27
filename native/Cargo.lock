@@ -463,6 +463,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
+name = "gpu"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "pollster",
+ "trace",
+ "wasm-bindgen",
+ "wgpu",
+]
+
+[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1425,6 +1437,7 @@ dependencies = [
  "bytemuck",
  "crc32fast",
  "fast_image_resize",
+ "gpu",
  "half",
  "heif",
  "image",

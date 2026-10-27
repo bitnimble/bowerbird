@@ -1,4 +1,4 @@
-use crate::gpu::Gpu;
+use gpu::Gpu;
 
 /// Builds every pipeline the page's module can dispatch; PMRID's only once its weights are held.
 ///
@@ -47,6 +47,6 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
 mod tests {
     #[test]
     fn every_pipeline_builds() {
-        super::build_every_pipeline(crate::gpu::device().expect("a GPU adapter"));
+        super::build_every_pipeline(gpu::device().expect("a GPU adapter"));
     }
 }

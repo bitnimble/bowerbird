@@ -90,7 +90,7 @@ fn main() {
     let opened = support::Open::shipped(&path, 0).run().expect("a decode");
     let frame = &opened.frame;
     let samples = frame.samples16().expect("16-bit");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let levels = opened.measured.levels.anchored();
     let white = levels.white.raw();
     println!(

@@ -6,8 +6,8 @@
 use crate::assembly_planes::Plane;
 use crate::assembly_seam::{SHRINK, SeamField, shrunk_size};
 use crate::base::Base;
-use crate::gpu::dispatch::Whole;
-use crate::gpu::{self, Gpu};
+use gpu::dispatch::Whole;
+use gpu::{self, Gpu};
 
 /// The most frames one assembly may hold, which is what bounds the shader's per-frame arrays.
 pub const MOST_SOURCES: usize = 12;
@@ -29,9 +29,9 @@ pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
-fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
-    use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    crate::hdr_fit::kernel(
+fn built(gpu: &'static Gpu, entry: &str) -> gpu::compute::Kernel {
+    use gpu::compute::{READ, UNIFORM, WRITE};
+    gpu::compute::kernel(
         gpu,
         entry,
         shaders::ASSEMBLY_LEVELS.source,
@@ -49,18 +49,18 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
     )
 }
 
-fn stacking(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn stacking(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_stack"))
 }
 
-fn tinting(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn tinting(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_tint"))
 }
 
-fn levelling(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+fn levelling(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+    static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "assembly_level"))
 }
 
@@ -106,7 +106,7 @@ pub async fn seam_field<E>(
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    let over = |kernel: &crate::hdr_fit::Kernel, frame: &gpu::Buffer, slot: usize, count: usize| {
+    let over = |kernel: &gpu::compute::Kernel, frame: &gpu::Buffer, slot: usize, count: usize| {
         let mut recording = gpu.record();
         let params = Params {
             size: [size.0 as u32, size.1 as u32],
@@ -143,7 +143,7 @@ pub async fn seam_field<E>(
                 bound(7, &level),
             ],
         });
-        let (x, y) = crate::base::groups(count);
+        let (x, y) = gpu::compute::groups(count);
         recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);

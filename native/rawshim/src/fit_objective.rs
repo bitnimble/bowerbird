@@ -5,7 +5,7 @@
 //! batching: every candidate of a scan in one round trip, as `fit_score::Scoring` does for the colour
 //! objective.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Pixels one thread of the gate walks.
 ///
@@ -47,8 +47,8 @@ pub(crate) struct Kernels {
     falloff: wgpu::ComputePipeline,
 }
 
-pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+pub(crate) fn kernels(gpu: &'static gpu::Gpu) -> &'static Kernels {
+    static BUILT: gpu::Cache<Kernels> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -117,25 +117,25 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 /// falloff asks three rounds of curve and score about one pair list, and a scan asks two folds
 /// about each of tens of them.
 pub(crate) struct Paired {
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     /// Bound into every group below and *held* rather than merely allocated: a `wgpu::BindGroup`
     /// keeps nothing alive that a browser will free.
-    stacked: crate::gpu::Buffer,
-    jpeg: crate::gpu::Buffer,
-    counts: crate::gpu::Buffer,
-    records: crate::gpu::Buffer,
+    stacked: gpu::Buffer,
+    jpeg: gpu::Buffer,
+    counts: gpu::Buffer,
+    records: gpu::Buffer,
     /// Every candidate's score words, then every candidate's bins (`fit_objective.slang`'s
     /// `tallies`).
-    tallies: crate::gpu::Buffer,
-    curves: crate::gpu::Buffer,
+    tallies: gpu::Buffer,
+    curves: gpu::Buffer,
     /// `invert_curve`'s answer for the round in hand, then `linear_table`, rewritten per round.
-    falloff_tables: crate::gpu::Buffer,
-    falloff_bins: crate::gpu::Buffer,
+    falloff_tables: gpu::Buffer,
+    falloff_bins: gpu::Buffer,
     /// Pairs the gate admitted, which the falloff walks and nothing else needs.
     admitted: std::cell::OnceCell<usize>,
     /// What [`Self::scored_through`] warps each candidate into, made on its first call.
-    planes: std::cell::OnceCell<Vec<crate::gpu::Buffer>>,
-    idle: crate::gpu::Buffer,
+    planes: std::cell::OnceCell<Vec<gpu::Buffer>>,
+    idle: gpu::Buffer,
     width: usize,
     height: usize,
     pixels: usize,
@@ -150,11 +150,11 @@ pub(crate) struct Scored {
 }
 
 fn held(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     label: &str,
     words: usize,
     usage: wgpu::BufferUsages,
-) -> crate::gpu::Buffer {
+) -> gpu::Buffer {
     gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: (words * 4).max(4) as u64,
@@ -163,11 +163,8 @@ fn held(
     })
 }
 
-async fn read_words(
-    gpu: &'static crate::gpu::Gpu,
-    staging: &crate::gpu::Buffer,
-) -> Option<Vec<u32>> {
-    crate::gpu::read_back(gpu, staging, |mapped| {
+async fn read_words(gpu: &'static gpu::Gpu, staging: &gpu::Buffer) -> Option<Vec<u32>> {
+    gpu::read_back(gpu, staging, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|word| u32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
@@ -182,9 +179,9 @@ async fn read_words(
 /// candidates one at a time, and allocating this set per step - six buffers, two of them megabytes -
 /// cost more than every dispatch in it put together.
 pub(crate) fn paired(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     candidates: usize,
-    jpeg: &crate::gpu::Buffer,
+    jpeg: &gpu::Buffer,
     (width, height): (usize, usize),
 ) -> Paired {
     let pixels = width * height;
@@ -271,7 +268,7 @@ fn block(paired: &Paired, gained: bool, fitted: crate::fit::Phase) -> Vec<u8> {
 }
 
 impl Paired {
-    fn group(&self, push: &crate::gpu::Buffer, gain: &crate::gpu::Buffer) -> wgpu::BindGroup {
+    fn group(&self, push: &gpu::Buffer, gain: &gpu::Buffer) -> wgpu::BindGroup {
         self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fit_objective"),
             layout: &kernels(self.gpu).layout,
@@ -320,7 +317,7 @@ impl Paired {
         })
     }
 
-    fn gain_of(&self, gain: Option<&crate::fit::Gain>) -> crate::gpu::Buffer {
+    fn gain_of(&self, gain: Option<&crate::fit::Gain>) -> gpu::Buffer {
         match gain {
             None => self.idle.clone(),
             Some(gain) => self.gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -341,7 +338,7 @@ impl Paired {
     /// this was scored in deltaE.
     pub(crate) async fn scored(
         &self,
-        warped: &[crate::gpu::Buffer],
+        warped: &[gpu::Buffer],
         fitted: crate::fit::Phase,
         gain: Option<&crate::fit::Gain>,
     ) -> Option<Vec<Scored>> {
@@ -353,7 +350,7 @@ impl Paired {
     /// same round trip into planes this keeps.
     pub(crate) async fn scored_through(
         &self,
-        source: &crate::gpu::Buffer,
+        source: &gpu::Buffer,
         source_size: (usize, usize),
         lenses: &[crate::fit::Lens],
     ) -> Option<Vec<Scored>> {
@@ -390,8 +387,8 @@ impl Paired {
 
     async fn scored_in(
         &self,
-        mut recording: crate::gpu::Recording<'_>,
-        warped: &[crate::gpu::Buffer],
+        mut recording: gpu::Recording<'_>,
+        warped: &[gpu::Buffer],
         fitted: crate::fit::Phase,
         gain: Option<&crate::fit::Gain>,
     ) -> Option<Vec<Scored>> {
@@ -538,7 +535,7 @@ impl Paired {
         );
         recording.copy_buffer_to_buffer(&self.falloff_bins, 0, &out, 0, (words * 4) as u64);
         recording.submit();
-        let read = crate::gpu::read_back(self.gpu, &out, |mapped| {
+        let read = gpu::read_back(self.gpu, &out, |mapped| {
             mapped
                 .chunks_exact(4)
                 .map(|word| f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]])))

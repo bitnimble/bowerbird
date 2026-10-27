@@ -49,7 +49,7 @@ fn main() {
         sigmas = vec![0.002, 0.005, 0.01, 0.02, 0.04];
     }
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no adapter");
         std::process::exit(2);
     };
@@ -365,7 +365,7 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
 /// the edges, the textures and the radial falloff are the photograph's, and only the colour is
 /// gone. A synthetic pattern cannot stand in, for the reason the second arm needs a real one.
 fn greyed(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &[f32],
     cfa: &rawshim::cfa::Cfa,
@@ -464,7 +464,7 @@ fn read_mosaic(path: &str) -> Option<Read> {
 }
 
 fn reconstruct(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &[f32],
     cfa: &rawshim::cfa::Cfa,
@@ -492,7 +492,7 @@ fn reconstruct(
 /// it is the noise RCD produced rather than the noise the estimate sees. The matrix is a linear map
 /// applied per pixel, so it both rescales each channel's variance and remixes the pairs.
 fn reconstruct_matrixed(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &[f32],
     cfa: &rawshim::cfa::Cfa,
@@ -564,7 +564,7 @@ fn as_fitted(
 }
 
 fn fit(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     base: &'static rawshim::base::Base,
     plane: &[f32],
     width: usize,

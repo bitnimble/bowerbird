@@ -35,7 +35,7 @@ fn main() {
 
 fn measure(path: &str) {
     let quantile = support::GRADE.white_quantile;
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("fit_bench: no adapter");
         std::process::exit(2);
     };

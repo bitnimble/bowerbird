@@ -79,7 +79,7 @@ impl<'a> Open<'a> {
             frame = pollster::block_on(frame.to_host())?;
             let mut samples = frame.samples16()?.to_vec();
             edit(&mut samples);
-            let gpu = rawshim::gpu::device()?;
+            let gpu = gpu::device()?;
             // Back on the device, since the measure below defringes the frame it is given in place.
             frame.pixels = rawshim::frame::Pixels::Resident(rawshim::resident::Resident::upload(
                 gpu,
@@ -148,7 +148,7 @@ pub fn graded_under(
     output: rawshim::grade::Output,
     intent: rawshim::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let mut cutting = cut(opened, options, matched.map(|m| &m.lens));
     let scene = rawshim::tone::SceneGrade::new(
@@ -190,7 +190,7 @@ pub struct Cutting {
 /// `options.sharpen_sigma` fixes the deconvolution's sigma in place of the measured one.
 pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit::Lens>) -> Cutting {
     let frame = &opened.frame;
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
     let levels = opened.measured.levels.anchored();
     let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, options);

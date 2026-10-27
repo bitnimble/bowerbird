@@ -3,7 +3,7 @@ use rawshim::hdr_fit::HdrColour;
 use units::light::{CurveCode, Gain, Light, Stops, same_curve};
 
 fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> {
-    let gpu = rawshim::gpu::device().expect("Vulkan adapter");
+    let gpu = gpu::device().expect("Vulkan adapter");
     let device = gpu.describing();
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tone probe"),
@@ -72,7 +72,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
     });
     recording.dispatch(
         [samples.len().div_ceil(64) as u32, 1, 1],
-        rawshim::gpu::dispatch::Whole::Fixed,
+        gpu::dispatch::Whole::Fixed,
         |pass| {
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -80,7 +80,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
     );
     recording.copy_buffer_to_buffer(&out, 0, &readback, 0, (samples.len() * 16) as u64);
     recording.submit();
-    pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {
+    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
         bytes
             .chunks_exact(16)
             .map(|pixel| {

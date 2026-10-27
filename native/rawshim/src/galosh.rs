@@ -20,7 +20,7 @@
 //! plane is box-downsampled into four levels, each shrunk as 8x8 DCT blocks at stride 4 (a
 //! block-thresholded pilot, then a Wiener pass off it) and fused back up through its Laplacian.
 
-use crate::gpu::dispatch::Whole;
+use gpu::dispatch::Whole;
 
 /// Workgroups for the IRLS reductions, and the invocations in each.
 ///
@@ -355,13 +355,13 @@ fn to_green(gains: [f32; 3]) -> [f32; 2] {
 /// the frame anyway: a photograph with its noise still in it is a far better outcome than a
 /// failed import, and the two limits asked about below are the only ones a real adapter is
 /// likely to miss.
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Galosh> {
-    static BUILT: crate::gpu::Cache<Option<Galosh>> = crate::gpu::Cache::new();
+pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Galosh> {
+    static BUILT: gpu::Cache<Option<Galosh>> = gpu::Cache::new();
     BUILT.get(gpu, || Galosh::new(gpu)).as_ref()
 }
 
 impl Galosh {
-    fn new(gpu: &crate::gpu::Gpu) -> Option<Galosh> {
+    fn new(gpu: &gpu::Gpu) -> Option<Galosh> {
         let limits = gpu.limits();
         // `ne_finalize` wants more than the 16KB a WebGPU device is only required to offer, so
         // this is asked rather than assumed - a validation failure would be fatal, since
@@ -960,7 +960,7 @@ fn table_key(fit: &NoiseFit) -> (u32, u32) {
 /// `gains` are the conditioning's own, by CFA colour; a mosaic conditioned without any takes
 /// [`UNGAINED`].
 pub async fn denoise(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     galosh: &Galosh,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -985,7 +985,7 @@ pub async fn denoise(
 /// the sixteen reduction dispatches that would have measured it, which is most of what a tile
 /// spends before it filters anything.
 pub async fn denoise_with(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     galosh: &Galosh,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1047,7 +1047,7 @@ pub const PROGRESS_TILE: usize = 2048;
 /// Bit-identical to the same frame denoised whole, at every `tile` and every `halo`, which is what
 /// the origin alignment below buys.
 pub async fn denoise_in_tiles(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     galosh: &Galosh,
     mosaic: &mut crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1111,7 +1111,7 @@ pub async fn denoise_in_tiles(
 /// the fit alone costs the two whole-frame transforms the reductions read through, and none of the
 /// shrinkage or the inverse.
 pub async fn fit(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     galosh: &Galosh,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1168,7 +1168,7 @@ enum Work {
 }
 
 async fn run(
-    gpu: &crate::gpu::Gpu,
+    gpu: &gpu::Gpu,
     galosh: &Galosh,
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
@@ -1326,17 +1326,17 @@ async fn run(
         .filter(|&channel| cfa.colour_at(channel / pw, channel % pw) == 1)
         .fold(0u64, |mask, channel| mask | 1 << channel);
 
-    let pyramid_noisy: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
+    let pyramid_noisy: Vec<gpu::Buffer> = (0..PYRAMID_LEVELS)
         .map(|level| plane!("galosh pyramid noisy", levelled(level)))
         .collect();
-    let pyramid_shrunk: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
+    let pyramid_shrunk: Vec<gpu::Buffer> = (0..PYRAMID_LEVELS)
         .map(|level| {
             let len = if level == 0 { 0 } else { levelled(level) };
             plane!("galosh pyramid shrunk", len)
         })
         .collect();
     // Each level's shrunk, boxed to the size of the level below it.
-    let pyramid_boxed: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS - 1)
+    let pyramid_boxed: Vec<gpu::Buffer> = (0..PYRAMID_LEVELS - 1)
         .map(|level| plane!("galosh pyramid boxed", levelled(level + 1)))
         .collect();
     // One level's luma pilot at a time, so the largest level's luma plane serves them all.
@@ -1510,7 +1510,7 @@ async fn run(
         )
     });
 
-    let bind = |kernel: &Kernel, buffers: &[(u32, &crate::gpu::Buffer)]| {
+    let bind = |kernel: &Kernel, buffers: &[(u32, &gpu::Buffer)]| {
         let mut entries: Vec<_> = buffers
             .iter()
             .map(|(binding, buffer)| wgpu::BindGroupEntry {
@@ -1905,9 +1905,7 @@ async fn run(
     // Bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
     // still pending, so without a wait here the next tile allocates while this one's gigabyte is
     // still owed - which at 61MP is every tile's planes resident at once.
-    crate::gpu::finished(gpu)
-        .await
-        .expect("the denoise finished");
+    gpu::finished(gpu).await.expect("the denoise finished");
     lap("dispatch");
 
     if let (Some((d, x, table_params)), Some(fit)) = (&staged, supplied) {
@@ -1915,7 +1913,7 @@ async fn run(
         let mut taken = Vec::new();
         for buffer in [d, x, table_params] {
             taken.push(
-                crate::gpu::read_back(gpu, buffer, <[u8]>::to_vec)
+                gpu::read_back(gpu, buffer, <[u8]>::to_vec)
                     .await
                     .expect("the table mapped"),
             );
@@ -1935,7 +1933,7 @@ async fn run(
     }
     let measured = match supplied {
         Some(fit) => fit,
-        None => crate::gpu::read_back(gpu, &fitted, fit_of)
+        None => gpu::read_back(gpu, &fitted, fit_of)
             .await
             .expect("the model mapped"),
     };
@@ -2349,7 +2347,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(kernels) = device(gpu) else { return };
@@ -2438,7 +2436,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let kernels = device(gpu).expect("the GALOSH kernels");
         // Neither a whole number of X-Trans periods, so the last tile ends mid-period.
         let (w, h) = (1730usize, 1342usize);
@@ -2577,7 +2575,7 @@ mod tests {
     /// fails is not the filter working too hard but the picture being replaced by a constant.
     #[test]
     fn a_frame_too_clean_to_fit_still_comes_back_a_picture() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2623,7 +2621,7 @@ mod tests {
     /// own measure: legitimate denoising is zero-mean over a row, the stripe is not.
     #[test]
     fn a_hard_edge_comes_back_without_a_stripe() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2675,7 +2673,7 @@ mod tests {
     /// Black with read noise on it denoises to black rather than to the upper half of its noise.
     #[test]
     fn a_noisy_black_denoises_to_black() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2725,7 +2723,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2788,7 +2786,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2843,7 +2841,7 @@ mod tests {
     /// nothing about the read noise however deep they sit.
     #[test]
     fn a_lone_photosite_under_black_does_not_move_the_fit() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2884,7 +2882,7 @@ mod tests {
     /// value to each black level.
     #[test]
     fn the_fit_reads_back_the_model_a_frame_was_drawn_from() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2929,7 +2927,7 @@ mod tests {
     /// saturated green on grey across its sites.
     #[test]
     fn a_colour_step_does_not_bleed_off_the_coarse_levels() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -2984,7 +2982,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
 
         let (width, height) = (720, 208);
@@ -3261,7 +3259,7 @@ mod tests {
     /// ones scales the edge's signal with them and the overlap average spreads the difference.
     #[test]
     fn a_bright_curve_comes_back_without_a_halo() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -3311,7 +3309,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
         let fit = NoiseFit {
@@ -3431,7 +3429,7 @@ mod tests {
     /// miss most of it.
     #[test]
     fn texture_on_a_coloured_surface_survives_the_colour_denoise() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -3504,7 +3502,7 @@ mod tests {
     }
 
     /// The mosaic back on the host, which is where these tests compare frames.
-    fn read(gpu: &crate::gpu::Gpu, mosaic: &crate::condition::Mosaic) -> Vec<f32> {
+    fn read(gpu: &gpu::Gpu, mosaic: &crate::condition::Mosaic) -> Vec<f32> {
         pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
     }
 
@@ -3556,7 +3554,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let cfa = crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
         assert!(!cfa.is_bayer() && super::filters(&cfa));
@@ -3597,7 +3595,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (256, 192);
         let mut noisy = frame(width, height);
@@ -3652,7 +3650,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (256, 192);
         let source = crate::condition::Mosaic::upload(gpu, &frame(width, height), width, height);
@@ -3695,7 +3693,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (512, 512);
         let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
@@ -3760,7 +3758,7 @@ mod tests {
 
     #[test]
     fn every_kernel_builds_and_the_frame_survives_it() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(galosh) = device(gpu) else {
@@ -3822,7 +3820,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (576, 576);
         let levels = [0.008f32, 0.0016, 0.027];
@@ -3885,7 +3883,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let gains = [1.0f32, 0.36, 0.57];
         let (alpha, sigma_sq) = (2.75e-3f32, 8.4e-6f32);
@@ -3962,7 +3960,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let cfa = xtrans();
         let (width, height) = (288, 192);
@@ -4020,7 +4018,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (288, 192);
         let noisy = frame(width, height);
@@ -4056,7 +4054,7 @@ mod tests {
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()
             .unwrap_or_else(|held| held.into_inner());
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (288, 192);
         let noisy = frame(width, height);
