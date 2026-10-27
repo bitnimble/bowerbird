@@ -16,6 +16,7 @@ import { NoShootPhotosStrings } from '../../shoots/no_shoot_photos_page.strings'
 import { ShootPhotosStrings } from '../../shoots/shoot_photos_page.strings';
 import { collectionPath, isComposite, renditionVersion } from '../photos_store';
 import { ViewerStoreStrings } from './viewer_store.strings';
+import { PANEL_DEFAULT_WIDTH, type PanelColumn } from './viewer_edges';
 import { BLOCK } from '../grid/grid_layout';
 import { BinPageStrings } from '../grid/bin_page.strings';
 import type { ListingStore } from '../grid/listing_store';
@@ -194,6 +195,10 @@ export class ViewerStore {
   // the DOM.
   @observable accessor detailWidth = 0;
   @observable accessor detailHeight = 0;
+  @observable accessor panelWidths: Record<PanelColumn, number> = {
+    view: PANEL_DEFAULT_WIDTH,
+    edit: PANEL_DEFAULT_WIDTH,
+  };
   // What the viewer's filmstrip has on screen, or null when none is mounted. The
   // strip scrolls the same collection on its own rail, so the rows it is over are
   // rows this client has to hold (`neededBlocks`).

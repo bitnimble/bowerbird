@@ -4,6 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { Fragment, useLayoutEffect, useMemo, type ReactNode } from 'react';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
+import { LabelFit } from '../../ui/label_fit';
 import { color } from '../../ui/tokens.stylex';
 import { Tooltip } from '../../ui/tooltip';
 import { EditTabsPresenter } from './edit_tabs_presenter';
@@ -21,12 +22,15 @@ const styles = stylex.create({
     alignContent: 'start',
     gap: '8px',
   },
-  tabs: {
-    display: 'flex',
-    gap: '4px',
+  strip: {
+    justifyContent: 'flex-start',
     borderBottomWidth: '1px',
     borderBottomStyle: 'solid',
     borderBottomColor: color.slate,
+  },
+  tabs: {
+    display: 'flex',
+    gap: '4px',
   },
   tab: {
     borderColor: 'transparent',
@@ -83,19 +87,38 @@ export const EditTabs = observer(function EditTabs({
       onValueChange={presenter.select}
       {...stylex.props(styles.root, style)}
     >
-      <Tabs.List aria-label={MobileEditPanelsStrings.tabs()} {...stylex.props(styles.tabs)}>
-        {tabs.map((tab) => (
-          <Tooltip key={tab.id} label={tab.title}>
-            <Tabs.Tab
-              value={tab.id}
-              aria-label={tab.title}
-              {...stylex.props(buttonStyles.base, buttonStyles.icon, focusRing.inside, styles.tab)}
-            >
-              {tab.icon}
-            </Tabs.Tab>
-          </Tooltip>
-        ))}
-      </Tabs.List>
+      <LabelFit
+        items={tabs.map(({ id, icon, title }) => ({ key: id, icon, label: title }))}
+        selected={selected.id}
+        rowStyle={styles.tabs}
+        itemStyle={(labelled) => [buttonStyles.base, !labelled && buttonStyles.icon, styles.tab]}
+        style={styles.strip}
+      >
+        {(labelled) => (
+          <Tabs.List aria-label={MobileEditPanelsStrings.tabs()} {...stylex.props(styles.tabs)}>
+            {tabs.map((tab) => {
+              const named = labelled(tab.id);
+              return (
+                <Tooltip key={tab.id} label={named ? undefined : tab.title}>
+                  <Tabs.Tab
+                    value={tab.id}
+                    aria-label={named ? undefined : tab.title}
+                    {...stylex.props(
+                      buttonStyles.base,
+                      !named && buttonStyles.icon,
+                      focusRing.inside,
+                      styles.tab,
+                    )}
+                  >
+                    {tab.icon}
+                    {named && tab.title}
+                  </Tabs.Tab>
+                </Tooltip>
+              );
+            })}
+          </Tabs.List>
+        )}
+      </LabelFit>
       {notice}
       <Tabs.Panel value={selected.id} {...stylex.props(panelStyles.panel)}>
         {contents(selected.panels)}

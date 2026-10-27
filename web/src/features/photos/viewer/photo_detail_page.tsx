@@ -8,6 +8,7 @@ import { readSetting, writeSetting } from '../../../app/local_setting';
 import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import { Button } from '../../../ui/button';
+import { EdgeResizer } from '../../../ui/edge_resizer';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
 import { Page, PageHead } from '../../../ui/page';
@@ -35,7 +36,7 @@ import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { renditionVersion, sourceOfPath } from '../photos_store';
 import { renditionsApi } from '../../../api/renditions';
 import { useDetailBox, useStripView } from './detail_page_hooks';
-import { panelEdge, stripEdge } from './viewer_edges';
+import { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, panelEdge, stripEdge } from './viewer_edges';
 import { styles } from './photo_detail_page.stylex';
 import { PhotoTriage } from './detail_triage';
 import { DetailNav } from './detail_nav';
@@ -56,6 +57,7 @@ import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
 import { aspectOf } from '../grid/grid_layout';
+import { onTv } from '../../../app/tv';
 
 // 0 decodes at the sensor's own size: the draw runs per canvas pixel, so the frame's size is paid
 // once at the open, and a smaller decode is detail a zoom cannot get back (`docs/raw-edit-gpu.md` §4.1).
@@ -263,7 +265,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       ? { ...visit, presenter: opened.presenter }
       : null;
 
-  // Both replace (the Edit row's link too), so opening and closing the editor leaves the history
+  // Both replace (Edit's link too), so opening and closing the editor leaves the history
   // where it found it: one entry for this photograph, and Back goes wherever the photograph was
   // reached from.
   //
@@ -372,6 +374,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const sheetStrip = stripInSheet && stripOffered && stripOpen;
   const panelsOffered = !mobile && mode === 'view';
   const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
+  const panelColumn = previewing ? 'edit' : 'view';
+  // Half the frame at most, so a width dragged out on a wide window leaves a narrow one its photo.
+  // What the drag starts from too, or the edge would sit still until the pointer passed the cap.
+  const panelWidth =
+    store.detailWidth > 0
+      ? Math.min(store.panelWidths[panelColumn], Math.max(PANEL_MIN_WIDTH, store.detailWidth / 2))
+      : store.panelWidths[panelColumn];
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
@@ -527,6 +536,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           {...stylex.props(
             styles.detail,
             styles[layout],
+            layout === 'beside' && styles.panelWidth(panelWidth),
             layout === 'sheet' && sheetStrip && styles.sheetStrip,
             editTabs && store.detailHeight > 0 && styles.sheetTop(store.detailHeight),
             sheetStrip && editTabs && [styles.sheetOverStrip, styles.belowTabs(underTabsHeight)],
@@ -582,6 +592,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             </div>
           )}
           {(mobile || panelsOpen || previewing) && panels}
+          {layout === 'beside' && !onTv() && (
+            <EdgeResizer
+              axis="x"
+              grows={-1}
+              value={panelWidth}
+              min={PANEL_MIN_WIDTH}
+              max={PANEL_MAX_WIDTH}
+              label={PhotoDetailStrings.resizePanels()}
+              onResize={(width) => photos.setPanelWidth(panelColumn, width)}
+              onNudge={(steps) => photos.nudgePanelWidth(panelColumn, steps)}
+              style={[styles.panelEdge, styles.panelEdgeAt(panelWidth)]}
+            />
+          )}
         </div>
 
         {/* Outside the panels, so it spans them: whichever axis still has room

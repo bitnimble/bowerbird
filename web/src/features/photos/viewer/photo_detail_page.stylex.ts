@@ -56,8 +56,17 @@ export const styles = stylex.create({
     minHeight: 0,
   },
   beside: {
-    gridTemplateColumns: 'minmax(0, 1fr) 320px',
+    position: 'relative',
   },
+  panelWidth: (width: number) => ({ gridTemplateColumns: `minmax(0, 1fr) ${width}px` }),
+  // Centred in the 10px gap before the column.
+  panelEdge: {
+    top: 0,
+    bottom: 0,
+    width: '8px',
+    zIndex: 3,
+  },
+  panelEdgeAt: (width: number) => ({ right: `${width + 1}px` }),
   below: {
     gridTemplateRows: 'minmax(0, 1fr) auto',
   },

@@ -77,6 +77,7 @@ export const PhotoDetailStrings = {
   nextPhoto: () => 'Next photo',
   hideMetadata: () => 'Hide metadata',
   showMetadata: () => 'Show metadata',
+  resizePanels: () => 'Resize panels',
   more: () => 'More',
 
   sectionEdit: () => 'Edit',

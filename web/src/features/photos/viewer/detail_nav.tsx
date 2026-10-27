@@ -157,27 +157,24 @@ const ROTATE_ACTIONS: Option<ViewAction>[] = [
 
 type EditAction = 'undo' | 'redo' | 'cameraMatch';
 
-type Action = 'edit' | 'editMerge' | 'metadata' | 'rerender' | 'hide' | 'delete';
+type Action = 'editMerge' | 'metadata' | 'rerender' | 'hide' | 'delete';
 
 // Greyed out rather than absent where a library serves the camera's JPEG: there is
 // no render of its own to remake.
 function actions({
   rerendering,
   renders,
-  edit,
   hidden,
   merged,
 }: {
   rerendering: boolean;
   renders: boolean;
-  edit: Option<'edit'>;
   /** Whether this photograph is already put away, which is which way the one hide row points. */
   hidden: boolean;
   /** A row composed out of others, which is the only kind that has a merge to go back into. */
   merged: boolean;
 }): Option<Action>[] {
   return [
-    edit,
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
     // than by a field the viewer would have to carry.
@@ -246,7 +243,7 @@ export const DetailNav = observer(function DetailNav({
    */
   stripOpen: boolean | null;
   onToggleStrip: () => void;
-  /** Where the Edit row goes, which replaces this entry in the history rather than pushing one. */
+  /** Where Edit goes, which replaces this entry in the history rather than pushing one. */
   editHref: string;
   onDone: () => void;
   /** What the stage stands in for, and whether an HDR rendition is there to stand in for. */
@@ -417,24 +414,10 @@ export const DetailNav = observer(function DetailNav({
             options: actions({
               rerendering: store.buildingRendition,
               renders: store.rerenderTarget != null,
-              edit: editOption({
-                editable,
-                fetchingOriginal: replicationStore.fetching.has(photoId),
-                readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
-                unreachable: store.unreachable(photoId),
-                editHref,
-                replace: true,
-              }),
               hidden: photo?.is_hidden ?? false,
               merged: isComposite(store.photoFor(photoId)),
             }),
             onSelect: (action) => {
-              if (action === 'edit') {
-                void fetchOriginalThenEdit(replication, photoId, () => {
-                  if (store.open?.id === photoId) navigate(editHref, { replace: true });
-                });
-                return;
-              }
               if (action === 'editMerge') {
                 navigate(mergeEditPath(photoId, listing.source));
                 return;
@@ -518,11 +501,16 @@ export const DetailNav = observer(function DetailNav({
       : []),
   ];
 
-  // A phone cannot hold the grade's bar on one line - the tools, the turns and the zoom are
-  // eight controls before the menus - so while editing it is allowed the second row rather
-  // than squeezing every button below its own label. Which also means dropping the centring:
-  // a spacer on a wrapped line pushes the toolbar to an edge instead of the middle.
-  const centred = editing && !mobile;
+  const editChoice = previewing
+    ? null
+    : editOption({
+        editable,
+        fetchingOriginal: replicationStore.fetching.has(photoId),
+        readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
+        unreachable: store.unreachable(photoId),
+        editHref,
+        replace: true,
+      });
   const tool = edit?.loupe.tool ?? 'cursor';
   const leaveTool = (): void => edit?.presenter.setTool('cursor');
 
@@ -577,14 +565,12 @@ export const DetailNav = observer(function DetailNav({
         <WayBack path={path} pathRef={pathRef} />
       )}
 
-      {centred && <Spacer />}
-
-      {/* Between two spacers where there is room for them, so the toolbar sits in the middle
-          of the bar rather than on the end of whichever group happens to be longer. */}
-      {editing && edit != null && (
-        <EditToolbar stage={edit.stage} loupe={edit.loupe} presenter={edit.presenter} />
-      )}
-      {editing && <Spacer />}
+      {editing &&
+        (edit == null ? (
+          <Spacer />
+        ) : (
+          <EditToolbar stage={edit.stage} loupe={edit.loupe} presenter={edit.presenter} />
+        ))}
 
       <div {...stylex.props(styles.tools)} ref={toolsRef} />
 
@@ -605,6 +591,30 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
+      {editChoice != null && (
+        <Button
+          variant="primary"
+          iconOnly={mobile}
+          aria-label={mobile ? editChoice.label : undefined}
+          tooltip={editChoice.tooltip}
+          disabled={editChoice.disabled}
+          // Hoverable while disabled, so the tooltip can say why, and focused through the fetch.
+          focusableWhenDisabled
+          render={editChoice.link}
+          onClick={
+            editChoice.link != null
+              ? undefined
+              : () =>
+                  void fetchOriginalThenEdit(replication, photoId, () => {
+                    if (store.open?.id === photoId) navigate(editHref, { replace: true });
+                  })
+          }
+        >
+          {editChoice.icon}
+          {!mobile && editChoice.label}
+        </Button>
+      )}
+
       {!mobile && <SoftProofMenu value={proof} hdrOffered={hdrOffered} onChange={onProof} />}
 
       {stripOpen != null && !mobile && (
@@ -622,8 +632,8 @@ export const DetailNav = observer(function DetailNav({
 
       {panelsOpen != null && <PanelsToggle open={panelsOpen} onToggle={onTogglePanels} />}
 
-      {/* Keyed on the mode: the three modes are one mounted page, so a menu kept open through a
-          fetch would otherwise still be open over the editor it opened. */}
+      {/* Keyed on the mode: the three modes are one mounted page, so a menu left open as the
+          editor opens would otherwise still be open over it. */}
       <OverflowMenu key={mode} hotkey label={PhotoDetailStrings.more()} sections={sections} />
     </Row>
   );

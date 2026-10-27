@@ -252,7 +252,9 @@ describe('the edit panel', () => {
       <p>Camera details</p>,
     );
     act(() => runInAction(() => (stage.softProof = 'srgb')));
-    expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label') ?? tab.textContent),
+    ).toEqual([
       'Light',
       'Colour',
       'Effects',

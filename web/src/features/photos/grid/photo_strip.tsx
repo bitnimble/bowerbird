@@ -6,7 +6,7 @@ import { ownsArrows } from '../../../app/remote_navigation';
 import { useListingStore, useMarksStore, useStacksStore } from '../../../app/stores_context';
 import { onTv } from '../../../app/tv';
 import { focusRing } from '../../../ui/focus_ring';
-import { stopFlings } from '../../../ui/stop_flings';
+import { EdgeResizer } from '../../../ui/edge_resizer';
 import { GRID_GAP } from './grid_layout';
 import { PhotoGridStrings } from './photo_grid.strings';
 import {
@@ -25,10 +25,8 @@ import { TileMenu } from './tile_menu';
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
 export const STRIP_ID = 'filmstrip-scroller';
 
-// The strip's own edge, dragged, on whichever side faces the photograph: how thick
-// it is drawn is how big its cells are. A delta from where the drag started rather
-// than the pointer's distance from the far edge, which would need the strip's box
-// read back on every move.
+// The strip's own edge, on whichever side faces the photograph: how thick it is drawn is how
+// big its cells are.
 export const StripResizer = observer(function StripResizer({
   view,
   presenter,
@@ -37,46 +35,18 @@ export const StripResizer = observer(function StripResizer({
   presenter: StripViewPresenter;
 }): JSX.Element {
   const along = view.axis;
-  const grabbed = useRef({ x: 0, y: 0, thickness: 0, along });
-  const hold = (e: { clientX: number; clientY: number }): void => {
-    grabbed.current = { x: e.clientX, y: e.clientY, thickness: view.thickness, along };
-  };
-
   return (
-    <div
-      ref={stopFlings}
-      {...stylex.props(strip.handle, along === 'x' ? strip.handleX : strip.handleY)}
-      role="separator"
-      aria-orientation={along === 'x' ? 'horizontal' : 'vertical'}
-      aria-label={PhotoGridStrings.resizeFilmstrip()}
-      aria-valuenow={view.thickness}
-      aria-valuemin={STRIP_MIN_THICKNESS}
-      aria-valuemax={STRIP_MAX_THICKNESS}
-      tabIndex={0}
-      onPointerDown={(e) => {
-        // Without this the drag selects the cells behind the edge instead of moving it.
-        e.preventDefault();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        hold(e);
-      }}
-      onPointerMove={(e) => {
-        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-        // How thick the strip is is what decides which edge it takes, so a drag can swap its
-        // own axis under itself (`stripEdge`). Taken from here on the new one, rather than
-        // subtracting a distance down the screen from one across it.
-        if (grabbed.current.along !== along) hold(e);
-        const from = along === 'x' ? grabbed.current.y : grabbed.current.x;
-        // The strip is past the photograph either way, so it grows towards the pointer's origin.
-        const moved = from - (along === 'x' ? e.clientY : e.clientX);
-        presenter.setThickness(grabbed.current.thickness + moved);
-      }}
-      onKeyDown={(e) => {
-        const grow = along === 'x' ? e.key === 'ArrowUp' : e.key === 'ArrowLeft';
-        const shrink = along === 'x' ? e.key === 'ArrowDown' : e.key === 'ArrowRight';
-        if (!grow && !shrink) return;
-        e.preventDefault();
-        presenter.nudgeThickness(grow ? 1 : -1);
-      }}
+    <EdgeResizer
+      axis={along === 'x' ? 'y' : 'x'}
+      // The strip is past the photograph either way, so it grows back towards it.
+      grows={-1}
+      value={view.thickness}
+      min={STRIP_MIN_THICKNESS}
+      max={STRIP_MAX_THICKNESS}
+      label={PhotoGridStrings.resizeFilmstrip()}
+      onResize={presenter.setThickness}
+      onNudge={presenter.nudgeThickness}
+      style={[strip.handle, along === 'x' ? strip.handleX : strip.handleY]}
     />
   );
 });

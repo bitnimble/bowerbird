@@ -82,7 +82,7 @@ function Page({ elsewhere }: { elsewhere: OriginalElsewhere }): JSX.Element {
   );
 }
 
-async function openMenu(elsewhere: OriginalElsewhere): Promise<void> {
+async function show(elsewhere: OriginalElsewhere): Promise<void> {
   render(
     <MemoryRouter initialEntries={[VIEWER]}>
       <StoresProvider>
@@ -91,28 +91,25 @@ async function openMenu(elsewhere: OriginalElsewhere): Promise<void> {
     </MemoryRouter>,
   );
   await act(async () => {});
-  await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
-  });
 }
 
-async function openMenuAndFetch(): Promise<void> {
-  await openMenu('reachable');
+async function showAndFetch(): Promise<void> {
+  await show('reachable');
   await act(async () => {
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Fetch original and edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch original and edit' }));
   });
 }
 
 const pending = (): string | null =>
-  screen.getByRole('menuitem', { name: 'Fetching original…' }).getAttribute('aria-disabled');
+  screen.getByRole('button', { name: 'Fetching original…' }).getAttribute('aria-disabled');
 
-test('the menu stays pending from the click until the original lands, and closes when the editor opens', async () => {
+test('the button stays pending from the click until the original lands, and the editor opens', async () => {
   const asks: ((transfer: Transfer) => void)[] = [];
   blobsApi.fetchOriginal = () => new Promise((resolve) => asks.push(resolve));
   const reads: ((transfers: Transfer[]) => void)[] = [];
   blobsApi.listTransfers = () => new Promise((resolve) => reads.push(resolve));
 
-  await openMenuAndFetch();
+  await showAndFetch();
   expect(pending()).toBe('true');
 
   await act(async () => {
@@ -128,14 +125,13 @@ test('the menu stays pending from the click until the original lands, and closes
   await waitFor(() =>
     expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(EDITOR),
   );
-  expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
 });
 
-test('the row returns to what it was when the fetch cannot be asked for', async () => {
+test('the button returns to what it was when the fetch cannot be asked for', async () => {
   const refusals: ((error: Error) => void)[] = [];
   blobsApi.fetchOriginal = () => new Promise((_, reject) => refusals.push(reject));
 
-  await openMenuAndFetch();
+  await showAndFetch();
   expect(pending()).toBe('true');
 
   await act(async () => {
@@ -143,20 +139,20 @@ test('the row returns to what it was when the fetch cannot be asked for', async 
   });
 
   expect(
-    screen.getByRole('menuitem', { name: 'Fetch original and edit' }).getAttribute('aria-disabled'),
+    screen.getByRole('button', { name: 'Fetch original and edit' }).getAttribute('aria-disabled'),
   ).not.toBe('true');
   expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(VIEWER);
 });
 
-test('an original only on a device this one cannot reach is not offered, and says why', async () => {
+test('an original only on a device this one cannot reach cannot be fetched, and says why', async () => {
   const asked: string[] = [];
   blobsApi.fetchOriginal = (photoId) => {
     asked.push(photoId);
     return Promise.resolve(pull('queued'));
   };
 
-  await openMenu('unreachable');
-  const item = screen.getByRole('menuitem', { name: 'Fetch original and edit' });
+  await show('unreachable');
+  const item = screen.getByRole('button', { name: 'Fetch original and edit' });
   expect(item.getAttribute('aria-disabled')).toBe('true');
   expect(item.getAttribute('aria-description')).toBe(
     "No local copy. The device holding it can't be reached from here.",

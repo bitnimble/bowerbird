@@ -10,16 +10,16 @@ const COLLAPSED_KEY = 'bowerbird.sidebar.collapsed';
 const OPEN_KEY = 'bowerbird.sidebar.toggled';
 const WIDTH_KEY = 'bowerbird.sidebar.width';
 
-const MIN_WIDTH = 160;
-const MAX_WIDTH = 520;
+export const SIDEBAR_MIN_WIDTH = 160;
+export const SIDEBAR_MAX_WIDTH = 520;
 // Mirrors `size.sidebar` in `tokens.stylex.ts`, which is what the sidebar is until a drag says
 // otherwise - and the arrow keys need a number before there has ever been one.
-const DEFAULT_WIDTH = 208;
+export const SIDEBAR_DEFAULT_WIDTH = 208;
 
 const RESIZE_STEP = 16;
 
 function clamp(width: number): number {
-  return Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width)));
+  return Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)));
 }
 
 export class SidebarPresenter {
@@ -85,7 +85,7 @@ export class SidebarPresenter {
 
   @action.bound
   nudgeWidth(steps: number): void {
-    this.setWidth((this.store.width ?? DEFAULT_WIDTH) + steps * RESIZE_STEP);
+    this.setWidth((this.store.width ?? SIDEBAR_DEFAULT_WIDTH) + steps * RESIZE_STEP);
   }
 
   /** The shoots an opened Shoots row lists, fetched once per library. */

@@ -16,7 +16,6 @@ import {
   firstPhotoId,
   frames,
   gotoPhoto,
-  photoAction,
   photoStage,
   savedRev,
   softProof,
@@ -764,10 +763,10 @@ test('opening and closing the editor leaves the history alone', async ({ page })
   await page.goto(route(PathSegment.photos(), photoId));
   await expect(page.getByRole('button', { name: 'More' })).toBeEnabled();
 
-  // Through the menu the reader uses, because it is the Edit row's link that puts anything in
-  // the history and `/edit` in the address arrives without having followed it.
+  // Through the button the reader uses, because it is Edit's link that puts anything in the
+  // history and `/edit` in the address arrives without having followed it.
   const before = await page.evaluate(() => history.length);
-  await photoAction(page, 'Actions', 'Edit', { exact: true });
+  await page.getByRole('link', { name: 'Edit', exact: true }).click();
   await expect(editTools(page)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(editTools(page)).toBeHidden();

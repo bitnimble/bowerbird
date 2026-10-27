@@ -12,8 +12,13 @@
 // routinely not the same edge. The strip chooses first and the panels choose
 // inside what it left, which is how they are nested on the page.
 
-/** The panel column, from `styles.beside` in `photo_detail_page.tsx`. */
-const PANEL_WIDTH = 320;
+/** The viewer's metadata column and the editor's panels, each sized on its own. */
+export type PanelColumn = 'view' | 'edit';
+
+export const PANEL_MIN_WIDTH = 280;
+export const PANEL_MAX_WIDTH = 720;
+export const PANEL_DEFAULT_WIDTH = 320;
+
 /** The panels' fold along the foot, from `styles.panelsBelow` (34vh). */
 const PANEL_FOLD = 0.34;
 /** `styles.detail`'s grid gap, and `styles.frame`'s. */
@@ -80,7 +85,9 @@ export function panelEdge(
   const taken = strip == null ? 0 : stripCost(strip.thickness);
   const w = strip?.edge === 'beside' ? width - taken : width;
   const h = strip?.edge === 'below' ? height - taken : height;
-  return betterEdge(aspect, w, h, PANEL_WIDTH + GAP, fold);
+  // The default width, not the dragged one: a drag that moved the column below would pull its
+  // own edge out from under the pointer.
+  return betterEdge(aspect, w, h, PANEL_DEFAULT_WIDTH + GAP, fold);
 }
 
 function stripCost(thickness: number): number {
