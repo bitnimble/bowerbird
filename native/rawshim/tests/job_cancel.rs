@@ -5,15 +5,15 @@
 //! pins that the flag is seen *before* the work rather than after it, which is the difference
 //! between cancel and "wait for it".
 
-use rawshim::assembly_analysis::Refused;
+use composite::assembly::analysis::Refused;
 
 /// A cancel set as an `analyse` starts is seen at its first boundary - before the device is even
 /// asked for, let alone a frame decoded.
 #[test]
 fn analyse_stops_at_its_first_boundary_once_cancelled() {
-    rawshim::progress::counted(Some(1), || {
-        rawshim::progress::cancel(1);
-        match pollster::block_on(rawshim::assembly_analysis::analyse(&[])) {
+    trace::progress::counted(Some(1), || {
+        trace::progress::cancel(1);
+        match pollster::block_on(composite::assembly::analysis::analyse(&[])) {
             Err(refused) => assert_eq!(refused, Refused::Cancelled),
             Ok(_) => panic!("a cancelled analysis must not run to completion"),
         }

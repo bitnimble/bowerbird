@@ -50,7 +50,7 @@ static const float HARRIS_K = 0.04;
 /// second search over pixels.
 ///
 /// **A share of the plane and not a count of its pixels**, because that reasoning is about
-/// *picture* and this plane's size is the caller's: `composite_align::Kind` searches a burst on
+/// *picture* and this plane's size is the caller's: `composite::align::Kind` searches a burst on
 /// half the long edge a pan gets, and a fixed sixteen would describe twice as much facade there -
 /// and exclude twice as much of the frame's border from being matched at all. A sixteenth of a
 /// hundredth resolves to exactly the sixteen this was tuned at on a 1616px plane.

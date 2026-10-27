@@ -42,7 +42,7 @@
 //   the frame shrunk to 1024 on its long edge (`dereflect.slang`, `dereflect_frame.slang`, whose
 //   `BRUSH_SOFTNESS` is a share of a stroke's own radius). A working plane of fixed size has fixed
 //   pixels, so constants in it are safe.
-// - *A pixel of whatever is drawn, on purpose.* `assembly_weight::W_HIGH_PX`, the high band's two
+// - *A pixel of whatever is drawn, on purpose.* `composite::assembly::weight::W_HIGH_PX`, the high band's two
 //   render pixels: what it smooths is the staircase a rasteriser leaves, which is one pixel at
 //   every size, so a share of the picture would be the wrong answer at every size but one.
 // - *A distance in units that are not pixels of anything.* `dust.slang`'s `SPAN` is 2.5 *blob
@@ -104,7 +104,7 @@ public struct Looked : IAbsolute {}
 /// The plane a composite's geometry search runs on: the frames' embedded JPEGs, brought to one
 /// size.
 ///
-/// **Deliberately not `IAbsolute`.** Its long edge is the caller's choice - `composite_align::Kind`
+/// **Deliberately not `IAbsolute`.** Its long edge is the caller's choice - `composite::align::Kind`
 /// asks for 1616 for a pan and 808 for a burst, and a body whose embedded JPEG is shorter brings
 /// the whole set down to its own size - so a count of these pixels is a ratio, and a constant in
 /// them describes a different amount of picture in each case.

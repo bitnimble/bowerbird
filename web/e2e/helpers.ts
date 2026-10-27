@@ -611,7 +611,7 @@ export function editTools(page: Page): Locator {
  *
  * **A frame arrives either way, which is why this is watched at all.** A dispatch the browser
  * refused writes nothing and the stages after it filter whatever the one before left, so what comes
- * back is a photograph rather than a failure - `gpu.rs`'s uncaptured-error handler is the only thing
+ * back is a photograph rather than a failure - the `gpu` crate's uncaptured-error handler is the only thing
  * in a tab that says so. A decode with no noise fit is a frame that was never denoised.
  *
  * Matched on the exact prefixes rather than on `rawshim`, because the module also logs which adapter

@@ -11,6 +11,8 @@
 //! leaves `base::prepare` sharpened (`tile::prepared_on_device`), and a whole rendition is
 //! sharpened per target (`hdr::Cut::from_base`).
 
+pub mod solve;
+
 use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
@@ -217,7 +219,7 @@ impl Placed {
 
     /// The pixels the fill can land on, `[left, top, right, bottom)`: the seam and the feather
     /// outside it, reaching past the buffer wherever those do.
-    pub(crate) fn lands(&self) -> [isize; 4] {
+    pub fn lands(&self) -> [isize; 4] {
         let [low, high] = bounds(&self.seam);
         let feather = self.feather.raw();
         [
@@ -229,7 +231,7 @@ impl Placed {
     }
 
     /// The pixels it is read from.
-    pub(crate) fn reads(&self) -> [isize; 4] {
+    pub fn reads(&self) -> [isize; 4] {
         let [left, top, right, bottom] = self.lands();
         let [dx, dy] = self.donor;
         [left + dx, top + dy, right + dx, bottom + dy]
@@ -293,25 +295,25 @@ fn overlaps(a: [isize; 4], b: [isize; 4]) -> bool {
 /// `Params` in `repair.slang`.
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct Params {
-    pub(crate) size: [u32; 2],
-    pub(crate) first: u32,
-    pub(crate) pixels: u32,
-    pub(crate) donor: [i32; 2],
-    pub(crate) vertices: u32,
-    pub(crate) band_first: u32,
-    pub(crate) band_samples: u32,
-    pub(crate) gain: f32,
-    pub(crate) feather: f32,
-    pub(crate) cell: u32,
-    pub(crate) cells: [u32; 2],
-    pub(crate) origin: [u32; 2],
-    pub(crate) picture: [f32; 4],
+pub struct Params {
+    pub size: [u32; 2],
+    pub first: u32,
+    pub pixels: u32,
+    pub donor: [i32; 2],
+    pub vertices: u32,
+    pub band_first: u32,
+    pub band_samples: u32,
+    pub gain: f32,
+    pub feather: f32,
+    pub cell: u32,
+    pub cells: [u32; 2],
+    pub origin: [u32; 2],
+    pub picture: [f32; 4],
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own.
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
@@ -324,12 +326,12 @@ fn built(gpu: &'static Gpu, entry: &str) -> gpu::compute::Kernel {
     gpu::compute::kernel(gpu, entry, shaders::REPAIR.source, bindings, &[])
 }
 
-pub(crate) fn repairing(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+pub fn repairing(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
     static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "repair"))
 }
 
-pub(crate) fn averaging(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
+pub fn averaging(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
     static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || built(gpu, "repair_cells"))
 }
@@ -342,7 +344,7 @@ pub(crate) fn averaging(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
 ///
 /// Answers what each repair was drawn over, cut out before any was ([`crate::retouched_frame`]),
 /// which is the only way to know it once they have been.
-pub(crate) fn apply(
+pub fn apply(
     frame: &Resident,
     whole: Size<Drawn>,
     origin: At<Drawn>,
@@ -490,15 +492,15 @@ pub(crate) fn apply(
 }
 
 /// The pixels under one repair's footprint on the frame [`apply`] drew it on, before it did.
-pub(crate) struct Cut {
+pub struct Cut {
     /// Which of the repairs [`apply`] was handed.
-    pub(crate) repair: usize,
+    pub repair: usize,
     /// Where on that frame, in its own pixels.
-    pub(crate) rect: Rect<Drawn>,
-    pub(crate) rgb: Resident,
+    pub rect: Rect<Drawn>,
+    pub rgb: Resident,
 }
 
-pub(crate) fn entry(binding: u32, buffer: &gpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+pub fn entry(binding: u32, buffer: &gpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
@@ -506,7 +508,7 @@ pub(crate) fn entry(binding: u32, buffer: &gpu::Buffer) -> wgpu::BindGroupEntry<
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub mod tests {
     use super::*;
 
     fn written(json: &str) -> Result<Repair, serde_json::Error> {
@@ -813,7 +815,7 @@ pub(crate) mod tests {
     }
 
     /// Stripes ten pixels apart across a frame of `size`, and a bright, coloured disc on them.
-    pub(crate) fn striped_with_a_disc(size: (usize, usize), centre: (f64, f64)) -> Vec<u16> {
+    pub fn striped_with_a_disc(size: (usize, usize), centre: (f64, f64)) -> Vec<u16> {
         let mut samples = Vec::with_capacity(size.0 * size.1 * 3);
         for y in 0..size.1 {
             for x in 0..size.0 {
@@ -832,7 +834,7 @@ pub(crate) mod tests {
     }
 
     /// A loop of radius 12 around `centre`, on the grid.
-    pub(crate) fn loop_around(whole: Size<Drawn>, centre: (f64, f64)) -> Vec<Point<Stored>> {
+    pub fn loop_around(whole: Size<Drawn>, centre: (f64, f64)) -> Vec<Point<Stored>> {
         (0..16)
             .map(|at| {
                 let angle = at as f64 * std::f64::consts::TAU / 16.0;
@@ -858,7 +860,7 @@ pub(crate) mod tests {
         for grow in [true, false] {
             let frame = Resident::upload(gpu, &samples, size.0, size.1);
             let offered = pollster::block_on(async {
-                crate::repair_solve::measure(&frame, whole, At::ORIGIN, drawn.clone(), None)?
+                crate::repair::solve::measure(&frame, whole, At::ORIGIN, drawn.clone(), None)?
                     .solved(&[], grow)
                     .await
             })
@@ -920,9 +922,15 @@ pub(crate) mod tests {
         for grow in [true, false] {
             let frame = Resident::upload(gpu, &samples, size.0, size.1);
             let offered = pollster::block_on(async {
-                crate::repair_solve::measure(&frame, whole, At::ORIGIN, drawn.clone(), Some(donor))?
-                    .solved(&[], grow)
-                    .await
+                crate::repair::solve::measure(
+                    &frame,
+                    whole,
+                    At::ORIGIN,
+                    drawn.clone(),
+                    Some(donor),
+                )?
+                .solved(&[], grow)
+                .await
             })
             .expect("solved");
             assert_eq!(offered.len(), 1, "grown {grow}");
@@ -970,7 +978,7 @@ pub(crate) mod tests {
         for grow in [true, false] {
             let frame = Resident::upload(gpu, &samples, size.0, size.1);
             let offered = pollster::block_on(async {
-                crate::repair_solve::measure(&frame, whole, At::ORIGIN, drawn.clone(), None)?
+                crate::repair::solve::measure(&frame, whole, At::ORIGIN, drawn.clone(), None)?
                     .solved(&[], grow)
                     .await
             })
@@ -1007,14 +1015,14 @@ pub(crate) mod tests {
         let drawn = loop_around(whole, centre);
         let offered = |frame: &Resident, origin: At<Drawn>| {
             pollster::block_on(async {
-                crate::repair_solve::measure(frame, whole, origin, drawn.clone(), None)?
+                crate::repair::solve::measure(frame, whole, origin, drawn.clone(), None)?
                     .solved(&[], true)
                     .await
             })
             .expect("solved")
         };
 
-        let searched = crate::repair_solve::searched(whole, &drawn, None);
+        let searched = crate::repair::solve::searched(whole, &drawn, None);
         let (left, top, wide, deep) = searched.raw();
         assert!(
             wide < size.0 || deep < size.1,

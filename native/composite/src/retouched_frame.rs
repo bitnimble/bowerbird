@@ -202,9 +202,9 @@ impl RetouchedFrame {
         drawn: Vec<Point<Stored>>,
         without: Option<&Repair>,
         donor: Option<[Extent<Stored>; 2]>,
-    ) -> Result<crate::repair_solve::Measuring, String> {
+    ) -> Result<crate::repair::solve::Measuring, String> {
         let Some(repair) = without else {
-            return crate::repair_solve::measure(
+            return crate::repair::solve::measure(
                 &self.frame,
                 self.whole,
                 self.origin,
@@ -212,9 +212,9 @@ impl RetouchedFrame {
                 donor,
             );
         };
-        let searched = crate::repair_solve::searched(self.whole, &drawn, donor);
+        let searched = crate::repair::solve::searched(self.whole, &drawn, donor);
         let (window, at) = self.original_under(repair, searched)?;
-        crate::repair_solve::measure(&window, self.whole, at, drawn, donor)
+        crate::repair::solve::measure(&window, self.whole, at, drawn, donor)
     }
 
     /// `rect` of the picture, as far as this frame holds it, with `repair`'s original put back:
@@ -334,13 +334,13 @@ struct Params {
     pad: [u32; 2],
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own.
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
-pub(crate) fn copying(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
+pub fn copying(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
     use gpu::compute::{READ, UNIFORM, WRITE};
     static BUILT: gpu::Cache<gpu::compute::Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
@@ -356,7 +356,7 @@ pub(crate) fn copying(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
 
 /// A `size` rectangle of one frame at its `At` copied over another at its own, recorded.
 #[track_caller]
-pub(crate) fn copy(
+pub fn copy(
     recording: &mut gpu::Recording<'_>,
     (src, src_at): (&Resident, At<Drawn>),
     (dst, dst_at): (&Resident, At<Drawn>),

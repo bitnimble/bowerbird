@@ -25,7 +25,7 @@ pub struct Lowpass {
     pub crop: Rect<units::px::Composite>,
     /// The white every window of this render is coded against, measured over the whole crop while
     /// the bands were being built. A strip left to measure its own is a band across the finished
-    /// picture, which is `crate::composite_tile::CompositeRequest::levels`' own warning.
+    /// picture, which is `crate::tile::CompositeRequest::levels`' own warning.
     pub levels: colour::tone::Anchored,
 }
 
@@ -39,7 +39,7 @@ pub struct Lowpass {
 /// exactly, so the 5-tap binomial §5.2 describes buys nothing a seam can see.
 pub async fn lowpass(
     recipe: &crate::assembly::Drawing,
-    request: &crate::composite_tile::CompositeRequest<'_>,
+    request: &crate::tile::CompositeRequest<'_>,
 ) -> Result<Lowpass, String> {
     let refused = || render::base::without_a_device("the assembly's lowpass");
     let gpu = gpu::device().ok_or_else(refused)?;
@@ -57,7 +57,7 @@ pub async fn lowpass(
     let coarse = crop_w.max(crop_h) as f64 / COARSE_LONG as f64;
     let scale = coarse.max(1.0);
 
-    let of = crate::assembly_weight::slots_of(recipe);
+    let of = crate::assembly::weight::slots_of(recipe);
     let slots = recipe.sources_used().len();
 
     let grid = {
@@ -73,7 +73,7 @@ pub async fn lowpass(
 
     let mut bands: Vec<Option<colour::resident::Resident>> = (0..slots).map(|_| None).collect();
 
-    let coarse_request = crate::composite_tile::CompositeRequest {
+    let coarse_request = crate::tile::CompositeRequest {
         window: Rect::exact(
             (crop.raw().0 as f64 / scale).round() as usize,
             (crop.raw().1 as f64 / scale).round() as usize,
@@ -85,11 +85,11 @@ pub async fn lowpass(
         scale,
         // Every source's own lowpass, whatever the weights say: the bands are what the blend mixes
         // *between*, so a source gathered here at no weight is still a source the blend reads.
-        weight: crate::composite_tile::Weight::Feather,
+        weight: crate::tile::Weight::Feather,
         ..request.clone()
     };
-    let levels = crate::composite_tile::layers_of(spec, &coarse_request, |i, layer, _| {
-        let crate::composite_tile::Layer { rgb, weight } = layer;
+    let levels = crate::tile::layers_of(spec, &coarse_request, |i, layer, _| {
+        let crate::tile::Layer { rgb, weight } = layer;
         if let Some(slot) = of[i] {
             bands[slot as usize] = render::base::resize(gpu, base, &rgb, grid);
         }
@@ -123,7 +123,7 @@ pub async fn lowpass(
 pub async fn prepared(
     recipe: &crate::assembly::Drawing,
     hold: &Lowpass,
-    request: &crate::composite_tile::CompositeRequest<'_>,
+    request: &crate::tile::CompositeRequest<'_>,
 ) -> Result<(colour::resident::Resident, decode::Prepared), String> {
     let refused = || render::base::without_a_device("the assembly's render");
     let gpu = gpu::device().ok_or_else(refused)?;
@@ -131,16 +131,16 @@ pub async fn prepared(
 
     // Once for the window, not once a source: every source reads the same array at its own slot,
     // and the flood is the expensive half of a window. No test can see the difference.
-    let fields = crate::assembly_weight::weights(gpu, recipe, request.window, request.scale).await;
-    let slot_of = crate::assembly_weight::slots_of(recipe);
+    let fields = crate::assembly::weight::weights(gpu, recipe, request.window, request.scale).await;
+    let slot_of = crate::assembly::weight::slots_of(recipe);
     let tile_warps: Vec<[f64; 6]> = (0..recipe.tiles.len())
         .map(|tile| recipe.warp_of(tile))
         .collect();
     let tile_slot: Vec<u32> = (0..recipe.tiles.len())
         .map(|tile| slot_of[recipe.pick[tile]].expect("a picked source has a slot"))
         .collect();
-    let masked = crate::composite_tile::CompositeRequest {
-        weight: crate::composite_tile::Weight::Mask(crate::composite_tile::Mask {
+    let masked = crate::tile::CompositeRequest {
+        weight: crate::tile::Weight::Mask(crate::tile::Mask {
             signed: &fields.signed,
             tile_of: &fields.tile_of,
             warps: &fields.warps,
@@ -155,7 +155,7 @@ pub async fn prepared(
         ..request.clone()
     };
 
-    let mut banding = crate::assembly_blend::Banding::over(
+    let mut banding = crate::assembly::blend::Banding::over(
         gpu,
         base,
         request.window,
@@ -164,7 +164,7 @@ pub async fn prepared(
         request.scale,
     );
     let mut carried = None;
-    let levels = crate::composite_tile::layers_of(&recipe.spec, &masked, |i, layer, arrived| {
+    let levels = crate::tile::layers_of(&recipe.spec, &masked, |i, layer, arrived| {
         banding.add(
             layer,
             slot_of[i].expect("a gathered source has a slot") as usize,
@@ -197,8 +197,8 @@ pub async fn prepared(
             keep: [0, 0, width, height],
             levels: anchored,
             matched: match request.from {
-                crate::composite_tile::From::Camera => None,
-                crate::composite_tile::From::Original => request.sources[recipe.base]
+                crate::tile::From::Camera => None,
+                crate::tile::From::Original => request.sources[recipe.base]
                     .analysis
                     .and_then(|a| a.from_raw.matched.clone()),
             },

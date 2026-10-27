@@ -823,7 +823,7 @@ fn mover_motion(which: usize, frame: usize) -> Affine {
 ///
 /// **A burst is not shot at one exposure.** Metering drifts frame to frame under any auto mode, and
 /// nothing in the file says by how much: the header states what the *camera asked for*, which is
-/// what `composite_solve::gains` reads, and what came out is a different number. That gap is a step
+/// what `composite::solve::gains` reads, and what came out is a different number. That gap is a step
 /// at a seam, so a fixture with every frame at one exposure cannot show one.
 ///
 /// A twelfth of a stop a frame, which is small enough to be invisible in the residual and plainly
@@ -957,7 +957,7 @@ fn crowd_frame(size: (usize, usize), frame: usize) -> Vec<[f32; 3]> {
     }
     // Last, over everything: the meter is the camera's, so it moves the whole frame including the
     // ground the figures stand on. Applied to the scene rather than to a header, because a header
-    // that said so is exactly what `composite_solve::gains` would have taken out already.
+    // that said so is exactly what `composite::solve::gains` would have taken out already.
     let stop = metering(frame);
     for pixel in &mut out {
         for channel in pixel {

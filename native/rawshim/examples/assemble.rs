@@ -1,4 +1,4 @@
-//! N RAWs of a burst through `assembly_analysis::analyse`, and the seams a drawn seed grows.
+//! N RAWs of a burst through `composite::assembly::analysis::analyse`, and the seams a drawn seed grows.
 //!
 //! ```text
 //! assemble <a.ARW> <b.ARW> [more...] [--pick N] [--out <dir>] [--planes <dir>]
@@ -16,8 +16,8 @@
 
 mod support;
 
-use rawshim::assembly_planes::Plane;
-use rawshim::composite_tile::{Blending, Layer, SourceFile};
+use composite::assembly::planes::Plane;
+use composite::tile::{Blending, Layer, SourceFile};
 
 fn main() {
     let args = Args::parse();
@@ -33,7 +33,7 @@ fn main() {
     // One fit for the lens the burst was shot on, handed to the first frame: `shared_lenses` gives
     // every member of the group that one answer, and a group with none is `Refused::Lensless`.
     let fitted = fitted_lens(&args.raws[0]);
-    let sources: Vec<rawshim::composite_align::AlignSource<'_>> = args
+    let sources: Vec<composite::align::AlignSource<'_>> = args
         .raws
         .iter()
         .zip(&planes_from)
@@ -46,7 +46,7 @@ fn main() {
             let said = |of: fn(&formats::header::BbHeader) -> f32| {
                 header.as_ref().map(of).filter(|v| *v > 0.0)
             };
-            rawshim::composite_align::AlignSource {
+            composite::align::AlignSource {
                 photo_id: path,
                 path,
                 preview_path: plane.as_deref(),
@@ -74,17 +74,17 @@ fn main() {
     }
 }
 
-/// **The whole of §3, end to end**: [`rawshim::assembly_analysis::analyse`] is the align, the
+/// **The whole of §3, end to end**: [`composite::assembly::analysis::analyse`] is the align, the
 /// intersection crop, the plane gather and the seam field stitched together. Each `--draw`
 /// rectangle then seeds a tile taking `--pick`.
 fn auto(
     gpu: &'static gpu::Gpu,
     base: &'static render::base::Base,
-    sources: &[rawshim::composite_align::AlignSource<'_>],
+    sources: &[composite::align::AlignSource<'_>],
     args: &Args,
 ) {
     let started = std::time::Instant::now();
-    let analysed = match pollster::block_on(rawshim::assembly_analysis::analyse(sources)) {
+    let analysed = match pollster::block_on(composite::assembly::analysis::analyse(sources)) {
         Ok(found) => found,
         Err(refused) => {
             println!("\nrefused: {refused:?}");
@@ -118,12 +118,12 @@ fn auto(
     println!(
         "  §3.1's corner check: {:.3} analysis px of radial pattern, against a bound of {:?}{}",
         analysed.radial.map_or(f64::NAN, |radial| {
-            let plane = rawshim::assembly_planes::ANALYSIS_LONG;
+            let plane = composite::assembly::planes::ANALYSIS_LONG;
             radial
                 .across(units::px::Span::<units::px::Analysis>::exact(plane))
                 .raw()
         }),
-        rawshim::assembly_analysis::NEAR_IDENTITY,
+        composite::assembly::analysis::NEAR_IDENTITY,
         if analysed.unaligned {
             " - unaligned"
         } else {
@@ -152,11 +152,11 @@ fn auto(
         })
         .collect();
     let started = std::time::Instant::now();
-    let planes = pollster::block_on(rawshim::assembly_planes::analysis_planes(spec, &files))
+    let planes = pollster::block_on(composite::assembly::planes::analysis_planes(spec, &files))
         .expect("the analysis planes");
     let gathered = started.elapsed().as_secs_f64();
     let started = std::time::Instant::now();
-    let again = pollster::block_on(rawshim::assembly_analysis::analysis_of(
+    let again = pollster::block_on(composite::assembly::analysis::analysis_of(
         gpu,
         base,
         spec.clone(),
@@ -190,7 +190,7 @@ fn auto(
 fn solved(
     gpu: &'static gpu::Gpu,
     base: &'static render::base::Base,
-    analysed: &rawshim::assembly_analysis::Analysed,
+    analysed: &composite::assembly::analysis::Analysed,
     planes: &[Plane],
     (width, height): (usize, usize),
     args: &Args,
@@ -211,7 +211,7 @@ fn solved(
     }
     let moved = recipe.pick.iter().filter(|&&s| s != recipe.base).count();
     let started = std::time::Instant::now();
-    let seams = match rawshim::assembly_seams::solve(&recipe, &analysed.volume) {
+    let seams = match composite::assembly::seams::solve(&recipe, &analysed.volume) {
         Ok(seams) => seams,
         Err(why) => {
             println!("\nsolve refused: {why}");
@@ -297,8 +297,8 @@ fn solved(
 /// The whole crop rendered through §5.2 once per source, with every tile picking that source and
 /// the base set to it, and the browser then masking between them - so it is the render whose
 /// sharpness answers "is the merge page soft".
-fn layers(sources: &[rawshim::composite_align::AlignSource<'_>], args: &Args, dir: &str) {
-    let analysed = match pollster::block_on(rawshim::assembly_analysis::analyse(sources)) {
+fn layers(sources: &[composite::align::AlignSource<'_>], args: &Args, dir: &str) {
+    let analysed = match pollster::block_on(composite::assembly::analysis::analyse(sources)) {
         Ok(found) => found,
         Err(refused) => {
             println!("\nrefused: {refused:?}");
@@ -324,14 +324,14 @@ fn layers(sources: &[rawshim::composite_align::AlignSource<'_>], args: &Args, di
     }
 }
 
-/// One recipe, over its own crop, in strips - `assembly_render::lowpass` then `prepared`.
+/// One recipe, over its own crop, in strips - `composite::assembly::lowpass::lowpass` then `prepared`.
 ///
 /// `long` is the crop's own long edge in output pixels, which is what a rendition size names
 /// (`canvasLongEdgeFor`). At the canvas's own scale this is the whole picture at 1:1; below it, the
 /// render is the downscale the server asks for, and a measurement taken at 1:1 instead is a
 /// measurement of a picture nobody is shown.
 fn through_the_render(
-    recipe: &rawshim::assembly::Drawing,
+    recipe: &composite::assembly::Drawing,
     path: &str,
     long: usize,
     sharpen: f64,
@@ -360,7 +360,7 @@ fn through_the_render(
     println!("  crop {crop_w}x{crop_h} of the canvas, rendered {width}x{height}");
 
     let asking = |window: units::px::Rect<units::px::Composite>, levels| {
-        rawshim::composite_tile::CompositeRequest {
+        composite::tile::CompositeRequest {
             window,
             parts: &[],
             scale,
@@ -373,13 +373,13 @@ fn through_the_render(
             },
             detail,
             sources: &files,
-            from: rawshim::composite_tile::From::Original,
-            weight: rawshim::composite_tile::Weight::Feather,
+            from: composite::tile::From::Original,
+            weight: composite::tile::Weight::Feather,
         }
     };
     let whole = units::px::Rect::exact(left, top, width, height);
     let started = std::time::Instant::now();
-    let held = pollster::block_on(rawshim::assembly_render::lowpass(
+    let held = pollster::block_on(composite::assembly::lowpass::lowpass(
         recipe,
         &asking(whole, None),
     ))
@@ -397,7 +397,7 @@ fn through_the_render(
     while row < top + height {
         let tall = STRIP_ROWS.min(top + height - row);
         let window = units::px::Rect::exact(left, row, width, tall);
-        let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(
+        let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(
             recipe,
             &held,
             &asking(window, Some(held.levels)),

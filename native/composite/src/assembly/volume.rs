@@ -1,9 +1,9 @@
 //! What the analysis leaves on disk for a seam solve: its seam field, and the plane it was measured
 //! on.
 
-use crate::assembly_seam::{NOT_REACHED, SeamField};
+use crate::assembly::seam::{NOT_REACHED, SeamField};
 
-/// What the analysis leaves for [`crate::assembly_seams::solve`]: its seam field in source order,
+/// What the analysis leaves for [`crate::assembly::seams::solve`]: its seam field in source order,
 /// over the plane it was measured on.
 pub struct Volume {
     /// The analysis plane the shrunk grid was cut from, which is what carries a cell to the canvas.
@@ -95,7 +95,7 @@ pub fn by_source(field: SeamField, plane_sources: &[usize]) -> SeamField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly_seams::tests::{MOVED, burst};
+    use crate::assembly::seams::tests::{MOVED, burst};
 
     #[test]
     fn a_volume_reads_back_what_was_written() {

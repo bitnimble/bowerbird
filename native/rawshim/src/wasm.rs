@@ -143,7 +143,7 @@ pub struct HeldRaw {
     shown: std::cell::Cell<Option<((usize, usize), (usize, usize), (usize, usize))>>,
     /// The repairs drawn over a frame assembled from tiles (`set_repairs`). A local open's are in
     /// its prepare instead, and this stays empty.
-    repairs: std::cell::RefCell<Vec<crate::repair::Repair>>,
+    repairs: std::cell::RefCell<Vec<composite::repair::Repair>>,
     /// A loop about to be searched around, whose search a frame assembled from tiles holds as well
     /// as the stage (`set_searched`).
     searched: std::cell::RefCell<Option<(Vec<units::px::Point<units::px::Stored>>, Option<Donor>)>>,
@@ -227,7 +227,7 @@ impl Patch {
 struct Drawing {
     /// The frame and what its repairs were drawn over, which change together or not at all. Kept
     /// because `uploaded` binds the frame by handle: dropping it would destroy it under the grade.
-    frame: crate::retouched_frame::RetouchedFrame,
+    frame: composite::retouched_frame::RetouchedFrame,
     uploaded: render::grade::Uploaded<'static>,
     pyramid: render::base::Pyramid,
     /// Held so the peak `quantile` wrote survives every tick that reads it.
@@ -511,7 +511,7 @@ fn refused() -> Result<(), JsValue> {
 }
 
 /// The document's repairs, as the page sends them.
-fn repairs_of(json: &str) -> Result<Vec<crate::repair::Repair>, JsValue> {
+fn repairs_of(json: &str) -> Result<Vec<composite::repair::Repair>, JsValue> {
     serde_json::from_str(json)
         .map_err(|e| JsValue::from_str(&format!("rawshim: these repairs are malformed: {e}")))
 }
@@ -592,7 +592,7 @@ fn donor_of(json: &str) -> Result<Donor, JsValue> {
     Ok(donor.map(|step| units::px::Extent::exactly(f64::from(step))))
 }
 
-fn repair_of(json: &str) -> Result<crate::repair::Repair, JsValue> {
+fn repair_of(json: &str) -> Result<composite::repair::Repair, JsValue> {
     serde_json::from_str(json)
         .map_err(|e| JsValue::from_str(&format!("rawshim: this repair is malformed: {e}")))
 }
@@ -830,7 +830,7 @@ impl HeldRaw {
         let drawn: Option<Vec<[u16; 2]>> = serde_json::from_str(drawn)
             .map_err(|e| JsValue::from_str(&format!("rawshim: this loop is malformed: {e}")))?;
         let drawn = drawn
-            .map(crate::repair::loop_of)
+            .map(composite::repair::loop_of)
             .transpose()
             .map_err(|why| JsValue::from_str(&why))?;
         let donor = donor.as_deref().map(donor_of).transpose()?;
@@ -872,7 +872,8 @@ impl HeldRaw {
             (at.1 + size.1).min(level.1),
         ];
         if let Some((drawn, donor)) = self.searched.borrow().as_ref() {
-            let (left, top, wide, deep) = crate::repair_solve::searched(whole, drawn, *donor).raw();
+            let (left, top, wide, deep) =
+                composite::repair::solve::searched(whole, drawn, *donor).raw();
             edges = [
                 edges[0].min(left),
                 edges[1].min(top),
@@ -880,7 +881,7 @@ impl HeldRaw {
                 edges[3].max(top + deep),
             ];
         }
-        let held = crate::repair::reaching(
+        let held = composite::repair::reaching(
             &self.repairs.borrow(),
             whole,
             units::px::Rect::exact(edges[0], edges[1], edges[2] - edges[0], edges[3] - edges[1]),
@@ -1255,7 +1256,7 @@ impl HeldRaw {
         self.tile.replace(None);
     }
 
-    /// The repairs a reader is offered for a loop they drew, as `crate::repair::Repair`s in JSON,
+    /// The repairs a reader is offered for a loop they drew, as `composite::repair::Repair`s in JSON,
     /// cheapest seam first.
     ///
     /// `drawn` is the loop on the `px::Stored` grid and `others` the repairs the document already
@@ -1282,7 +1283,7 @@ impl HeldRaw {
             JsValue::from_str(&format!("rawshim: this {what} is malformed: {e}"))
         };
         let drawn: Vec<[u16; 2]> = serde_json::from_str(drawn).map_err(|e| malformed("loop", e))?;
-        let drawn = crate::repair::loop_of(drawn).map_err(|why| JsValue::from_str(&why))?;
+        let drawn = composite::repair::loop_of(drawn).map_err(|why| JsValue::from_str(&why))?;
         let others = repairs_of(others)?;
         let without = without.as_deref().map(repair_of).transpose()?;
         let donor = donor.as_deref().map(donor_of).transpose()?;
@@ -1466,7 +1467,7 @@ impl HeldRaw {
         rows: usize,
         frame_width: usize,
         frame_height: usize,
-        repairs: Vec<crate::repair::Repair>,
+        repairs: Vec<composite::repair::Repair>,
     ) -> Result<crate::tile::TileRequest, JsValue> {
         let levels = self
             .levels
@@ -1588,7 +1589,7 @@ impl HeldRaw {
     /// covers them all, because a prepare's fixed cost is a file open and a region decode for
     /// every source it touches - but the library is told the squares as well as their box, so each
     /// source is decoded for the box bounding *its own* squares and a source no square reaches is
-    /// not opened at all (`composite_tile::CompositeRequest::parts`). Handed only the box, a diagonal pan
+    /// not opened at all (`composite::tile::CompositeRequest::parts`). Handed only the box, a diagonal pan
     /// would decode every source for a corner nobody asked about.
     fn missing_over(
         &self,
@@ -1676,7 +1677,7 @@ impl HeldRaw {
             }
             recording.submit();
         }
-        let frame = crate::retouched_frame::RetouchedFrame::drawn(
+        let frame = composite::retouched_frame::RetouchedFrame::drawn(
             frame,
             units::px::Size::exact(level.0, level.1),
             units::px::At::exact(first.0, first.1),
@@ -2014,7 +2015,7 @@ impl HeldRaw {
         ev: Option<f64>,
         region: &str,
         part: impl FnOnce(
-            &crate::retouched_frame::RetouchedFrame,
+            &composite::retouched_frame::RetouchedFrame,
             units::px::Rect<units::px::Drawn>,
         ) -> Result<
             (colour::resident::Resident, units::px::At<units::px::Drawn>),

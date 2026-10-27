@@ -6,7 +6,7 @@
 // and summing would double-count every seam between two neighbours that picked the same frame; the
 // union has no such seam, because the owner does not change across it.
 //
-// Four entries, driven in order by `assembly_weight.rs`: the owner map, a seed pass a slot, a jump
+// Four entries, driven in order by `composite::assembly::weight`: the owner map, a seed pass a slot, a jump
 // flood, and the resolve. The flood is `log2(long edge)` passes of one read per neighbour, which is
 // what a distance over a window costs when the seeds are not a shape the host can walk.
 //

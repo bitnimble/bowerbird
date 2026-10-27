@@ -1,10 +1,10 @@
 //! What a job asks of an assembly that renders nothing: analyse a burst into a recipe and the seam
 //! volume beside it, or solve seams over that volume for the reader's picks.
 
-use crate::assembly::Assembly;
-use crate::assembly_seams::{Layout, Seams};
-use crate::assembly_volume::Volume;
 use crate::composite_job::CompositeJob;
+use composite::assembly::Assembly;
+use composite::assembly::seams::{Layout, Seams};
+use composite::assembly::volume::Volume;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -15,8 +15,8 @@ pub fn analyse(pano: &CompositeJob, volume_path: &str) -> Result<String, String>
     let (headers, models) = crate::composite_job::headers_of(pano);
     let sources = crate::composite_job::sources_of(pano, &headers, &models)?;
 
-    use crate::assembly_analysis::Refused;
-    let analysed = match pollster::block_on(crate::assembly_analysis::analyse(&sources)) {
+    use composite::assembly::analysis::Refused;
+    let analysed = match pollster::block_on(composite::assembly::analysis::analyse(&sources)) {
         Ok(analysed) => analysed,
         // An answer rather than a failure: the caller fits these lenses and asks again, which is
         // cheaper than an align of its own run first to find out.
@@ -29,7 +29,7 @@ pub fn analyse(pano: &CompositeJob, volume_path: &str) -> Result<String, String>
             return serde_json::to_string(&serde_json::json!({ "lensless": named }))
                 .map_err(|error| error.to_string());
         }
-        Err(Refused::Cancelled) => return Err(crate::progress::CANCELLED.to_string()),
+        Err(Refused::Cancelled) => return Err(trace::progress::CANCELLED.to_string()),
         Err(other) => return Err(format!("{other:?}")),
     };
     std::fs::write(volume_path, analysed.volume.to_bytes())
@@ -55,7 +55,9 @@ pub fn seams(recipe: &Assembly, volume_path: &str, picks: &[Vec<usize>]) -> Resu
                 ..recipe.clone()
             };
             let layout = layout_for(&volume, &recipe).ok()?;
-            Some(crate::assembly_seams::balance(&recipe, &volume, &layout))
+            Some(composite::assembly::seams::balance(
+                &recipe, &volume, &layout,
+            ))
         })
         .collect();
     serde_json::to_string(&solved).map_err(|error| error.to_string())
@@ -85,7 +87,7 @@ fn layout_for(volume: &Arc<Volume>, recipe: &Assembly) -> Result<Arc<Layout>, St
     if let Some(layout) = found(&lock()) {
         return Ok(layout);
     }
-    let layout = Arc::new(crate::assembly_seams::layout(recipe, volume)?);
+    let layout = Arc::new(composite::assembly::seams::layout(recipe, volume)?);
     let mut held = lock();
     // ponytail: one volume's layouts at a time; two merges open side by side cut again on each switch.
     held.retain(|(at, _, _)| Arc::ptr_eq(at, volume));
@@ -130,7 +132,7 @@ mod tests {
         Volume {
             plane: (cells * 4, 4),
             shrunk: (cells, 1),
-            field: crate::assembly_seam::SeamField {
+            field: composite::assembly::seam::SeamField {
                 level: vec![0.0; cells * 2],
                 tint: vec![0.0; cells * 2],
                 sources: 1,

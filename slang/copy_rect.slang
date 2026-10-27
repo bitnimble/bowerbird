@@ -1,4 +1,4 @@
-// A rectangle of one packed frame copied into another (`retouched_frame.rs`): a removal's original
+// A rectangle of one packed frame copied into another (`composite::retouched_frame`): a removal's original
 // cut out of the frame before it is painted over, and put back over a copy of the frame to see
 // under it.
 //

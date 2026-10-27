@@ -95,9 +95,9 @@ pub struct TileRequest {
     #[serde(default)]
     pub scale: decode::view::Scale,
     /// The reader's repairs, which a window grows to hold the fill of wherever one reaches it
-    /// (`crate::repair::reaching`).
+    /// (`composite::repair::reaching`).
     #[serde(default)]
-    pub repairs: Vec<crate::repair::Repair>,
+    pub repairs: Vec<composite::repair::Repair>,
     /// The photograph drawn at `[width, height]`, and then **`tile` is in that drawing's pixels**
     /// rather than the photograph's: a band of a render too large to hold whole (`job::bands`), or a
     /// window of one level of a picture (`picture::prepared`). Where `scale` decodes some other
@@ -180,7 +180,7 @@ pub async fn prepared_async(
 pub async fn prepared_on_device(
     source: Source<'_>,
     request: &TileRequest,
-) -> Result<(crate::retouched_frame::RetouchedFrame, decode::Prepared), String> {
+) -> Result<(composite::retouched_frame::RetouchedFrame, decode::Prepared), String> {
     let grown = grown(request)?;
     let detail = request.detail();
     let stored = request.stored();
@@ -455,7 +455,7 @@ pub async fn prepared_on_device(
     let Some((frame, took_off)) = chained else {
         return Err(refused());
     };
-    let frame = crate::retouched_frame::RetouchedFrame::drawn(
+    let frame = composite::retouched_frame::RetouchedFrame::drawn(
         frame,
         Size::exact(grown.frame.0, grown.frame.1),
         At::exact(grown.window.0, grown.window.1),
@@ -730,7 +730,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     let start = |place: Place<Drawn>| (place - reach).floor_to(step);
     // What the window has to hold before its margin: the rectangle, and wherever the fill of a
     // repair reaching it is read from.
-    let held = crate::repair::reaching(&request.repairs, frame, kept, reach);
+    let held = composite::repair::reaching(&request.repairs, frame, kept, reach);
     let (window_left, window_top) = (start(held.at.x), start(held.at.y));
     let window: Rect<Drawn> = Rect {
         at: At {

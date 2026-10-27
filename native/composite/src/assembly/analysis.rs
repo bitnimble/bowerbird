@@ -5,11 +5,11 @@
 //! that cannot be assembled is named rather than silently half-answered. Tiles are the reader's:
 //! each is seeded where they click and grown by `assembly_seams`.
 
+use crate::align::AlignSource;
 use crate::assembly::Assembly;
-use crate::assembly_levels::{MOST_SOURCES, seam_field};
-use crate::assembly_planes::Plane;
-use crate::assembly_seam::shrunk_size;
-use crate::composite_align::AlignSource;
+use crate::assembly::levels::{MOST_SOURCES, seam_field};
+use crate::assembly::planes::Plane;
+use crate::assembly::seam::shrunk_size;
 use composition::Composition;
 use gpu::Gpu;
 use render::base::Base;
@@ -20,7 +20,7 @@ pub const MOST_TILES: usize = 256;
 pub const MOST_VERTICES: usize = 8192;
 
 /// §3.1's bound on how much worse than the field's own middle a burst's corners may register -
-/// `composite_align::Aligned::radial` carried onto the analysis plane, being a difference and so
+/// `composite::align::Aligned::radial` carried onto the analysis plane, being a difference and so
 /// carrying no texture floor of its own.
 ///
 /// A registration budget of 2.25 analysis pixels, less the median 1.10 a real hand-held burst's
@@ -28,10 +28,10 @@ pub const MOST_VERTICES: usize = 8192;
 /// near-identity, and the page says so.
 ///
 /// So many pixels of a plane whose size the pipeline fixes, where the reading is a [`Share`] of a
-/// plane `composite_align::Kind` chooses: the two meet only once the share is resolved on this one.
+/// plane `composite::align::Kind` chooses: the two meet only once the share is resolved on this one.
 pub const NEAR_IDENTITY: Extent<Analysis> = Extent::exactly(1.15);
 
-/// How finely the frames' intersection is walked, as `composite_solve::COVER_GRID` walks their
+/// How finely the frames' intersection is walked, as `composite::solve::COVER_GRID` walks their
 /// union.
 const COVER_GRID: usize = 400;
 
@@ -56,34 +56,34 @@ pub enum Refused {
 /// A recipe with no tiles yet, and what a seam solve reads for the tiles a reader seeds.
 pub struct Analysed {
     pub assembly: Assembly,
-    /// §3.1's radial check, as `composite_align::Aligned::radial` measured it, or `None` where the
+    /// §3.1's radial check, as `composite::align::Aligned::radial` measured it, or `None` where the
     /// caller brought its own planes and nothing aligned anything.
     pub radial: Option<Share>,
     /// `radial` past [`NEAR_IDENTITY`]: what moved with the camera - parallax - is left to each
     /// seed's own tracking, and a seam near the corners may cross an edge the frames disagree on.
     pub unaligned: bool,
     pub warnings: Vec<String>,
-    pub volume: crate::assembly_volume::Volume,
+    pub volume: crate::assembly::volume::Volume,
 }
 
 /// Steps `analysis_of` reports: the frames' levels and the cells', one per `stepped()` boundary.
 const FIELD_STEPS: usize = 2;
 
 fn stopping() -> Result<(), Refused> {
-    crate::progress::stop_if_cancelled().map_err(refused_by)
+    trace::progress::stop_if_cancelled().map_err(refused_by)
 }
 
 /// The same look, one of [`FIELD_STEPS`] behind it: §3's stages are the only places an analysis can
 /// be interrupted, so they are also the only honest places for it to say how far it has got.
 fn stepped() -> Result<(), Refused> {
-    crate::progress::advance();
+    trace::progress::advance();
     stopping()
 }
 
-/// A stage's string failure, where [`crate::progress::CANCELLED`] is the reader's cancel rather
+/// A stage's string failure, where [`trace::progress::CANCELLED`] is the reader's cancel rather
 /// than a set that would not align.
 fn refused_by(why: String) -> Refused {
-    match why == crate::progress::CANCELLED {
+    match why == trace::progress::CANCELLED {
         true => Refused::Cancelled,
         false => Refused::NotAligned(why),
     }
@@ -96,18 +96,18 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
     // into this rather than into a pass of their own: a preview and a pair each, the solve, a
     // full-size plane each, and the field.
     let n = sources.len();
-    crate::progress::begin(n + n.saturating_sub(1) + 1 + n + FIELD_STEPS);
+    trace::progress::begin(n + n.saturating_sub(1) + 1 + n + FIELD_STEPS);
     stopping()?;
     let gpu = gpu::device().ok_or_else(refused)?;
     let base = render::base::device(gpu).ok_or_else(refused)?;
 
     // A burst points every frame at the same place, so a focal no file stated is nearly
     // unobservable and a free solve wanders tens of percent (§3.1).
-    let aligned = crate::composite_align::align(
+    let aligned = crate::align::align(
         gpu,
         sources,
-        crate::composite_solve::Leash::Assumed,
-        crate::composite_align::Kind::Stack(crate::composite_align::Reference::Sharpest),
+        crate::solve::Leash::Assumed,
+        crate::align::Kind::Stack(crate::align::Reference::Sharpest),
     )
     .await
     .map_err(refused_by)?;
@@ -134,16 +134,16 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
         .iter()
         .map(|from| from.analysis.and_then(fit::photo_analysis::decode))
         .collect();
-    let files: Vec<crate::composite_tile::SourceFile<'_>> = placed
+    let files: Vec<crate::tile::SourceFile<'_>> = placed
         .iter()
         .zip(&stored)
-        .map(|(from, held)| crate::composite_tile::SourceFile {
+        .map(|(from, held)| crate::tile::SourceFile {
             path: from.path,
             analysis: held.as_ref(),
         })
         .collect();
     stopping()?;
-    let planes = crate::assembly_planes::analysis_planes(&spec, &files)
+    let planes = crate::assembly::planes::analysis_planes(&spec, &files)
         .await
         .map_err(refused_by)?;
 
@@ -155,9 +155,9 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
 }
 
 /// Whether a radial reading is past [`NEAR_IDENTITY`], once it is on the analysis plane.
-pub(crate) fn unaligned_at(radial: Share) -> bool {
+pub fn unaligned_at(radial: Share) -> bool {
     radial.across(Span::<Analysis>::exact(
-        crate::assembly_planes::ANALYSIS_LONG,
+        crate::assembly::planes::ANALYSIS_LONG,
     )) > NEAR_IDENTITY
 }
 
@@ -197,10 +197,10 @@ pub async fn analysis_of(
     let field = seam_field(gpu, base, planes, size, stepped).await?;
     let shrunk = shrunk_size(size);
     let plane_sources: Vec<usize> = planes.iter().map(|p| p.source).collect();
-    let volume = crate::assembly_volume::Volume {
+    let volume = crate::assembly::volume::Volume {
         plane: size,
         shrunk,
-        field: crate::assembly_volume::by_source(field, &plane_sources),
+        field: crate::assembly::volume::by_source(field, &plane_sources),
     };
     Ok(Analysed {
         volume,
@@ -334,9 +334,7 @@ pub fn intersection_crop(spec: &Composition) -> [f64; 4] {
         })
         .collect();
 
-    let Some([left, top, wide, tall]) =
-        crate::composite_solve::largest_inside(&covered, across, down)
-    else {
+    let Some([left, top, wide, tall]) = crate::solve::largest_inside(&covered, across, down) else {
         return [0.0, 0.0, 1.0, 1.0];
     };
     // Centre to centre, because a cell counts as covered on the strength of its centre and its

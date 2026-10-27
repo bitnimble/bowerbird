@@ -55,56 +55,15 @@ use std::os::raw::c_char;
 #[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
-/// A composition's geometry, and the tiles across it that each take one frame.
-pub mod assembly;
-/// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
-pub mod assembly_analysis;
-/// What each piece's frame is multiplied by to meet the light across its seams.
-pub mod assembly_balance;
-/// §5.2's two bands, mixed in log2 light: the lowpass at `W(x)`, the detail at two render pixels.
-pub mod assembly_blend;
 /// The jobs an assembly asks for that render nothing: its analysis, and its seams.
 #[cfg(feature = "renditions")]
 pub mod assembly_job;
-/// Which frame each cell takes under the reader's picks.
-pub mod assembly_labelling;
-/// Each frame's light and colour over every cell a seam is solved on.
-pub mod assembly_levels;
-/// What the analysis measures over: every source of a recipe, prepared and on one canvas.
-pub mod assembly_planes;
-/// The crop-wide lowpass a render's two-band mix reads.
-pub mod assembly_render;
-/// The field a seam is solved over, and the min cut that solves it.
-pub mod assembly_seam;
-/// Where the frames a reader picked meet, solved for those picks.
-pub mod assembly_seams;
-/// A labelling's pieces as one subdivision whose neighbours share their vertices.
-pub mod assembly_tiles;
-/// What the analysis leaves on disk for a seam solve.
-pub mod assembly_volume;
-/// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
-pub mod assembly_weight;
-/// A set of photographs into a recipe: what overlaps what, and where each one points.
-pub mod composite_align;
-/// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
-/// - which is the one thing a correlation search cannot say.
-pub mod composite_features;
 /// What a job asks of a composite: align a set of photographs, or render the recipe that came out.
 ///
 /// The server's half, like `job` it hands its work to: the browser opens one photograph and has
 /// no rendition to build, so a composite is not something it can be asked for.
 #[cfg(feature = "renditions")]
 pub mod composite_job;
-/// What two frames of a composite have in common: how far apart they sit, and where their content
-/// corresponds once that is known.
-pub mod composite_pairs;
-/// A world, and what a camera pointed at it would have recorded: the synthetic views a composite's
-/// alignment is exercised against, and the library the end-to-end suite composes one out of.
-pub mod composite_scene;
-/// Where each frame of a composite points, and how long the lens was, from what the pairs found.
-pub mod composite_solve;
-/// One rectangle of a composite's canvas, gathered source by source and blended.
-pub mod composite_tile;
 #[cfg(feature = "renditions")]
 pub mod debug;
 #[cfg(all(test, feature = "renditions"))]
@@ -120,8 +79,6 @@ pub mod hdr;
 pub mod hdr_args;
 pub mod job;
 pub mod open;
-/// Where a patch of one frame lies in another, or elsewhere in its own.
-pub mod patch_search;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are
@@ -129,11 +86,6 @@ pub mod patch_search;
 #[cfg(feature = "renditions")]
 pub mod picture;
 pub mod pipelines;
-/// How far the work somebody is waiting on has got, read from outside the call doing it.
-pub mod progress;
-pub mod repair;
-pub mod repair_solve;
-pub mod retouched_frame;
 pub mod scrub;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
 #[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
@@ -148,8 +100,6 @@ mod tv_stage;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
-#[cfg(test)]
-mod wgsl_layout;
 
 /// Hands over the library's held log lines (see [`trace::warn`]), and from the first call on holds
 /// them rather than printing them.
@@ -666,7 +616,7 @@ pub unsafe extern "C" fn bb_camera_names(
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_job_progress(progress_id: u32) -> u64 {
-    progress::packed(progress_id)
+    trace::progress::packed(progress_id)
 }
 
 /// Tells the job running under `progress_id` to stop at the next boundary it counts itself at.
@@ -675,7 +625,7 @@ pub extern "C" fn bb_job_progress(progress_id: u32) -> u64 {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_cancel_job(progress_id: u32) {
-    progress::cancel(progress_id);
+    trace::progress::cancel(progress_id);
 }
 
 /// Keeps what a render allocates for the next render to reuse, until as many

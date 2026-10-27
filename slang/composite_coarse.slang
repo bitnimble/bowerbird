@@ -50,7 +50,7 @@ static const int COARSE_LONG = 202;
 /// them. Measured on a synthetic pair, the peak lands on the same translation either way.
 ///
 /// **How many source pixels that average is depends on the caller** - eight from a pan's 1616,
-/// four from a burst's 808 (`composite_align::Kind`) - but the stride itself does not: this plane
+/// four from a burst's 808 (`composite::align::Kind`) - but the stride itself does not: this plane
 /// is reduced to `COARSE_LONG` whatever arrived, so a count of *its* pixels is scale-exact.
 static const int STRIDE = 2;
 

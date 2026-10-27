@@ -127,7 +127,7 @@ impl Weighed<'_> {
 
 /// The uniform block, as `composite_gather.slang` declares it.
 ///
-/// The geometry rather than a [`Gathered`], so `wgsl_layout.rs` can ask what length this writes
+/// The geometry rather than a [`Gathered`], so `every_uniform_is_the_size_its_shader_reads` can ask what length this writes
 /// without a device: a `Gathered` also carries the decoded region the taps read, which is a
 /// `Resident` and so a buffer.
 #[allow(clippy::too_many_arguments)]
@@ -228,10 +228,10 @@ fn params(
     bytes
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own. Nothing above branches
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own. Nothing above branches
 /// on a value, so any source's geometry writes the same run of words.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     let spec = Composition::of_one([64, 64], composition::LensSpec::none());
     params(
         &spec.sources[0],
@@ -584,7 +584,7 @@ fn blend_params(pixels: usize) -> Vec<u8> {
 }
 
 #[cfg(test)]
-pub(crate) fn blend_block() -> usize {
+pub fn blend_block() -> usize {
     blend_params(1).len()
 }
 
@@ -605,7 +605,7 @@ fn stub_of(recording: &mut gpu::Recording<'_>, size: u64) -> gpu::Buffer {
 }
 
 /// `TileWarp`'s size in `composite_gather.slang`, which a stub for its binding has to match.
-const WARP_BYTES: u64 = std::mem::size_of::<crate::assembly_weight::TileWarp>() as u64;
+const WARP_BYTES: u64 = std::mem::size_of::<crate::assembly::weight::TileWarp>() as u64;
 
 /// Where a source's file is and what has been measured about it, in the recipe's own order.
 #[derive(Clone, Copy)]
@@ -637,9 +637,9 @@ pub const NOT_REACHED: f32 = -1e30;
 /// Where a source's weight is read from rather than computed (§5.2).
 #[derive(Clone, Copy)]
 pub struct Mask<'a> {
-    /// One f32 an output pixel a slot, slot-minor: `assembly_weight::Weights::signed`.
+    /// One f32 an output pixel a slot, slot-minor: `composite::assembly::weight::Weights::signed`.
     pub signed: &'a gpu::Buffer,
-    /// `assembly_weight::Weights::tile_of` and the table it indexes.
+    /// `composite::assembly::weight::Weights::tile_of` and the table it indexes.
     pub tile_of: &'a gpu::Buffer,
     pub warps: &'a gpu::Buffer,
     /// The same warps the device reads, in canvas pixels about the canvas origin, and which slot
@@ -803,7 +803,7 @@ const ANCHOR_AMONG: f64 = 0.9;
 const PEAK_AMONG: f64 = 1.0;
 
 /// Those quantiles of the sources' whites and peaks, or None where none of them measured anything.
-pub(crate) fn combined(measured: &[colour::tone::Levels]) -> Option<colour::tone::Anchored> {
+pub fn combined(measured: &[colour::tone::Levels]) -> Option<colour::tone::Anchored> {
     if measured.is_empty() {
         return None;
     }
@@ -1231,7 +1231,7 @@ async fn taken(
 /// **The gain lands here, in the coding.** Dividing the white a source is coded against by its gain
 /// is a multiplication of its light, which is what an exposure match is - and it costs nothing,
 /// where a multiply per sample downstream would be a pass over the window.
-pub(crate) fn coded_as(anchored: colour::tone::Anchored, gain: f64) -> colour::tone::Anchored {
+pub fn coded_as(anchored: colour::tone::Anchored, gain: f64) -> colour::tone::Anchored {
     colour::tone::Levels {
         white: units::light::Light::measured(anchored.white.raw() / gain),
         peak: units::light::Light::measured(anchored.peak.raw() / gain),
@@ -1378,7 +1378,7 @@ fn preview_of(path: &str, at_least_long_edge: u32) -> Result<units::rgb::Rgb, St
 /// `at_least_long_edge` bounds it twice over: the smallest preview the body wrote that still
 /// covers it, and then the DCT scale that decode reads at. A grid tile of a ten-frame panorama is
 /// then ten small JPEGs rather than ten 14MB ones.
-pub(crate) async fn camera_picture(
+pub async fn camera_picture(
     path: &str,
     at_least_long_edge: u32,
 ) -> Result<decode::frame::Frame, String> {
@@ -1425,7 +1425,7 @@ pub(crate) async fn camera_picture(
 /// photograph and composites a window of a canvas, and never asks what a whole one is coded
 /// against.
 #[cfg(feature = "renditions")]
-pub(crate) fn camera_peak(path: &str) -> Result<units::light::Light<units::light::Level>, String> {
+pub fn camera_peak(path: &str) -> Result<units::light::Light<units::light::Level>, String> {
     if formats::rendered::is_rendered(path) {
         // ponytail: whole decode for a header answer; a header-only coding read if it shows. Never
         // assume sRGB here: three stops out on a gain-mapped JPEG.

@@ -2,8 +2,8 @@
 #![cfg(feature = "fixtures")]
 mod support;
 
-use rawshim::assembly_planes::{ANALYSIS_LONG, analysis_planes};
-use rawshim::composite_tile::SourceFile;
+use composite::assembly::planes::{ANALYSIS_LONG, analysis_planes};
+use composite::tile::SourceFile;
 use composition::{Composition, LensSpec, SourceSpec, from_axis_angle, normalise};
 use rawshim::snapshot::{Frame, Snapshot};
 use support::*;

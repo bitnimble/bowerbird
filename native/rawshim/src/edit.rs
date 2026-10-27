@@ -61,7 +61,7 @@ pub struct EditRequest {
     pub dust: denoise::dust::Settings,
     /// The reader's repairs, which the open applies after the chain as every window does.
     #[serde(default)]
-    pub repairs: Vec<crate::repair::Repair>,
+    pub repairs: Vec<composite::repair::Repair>,
     #[serde(default)]
     pub reflection: crate::dereflect::Settings,
     /// The layer an earlier open found for these same strokes, taken out rather than found again.
@@ -611,7 +611,7 @@ pub async fn from_frame(
 /// grade had to be given the samples, which is a `GPUDevice` boundary a frame cannot cross except
 /// as bytes.
 pub struct Opened {
-    pub frame: crate::retouched_frame::RetouchedFrame,
+    pub frame: composite::retouched_frame::RetouchedFrame,
     pub header: PreparedHeader,
     /// What the frame was coded against, which the tick's uniform anchors to.
     pub levels: colour::tone::Levels,

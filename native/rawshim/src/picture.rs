@@ -39,7 +39,7 @@ pub fn prepared(
     // The parts of `window` the caller is actually short of, or empty for the whole of it. An L of
     // tiles is decoded per source for the box bounding *its own* parts rather than for the box
     // bounding all of them, which holds a corner nobody asked about
-    // (`composite_tile::CompositeRequest::parts`).
+    // (`composite::tile::CompositeRequest::parts`).
     parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<crate::edit::Prepared, String> {
     let picture = whole(job)?;
@@ -151,7 +151,7 @@ pub fn prepared(
         let cropped = colour::resident::Resident::empty(gpu, width, height);
         let mut recording = gpu.record();
         // Crop after filtering so window boundaries keep the whole picture's neighbours.
-        crate::retouched_frame::copy(
+        composite::retouched_frame::copy(
             &mut recording,
             (source, units::px::At::exact(x, y)),
             (&cropped, units::px::At::exact(0, 0)),

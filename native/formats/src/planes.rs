@@ -193,5 +193,5 @@ fn block(layout: &Layout) -> Vec<u8> {
     bytes
 }
 
-/// What [`block`] writes, for `wgsl_layout` to hold against the shader's own struct.
+/// What [`block`] writes, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own struct.
 pub const BLOCK_BYTES: usize = 4 * 4 + 2 * 16;

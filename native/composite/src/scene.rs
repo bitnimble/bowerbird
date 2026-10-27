@@ -136,6 +136,12 @@ pub fn rig() -> Vec<[f64; 4]> {
     .collect()
 }
 
+/// The views of a rig, written where a decode can open them.
+pub fn fixtures(name: &str, rig: &[[f64; 4]]) -> Vec<String> {
+    let directory = std::env::temp_dir().join(format!("bowerbird-pano-{name}"));
+    views(&directory, rig)
+}
+
 /// The views of `rig` written into a directory, in the order the rig names them.
 pub fn views(directory: &std::path::Path, rotations: &[[f64; 4]]) -> Vec<String> {
     std::fs::create_dir_all(directory).expect("a fixture directory");

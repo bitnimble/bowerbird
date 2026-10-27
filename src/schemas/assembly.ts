@@ -5,7 +5,7 @@ export const MOST_TILES = 256;
 export const MOST_VERTICES = 8192;
 export const MOST_SOURCES = 12;
 
-/** `assembly_weight::FEATHER`: a recipe's feather where it names none. */
+/** `composite::assembly::weight::FEATHER`: a recipe's feather where it names none. */
 export const DEFAULT_FEATHER = 0.0025;
 /** The widest feather the page offers. */
 export const MOST_FEATHER = 0.015;

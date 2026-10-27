@@ -2,7 +2,7 @@
 //!
 //! `measure_defocus` subtracts the noise's own contribution to both of its sums analytically, from
 //! per-channel variances alone. That derivation assumes the three channels' noise is independent,
-//! and `image.rs`'s fixture asserts it against exactly that - grain drawn per channel. A demosaic
+//! and `detail.rs`'s fixture asserts it against exactly that - grain drawn per channel. A demosaic
 //! builds red and blue out of green, so the frame the estimate actually runs on has correlated
 //! channels, and a cross-covariance the subtraction has no term for.
 //!
@@ -37,7 +37,7 @@ fn main() {
             "--crop" => crop = args.next().and_then(|v| v.parse().ok()),
             "--inject" => inject = args.next().and_then(|v| pair(&v)),
             "--achromatic" => achromatic = true,
-            // Refused rather than ignored: the numbers this prints become constants in `image.rs`,
+            // Refused rather than ignored: the numbers this prints become constants in `detail.rs`,
             // and a mistyped flag swallowed as a sigma prints a plausible table of the wrong thing.
             other => match other.parse::<f32>() {
                 Ok(sigma) => sigmas.push(sigma),
@@ -79,7 +79,7 @@ fn main() {
     // The content with no grain on it, past the matrix, so a noisy reconstruction of the same
     // content can be differenced against it.
     let quiet = reconstruct_matrixed(gpu, rcd, &structure, cfa, w, h, matrix);
-    // No copy of `image.rs`'s constants here: they are private, so one printed would go stale with
+    // No copy of `detail.rs`'s constants here: they are private, so one printed would go stale with
     // nothing to notice.
     println!(
         "{w}x{h}, cfa {cfa:?}, content {}, native sigma {}",

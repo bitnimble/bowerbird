@@ -175,12 +175,12 @@ pub struct Job {
     /// the correction is on the mosaic, inside the one decode every target is cut from.
     #[serde(default)]
     pub dust: denoise::dust::Settings,
-    /// The reader's repairs, in the order they were made (`crate::repair`).
+    /// The reader's repairs, in the order they were made (`composite::repair`).
     ///
     /// On the job rather than on a target for the reason the dust is: every rendition is cut from
     /// the one frame they are applied to, the largest, and the rest are downscales of it.
     #[serde(default)]
-    pub repairs: Vec<crate::repair::Repair>,
+    pub repairs: Vec<composite::repair::Repair>,
     /// The Retouch tab's reflection removal, found over the whole frame every target is cut from.
     #[serde(default)]
     pub reflection: crate::dereflect::Settings,
@@ -232,14 +232,14 @@ pub struct Job {
     ///
     /// The camera match is fitted inside the base every render builds (`open::measure`), and a
     /// library that serves the cameras' pictures never asks for one - so a panorama of those
-    /// frames has no lens table to reach their sensors through (`composite_align::Aligned::lensless`).
+    /// frames has no lens table to reach their sensors through (`composite::align::Aligned::lensless`).
     /// This is how that fit is asked for on its own: everything past the base is a picture nobody
     /// wanted, and the cut, the grade, the encode and the file are most of what a render costs
     /// once the decode is paid for.
     #[serde(default)]
     pub measure: bool,
     /// Where a caller watching from another thread reads this job's steps and cancels it
-    /// (`crate::progress`). Only a job with one can be cancelled.
+    /// (`trace::progress`). Only a job with one can be cancelled.
     #[serde(default)]
     pub progress_id: Option<u32>,
 }
@@ -696,8 +696,8 @@ pub(crate) fn assembled(
                     .iter()
                     .all(|target| target.source == Source::Embedded)
             {
-                true => crate::composite_tile::From::Camera,
-                false => crate::composite_tile::From::Original,
+                true => composite::tile::From::Camera,
+                false => composite::tile::From::Original,
             },
             window,
             parts,
@@ -1288,7 +1288,7 @@ fn repaired(cut: &hdr::Cut, job: &Job) -> Result<(), String> {
         return Ok(());
     };
     // What each was drawn over is the editor's to keep (`repaired`), and a rendition keeps nothing.
-    crate::repair::apply(
+    composite::repair::apply(
         frame,
         units::px::Size::exact(cut.width, cut.height),
         units::px::At::ORIGIN,
@@ -1421,7 +1421,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     for target in &job.targets {
         // Never for a panorama: what a photograph's embedded target lifts is one JPEG out of one
         // file, and a panorama's is a composite of all of theirs. It has a fast path of its own
-        // (`composite_tile::From::Camera`), reached through the render below.
+        // (`composite::tile::From::Camera`), reached through the render below.
         if job.composite.is_none()
             && target.source == Source::Embedded
             && target.output == Output::Srgb
@@ -1492,7 +1492,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     }
 
     // The waits a caller can be told about: the decode, the cut, and an encode per rendition.
-    crate::progress::begin(2 + first.len() + banded.len());
+    trace::progress::begin(2 + first.len() + banded.len());
 
     // Asked for below the loop above, so a job that renders nothing needs no adapter: a scan that
     // read a header, or one whose only target was lifted whole out of the camera's JPEG, is not a
@@ -1500,7 +1500,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     gpu::device().ok_or(NO_ADAPTER)?;
     let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
-    crate::progress::advance();
+    trace::progress::advance();
     let mut measured = pollster::block_on(render(
         job,
         base,
@@ -1545,7 +1545,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             &mut outcome,
         ))?;
         lap("bands, encode, write");
-        crate::progress::advance();
+        trace::progress::advance();
     }
     Ok(outcome)
 }
@@ -1922,7 +1922,7 @@ pub(crate) async fn render(
     };
     gpu.settle();
     lap("resize, lens, sharpen");
-    crate::progress::advance();
+    trace::progress::advance();
 
     // **The frame goes up once per size, not once per rendition.** Two outputs of one size
     // differ by two words of a uniform; uploading 59MB at 3840 - 366MB at native - and
@@ -2053,7 +2053,7 @@ pub(crate) async fn render(
         }
         wrote(target, coded, out_width, out_height, &options)?;
         lap("encode, write");
-        crate::progress::advance();
+        trace::progress::advance();
     }
 
     // Dropped first: it borrows `scene_peak`, and the readback wants the buffer to itself.

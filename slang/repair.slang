@@ -1,4 +1,4 @@
-// A spot or a thing the reader removed, filled from elsewhere in the same frame (`repair.rs`).
+// A spot or a thing the reader removed, filled from elsewhere in the same frame (`composite::repair`).
 //
 // **Every position here is already in this buffer's pixels.** A repair is stored on the
 // `px::Stored` grid and the host maps it onto whichever frame this is - the editor's, a rendition
@@ -54,7 +54,7 @@ struct Params {
 /// `repair_cells`: a cell's log2 light and its two log2 colour ratios.
 [vk::binding(5, 0)] RWStructuredBuffer<float> cells;
 
-/// `assembly_seam::NOT_REACHED`, for a cell no pixel of the frame falls in.
+/// `composite::assembly::seam::NOT_REACHED`, for a cell no pixel of the frame falls in.
 static const float NOT_REACHED = -1e30;
 
 /// The least light a cell is read as, normalised as `light_of_code` is: fourteen stops under the
@@ -160,7 +160,7 @@ void repair(uint3 id : SV_DispatchThreadID)
 }
 
 /// The field the solve searches: the frame averaged over square cells, as log2 light and the two
-/// log2 colour ratios `assembly_seam::SeamField` holds, which is what `patch_search` compares.
+/// log2 colour ratios `composite::assembly::seam::SeamField` holds, which is what `patch_search` compares.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void repair_cells(uint3 id : SV_DispatchThreadID)

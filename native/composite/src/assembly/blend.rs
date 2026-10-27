@@ -1,19 +1,19 @@
 //! §5.2's two bands, accumulated one layer at a time.
 //!
-//! `composite_tile::Blending`'s shape, with two accumulators instead of one and log2 light instead
+//! `composite::tile::Blending`'s shape, with two accumulators instead of one and log2 light instead
 //! of light: the lowpass at `W(x)`, the detail at `W_HIGH_PX`. A source's layer arrives with
 //! §5.2's signed distance in its weight buffer rather than a feather, which is what
 //! `CompositeRequest::mask` asks the gather for.
 
-use crate::composite_tile::Layer;
+use crate::tile::Layer;
 use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
 use units::px::{Composite, Rect};
 
 /// `composite_gather.slang`'s own sentinel, pinned against it by
-/// `composite_tile::tests::the_unreached_sentinel_matches_the_shader`.
-pub const NOT_REACHED: f32 = crate::composite_tile::NOT_REACHED;
+/// `composite::tile::tests::the_unreached_sentinel_matches_the_shader`.
+pub const NOT_REACHED: f32 = crate::tile::NOT_REACHED;
 
 /// `Params` in `assembly_blend.slang`.
 #[repr(C)]
@@ -28,9 +28,9 @@ struct Params {
     pad: [f32; 2],
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own.
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
@@ -85,7 +85,7 @@ impl Banding {
         base: &'static render::base::Base,
         window: Rect<Composite>,
         width: &gpu::Buffer,
-        lowpass: &crate::assembly_render::Lowpass,
+        lowpass: &crate::assembly::lowpass::Lowpass,
         scale: f64,
     ) -> Banding {
         let (left, top, w, h) = window.raw();
@@ -104,7 +104,7 @@ impl Banding {
         let block = Params {
             size: [w as u32, h as u32],
             pixels: pixels as u32,
-            w_high: crate::assembly_weight::W_HIGH_PX,
+            w_high: crate::assembly::weight::W_HIGH_PX,
             lowpass_size: [lowpass.size.0 as u32, lowpass.size.1 as u32],
             lowpass_at: [at(0, left, crop_left) as f32, at(1, top, crop_top) as f32],
             lowpass_per_pixel: [(scale / cell[0]) as f32, (scale / cell[1]) as f32],
@@ -257,7 +257,7 @@ mod tests {
     /// than to the other.
     #[test]
     fn the_unreached_sentinel_matches_the_shader() {
-        let source = include_str!("../../../slang/assembly_blend.slang");
+        let source = include_str!("../../../../slang/assembly_blend.slang");
         let line = source
             .lines()
             .find(|l| l.contains("const float NOT_REACHED ="))

@@ -228,7 +228,7 @@ export class SinglePhotoRenderer {
    * **The fit is made inside the base a render builds**, so a library that serves the cameras'
    * pictures has never made one - and a panorama of those frames has no ratio table to reach
    * their sensors through, which is a doubled edge at every seam of the composite
-   * (`composite_align::Aligned::lensless`).
+   * (`composite::align::Aligned::lensless`).
    *
    * **No target, so no picture**: `Job::measure` runs the base and stops. It still pays the
    * decode, which is what the fit is measured over and most of what a render costs, but not the

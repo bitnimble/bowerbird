@@ -799,7 +799,7 @@ pub fn apply(
     correct(gpu, device(gpu), mosaic, spots, *removal, origin);
 }
 
-/// What the correction writes, for `wgsl_layout`, which holds it against the struct its own
+/// What the correction writes, for `every_uniform_is_the_size_its_shader_reads`, which holds it against the struct its own
 /// shader declares.
 #[cfg(test)]
 pub(crate) fn params_block() -> usize {

@@ -345,7 +345,7 @@ mod tests {
     /// **The window is a share so that it describes the same picture on either plane**, and the
     /// number was chosen so a pan's plane resolves it to exactly what it was tuned at.
     ///
-    /// A fixed sixteen was the `px.rs` failure in its own words: `composite_align::Kind` searches a
+    /// A fixed sixteen was the `px.rs` failure in its own words: `composite::align::Kind` searches a
     /// burst on half the long edge, where sixteen pixels is twice the facade and twice the border
     /// excluded from matching.
     #[test]

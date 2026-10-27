@@ -91,7 +91,7 @@ pub unsafe extern "C" fn bb_run_job(
 
     let result = match parsed {
         Err(error) => Err(format!("could not read the job: {error}")),
-        Ok(parsed) => crate::progress::counted(parsed.progress_id, || {
+        Ok(parsed) => trace::progress::counted(parsed.progress_id, || {
             crate::guard("bb_run_job", Err("panicked".to_string()), || {
                 job::run(&parsed)
             })
@@ -351,7 +351,7 @@ struct PrepareCommand {
     /// **An L of tiles costs what the L covers, not what its box does.** Each source is decoded
     /// for the box bounding *its own* parts, and a source no part reaches is not decoded at all -
     /// where the box bounding an L holds a corner nobody asked about, which widens every
-    /// footprint and can pull in a source on its own (`composite_tile::CompositeRequest::parts`).
+    /// footprint and can pull in a source on its own (`composite::tile::CompositeRequest::parts`).
     #[serde(default)]
     parts: Vec<[usize; 4]>,
 }

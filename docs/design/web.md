@@ -416,7 +416,7 @@ the size of its own canvas leaves none.
 **The reader makes every tile, by clicking.** The analysis hands back no tiles, only the seam field, so the
 page opens as the base frame under a crosshair. A click on the picture seeds a small square tile there
 (`seedAround`, a hundredth of the long edge) on the base and opens its popup, which solves every frame's
-growth of it at once (`assembly_labelling::stamped` holds the square to its pick and lets the seam solve grow it
+growth of it at once (`composite::assembly::labelling::stamped` holds the square to its pick and lets the seam solve grow it
 out to the cheapest seam around what moved). **Only grown pieces are ever drawn** - as SVG paths over one
 canvas at the analysis scale, stroked at low opacity with no fill, filled white at 8% on hover, hit-tested by
 the browser rather than by anything here reading pixels - and a pick not yet solved leaves the picture as it

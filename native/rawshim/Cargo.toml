@@ -15,7 +15,7 @@ default = ["renditions"]
 # than the database, and the display transform is the client's GPU rather than an AVIF encoder.
 # That is what lets the desktop and mobile shells ship without a native library to resolve at
 # all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
-renditions = ["dep:lensdb", "decode/renditions", "formats/renditions", "render/renditions"]
+renditions = ["dep:lensdb", "composite/renditions", "decode/renditions", "formats/renditions", "render/renditions"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -176,6 +176,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 colour = { path = "../colour" }
+composite = { path = "../composite" }
 denoise = { path = "../denoise" }
 burst = { path = "../burst" }
 composition = { path = "../composition" }
@@ -184,21 +185,14 @@ fit = { path = "../fit" }
 formats = { path = "../formats" }
 geometry = { path = "../geometry" }
 gpu = { path = "../gpu" }
-linalg = { path = "../linalg" }
 mosaic = { path = "../mosaic" }
 render = { path = "../render" }
 shaders = { path = "../shaders" }
 trace = { path = "../trace" }
 units = { path = "../units" }
-fast_image_resize = "6.1.0"
 # The f16 the detail and neighbourhood textures and the jacobian readback are held in. Conversion
 # only - no feature of it is wanted.
 half = { version = "2.7.1", default-features = false }
-# libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
-# pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
-# which is the wrong way round here: every decode is bounded to the fit grid or a preview.
-jpeg-decoder = { version = "0.3.2", default-features = false, features = ["rayon"] }
-jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 # The grade runs here, on the same WGSL the editor runs, so there is one implementation of
 # it rather than two that must be held in agreement (DESIGN 21.1). That costs the server an
 # adapter; where there is no hardware one, `gpu::device` falls back to whatever software
@@ -218,16 +212,6 @@ rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 png = "0.18.1"
-# `png` reads the `cICP` chunk that makes a PNG HDR and does not write one, so an HDR export
-# splices it in itself and needs the checksum every PNG chunk carries. Already in the tree
-# under `png`; named here because this crate calls it directly.
-crc32fast = "1.5.0"
-rust_h265 = "0.1.0"
-moxcms = "0.9.1"
-
-# The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
-# callers sit inside their own parallelism. libavif and libjxl are linked on top, through
-# build.rs, and only for a `renditions` build.
 
 # Vulkan without wgpu in the way, for the one thing WGSL cannot say: the cooperative matrices a
 # tensor core is reached through. Already in the tree - it is what wgpu's own Vulkan backend calls -
@@ -259,15 +243,12 @@ web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 wasm-bindgen-futures = "0.4.58"
 
 [dev-dependencies]
-burst = { path = "../burst", features = ["testing"] }
 fit = { path = "../fit", features = ["testing"] }
 formats = { path = "../formats", features = ["testing"] }
-shaders = { path = "../shaders", features = ["layout"] }
+jpeg-encoder = { version = "0.7.1", features = ["simd"] }
+moxcms = "0.9.1"
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,
 # and a synthetic burst with no embedded JPEG is a burst `composite_align` cannot open at all -
 # `upright_preview_rgb` reads `preview_jpegs` and has no other way in. Pinned to the version rawler
 # already builds, so this declares what is in the tree rather than adding to it.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
-# A second reader for what `tiff_write` writes, so the export is held against a decoder that is
-# not the writer's own.
-tiff = "0.11.3"

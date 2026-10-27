@@ -593,7 +593,7 @@ impl Picture {
     }
 }
 
-/// What [`Picture::block`] writes, for `wgsl_layout` to hold against the shader's own struct.
+/// What [`Picture::block`] writes, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own struct.
 pub const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 32;
 
 fn float_storage(gpu: &gpu::Gpu, values: &[f32]) -> gpu::Buffer {

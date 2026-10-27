@@ -107,7 +107,7 @@ pub struct Admitted {
     on_device: gpu::Buffer,
 }
 
-/// What `block` writes, for `wgsl_layout`, which holds it against the struct its own shader
+/// What `block` writes, for `every_uniform_is_the_size_its_shader_reads`, which holds it against the struct its own shader
 /// declares.
 #[cfg(test)]
 pub fn params_block() -> usize {

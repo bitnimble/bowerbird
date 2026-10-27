@@ -1,6 +1,31 @@
 //! What an assembly is: a composition's geometry, and the tiles across it that each take one frame.
 //! A recipe, not a picture, for [`composition`]'s reasons.
 
+/// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
+pub mod analysis;
+/// What each piece's frame is multiplied by to meet the light across its seams.
+pub mod balance;
+/// §5.2's two bands, mixed in log2 light: the lowpass at `W(x)`, the detail at two render pixels.
+pub mod blend;
+/// Which frame each cell takes under the reader's picks.
+pub mod labelling;
+/// Each frame's light and colour over every cell a seam is solved on.
+pub mod levels;
+/// The crop-wide lowpass a render's two-band mix reads.
+pub mod lowpass;
+/// What the analysis measures over: every source of a recipe, prepared and on one canvas.
+pub mod planes;
+/// The field a seam is solved over, and the min cut that solves it.
+pub mod seam;
+/// Where the frames a reader picked meet, solved for those picks.
+pub mod seams;
+/// A labelling's pieces as one subdivision whose neighbours share their vertices.
+pub mod tiles;
+/// What the analysis leaves on disk for a seam solve.
+pub mod volume;
+/// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
+pub mod weight;
+
 use composition::Composition;
 use serde::{Deserialize, Serialize};
 use units::light::Gain;
@@ -45,11 +70,11 @@ pub struct Assembly {
     /// Where the picked frames actually meet, solved for `pick` and `base` (`assembly_seams`).
     /// Absent, the tiles are the seams.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seams: Option<crate::assembly_seams::Seams>,
+    pub seams: Option<crate::assembly::seams::Seams>,
 }
 
 fn default_feather() -> f32 {
-    crate::assembly_weight::FEATHER.raw() as f32
+    crate::assembly::weight::FEATHER.raw() as f32
 }
 
 impl Assembly {

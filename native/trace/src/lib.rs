@@ -3,6 +3,8 @@
 #![deny(unsafe_code)]
 
 pub mod clock;
+/// How far the work somebody is waiting on has got, read from outside the call doing it.
+pub mod progress;
 
 /// A line about something the pipeline declined to do, where the reader will actually see it.
 ///

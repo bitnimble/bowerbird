@@ -10,8 +10,8 @@
 //! which is the geometry the recipe is stated in, so the lens is carried for the RAW gather to undo
 //! later and is not applied to anything here.
 
-use crate::composite_pairs::{Match, Pair, Pyramid};
-use crate::composite_solve::{Leash, exposure_of, framed, gains, solve};
+use crate::pairs::{Match, Pair, Pyramid};
+use crate::solve::{Leash, exposure_of, framed, gains, solve};
 use composition::{Composition, LensSpec, SourceSpec, VERSION};
 use units::px::Share;
 
@@ -61,7 +61,7 @@ pub struct Aligned {
     pub dropped: Vec<usize>,
     /// Which pairs the solve rested on, and what each one's matches reproject to.
     pub kept: Vec<(usize, usize, f64)>,
-    /// [`crate::composite_solve::Solved::radial_px`], which is what §3.1 refuses a burst by, as a
+    /// [`crate::solve::Solved::radial_px`], which is what §3.1 refuses a burst by, as a
     /// share of the long edge the search actually ran on: [`Kind::plane_long`] asks for one, and a
     /// body whose embedded JPEG is shorter brings every plane down to its own size.
     pub radial: Share,
@@ -206,7 +206,7 @@ pub enum Reference {
 impl Kind {
     /// The long edge of the plane the search runs on.
     ///
-    /// The tolerances travel with it: `composite_solve::across` states them as shares of the long
+    /// The tolerances travel with it: `composite::solve::across` states them as shares of the long
     /// edge rather than counts of pixels, which is the failure `px.rs` opens on.
     fn plane_long(self) -> usize {
         match self {
@@ -243,7 +243,7 @@ pub async fn align(
 
     // A preview each, then a pass over every pair searched, then the solve.
     let n = sources.len();
-    crate::progress::begin(n + kind.searches(n) + 1);
+    trace::progress::begin(n + kind.searches(n) + 1);
     let planes = previews_at(gpu, sources, kind.plane_long()).await?;
     let sizes: Vec<[usize; 2]> = planes.iter().map(|p| [p.width, p.height]).collect();
     let pyramids: Vec<Pyramid> = planes.iter().map(|plane| Pyramid::of(gpu, plane)).collect();
@@ -274,11 +274,11 @@ pub async fn align(
     let mut solved = solve(&sizes, &pairs, focal0, leash)
         .ok_or_else(|| "these photographs do not make one picture".to_string())?;
     if matches!(kind, Kind::Stack(_)) {
-        crate::composite_solve::scale_each(&sizes, &pairs, &mut solved);
+        crate::solve::scale_each(&sizes, &pairs, &mut solved);
     }
     let solved = solved;
     lap("solve");
-    crate::progress::advance();
+    trace::progress::advance();
     for &i in &solved.dropped {
         warnings.push(format!(
             "{} does not overlap the rest and was left out",
@@ -396,7 +396,7 @@ async fn panned(
     let mut described = Vec::with_capacity(pyramids.len());
     for level in pyramids {
         let corners = match distinctly > 0.0 {
-            true => crate::composite_features::described(gpu, level.top()).await,
+            true => crate::features::described(gpu, level.top()).await,
             false => None,
         };
         described.push(corners);
@@ -408,16 +408,12 @@ async fn panned(
     for a in 0..pyramids.len() {
         for b in a + 1..pyramids.len() {
             let at = trace::clock::Mark::now();
-            let found = crate::composite_pairs::coarse(
-                gpu,
-                pyramids[a].coarse(),
-                pyramids[b].coarse(),
-                MIN_OVERLAP,
-            )
-            .await;
+            let found =
+                crate::pairs::coarse(gpu, pyramids[a].coarse(), pyramids[b].coarse(), MIN_OVERLAP)
+                    .await;
             coarse_ms += at.elapsed().as_secs_f64() * 1000.0;
-            crate::progress::advance();
-            crate::progress::stop_if_cancelled()?;
+            trace::progress::advance();
+            trace::progress::stop_if_cancelled()?;
             let Some(found) = found else {
                 continue;
             };
@@ -443,7 +439,7 @@ async fn panned(
             // is, so this counts the corners a repeat cannot produce.
             let clearly = match (distinctly > 0.0, &described[a], &described[b]) {
                 (true, Some(ours), Some(theirs)) => {
-                    let pairs = crate::composite_features::paired(ours, theirs);
+                    let pairs = crate::features::paired(ours, theirs);
                     let clear = pairs.iter().filter(|p| p.over <= distinctly).count();
                     clear as f64 / ours.at.len().max(1) as f64
                 }
@@ -455,8 +451,7 @@ async fn panned(
             // correctly. A margin is a thing to measure, not to assume.
             let vouched = clearly >= clearly_bar;
             let at = trace::clock::Mark::now();
-            let refine =
-                crate::composite_pairs::refined(gpu, &pyramids[a], &pyramids[b], found).await;
+            let refine = crate::pairs::refined(gpu, &pyramids[a], &pyramids[b], found).await;
             let (matches, sampled) = (refine.found, refine.sampled);
             refine_ms += at.elapsed().as_secs_f64() * 1000.0;
             // **Two kinds of evidence, and either is enough.** The floor asks how much of the
@@ -546,7 +541,7 @@ async fn stacked(
     let on = burst::align::Pyramid::of(gpu, &luma_of(&pyramids[reference]), preview);
     let mut pairs = Vec::new();
     for at in (0..pyramids.len()).filter(|&at| at != reference) {
-        crate::progress::stop_if_cancelled()?;
+        trace::progress::stop_if_cancelled()?;
         let frame = luma_of(&pyramids[at]);
         let field = burst::align::measure(
             gpu,
@@ -559,7 +554,7 @@ async fn stacked(
             |_, _| burst::Offset::exactly(0.0, 0.0),
             burst::align::Search::unplaced(frame.width.max(frame.height)),
         );
-        crate::progress::advance();
+        trace::progress::advance();
         let placed = field
             .placed(gpu)
             .await
@@ -588,7 +583,7 @@ async fn stacked(
             b: at.max(reference),
             score,
             found: matches.len(),
-            matches: crate::composite_pairs::agreeing(&matches),
+            matches: crate::pairs::agreeing(&matches),
             vouched: true,
         });
     }
@@ -678,8 +673,8 @@ pub async fn previews_at(
     let mut planes = Vec::with_capacity(sources.len());
     for source in sources {
         planes.push(preview_of(gpu, source, wide).await?);
-        crate::progress::advance();
-        crate::progress::stop_if_cancelled()?;
+        trace::progress::advance();
+        trace::progress::stop_if_cancelled()?;
     }
 
     // **One scale, or the focal is two numbers at once.** The search compares two planes on one
@@ -928,17 +923,11 @@ fn assumed_focal(size: &[usize; 2]) -> f64 {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use composition::{Projection, from_axis_angle, multiply, ray_to_source};
 
-    pub(crate) use crate::composite_scene::{FOCAL, TALL, WIDE, rig};
-
-    /// The views of a rig, written where a decode can open them.
-    pub(crate) fn fixtures(name: &str, rig: &[[f64; 4]]) -> Vec<String> {
-        let directory = std::env::temp_dir().join(format!("bowerbird-pano-{name}"));
-        crate::composite_scene::views(&directory, rig)
-    }
+    use crate::scene::{FOCAL, TALL, WIDE, fixtures, rig};
 
     fn offered<'a>(paths: &'a [String]) -> Vec<AlignSource<'a>> {
         paths
@@ -1059,13 +1048,7 @@ pub(crate) mod tests {
     fn a_window_of_the_composite_is_a_prepared_tile() {
         let (p, paths) = merged("tile");
         let (across, down) = (512usize, 256usize);
-        let (frame, prepared) = composited(
-            &p,
-            &paths,
-            across,
-            down,
-            crate::composite_tile::From::Original,
-        );
+        let (frame, prepared) = composited(&p, &paths, across, down, crate::tile::From::Original);
         assert_eq!((prepared.width, prepared.height), (across, down));
         assert_eq!(prepared.keep, [0, 0, across, down]);
         assert_eq!(prepared.photograph, (p.canvas[0], p.canvas[1]));
@@ -1097,8 +1080,8 @@ pub(crate) mod tests {
             let (frame, _) = composited(&p, &paths, across, down, from);
             pollster::block_on(frame.into_host()).expect("the window reads back")
         };
-        let rendered = luma(crate::composite_tile::From::Original);
-        let camera = luma(crate::composite_tile::From::Camera);
+        let rendered = luma(crate::tile::From::Original);
+        let camera = luma(crate::tile::From::Camera);
 
         assert_eq!(camera.len(), rendered.len());
         assert!(
@@ -1141,16 +1124,16 @@ pub(crate) mod tests {
         paths: &[String],
         across: usize,
         down: usize,
-        from: crate::composite_tile::From,
+        from: crate::tile::From,
     ) -> (colour::resident::Resident, decode::Prepared) {
-        let files: Vec<crate::composite_tile::SourceFile<'_>> = paths
+        let files: Vec<crate::tile::SourceFile<'_>> = paths
             .iter()
-            .map(|path| crate::composite_tile::SourceFile {
+            .map(|path| crate::tile::SourceFile {
                 path,
                 analysis: None,
             })
             .collect();
-        let request = crate::composite_tile::CompositeRequest {
+        let request = crate::tile::CompositeRequest {
             // The whole window, which is what an empty list means.
             parts: &[],
             window: units::px::Rect::exact(
@@ -1172,10 +1155,9 @@ pub(crate) mod tests {
             detail: denoise::galosh::Detail::at(0.0, 0.0),
             sources: &files,
             from,
-            weight: crate::composite_tile::Weight::Feather,
+            weight: crate::tile::Weight::Feather,
         };
-        pollster::block_on(crate::composite_tile::prepared(p, &request))
-            .expect("a window composites")
+        pollster::block_on(crate::tile::prepared(p, &request)).expect("a window composites")
     }
 
     /// Four photographs of one world, told nothing about each other, come back as a recipe whose

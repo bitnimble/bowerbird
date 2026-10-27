@@ -274,7 +274,7 @@ The embedded JPEG carries its own EXIF orientation, so the decode reads tag 0x01
 > and a result over `bun:ffi`, no pointers held across calls - and the measurements here are what the
 > numbers since are compared against. Read the mechanism as history and the reasoning as current.
 
-Everything that touches pixels is in one Rust library, called from TypeScript over `bun:ffi`. It links LibRaw for the RAW decode, lensfun for the lens database and libavif for every AVIF, read or written (§10.1). Everything in between is the crate's own Rust: the resampling and filtering in `image.rs` and `fit::profile`, the JPEG in `jpeg.rs`. TypeScript orchestrates: it passes a path and a job, and gets back a written file, a struct of scalars, or a count.
+Everything that touches pixels is in one Rust library, called from TypeScript over `bun:ffi`. It links LibRaw for the RAW decode, lensfun for the lens database and libavif for every AVIF, read or written (§10.1). Everything in between is our own Rust: the resampling in `resize.rs`, the filtering in `detail.rs`, the fit in `profile.rs` and the JPEG in `jpeg.rs`. TypeScript orchestrates: it passes a path and a job, and gets back a written file, a struct of scalars, or a count.
 
 Minimal FFI bindings for LibRaw:
 

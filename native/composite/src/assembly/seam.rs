@@ -47,7 +47,7 @@ pub const NEIGHBOURS: [(isize, isize, f32); 8] = [
 /// The ground a burst mostly is costs nothing to cut across, so without this a tile wanders out to
 /// wherever its ring ends. With it the shortest of the cheapest contours wins, which is the tile
 /// that claims the least.
-pub(crate) const TIE: f32 = 1e-4;
+pub const TIE: f32 = 1e-4;
 
 /// What a seam solve reads about each shrunk cell of [`shrunk_size`].
 pub struct SeamField {
@@ -141,7 +141,7 @@ pub fn along_an_edge(field: &SeamField, p: usize, q: usize) -> f32 {
 /// Boykov and Kolmogorov's max flow (2004): two search trees, one from each terminal, kept between
 /// augmentations rather than rebuilt for each. On a grid, where Dinic's rebuilds are nearly all the
 /// work, it is the difference between one cut a click and one cut a frame.
-pub(crate) struct MinCut {
+pub struct MinCut {
     /// Arcs by node, `adj[start[u]..start[u + 1]]`, each node's in the order they were added.
     /// Filled from `from` when the flow starts.
     start: Vec<u32>,
@@ -174,7 +174,7 @@ const FAR: u32 = u32::MAX;
 
 impl MinCut {
     /// `n` nodes, with room for `arcs` calls to [`MinCut::add`] without growing.
-    pub(crate) fn with_capacity(n: usize, arcs: usize) -> MinCut {
+    pub fn with_capacity(n: usize, arcs: usize) -> MinCut {
         MinCut {
             start: vec![0; n + 1],
             adj: Vec::new(),
@@ -194,14 +194,14 @@ impl MinCut {
     }
 
     /// An arc and its reverse, adjacent, so that `e ^ 1` is the other one.
-    pub(crate) fn add(&mut self, u: usize, v: usize, c: f32) {
+    pub fn add(&mut self, u: usize, v: usize, c: f32) {
         self.from.extend([u as u32, v as u32]);
         self.to.extend([v as u32, u as u32]);
         self.cap.extend([c, 0.0]);
     }
 
     /// `u`'s arcs from the source and to the sink, at most one of them other than zero.
-    pub(crate) fn terminals(&mut self, u: usize, source: f32, sink: f32) {
+    pub fn terminals(&mut self, u: usize, source: f32, sink: f32) {
         self.tr[u] = source - sink;
     }
 
@@ -244,7 +244,7 @@ impl MinCut {
         None
     }
 
-    pub(crate) fn max_flow(&mut self) -> f32 {
+    pub fn max_flow(&mut self) -> f32 {
         self.index();
         for u in 0..self.tr.len() {
             let sink = match self.tr[u] {
@@ -438,7 +438,7 @@ impl MinCut {
     }
 
     /// Every node the source still reaches, which is the one cut every maximum flow agrees on.
-    pub(crate) fn source_side(&self) -> Vec<bool> {
+    pub fn source_side(&self) -> Vec<bool> {
         let mut seen: Vec<bool> = self.tr.iter().map(|&tr| tr > DRY).collect();
         let mut stack: Vec<usize> = (0..seen.len()).filter(|&u| seen[u]).collect();
         while let Some(u) = stack.pop() {

@@ -42,7 +42,7 @@ struct Params {
     float inv_half2;
     uint projection;
     uint through;
-    /// Where the weight comes from: `WEIGHED_FEATHER` or `WEIGHED_MASK` (`composite_tile::Weighed`).
+    /// Where the weight comes from: `WEIGHED_FEATHER` or `WEIGHED_MASK` (`composite::tile::Weighed`).
     uint weighting;
     /// How many floats `mask` strides by, and which of them is this source's.
     uint mask_stride;
@@ -50,7 +50,7 @@ struct Params {
     /// Half the source's full-resolution corrected frame, which the feather measures against.
     float2 half_size;
     /// §3.7a's canvas warp, `(a, b, c, d)` of `[a b; c d]`, already carried into the centre-relative
-    /// frame `canvas` is in (`composite_tile::params`). The identity for every panorama.
+    /// frame `canvas` is in (`composite::tile::params`). The identity for every panorama.
     float4 warp_m;
     /// That warp's translation in the same frame, which the identity makes exactly zero.
     float2 warp_t;
@@ -60,7 +60,7 @@ struct Params {
     float inv_reach2;
 };
 
-/// One tile's §3.7a correction. `assembly_weight::TileWarp`.
+/// One tile's §3.7a correction. `composite::assembly::weight::TileWarp`.
 struct TileWarp {
     float4 m;
     float2 t;

@@ -109,7 +109,7 @@ export class CompositeRenderer {
 
   /**
    * An assembly's seams for each of `picks` in place of the recipe's own, over the volume its carve
-   * wrote: a JSON array of `assembly_seams::Seams`, `null` where that set's solve was refused.
+   * wrote: a JSON array of `composite::assembly::seams::Seams`, `null` where that set's solve was refused.
    *
    * On a worker of its own, kept open: a reader is waiting on it after every pick, and it never
    * touches the device the carve and the renders queue for.

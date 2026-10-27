@@ -16,9 +16,9 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     mosaic::lslcd::device(gpu);
     formats::planes::kernel(gpu);
     denoise::pmrid::device(gpu);
-    crate::repair::averaging(gpu);
-    crate::repair::repairing(gpu);
-    crate::retouched_frame::copying(gpu);
+    composite::repair::averaging(gpu);
+    composite::repair::repairing(gpu);
+    composite::retouched_frame::copying(gpu);
     colour::white_balance::device(gpu);
     fit::build_pipelines(gpu);
     colour::lattice::bake_kernel(gpu);

@@ -9,8 +9,8 @@
 //! Host arithmetic over the shrunk field, and deliberately: it is one patch a click, a few
 //! milliseconds a frame, over a field the solve that follows already holds.
 
-use crate::assembly_labelling::RING;
-use crate::assembly_seam::{SeamField, differ};
+use crate::assembly::labelling::RING;
+use crate::assembly::seam::{SeamField, differ};
 use units::light::Stops;
 use units::px::{Share, Shrunk, Span};
 
@@ -395,7 +395,7 @@ fn matched(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly_seam::NOT_REACHED;
+    use crate::assembly::seam::NOT_REACHED;
 
     const SIZE: (usize, usize) = (240, 200);
 

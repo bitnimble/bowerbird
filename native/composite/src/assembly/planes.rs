@@ -1,6 +1,6 @@
 //! The planes the analysis reads: the panorama's own prepared sources, gathered onto one canvas.
 
-use crate::composite_tile::{CompositeRequest, From, Layer, SourceFile};
+use crate::tile::{CompositeRequest, From, Layer, SourceFile};
 use colour::resident::Resident;
 use composition::Composition;
 
@@ -92,7 +92,7 @@ pub async fn analysis_planes(
         // camera's JPEG has none - so a carve of the cameras' pictures would score every tile
         // against a default noise model. The render is what follows the library.
         from: From::Original,
-        weight: crate::composite_tile::Weight::Feather,
+        weight: crate::tile::Weight::Feather,
     };
     let long = ANALYSIS_LONG.min(w.max(h));
     let out = match w >= h {
@@ -100,7 +100,7 @@ pub async fn analysis_planes(
         false => (w * long / h, long),
     };
     let mut planes = Vec::new();
-    crate::composite_tile::layers_of(spec, &request, |source, layer, arrived| {
+    crate::tile::layers_of(spec, &request, |source, layer, arrived| {
         let Layer { rgb, weight } = layer;
         drop(weight);
         let rgb = match render::base::resize(gpu, base, &rgb, out) {
@@ -127,8 +127,8 @@ pub async fn analysis_planes(
         });
         // A source each, and the slowest thing a carve does: this is a full decode and demosaic per
         // frame where the align worked off 800px previews.
-        crate::progress::advance();
-        crate::progress::stop_if_cancelled()
+        trace::progress::advance();
+        trace::progress::stop_if_cancelled()
     })
     .await?;
     Ok(planes)

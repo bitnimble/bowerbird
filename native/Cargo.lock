@@ -304,6 +304,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "composite"
+version = "0.1.0"
+dependencies = [
+ "burst",
+ "bytemuck",
+ "colour",
+ "composition",
+ "decode",
+ "denoise",
+ "fit",
+ "formats",
+ "geometry",
+ "gpu",
+ "linalg",
+ "mosaic",
+ "png",
+ "pollster",
+ "rawler",
+ "render",
+ "serde",
+ "serde_json",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "composition"
 version = "0.1.0"
 dependencies = [
@@ -1603,11 +1631,10 @@ dependencies = [
  "burst",
  "bytemuck",
  "colour",
+ "composite",
  "composition",
- "crc32fast",
  "decode",
  "denoise",
- "fast_image_resize",
  "fit",
  "formats",
  "geometry",
@@ -1615,10 +1642,8 @@ dependencies = [
  "half",
  "heif",
  "image",
- "jpeg-decoder",
  "jpeg-encoder",
  "lensdb",
- "linalg",
  "mosaic",
  "moxcms 0.9.1",
  "png",
@@ -1626,11 +1651,9 @@ dependencies = [
  "rawler",
  "rayon",
  "render",
- "rust_h265",
  "serde",
  "serde_json",
  "shaders",
- "tiff",
  "trace",
  "units",
  "uuid",

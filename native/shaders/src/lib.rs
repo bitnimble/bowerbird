@@ -14,7 +14,7 @@ pub mod overrides;
 /// One compiled WGSL file.
 #[derive(Clone, Copy, Debug)]
 pub struct Module {
-    /// Under the compiled tree, with `/`: `frame.wgsl`, `galosh/pyr_pack.wgsl`.
+    /// Under the compiled tree, with `/`: frame.wgsl, galosh/pyr_pack.wgsl.
     pub path: &'static str,
     pub source: &'static str,
 }

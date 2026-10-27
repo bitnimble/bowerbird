@@ -2,12 +2,12 @@
 //! from a recipe.
 mod support;
 
-use rawshim::assembly::Drawing;
-use rawshim::assembly_blend::{Banding, NOT_REACHED};
-use rawshim::assembly_render::{LAMBDA_SPLIT, Lowpass, lowpass};
-use rawshim::assembly_tiles::W_MAX;
-use rawshim::assembly_weight::{W_HIGH_PX, Weights, slots_of, weights};
-use rawshim::composite_tile::{
+use composite::assembly::Drawing;
+use composite::assembly::blend::{Banding, NOT_REACHED};
+use composite::assembly::lowpass::{LAMBDA_SPLIT, Lowpass, lowpass};
+use composite::assembly::tiles::W_MAX;
+use composite::assembly::weight::{W_HIGH_PX, Weights, slots_of, weights};
+use composite::tile::{
     Blending, CompositeRequest, From, Layer, Mask, SourceFile, Weight, layers_of,
 };
 use composition::{Composition, LensSpec, Projection, SourceSpec};
@@ -134,7 +134,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
     );
     assert_eq!(
         at(64, 64, base),
-        rawshim::assembly_weight::NO_TILE,
+        composite::assembly::weight::NO_TILE,
         "the base has no tile here, so it takes the ground's own geometry",
     );
 }
@@ -330,7 +330,7 @@ fn next_scratch() -> usize {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// `composite_tile::prepared`'s own defaults for a source nothing has measured yet - no sharpen,
+/// `composite::tile::prepared`'s own defaults for a source nothing has measured yet - no sharpen,
 /// no defringe, no dust - the same ones `composite_align`'s own composite test uses.
 fn asking<'a>(
     _spec: &Composition,
@@ -987,7 +987,7 @@ fn under_gain(spec: &Composition, paths: &[String], size: (usize, usize), gain: 
     recipe.gain[0] = gain;
     let request = asking(spec, paths, whole(size));
     let held = pollster::block_on(lowpass(&recipe, &request)).expect("a lowpass");
-    let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(&recipe, &held, &request))
+    let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(&recipe, &held, &request))
         .expect("a render");
     let codes = pollster::block_on(out.host()).expect("a readable window");
     (0..size.0 * size.1)
@@ -1272,7 +1272,7 @@ fn render_in_strips(
     while left < size.0 {
         let across = wide.min(size.0 - left);
         let window = Rect::exact(left, 0, across, size.1);
-        let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(
+        let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(
             recipe,
             &held,
             &asking(spec, paths, window),
@@ -1566,7 +1566,7 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
     };
     let held = pollster::block_on(lowpass(&recipe, &request)).expect("a lowpass");
     let (_, prepared) =
-        pollster::block_on(rawshim::assembly_render::prepared(&recipe, &held, &request))
+        pollster::block_on(composite::assembly::lowpass::prepared(&recipe, &held, &request))
             .expect("a window of the assembly");
     assert!(
         prepared.matched.is_some(),

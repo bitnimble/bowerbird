@@ -49,7 +49,7 @@ pub struct Weights {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TileWarp {
     /// `(a, b, c, d)` of `[a b; c d]`, carried into the centre-relative frame the shader's canvas
-    /// coordinate is already in, as `composite_tile::params` carries a source's own.
+    /// coordinate is already in, as `composite::tile::params` carries a source's own.
     pub m: [f32; 4],
     pub t: [f32; 2],
     /// What to multiply this tile's light by, past whatever its source's own gain already did, as
@@ -71,7 +71,7 @@ fn warps_of(recipe: &Drawing) -> Vec<TileWarp> {
         .map(|tile| {
             // The warp is stated in canvas pixels about the canvas origin and the shader's
             // coordinate is relative to the projection's centre, so `M*p + b - centre` becomes
-            // `M*q + (M*centre + b - centre)` - `composite_tile::params` does the same for a source.
+            // `M*q + (M*centre + b - centre)` - `composite::tile::params` does the same for a source.
             let [a, b, c, d, tx, ty] = recipe.warp_of(tile);
             TileWarp {
                 m: [a as f32, b as f32, c as f32, d as f32],
@@ -121,9 +121,9 @@ struct TileSpan {
     width: f32,
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own.
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
@@ -169,7 +169,7 @@ fn settling(gpu: &'static Gpu) -> &'static Entry {
     BUILT.get(gpu, || built(gpu, "assembly_settle", &[4, 6, 8, 9, 10, 11]))
 }
 
-// `zeroed`, `uploaded` and `dispatch` are `assembly_analysis.rs`'s, copied rather than shared -
+// `zeroed`, `uploaded` and `dispatch` are `composite::assembly::analysis`'s, copied rather than shared -
 // they are eight lines each and sharing them would make one module's binding count another's
 // problem.
 
@@ -418,7 +418,7 @@ mod tests {
     /// what a test reads (`CLAUDE.md`).
     #[test]
     fn the_unseeded_sentinel_matches_the_shader() {
-        let source = include_str!("../../../slang/assembly_weight.slang");
+        let source = include_str!("../../../../slang/assembly_weight.slang");
         let line = source
             .lines()
             .find(|l| l.contains("const float UNSEEDED ="))
@@ -430,7 +430,7 @@ mod tests {
     /// field's pass before any per-source one.
     #[test]
     fn the_every_slot_sentinel_matches_the_shader() {
-        let source = include_str!("../../../slang/assembly_weight.slang");
+        let source = include_str!("../../../../slang/assembly_weight.slang");
         let line = source
             .lines()
             .find(|l| l.contains("const uint EVERY_SLOT ="))

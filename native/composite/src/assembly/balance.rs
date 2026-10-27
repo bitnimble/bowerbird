@@ -1,11 +1,11 @@
 //! What each piece's frame is multiplied by to meet the light across its seams.
 
-use crate::assembly_labelling::{Reader, four};
-use crate::assembly_seam::{TINT_NOISE, TINT_SIGNIFICANT, beyond};
+use crate::assembly::labelling::{Reader, four};
+use crate::assembly::seam::{TINT_NOISE, TINT_SIGNIFICANT, beyond};
 use units::light::{Gain, Stops};
 
 /// By frame and the drawn tile it is read through, what that frame's light is multiplied by.
-pub(crate) type Balance = std::collections::BTreeMap<(usize, u32), Gain>;
+pub type Balance = std::collections::BTreeMap<(usize, u32), Gain>;
 
 /// The largest correction [`balanced`] answers, either way.
 const MOST_BALANCE: f32 = 2.0;
@@ -19,7 +19,7 @@ const BALANCE_SWEEPS: usize = 30;
 /// Per piece of `label`, the gain that makes its frame meet what lies across its seams: both frames
 /// read at every cell within `band` of a seam, weighted as §5.2 mixes them there, least squares over
 /// every seam at once so two taken pieces meeting each other agree too, the base held where it is.
-pub(crate) fn balanced(reader: &Reader, label: &[usize], base: usize, band: usize) -> Balance {
+pub fn balanced(reader: &Reader, label: &[usize], base: usize, band: usize) -> Balance {
     let (w, h) = reader.volume.shrunk;
     let sources = reader.volume.field.sources;
     let field = &reader.volume.field;
@@ -127,8 +127,8 @@ pub(crate) fn balanced(reader: &Reader, label: &[usize], base: usize, band: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly_labelling::{RING, stamped};
-    use crate::assembly_seams::tests::{SIZE, burst, drawn, untiled};
+    use crate::assembly::labelling::{RING, stamped};
+    use crate::assembly::seams::tests::{SIZE, burst, drawn, untiled};
     use units::px::{Shrunk, Span};
 
     #[test]

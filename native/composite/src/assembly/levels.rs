@@ -3,8 +3,8 @@
 //! Three passes of `assembly_levels.slang`, and the canvas itself never comes back off the device:
 //! only the cell grid does.
 
-use crate::assembly_planes::Plane;
-use crate::assembly_seam::{SHRINK, SeamField, shrunk_size};
+use crate::assembly::planes::Plane;
+use crate::assembly::seam::{SHRINK, SeamField, shrunk_size};
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
 use render::base::Base;
@@ -23,9 +23,9 @@ struct Params {
     pad: [u32; 3],
 }
 
-/// The block's size, for `wgsl_layout.rs` to hold against the shader's own.
+/// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub(crate) fn params_block() -> usize {
+pub fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 
@@ -204,12 +204,12 @@ mod tests {
         let most = super::MOST_SOURCES;
         let line = format!("static const uint MOST_SOURCES = {most};");
         assert!(
-            include_str!("../../../slang/assembly_levels.slang").contains(&line),
+            include_str!("../../../../slang/assembly_levels.slang").contains(&line),
             "assembly_levels.slang does not say `{line}`"
         );
         let line = format!("export const MOST_SOURCES = {most};");
         assert!(
-            include_str!("../../../src/schemas/assembly.ts").contains(&line),
+            include_str!("../../../../src/schemas/assembly.ts").contains(&line),
             "the schema does not say `{line}`"
         );
     }
@@ -220,10 +220,10 @@ mod tests {
     fn the_sentinel_the_shader_writes_is_the_one_the_host_reads() {
         let line = format!(
             "static const float NOT_REACHED = {:e};",
-            crate::assembly_seam::NOT_REACHED
+            crate::assembly::seam::NOT_REACHED
         );
         assert!(
-            include_str!("../../../slang/assembly_levels.slang").contains(&line),
+            include_str!("../../../../slang/assembly_levels.slang").contains(&line),
             "assembly_levels.slang does not say `{line}`"
         );
     }

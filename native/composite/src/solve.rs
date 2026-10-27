@@ -5,7 +5,7 @@
 //! translation to recover, and a body that shot the whole set had one lens on it. That is the whole
 //! model, and it is why ten frames cost sixteen parameters rather than a hundred.
 
-use crate::composite_pairs::{Match, Pair};
+use crate::pairs::{Match, Pair};
 use composition::{Projection, conjugate, cross, from_axis_angle, multiply, normalise, rotate};
 use units::px::{Share, TUNED_ON};
 
@@ -407,7 +407,7 @@ fn inner_crop(outer: &Framing, solved: &Solved, sizes: &[[usize; 2]], kept: &[us
     let Some([left, top, wide, tall]) = largest_inside(&covered, across, down) else {
         return [0.0, 0.0, 1.0, 1.0];
     };
-    // Centre to centre, as `assembly_analysis::intersection_crop` is: a cell counts as covered on
+    // Centre to centre, as `composite::assembly::analysis::intersection_crop` is: a cell counts as covered on
     // the strength of its centre and its outer half may not be, so the crop's edges are the
     // outermost centres that were actually sampled.
     [
@@ -441,7 +441,7 @@ fn ray_at(framing: &Framing, canvas: [f64; 2]) -> [f64; 3] {
 ///
 /// Row by row, each column carrying how far up it has been true: that turns every row into a
 /// histogram whose largest rectangle is the classic stack walk, and the whole grid into one pass.
-pub(crate) fn largest_inside(covered: &[bool], across: usize, down: usize) -> Option<[usize; 4]> {
+pub fn largest_inside(covered: &[bool], across: usize, down: usize) -> Option<[usize; 4]> {
     let mut heights = vec![0usize; across];
     let mut best: Option<(usize, [usize; 4])> = None;
     for row in 0..down {
@@ -2180,7 +2180,7 @@ mod tests {
     /// Whether the analysis would flag this reading, on the plane these fixtures are stated on.
     fn unaligned_on(size: [usize; 2], radial_px: f64) -> bool {
         let long = size[0].max(size[1]) as f64;
-        crate::assembly_analysis::unaligned_at(units::px::Share::measured(radial_px, long))
+        crate::assembly::analysis::unaligned_at(units::px::Share::measured(radial_px, long))
     }
 
     /// Two frames on top of each other, the second `scale` times longer in the lens, with matches

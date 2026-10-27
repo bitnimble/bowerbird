@@ -13,8 +13,8 @@
 //! drew: a [`crate::repair::CELLS_ACROSS`]th of it. So a dust spot and a person are searched at the
 //! same grain relative to themselves, and nothing here names a pixel of any frame.
 
-use crate::assembly_seam::{MinCut, NEIGHBOURS, SeamField, TIE, along_an_edge, differ};
-use crate::assembly_tiles::{simplify, trace};
+use crate::assembly::seam::{MinCut, NEIGHBOURS, SeamField, TIE, along_an_edge, differ};
+use crate::assembly::tiles::{simplify, trace};
 use crate::patch_search::Patch;
 use crate::repair::{
     FEATHER_CELLS, MOST_GAIN, MOST_VERTICES, Params, Repair, bounds, cell, entry, offered_feather,
@@ -95,7 +95,7 @@ impl Grid {
     }
 
     /// A position on the grid, in the frame's pixels: a cell's centre is a whole number, which is
-    /// what `assembly_tiles::trace` writes a loop in.
+    /// what `composite::assembly::tiles::trace` writes a loop in.
     fn pixel_of(&self, [x, y]: [f64; 2]) -> Point<Drawn> {
         let side = self.side as f64;
         Point {
@@ -661,7 +661,7 @@ fn reached_from(fill: &[bool], hole: &[bool], size: (usize, usize)) -> Vec<bool>
         out[p] = true;
     }
     while let Some(p) = pending.pop() {
-        for q in crate::assembly_labelling::four(p, size) {
+        for q in crate::assembly::labelling::four(p, size) {
             if fill[q] && !out[q] {
                 out[q] = true;
                 pending.push(q);

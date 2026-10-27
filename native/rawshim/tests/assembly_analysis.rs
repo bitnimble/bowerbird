@@ -2,11 +2,11 @@
 
 mod support;
 
-use rawshim::assembly_analysis::{Refused, analysis_of, corridor_share, intersection_crop};
-use rawshim::assembly_levels::seam_field;
-use rawshim::assembly_planes::Plane;
-use rawshim::assembly_seam::{NEIGHBOURS, SHRINK, SeamField, along_an_edge};
-use rawshim::assembly_tiles::{
+use composite::assembly::analysis::{Refused, analysis_of, corridor_share, intersection_crop};
+use composite::assembly::levels::seam_field;
+use composite::assembly::planes::Plane;
+use composite::assembly::seam::{NEIGHBOURS, SHRINK, SeamField, along_an_edge};
+use composite::assembly::tiles::{
     Cell, MIN_LOBE_AREA, Subdivision, crosses, enclosing, lobes, simplify, subdivide,
     tolerance_for, trace,
 };

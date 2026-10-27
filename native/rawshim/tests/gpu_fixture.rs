@@ -17,7 +17,7 @@
 
 mod support;
 
-use rawshim::composite_tile::{CompositeRequest, From, SourceFile};
+use composite::tile::{CompositeRequest, From, SourceFile};
 use composition::{Composition, LensSpec};
 use rawshim::hdr::{self, Prepared};
 use colour::matched::{HdrColour, TRUST_CEILING};
@@ -2244,7 +2244,7 @@ const PANO_TALL: usize = 64;
 /// Two synthetic 16-bit PNGs a degree apart, and the recipe that places them.
 ///
 /// Written to a temporary directory rather than committed: a decodable source is what
-/// `composite_tile::prepared` needs, and two 300x200 frames regenerate in milliseconds where two
+/// `composite::tile::prepared` needs, and two 300x200 frames regenerate in milliseconds where two
 /// files in the repo are two more things to keep current.
 ///
 /// **PNG, not TIFF.** `rawler`'s `get_decoder` dispatches a TIFF purely by its `Make` tag or a
@@ -2252,7 +2252,7 @@ const PANO_TALL: usize = 64;
 /// synthetic file written by a minimal encoder would fail to decode at all, and `tiff_write.rs`
 /// exports only an 8-bit `encode`. `formats::rendered::is_rendered` already treats `.png` as a
 /// finished picture, which both decodes a 16-bit source outright and is what puts a
-/// `From::Original` source through `Through::Corrected` at `composite_tile.rs`'s own check - the
+/// `From::Original` source through `Through::Corrected` at `composite::tile`'s own check - the
 /// geometry this fixture wants, since there is no lens to undo. `png_write::encode_hdr` already
 /// writes exactly that (16-bit, `cICP`-tagged) for the HDR still export, so this needs no new
 /// dependency and no TIFF writer of its own.
@@ -2343,10 +2343,10 @@ fn a_panorama_window_reproduces_the_recorded_frame() {
         detail: denoise::galosh::Detail::at(0.0, 0.0),
         sources: &sources,
         from: From::Original,
-        weight: rawshim::composite_tile::Weight::Feather,
+        weight: composite::tile::Weight::Feather,
     };
     let (window_out, _) =
-        pollster::block_on(rawshim::composite_tile::prepared(&spec, &request)).expect("a window");
+        pollster::block_on(composite::tile::prepared(&spec, &request)).expect("a window");
     let got = read_codes(&window_out);
     Snapshot::pq(&got, window.size).check("composite/panorama-window", UNGRADED);
 }
@@ -2413,9 +2413,9 @@ fn assembly_of_three() -> (Composition, Vec<String>) {
 ///
 /// The two corridors are either side of `W_MAX`, so one feather is the corridor's own half-width
 /// and the other is the cap - two widths rather than one number twice.
-fn two_tiles_picking_two_frames(spec: Composition) -> rawshim::assembly::Drawing {
+fn two_tiles_picking_two_frames(spec: Composition) -> composite::assembly::Drawing {
     let (w, h) = (spec.canvas[0] as f32, spec.canvas[1] as f32);
-    rawshim::assembly::Drawing {
+    composite::assembly::Drawing {
         spec,
         vertices: vec![
             [w * 0.10, h * 0.20],
@@ -2458,7 +2458,7 @@ fn assembly_request<'a>(
         detail: denoise::galosh::Detail::at(0.0, 0.0),
         sources,
         from: From::Original,
-        weight: rawshim::composite_tile::Weight::Feather,
+        weight: composite::tile::Weight::Feather,
     }
 }
 
@@ -2488,9 +2488,9 @@ fn an_assembly_reproduces_the_recorded_frame() {
         .collect();
     let (left, top, wide, tall) = ASSEMBLY_WINDOW;
     let request = assembly_request(&sources, units::px::Rect::exact(left, top, wide, tall));
-    let hold = pollster::block_on(rawshim::assembly_render::lowpass(&recipe, &request))
+    let hold = pollster::block_on(composite::assembly::lowpass::lowpass(&recipe, &request))
         .expect("a lowpass");
-    let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(&recipe, &hold, &request))
+    let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(&recipe, &hold, &request))
         .expect("a window");
     let got = read_codes(&out);
     Snapshot::pq(&got, Size::<units::px::Composite>::exact(wide, tall))

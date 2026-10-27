@@ -11,7 +11,7 @@
 
 mod support;
 
-use rawshim::composite_pairs::{Pyramid, coarse, refined};
+use composite::pairs::{Pyramid, coarse, refined};
 
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
@@ -34,10 +34,10 @@ fn main() {
     // here rather than made per source, so the borrows below outlive the map.
     let planes_from: Vec<Option<String>> = paths.iter().map(|path| plane_for(path)).collect();
 
-    let sources: Vec<rawshim::composite_align::AlignSource<'_>> = paths
+    let sources: Vec<composite::align::AlignSource<'_>> = paths
         .iter()
         .zip(&planes_from)
-        .map(|(path, plane)| rawshim::composite_align::AlignSource {
+        .map(|(path, plane)| composite::align::AlignSource {
             photo_id: path,
             path,
             preview_path: plane.as_deref(),
@@ -54,7 +54,7 @@ fn main() {
         .collect();
 
     let started = std::time::Instant::now();
-    let planes = pollster::block_on(rawshim::composite_align::previews(gpu, &sources))
+    let planes = pollster::block_on(composite::align::previews(gpu, &sources))
         .expect("every source has a preview");
     println!(
         "previews: {} in {:.0}ms, {:.0}ms each",
@@ -112,11 +112,11 @@ fn main() {
     // many of each frame's corners match one corner of the other clearly better than any second
     // place. Printed beside what the search says, so the two can be told apart on the same pairs.
     if let Ok(which) = std::env::var("PANO_PROBE_FEATURES") {
-        let described: Vec<rawshim::composite_features::Described> = planes
+        let described: Vec<composite::features::Described> = planes
             .iter()
             .map(|plane| {
-                let level = rawshim::composite_pairs::Pyramid::of(gpu, plane);
-                pollster::block_on(rawshim::composite_features::described(gpu, level.top()))
+                let level = composite::pairs::Pyramid::of(gpu, plane);
+                pollster::block_on(composite::features::described(gpu, level.top()))
                     .expect("the device describes")
             })
             .collect();
@@ -142,7 +142,7 @@ fn main() {
         };
         println!("\n  pair   corners matched   of ours   median ratio   clearly");
         for (a, b) in asked {
-            let pairs = rawshim::composite_features::paired(&described[a], &described[b]);
+            let pairs = composite::features::paired(&described[a], &described[b]);
             let mut ratios: Vec<f64> = pairs.iter().map(|p| p.over).collect();
             ratios.sort_by(f64::total_cmp);
             let middle = ratios.get(ratios.len() / 2).copied().unwrap_or(f64::NAN);
@@ -223,7 +223,7 @@ fn main() {
                 from.iter().filter(|d| **d <= 8.0).count() as f64 / from.len().max(1) as f64;
             // The same, over only the correspondences that locked on hard: if the junk is what the
             // peak already knows about, keeping the strong ones alone is the whole fix.
-            let locked: Vec<rawshim::composite_pairs::Match> =
+            let locked: Vec<composite::pairs::Match> =
                 matches.iter().filter(|m| m.peak > 0.9).copied().collect();
             let (apart, _) = deviations(&locked);
             let tight90 =
@@ -241,11 +241,11 @@ fn main() {
 
     println!();
     let whole = std::time::Instant::now();
-    let answer = pollster::block_on(rawshim::composite_align::align(
+    let answer = pollster::block_on(composite::align::align(
         gpu,
         &sources,
-        rawshim::composite_solve::Leash::Free,
-        rawshim::composite_align::Kind::Pan,
+        composite::solve::Leash::Free,
+        composite::align::Kind::Pan,
     ));
     println!(
         "align: {:.0}ms for {} sources",
@@ -761,16 +761,16 @@ fn draw(paths: &[String], planes: &[fit::hdr::Source], a: usize, b: usize, to: &
 /// different instance of itself. The refine already drops a point that disagrees with its own tile,
 /// which is a local test - this is the whole field against itself, which a coincidence spread over
 /// two unrelated frames cannot pass.
-fn deviations(matches: &[rawshim::composite_pairs::Match]) -> (Vec<f64>, [f64; 6]) {
+fn deviations(matches: &[composite::pairs::Match]) -> (Vec<f64>, [f64; 6]) {
     // The same mapping the search itself keeps points by, so what is drawn is what was judged - and
     // an affine rather than a median offset, or a frame rolled a degree against its pair reads as a
     // steadily worsening disagreement along the seam, which is the roll and not a bad match.
-    let Some(mapping) = rawshim::composite_pairs::consensus(matches) else {
+    let Some(mapping) = composite::pairs::consensus(matches) else {
         return (vec![0.0; matches.len()], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
     };
     let from = matches
         .iter()
-        .map(|m| rawshim::composite_pairs::apart(&mapping, m))
+        .map(|m| composite::pairs::apart(&mapping, m))
         .collect();
     (from, mapping)
 }
@@ -781,10 +781,10 @@ fn deviations(matches: &[rawshim::composite_pairs::Match]) -> (Vec<f64>, [f64; 6
 /// piled in one corner are the same number and a very different claim, and the second is what a
 /// scene that repeats produces - one feature meeting the wrong instance of itself.
 fn covered(
-    matches: &[rawshim::composite_pairs::Match],
+    matches: &[composite::pairs::Match],
     a: &fit::hdr::Source,
     b: &fit::hdr::Source,
-    found: rawshim::composite_pairs::Coarse,
+    found: composite::pairs::Coarse,
     // The coarse translation is stated on the smallest level of the pyramid; the matches are on the
     // largest, which is the preview itself.
     up: usize,
@@ -844,7 +844,7 @@ fn focal_px(path: &str) -> Option<f64> {
 /// How far the frames' own centres climb across the canvas, in degrees.
 ///
 /// The visible symptom of a panorama that was not levelled: the frames make a staircase that runs
-/// uphill, and the horizon in them runs with it. Near zero is what `composite_solve::straighten` is for,
+/// uphill, and the horizon in them runs with it. Near zero is what `composite::solve::straighten` is for,
 /// and a residual here is the levelling's error rather than the solve's.
 fn climb(p: &composition::Composition) -> f64 {
     let centres: Vec<[f64; 2]> = p

@@ -13,7 +13,7 @@ import { VERSION } from '../src/version.ts';
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
 
-// The CEF AppImage bundler runs FabianLars's fork of `quick-sharun.sh`, whose default URLs for
+// The CEF AppImage bundler runs FabianLars's fork of quick-sharun.sh, whose default URLs for
 // these two 404 and fail every AppImage.
 const SHARUN_FORK =
   'https://raw.githubusercontent.com/FabianLars/Anylinux-AppImages/3e280d1b2270fecfcb2c2c823b490c782ecf1277/useful-tools/lib';

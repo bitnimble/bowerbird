@@ -5,13 +5,13 @@
 //! labelling over the picked frames only (`assembly_labelling`), the seams go wherever that
 //! labelling puts them, and each piece is balanced to the light across them (`assembly_balance`).
 
+use crate::assembly::analysis::{MOST_TILES, MOST_VERTICES, corridor_share};
+use crate::assembly::balance::balanced;
+use crate::assembly::labelling::{Labelled, RING, Reader, labelling, stamped};
+use crate::assembly::seam::SHRINK;
+use crate::assembly::tiles::{Cell, W_MAX, enclosing, lobes, subdivide};
+use crate::assembly::volume::Volume;
 use crate::assembly::{Assembly, Takes};
-use crate::assembly_analysis::{MOST_TILES, MOST_VERTICES, corridor_share};
-use crate::assembly_balance::balanced;
-use crate::assembly_labelling::{Labelled, RING, Reader, labelling, stamped};
-use crate::assembly_seam::SHRINK;
-use crate::assembly_tiles::{Cell, W_MAX, enclosing, lobes, subdivide};
-use crate::assembly_volume::Volume;
 use serde::{Deserialize, Serialize};
 use units::px::{Composite, Extent, Share, Shrunk, Span};
 
@@ -207,19 +207,19 @@ fn pieces(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub mod tests {
     use super::*;
-    use crate::assembly_seam::SeamField;
+    use crate::assembly::seam::SeamField;
     use composition::{Composition, LensSpec};
 
     /// Large enough that [`RING`] is seventy-two cells.
-    pub(crate) const SIZE: (usize, usize) = (240, 200);
-    pub(crate) const TILE: [usize; 4] = [18, 0, 60, 200];
-    pub(crate) const MOVED: [usize; 4] = [16, 5, 26, 35];
+    pub const SIZE: (usize, usize) = (240, 200);
+    pub const TILE: [usize; 4] = [18, 0, 60, 200];
+    pub const MOVED: [usize; 4] = [16, 5, 26, 35];
 
     /// Two frames that agree everywhere but `moved`, `[left, top, right, bottom)` in cells, where
     /// the second is two stops brighter.
-    pub(crate) fn burst(moved: [usize; 4]) -> Volume {
+    pub fn burst(moved: [usize; 4]) -> Volume {
         let (w, h) = SIZE;
         let inside = |[l, t, r, b]: [usize; 4], p: usize| {
             let (x, y) = (p % w, p / w);
@@ -241,7 +241,7 @@ pub(crate) mod tests {
     }
 
     /// Two frames on the base, and no tile yet.
-    pub(crate) fn untiled() -> Assembly {
+    pub fn untiled() -> Assembly {
         let mut spec = Composition::of_one([SIZE.0 * SHRINK, SIZE.1 * SHRINK], LensSpec::none());
         spec.sources.push(spec.sources[0].clone());
         Assembly {
@@ -251,7 +251,7 @@ pub(crate) mod tests {
     }
 
     /// `recipe` with a tile drawn over `cells` (`[left, top, right, bottom)`), picking `pick`.
-    pub(crate) fn drawn(mut recipe: Assembly, [l, t, r, b]: [usize; 4], pick: usize) -> Assembly {
+    pub fn drawn(mut recipe: Assembly, [l, t, r, b]: [usize; 4], pick: usize) -> Assembly {
         let first = recipe.vertices.len() as u32;
         let at = |c: usize| (c * SHRINK) as f32;
         recipe.vertices.extend([

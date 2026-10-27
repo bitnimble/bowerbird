@@ -4,14 +4,14 @@
 //! Host code for `assembly_seam`'s reason: a bounded graph over a field the device produced, at the
 //! shrunk scale of §3.4.
 
+use crate::assembly::seam::{MinCut, NEIGHBOURS, SHRINK, TIE, along_an_edge, differ, disagreement};
+use crate::assembly::volume::Volume;
 use crate::assembly::{Assembly, Takes};
-use crate::assembly_seam::{MinCut, NEIGHBOURS, SHRINK, TIE, along_an_edge, differ, disagreement};
-use crate::assembly_volume::Volume;
 use crate::patch_search::{clears, tracked};
 use units::px::{Analysis, Share, Shrunk, Span};
 
 /// No tile, where a cell or a frame's reading of it has none.
-pub(crate) const NO_TILE: u32 = u32::MAX;
+pub const NO_TILE: u32 = u32::MAX;
 
 /// How far past a tile its pick may grow, as a share of the long edge: a tile is only the least of
 /// what it takes, and this is far enough to reach a standing figure's feet from one drawn on its
@@ -38,7 +38,7 @@ const CYCLES: usize = 2;
 
 /// The frame each cell of `volume` takes under `recipe`'s picks, and each tile's
 /// [`Stamp::shift`].
-pub(crate) fn labelling(recipe: &Assembly, volume: &Volume) -> Result<Labelled, String> {
+pub fn labelling(recipe: &Assembly, volume: &Volume) -> Result<Labelled, String> {
     let (w, h) = volume.shrunk;
     let sources = recipe.spec.sources.len();
     if volume.field.sources != sources {
@@ -129,12 +129,12 @@ fn refused_where_nothing_left(
     Ok(())
 }
 
-pub(crate) struct Labelled {
+pub struct Labelled {
     /// The frame each cell takes.
-    pub(crate) label: Vec<usize>,
+    pub label: Vec<usize>,
     /// As [`Stamp::shift`] and [`Stamp::shifted_by`].
-    pub(crate) shift: Vec<[f64; 2]>,
-    pub(crate) shifted_by: Vec<u32>,
+    pub shift: Vec<[f64; 2]>,
+    pub shifted_by: Vec<u32>,
 }
 
 /// Cells as `[left, top, right, bottom)`.
@@ -201,7 +201,7 @@ fn anchored(label: &mut [usize], own: &[usize], base: usize, (w, h): (usize, usi
 }
 
 /// The recipe's tiles, laid over the shrunk grid.
-pub(crate) struct Stamp {
+pub struct Stamp {
     /// The tile a cell lies in, each written over the last in order, or [`NO_TILE`].
     zone: Vec<u32>,
     /// Cells a tile holds to its pick.
@@ -209,13 +209,13 @@ pub(crate) struct Stamp {
     /// Per cell, a bit per frame a tile picking it may take there.
     grows: Vec<u32>,
     /// Per tile, the cells its bounds cover, `[left, top, right, bottom)`.
-    pub(crate) bounds: Vec<[usize; 4]>,
+    pub bounds: Vec<[usize; 4]>,
     /// Per tile, in cells, where its pick shows what the base shows under it
     /// ([`crate::patch_search`]); zero for one on the base.
-    pub(crate) shift: Vec<[f64; 2]>,
+    pub shift: Vec<[f64; 2]>,
     /// `cells * sources`: the tile whose [`Stamp::shift`] a frame is read through at a cell - the
     /// nearest picking that frame, within its ring - or [`NO_TILE`].
-    pub(crate) shifted_by: Vec<u32>,
+    pub shifted_by: Vec<u32>,
 }
 
 /// A tile is the least its pick takes, not the whole of it: every cell its bounds touch is held to
@@ -224,7 +224,7 @@ pub(crate) struct Stamp {
 /// grows.
 ///
 /// `known`, where a caller already holds each tile's shift, is taken rather than tracked again.
-pub(crate) fn stamped(
+pub fn stamped(
     recipe: &Assembly,
     volume: &Volume,
     ring: usize,
@@ -319,16 +319,16 @@ pub(crate) fn stamped(
 }
 
 /// Each frame as its piece would be drawn, over a [`Stamp`].
-pub(crate) struct Reader<'a> {
-    pub(crate) volume: &'a Volume,
-    pub(crate) shift: &'a [[f64; 2]],
-    pub(crate) shifted_by: &'a [u32],
+pub struct Reader<'a> {
+    pub volume: &'a Volume,
+    pub shift: &'a [[f64; 2]],
+    pub shifted_by: &'a [u32],
 }
 
 impl Reader<'_> {
     /// Frame `s`'s log2 light at `p`, through the shift of the tile that would take it, and the
     /// cell it was read from; none where `s` does not reach.
-    pub(crate) fn read(&self, p: usize, s: usize) -> Option<(f32, usize)> {
+    pub fn read(&self, p: usize, s: usize) -> Option<(f32, usize)> {
         let (w, h) = self.volume.shrunk;
         let sources = self.volume.field.sources;
         let [dx, dy] = match self.shifted_by[p * sources + s] {
@@ -675,7 +675,7 @@ fn groups(mask: &[bool], size: (usize, usize)) -> Vec<Vec<usize>> {
     out
 }
 
-pub(crate) fn four(p: usize, (w, h): (usize, usize)) -> impl Iterator<Item = usize> {
+pub fn four(p: usize, (w, h): (usize, usize)) -> impl Iterator<Item = usize> {
     let (x, y) = (p % w, p / w);
     [
         (x > 0).then(|| p - 1),
@@ -690,8 +690,8 @@ pub(crate) fn four(p: usize, (w, h): (usize, usize)) -> impl Iterator<Item = usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly_seam::NOT_REACHED;
-    use crate::assembly_seams::tests::{MOVED, SIZE, TILE, burst, drawn, untiled};
+    use crate::assembly::seam::NOT_REACHED;
+    use crate::assembly::seams::tests::{MOVED, SIZE, TILE, burst, drawn, untiled};
 
     #[test]
     fn a_tile_through_a_moving_figure_grows_onto_the_ground_beside_it() {
