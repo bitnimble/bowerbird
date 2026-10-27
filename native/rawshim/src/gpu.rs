@@ -2823,17 +2823,21 @@ pub struct Band {
     pub rows: crate::px::Span<crate::px::Output>,
 }
 
-/// How a picture is brought inside what its target can show, as ICC's rendering intents promise.
-/// `gamut_map.slang` reads these by number.
+/// How a picture is brought inside what its target can show. `gamut_map.slang` reads these by
+/// number, so a variant's place in this list is its number there.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Intent {
-    /// The whole range compressed, highlights rolled and the gamut's edge approached through a
-    /// knee, so gradients survive.
-    #[default]
+    /// ICC's perceptual: the whole range compressed, highlights rolled and the gamut's edge
+    /// approached through a knee, so gradients survive.
     Perceptual,
-    /// Every colour the target can show left exactly, and the rest clipped to its edge.
+    /// ICC's relative colorimetric: every colour the target can show left exactly, and the rest
+    /// clipped to its edge.
     RelativeColorimetric,
+    /// Highlights rolled on luma from lower down and brought inside the gamut at that luma, so a
+    /// bright saturated light gives up its colour on the way to white.
+    #[default]
+    ToWhite,
 }
 
 /// The reader's view: which rectangle of the output is on screen, and how large the screen is.
@@ -2897,7 +2901,7 @@ impl<'a> Grade<'a> {
             window: None,
             neighbourhood_window: None,
             canvas: None,
-            intent: Intent::Perceptual,
+            intent: Intent::default(),
             print_blur: crate::px::Extent::measured(0.0),
             band: None,
             reach_mask: None,

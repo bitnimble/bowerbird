@@ -47,7 +47,7 @@ export const JobTargetSchema = z.object({
   preset: z.number(),
   stillFullChroma: z.boolean(),
   sdrFullChroma: z.boolean(),
-  /** How an `srgb` output reaches its gamut; perceptual where absent. */
+  /** How an `srgb` output reaches its gamut; to white where absent. */
   intent: RenderingIntentSchema.optional(),
   /** Grid only: writes no file, still reports the descriptor. */
   describeOnly: z.boolean().optional(),

@@ -113,12 +113,14 @@ test('the rendering intent names the intent the print is drawn with', () => {
     null,
   );
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
-  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe(
+    'Natural (AgX)',
+  );
   act(() => presenter?.setRenderingIntent('relativeColorimetric'));
   expect(store.scene.renderingIntent).toBe('relativeColorimetric');
   expect(redraws).toBe(1);
   expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe(
-    'Relative colorimetric',
+    'Clip highlights (relative colorimetric)',
   );
 });
 
@@ -126,7 +128,9 @@ test('an sRGB proof offers the rendering intent', () => {
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, null);
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="srgb" />);
-  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe(
+    'Natural (AgX)',
+  );
 });
 
 test('a flat print offers the paper and the ink and nothing a surface needs light to show', () => {

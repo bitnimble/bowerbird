@@ -183,7 +183,9 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
     await softProof(page, label);
     if (label === 'SDR (sRGB)') {
       await page.getByRole('combobox', { name: 'Rendering intent' }).click();
-      await page.getByRole('option', { name: 'Relative colorimetric', exact: true }).click();
+      await page
+        .getByRole('option', { name: 'Clip highlights (relative colorimetric)', exact: true })
+        .click();
     }
     if (label === 'Printed media') {
       await page.getByRole('checkbox', { name: 'Black point compensation' }).uncheck();

@@ -1,7 +1,8 @@
 // How a picture is brought inside what its target can show - an sRGB file, or a printer's ink on
-// its paper - from an HDR grade as well as an SDR one. The intents are ICC's and keep ICC's promises:
+// its paper - from an HDR grade as well as an SDR one. Two intents are ICC's and keep ICC's promises:
 // perceptual compresses the whole range so gradients survive, relative colorimetric leaves every
-// colour the target can show exactly where it is and clips the rest.
+// colour the target can show exactly where it is and clips the rest. To white rolls from lower down
+// and takes a bright saturated light towards white as it compresses, the way film does.
 module gamut_map;
 
 import prelude;
@@ -10,8 +11,10 @@ import primaries;
 
 public static const uint INTENT_PERCEPTUAL = 0;
 public static const uint INTENT_RELATIVE = 1;
+public static const uint INTENT_TO_WHITE = 2;
 
 static const float CHROMA_KNEE = 0.9;
+static const Stops TO_WHITE_KNEE = { -1.5 };
 
 /// Where a target's gamut ends.
 public interface IGamut
@@ -36,12 +39,27 @@ public struct SrgbCube : IGamut
     }
 };
 
-/// `graded` as a share of `white`: rolled under it for perceptual, and left for relative
-/// colorimetric, which clips at the gamut instead. `scene_peak` is the brightest `graded` reaches.
+/// `graded` as a share of `white`: rolled under it for perceptual and to white, and left for
+/// relative colorimetric, which clips at the gamut instead. `scene_peak` is the brightest `graded`
+/// reaches.
 public float3 toned(Colour<DisplayNits> graded, Light<DisplayNits> scene_peak, Light<DisplayNits> white, uint intent)
 {
     if (intent == INTENT_PERCEPTUAL) { return within(rolled(graded, rolloff(scene_peak, white, white)), white).v / white.v; }
+    if (intent == INTENT_TO_WHITE) { return whitened(graded, rolloff_under(scene_peak, white, white, TO_WHITE_KNEE)) / white.v; }
     return max(graded.v, float3(0.0)) / white.v;
+}
+
+/// `nits` with its luma rolled, and its chroma kept only as far as its hottest channel survives the
+/// same roll.
+float3 whitened(Colour<DisplayNits> nits, Rolloff knee)
+{
+    let luma = dot(LUMA, nits.v);
+    if (luma <= 0.0) { return float3(0.0); }
+    let rolled_luma = roll(measured<DisplayNits>(luma), knee).v;
+    let top = max(nits.v.r, max(nits.v.g, nits.v.b));
+    let kept = roll(measured<DisplayNits>(top), knee).v / top;
+    // Unclamped: a channel still past white is `mapped`'s to bring in at constant luma.
+    return max(rolled_luma * (1.0 + (nits.v / luma - 1.0) * kept), float3(0.0));
 }
 
 /// `colour`, a share of the target's white, brought inside `gamut` at its own luma and hue.
@@ -54,7 +72,7 @@ public float3 mapped<G : IGamut>(float3 colour, G gamut, uint intent)
     let limit = gamut.limit(luma, chroma);
     if (limit <= 0.0) { return float3(luma); }
     let reach = 1.0 / limit;
-    if (intent != INTENT_PERCEPTUAL) { return reach <= 1.0 ? colour : luma + chroma / reach; }
+    if (intent == INTENT_RELATIVE) { return reach <= 1.0 ? colour : luma + chroma / reach; }
     if (reach <= CHROMA_KNEE) { return colour; }
     let compressed = CHROMA_KNEE + (1.0 - CHROMA_KNEE) * (reach - CHROMA_KNEE) / (reach + 1.0 - 2.0 * CHROMA_KNEE);
     return luma + chroma * (compressed / reach);

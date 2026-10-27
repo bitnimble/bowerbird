@@ -107,7 +107,7 @@ describe('ExportOptionsSchema', () => {
       halfSize: false,
       exportHdr: true,
       gainMap: false,
-      renderingIntent: 'perceptual',
+      renderingIntent: 'toWhite',
     });
   });
 });

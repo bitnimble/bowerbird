@@ -1,7 +1,7 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
+//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid|upscaler] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--perceptual|--relative]|--linear]
 //!         [--as-export] [--defocus r,b]
 //!         [--ev N] [--edge N]
 //!         [--camera-crop <dir>]
@@ -505,7 +505,7 @@ fn main() {
         defocus: None,
         ev: None,
         domain: Domain::Pq,
-        intent: rawshim::gpu::Intent::Perceptual,
+        intent: rawshim::gpu::Intent::default(),
         encode: None,
         out: &out,
     };
@@ -530,6 +530,7 @@ fn main() {
             }
             "--sdr" => stages.domain = Domain::Srgb,
             "--relative" => stages.intent = rawshim::gpu::Intent::RelativeColorimetric,
+            "--perceptual" => stages.intent = rawshim::gpu::Intent::Perceptual,
             "--linear" => stages.domain = Domain::Linear,
             "--encode" => {
                 let spec = args.next().expect("quantizer,420|444");

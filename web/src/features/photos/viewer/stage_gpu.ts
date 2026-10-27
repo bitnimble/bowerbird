@@ -35,7 +35,11 @@ import { SDR_WHITE_NITS } from '../../../app/sdr_white';
 const log = new Logger('stage');
 
 /** `Colour.proof` in `stage.slang`: one more than the intent's number in `gamut_map.slang`. */
-const PROOF_INTENT: Record<RenderingIntent, number> = { perceptual: 1, relativeColorimetric: 2 };
+const PROOF_INTENT: Record<RenderingIntent, number> = {
+  perceptual: 1,
+  relativeColorimetric: 2,
+  toWhite: 3,
+};
 
 /**
  * The imported pipeline's fragment, which is the one thing `slang/` cannot say.

@@ -2057,8 +2057,9 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
 /// The same dispatch's SDR arm, against its committed answer.
 ///
 /// An SDR rendition is not a second pipeline - `gpu::Output::mastered` puts its peak at diffuse
-/// white and the same grade rolls the highlights into it - so what needs checking is only
-/// the end: the sRGB primaries and transfer at 8 bits, where the still writes PQ at 16.
+/// white and the same grade feeds it, its highlights brought under white by the intent - so what
+/// needs checking is only the end: the sRGB primaries and transfer at 8 bits, where the still
+/// writes PQ at 16.
 /// Its own test because the peak differs, and with it every value in the frame.
 #[test]
 fn the_encode_pass_reproduces_the_recorded_sdr_frame() {

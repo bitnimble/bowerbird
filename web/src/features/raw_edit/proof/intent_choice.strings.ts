@@ -1,5 +1,6 @@
 export const IntentChoiceStrings = {
   renderingIntent: () => 'Rendering intent',
-  perceptual: () => 'Perceptual',
-  relativeColorimetric: () => 'Relative colorimetric',
+  toWhite: () => 'Natural (AgX)',
+  perceptual: () => 'Compress highlights (perceptual)',
+  relativeColorimetric: () => 'Clip highlights (relative colorimetric)',
 };

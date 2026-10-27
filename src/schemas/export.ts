@@ -99,7 +99,7 @@ export const ExportOptionsSchema = z.object({
    */
   gainMap: z.boolean().default(false),
   /** How the SDR picture an export writes, alone or as a gain map's base, reaches sRGB. */
-  renderingIntent: RenderingIntentSchema.default('perceptual'),
+  renderingIntent: RenderingIntentSchema.default('toWhite'),
 });
 export type ExportOptions = z.infer<typeof ExportOptionsSchema>;
 

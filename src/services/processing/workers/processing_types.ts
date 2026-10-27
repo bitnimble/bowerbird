@@ -57,7 +57,7 @@ export interface RenditionTarget {
   stillFullChroma: boolean;
   /** The same for the SDR renditions (§10.1). Separate setting, separate scale. */
   sdrFullChroma: boolean;
-  /** How an SDR target reaches sRGB's gamut; perceptual where absent. */
+  /** How an SDR target reaches sRGB's gamut; to white where absent. */
   intent?: RenderingIntent;
   /** Grid only: writes no file, still reports the descriptor. */
   describeOnly?: boolean;

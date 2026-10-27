@@ -69,7 +69,7 @@ public float3 print_reflectance(float3 signal, bool coating_drawn)
         let white = dot(LUMA, mul(target_matrix(4), float3(1.0)));
         black = max(black - coating_at_45_0() / white, float3(0.0));
     }
-    let compensated = intent == INTENT_PERCEPTUAL || print.framing.w > 0.5;
+    let compensated = intent != INTENT_RELATIVE || print.framing.w > 0.5;
     return mul(target_matrix(4), onto_black(colour, black, compensated));
 }
 

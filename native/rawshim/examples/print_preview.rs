@@ -18,7 +18,8 @@ fn main() -> Result<(), String> {
         .find_map(|arg| arg.strip_prefix("--intent=").map(str::to_owned))
         .as_deref()
     {
-        None | Some("perceptual") => Intent::Perceptual,
+        None | Some("to-white") => Intent::ToWhite,
+        Some("perceptual") => Intent::Perceptual,
         Some("relative") => Intent::RelativeColorimetric,
         Some(other) => return Err(format!("unknown intent {other}")),
     };
@@ -85,7 +86,7 @@ fn main() -> Result<(), String> {
         })
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--adaptation=0.7] [--intent=perceptual|relative] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0] [--environment=studio|meadow|hotel]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--adaptation=0.7] [--intent=to-white|perceptual|relative] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0] [--environment=studio|meadow|hotel]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;

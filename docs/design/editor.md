@@ -167,12 +167,19 @@ is graded to a bounded print reflectance before illumination.
 setting.** `gamut_map.slang` is handed the graded light before any roll into a display and does
 three things. Luminance: perceptual rolls the scene's peak into white along the grade's roll-off
 (§10.7.1), which leaves everything a third of a stop under white where it is; relative colorimetric
-leaves all of it, so a highlight past white clips. Gamut: at constant
-Rec.2020 luma, chroma past what the target holds at that luma and hue is compressed from 0.9 of the
-limit (perceptual) or cut at it (relative). Black: perceptual lifts the frame onto the target's
-black, relative does so with black point compensation and otherwise floors at it. The intents are
-Lightroom's two; absolute colorimetric proofs one medium on another, which a print of a photograph
-never asks for. The target is an interface, so
+leaves all of it, so a highlight past white clips; to white, the default, rolls luma from BT.2390's
+knee held no lower than 1.5 stops under white and keeps only as much chroma as the pixel's hottest
+channel survives of the same roll, so a bright saturated light goes towards white the way it does
+on film and in AgX rather than staying a flat saturated patch. Gamut: at constant Rec.2020 luma, chroma past what the target
+holds at that luma and hue is compressed from 0.9 of the limit (perceptual, to white) or cut at it
+(relative). Black: perceptual and to white lift the frame onto the target's black, relative does so
+with black point compensation and otherwise floors at it. Two of the intents are Lightroom's;
+absolute colorimetric proofs one medium on another, which a print of a photograph never asks for.
+To white is what every SDR rendition, export and proof gets unless the reader picks another. Its
+lower knee is a choice with a cost: whenever the frame holds highlights past white, diffuse white
+and up to a stop and a half under it land below where perceptual puts them. On a camera-matched
+photo it changes little, since the match already carries the camera's own highlight rendering up
+to white. The target is an interface, so
 sRGB and generic paper are the cube in closed form, and a printer profile is a table of its maximum
 chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by

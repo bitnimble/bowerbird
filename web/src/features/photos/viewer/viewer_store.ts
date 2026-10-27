@@ -70,7 +70,7 @@ export class ViewerStore {
   // Which rendition an HDR frame is proofed against, kept across photos as a way of looking is.
   // Null follows the frame, which is also the only answer a frame with no HDR in it has.
   @observable accessor proof: 'hdr' | 'srgb' | null = null;
-  @observable accessor proofIntent: RenderingIntent = 'perceptual';
+  @observable accessor proofIntent: RenderingIntent = 'toWhite';
 
   /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
   showsHdr(photoId: string): boolean {

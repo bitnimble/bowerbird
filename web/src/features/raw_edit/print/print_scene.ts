@@ -11,7 +11,7 @@ const lux = z.number().min(0).max(MOST_LUX);
 export const PrintSceneSchema = z
   .object({
     paper: z.enum(['gloss', 'satin', 'matte']),
-    renderingIntent: RenderingIntentSchema.default('perceptual'),
+    renderingIntent: RenderingIntentSchema.default('toWhite'),
     blackPointCompensation: z.boolean().default(true),
     ink: z.enum(['dye', 'pigment']).default('dye'),
     printResolutionPpi: z.number().min(72).max(1200),
@@ -159,7 +159,7 @@ export const ENVIRONMENT_LIGHTING = {
 
 export const DEFAULT_PRINT_SCENE: PrintScene = {
   paper: 'satin',
-  renderingIntent: 'perceptual',
+  renderingIntent: 'toWhite',
   blackPointCompensation: true,
   ink: 'dye',
   printResolutionPpi: 600,

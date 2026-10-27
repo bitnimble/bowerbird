@@ -445,6 +445,54 @@ fn perceptual_keeps_a_highlights_colour_that_relative_clips() {
     );
 }
 
+#[test]
+fn to_white_takes_a_saturated_highlight_towards_white() {
+    let colour = HdrColour::identity();
+    let [perceptual, relative, to_white] = [
+        Intent::Perceptual,
+        Intent::RelativeColorimetric,
+        Intent::ToWhite,
+    ]
+    .map(|intent| {
+        let drawn = matched([6.0, 1.2, 0.4], lit_evenly(intent), &colour);
+        let raw = drawn.map(|light| light.raw());
+        let purity =
+            raw.into_iter().fold(f64::MAX, f64::min) / raw.into_iter().fold(0.0f64, f64::max);
+        (purity, luminance(drawn).raw())
+    });
+    assert!(
+        to_white.0 > perceptual.0 + 0.2 && to_white.1 > perceptual.1,
+        "to white kept the highlight's colour: (purity, nits) {perceptual:?} against {to_white:?}"
+    );
+    assert!(
+        to_white.0 < relative.0 && to_white.1 < relative.1,
+        "to white clipped the highlight as relative does: (purity, nits) {relative:?} against {to_white:?}"
+    );
+}
+
+/// Under a peak far enough past white that BT.2390's own knee falls below to white's floor, the floor
+/// is the knee: a probe under it is left, one just over it is rolled.
+#[test]
+fn to_white_rolls_from_its_own_knee() {
+    let colour = HdrColour::identity();
+    let moved = |probe: f64| {
+        let lit = move |column: usize| if column < 6 { [100.0; 3] } else { [probe; 3] };
+        let [relative, to_white] = [Intent::RelativeColorimetric, Intent::ToWhite].map(|intent| {
+            luminance(sample_as(&lit, lit_evenly(intent), [16, 16], Some(&colour))).raw()
+        });
+        to_white / relative
+    };
+    let (under, over) = (moved(0.25), moved(0.45));
+    assert!(
+        (under - 1.0).abs() < 0.02,
+        "to white moved a colour under its knee by {under}"
+    );
+    assert!(
+        over < 0.98,
+        "to white left a colour over its knee at {over}"
+    );
+}
+
 /// A colour the paper can hold is laid down exactly by a colorimetric intent: its share of white is
 /// its share of the paper's white.
 #[test]
@@ -468,7 +516,12 @@ fn a_colorimetric_intent_leaves_what_the_paper_holds() {
 fn the_intents_differ_under_a_blown_highlight() {
     let colour = HdrColour::identity();
     let blown = |column: usize| if column < 6 { [4.0; 3] } else { [1.3; 3] };
-    let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric].map(|intent| {
+    let [perceptual, relative, to_white] = [
+        Intent::Perceptual,
+        Intent::RelativeColorimetric,
+        Intent::ToWhite,
+    ]
+    .map(|intent| {
         luminance(sample_as(
             &blown,
             lit_evenly(intent),
@@ -480,6 +533,10 @@ fn the_intents_differ_under_a_blown_highlight() {
     assert!(
         relative / perceptual > 1.05,
         "the intents drew the same picture: {perceptual} against {relative} nits"
+    );
+    assert!(
+        to_white < perceptual,
+        "to white's lower shoulder left the probe above perceptual's: {to_white} against {perceptual} nits"
     );
 }
 
@@ -568,10 +625,19 @@ fn an_srgb_proof_reaches_its_gamut_by_the_intent_chosen() {
     let read = |intent| {
         linear(drawn_as(&blown, Shown::Srgb(intent), 32, 4.0, None)[(16 * 32 + 16) * 4 + 1])
     };
-    let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric].map(read);
+    let [perceptual, relative, to_white] = [
+        Intent::Perceptual,
+        Intent::RelativeColorimetric,
+        Intent::ToWhite,
+    ]
+    .map(read);
     assert!(
         relative / perceptual > 1.05,
         "relative proofed as perceptual: {relative} against {perceptual}"
+    );
+    assert!(
+        to_white < perceptual,
+        "to white proofed as perceptual: {to_white} against {perceptual}"
     );
 }
 

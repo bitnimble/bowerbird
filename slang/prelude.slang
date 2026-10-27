@@ -126,14 +126,20 @@ public struct Rolloff {
 /// `white` is the target's diffuse white; a lower peak bounds the knee instead.
 public Rolloff rolloff(Light<DisplayNits> source_peak, Light<DisplayNits> peak, Light<DisplayNits> white)
 {
+    return rolloff_under(source_peak, peak, white, KNEE_UNDER_WHITE);
+}
+
+/// [`rolloff`] with its knee held no lower than `under_white` rather than `KNEE_UNDER_WHITE`.
+public Rolloff rolloff_under(Light<DisplayNits> source_peak, Light<DisplayNits> peak, Light<DisplayNits> white, Stops under_white)
+{
     let lw = pq(source_peak).v;
     let max_lum = pq(peak).v / lw;
-    let floor = pq(measured<DisplayNits>(min(white.v, peak.v) * gain_of(KNEE_UNDER_WHITE).g)).v / lw;
+    let floor_nits = min(white.v, peak.v) * gain_of(under_white).g;
     Rolloff knee;
     knee.lw = lw;
     knee.max_lum = max_lum;
-    knee.ks = max(1.5 * max_lum - 0.5, floor);
-    knee.floor_nits = min(white.v, peak.v) * gain_of(KNEE_UNDER_WHITE).g;
+    knee.ks = max(1.5 * max_lum - 0.5, pq(measured<DisplayNits>(floor_nits)).v / lw);
+    knee.floor_nits = floor_nits;
     knee.fits = max_lum >= 1.0;
     return knee;
 }

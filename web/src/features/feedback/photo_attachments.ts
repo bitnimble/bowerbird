@@ -109,7 +109,7 @@ function rolledToSdr(
       halfSize: false,
       exportHdr: false,
       gainMap: false,
-      renderingIntent: 'perceptual',
+      renderingIntent: 'toWhite',
     },
   });
 }

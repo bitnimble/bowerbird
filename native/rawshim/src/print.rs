@@ -141,7 +141,7 @@ impl Default for Scene {
         let lighting = Environment::default().lighting();
         Self {
             paper: Paper::Satin,
-            rendering_intent: crate::gpu::Intent::Perceptual,
+            rendering_intent: crate::gpu::Intent::default(),
             black_point_compensation: true,
             ink: Ink::Dye,
             print_resolution_ppi: 600.0,

@@ -260,7 +260,7 @@ Colour<P3Linear> proofed(float3 share)
 }
 
 /// What an sRGB file holds of this pixel before its gamut is reached, as a share of its white: the
-/// rendition's own roll-off for perceptual, and the grade unrolled for relative colorimetric.
+/// rendition's own roll-off for perceptual, and the grade as `toned` brings it under white otherwise.
 float3 srgb_share(Colour<SceneNits> scene, float2 at)
 {
     if (edit.intent == INTENT_PERCEPTUAL) { return display_nits(scene, at).v / edit.peak; }

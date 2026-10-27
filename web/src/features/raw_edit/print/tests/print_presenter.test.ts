@@ -422,7 +422,7 @@ describe('print viewing', () => {
     expect(editor.decoder.print?.presentation).toBe('flat');
     expect(editor.decoder.proof).toEqual({
       output: 'hdr',
-      intent: 'perceptual',
+      intent: 'toWhite',
       displayPeakNits: null,
     });
     expect(editor.decoder.stage).toEqual(photo);

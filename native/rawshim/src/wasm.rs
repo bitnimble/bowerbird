@@ -446,7 +446,7 @@ impl HeldRaw {
             geometry: std::cell::Cell::new(crate::image::Geometry::none()),
             adjust: std::cell::RefCell::new(crate::gpu::Adjust::none()),
             proof: std::cell::Cell::new(crate::gpu::Output::Pq),
-            proof_intent: std::cell::Cell::new(crate::gpu::Intent::Perceptual),
+            proof_intent: std::cell::Cell::new(crate::gpu::Intent::default()),
             display_peak: std::cell::Cell::new(None),
             print: std::cell::Cell::new(None),
             printer: std::cell::RefCell::new(None),
@@ -2197,7 +2197,7 @@ impl HeldRaw {
     /// `fs`).
     ///
     /// `intent` is how an sRGB proof reaches its file's gamut, named as a print scene names its own;
-    /// perceptual is the rendition's. `display_peak` is the brightest the display shows, in nits,
+    /// to white is the rendition's. `display_peak` is the brightest the display shows, in nits,
     /// and none rolls every draw onto SDR white, as the viewer's does.
     #[wasm_bindgen(js_name = setProof)]
     pub fn set_proof(
