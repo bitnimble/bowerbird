@@ -1,4 +1,4 @@
-"""The device's reflection remover (`native/rawshim/src/dereflect.rs`, `slang/dereflect.slang`,
+"""The device's reflection remover (`native/dereflect/src/lib.rs`, `slang/dereflect.slang`,
 `slang/dereflect_frame.slang`) held against torch on one cached frame, brushed: the network alone,
 then the whole stage over a frame twice the network's size, in `float` and `half` cells.
 

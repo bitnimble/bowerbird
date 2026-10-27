@@ -22,8 +22,6 @@
 
 use crate::hdr;
 use crate::hdr_args::{self, EncodeOptions};
-#[cfg(feature = "renditions")]
-use crate::stacks;
 use colour::tone;
 use decode::Source as Raw;
 use formats::still::Chroma;
@@ -183,7 +181,7 @@ pub struct Job {
     pub repairs: Vec<composite::repair::Repair>,
     /// The Retouch tab's reflection removal, found over the whole frame every target is cut from.
     #[serde(default)]
-    pub reflection: crate::dereflect::Settings,
+    pub reflection: dereflect::Settings,
     /// The fraction of the deconvolution to blend in, as the Detail panel's Sharpening slider
     /// sets it (§10.9). Read against `image::SHARPEN_GAIN`, so 1 is the top of that track and
     /// the deconvolution as computed is its middle.
@@ -650,7 +648,7 @@ pub(crate) struct Base {
     pub(crate) describes_the_photograph: bool,
     /// The reflection found over this base's whole frame and already taken out of it, for the
     /// windows a render cuts afterwards to take out too.
-    pub(crate) removal: Option<crate::dereflect::Removal>,
+    pub(crate) removal: Option<dereflect::Removal>,
 }
 
 /// The picture this job is of, assembled at `size` on its long edge, whatever it is composed from.
@@ -793,8 +791,8 @@ impl Base {
         let gpu = gpu::device().ok_or_else(refused)?;
         // Shrunk off the frame before the open defringes it in place: the network learned on
         // frames as the demosaic leaves them.
-        let looked = match job.reflection.takes_out() && crate::dereflect::ready(gpu) {
-            true => Some(crate::dereflect::looked(gpu, &resident).ok_or_else(refused)?),
+        let looked = match job.reflection.takes_out() && dereflect::ready(gpu) {
+            true => Some(dereflect::looked(gpu, &resident).ok_or_else(refused)?),
             false => None,
         };
         let strengths = job.strengths().before_the_fit();
@@ -825,7 +823,7 @@ impl Base {
         // the camera's JPEG still shows the reflection.
         let full = units::px::Size::exact(width, height);
         let removal = looked.and_then(|looked| {
-            crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
+            dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
         });
         if let Some(removal) = &removal {
             removal.take_out(gpu, &resident, units::px::At::ORIGIN, full);
@@ -1246,14 +1244,14 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
 /// The reflection a window of this job's photograph takes out, found over a decode of the whole
 /// frame once per set of strokes: a tile has no frame to find it in.
 #[cfg(feature = "renditions")]
-pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
+pub(crate) fn whole_removal(job: &Job) -> Option<dereflect::Removal> {
     let gpu = gpu::device()?;
-    if !job.reflection.takes_out() || !crate::dereflect::ready(gpu) {
+    if !job.reflection.takes_out() || !dereflect::ready(gpu) {
         return None;
     }
     let stored = job.stored();
     let matched = job.camera_match.apply(stored.from_raw.matched.clone());
-    let found = crate::dereflect::Found {
+    let found = dereflect::Found {
         photograph: job.raw_file_path.clone(),
         strokes: job.reflection.strokes.clone(),
         lens: matched.as_ref().map(|matched| matched.lens.clone()),
@@ -1261,7 +1259,7 @@ pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
         dust: job.dust,
         half_size: job.half_size,
     };
-    let layer = crate::dereflect::kept(found, || {
+    let layer = dereflect::kept(found, || {
         let frame = decode::frame_from_path(
             &job.raw_file_path,
             job.detail(),
@@ -1270,12 +1268,12 @@ pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
             denoise::galosh::wanted(stored.from_raw.noise, job.detail()),
             job.dust.wanted(stored.from_raw.dust.as_deref()),
         )?;
-        let looked = crate::dereflect::looked(gpu, frame.resident()?)?;
+        let looked = dereflect::looked(gpu, frame.resident()?)?;
         let full = units::px::Size::exact(frame.width, frame.height);
-        crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
+        dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
             .map(|removal| removal.layer)
     })?;
-    Some(crate::dereflect::Removal {
+    Some(dereflect::Removal {
         layer,
         strength: job.reflection.strength,
     })
@@ -2109,7 +2107,7 @@ pub(crate) struct Rendered {
     pub(crate) peak: Light<DisplayNits>,
     /// The base's, for the bands cut after it.
     #[cfg(feature = "renditions")]
-    pub(crate) removal: Option<crate::dereflect::Removal>,
+    pub(crate) removal: Option<dereflect::Removal>,
 }
 
 /// A graded frame off the device, in the depth its output is written at.

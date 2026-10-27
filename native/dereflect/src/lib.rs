@@ -1,6 +1,8 @@
 //! The reflection remover (`models/dereflect`): LightRR, told what the picture shows by DINOv2
 //! ViT-S/14, on the device. `models/dereflect`'s `device_check` holds it against torch.
 
+#![deny(unsafe_code)]
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

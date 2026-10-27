@@ -107,7 +107,7 @@ pub struct TileRequest {
     pub drawn: Option<[usize; 2]>,
     /// The photograph's reflection, found over the whole frame, which a window only takes out.
     #[serde(skip)]
-    pub removal: Option<crate::dereflect::Removal>,
+    pub removal: Option<dereflect::Removal>,
 }
 
 impl TileRequest {

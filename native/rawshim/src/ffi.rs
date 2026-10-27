@@ -128,7 +128,7 @@ pub unsafe extern "C" fn bb_describe_jpeg(
         let Ok(rgb) = formats::jpeg::decode_tile(jpeg, 0) else {
             return -1;
         };
-        match crate::stacks::describe(gpu, rgb.as_ref()) {
+        match stacks::describe(gpu, rgb.as_ref()) {
             Some(descriptor) if descriptor.len() <= out.len() => {
                 out[..descriptor.len()].copy_from_slice(&descriptor);
                 descriptor.len() as i64
@@ -194,7 +194,7 @@ pub unsafe extern "C" fn bb_hold_dereflect_model(
     else {
         return -2;
     };
-    match crate::dereflect::hold_model(&manifest, &weights) {
+    match dereflect::hold_model(&manifest, &weights) {
         Ok(()) => 0,
         Err(why) => {
             trace::warn(&format!("rawshim: the reflection model was refused: {why}"));

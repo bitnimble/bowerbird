@@ -11,8 +11,8 @@
 //! document's strokes, and writes the reflection the stage takes out of it, linear, at full size.
 //! `DEREFLECT_CELLS=half` holds the network in `half` cells (`shader-f16`).
 
+use dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
 use gpu::{Buffer, Gpu};
-use rawshim::dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
 
 const TIMED_RUNS: usize = 5;
 
@@ -87,7 +87,7 @@ fn frame(args: &[String]) {
     let (gpu, remover) = opened(bundle);
     let resident = colour::resident::Resident::upload(gpu, &samples, w, h);
     let full = units::px::Size::exact(w, h);
-    let looked = rawshim::dereflect::looked(gpu, &resident).expect("the shrink");
+    let looked = dereflect::looked(gpu, &resident).expect("the shrink");
     let layer = remover.layer(gpu, &looked, full, &strokes, &geometry::lens::Lens::none());
     let before = resident.duplicate();
     layer.take_out(gpu, &resident, units::px::At::ORIGIN, full, 1.0);

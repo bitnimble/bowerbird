@@ -10,7 +10,7 @@
 //! keeps. Frames are taken in capture order.
 
 use decode::raw::{Preview, upright_preview_jpeg};
-use rawshim::stacks::{describe, group, similarity};
+use stacks::{describe, group, similarity};
 
 const TILE: usize = 800;
 const THUMBNAIL: usize = 512;

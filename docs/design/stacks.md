@@ -57,7 +57,7 @@ On `libraries`: `auto_stack`, `auto_stack_similarity` (0.78) and
 burst-heavy sport where the stack is the unit of work and another a studio where
 every frame is deliberate.
 
-### 19.3 The descriptor (`native/rawshim/src/stacks.rs`)
+### 19.3 The descriptor (`native/stacks/src/lib.rs`)
 
 Rust computes and compares descriptors; TypeScript stores and returns blobs.
 Library passes make hundreds of thousands of comparisons over a couple of thousand

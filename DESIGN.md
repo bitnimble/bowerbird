@@ -63,8 +63,12 @@ and web clients use its REST API. This repo's web client has a separate build/de
 | `zod`             | Schema validation (v4)                                                                   |
 | `@parcel/watcher` | Filesystem watching (§9.8); native, prebuilt for every platform this runs on but Android |
 
-Pixel processing lives in `native/rawshim` (§10.4): compiled rawler fork and `lensdb`,
-libavif/libjxl for `renditions`, Rust and Slang elsewhere. No image-processing package.
+Pixel processing lives in the `native/` Cargo workspace, linked into one library by
+`native/rawshim` (§10.4): compiled rawler fork and `lensdb`, libavif/libjxl for `renditions`,
+Rust and Slang elsewhere. No image-processing package. Its crates, each depending only on those
+before it: `units`, `trace`, `shaders`, `gpu`; `colour`, `linalg`, `mosaic`, `denoise`,
+`formats`, `geometry`, `stacks`; `render`; `fit`; `composition`, `burst`; `decode`;
+`composite`, `dereflect`; then `rawshim`'s jobs and its FFI and wasm entry points.
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 

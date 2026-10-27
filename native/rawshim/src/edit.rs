@@ -63,10 +63,10 @@ pub struct EditRequest {
     #[serde(default)]
     pub repairs: Vec<composite::repair::Repair>,
     #[serde(default)]
-    pub reflection: crate::dereflect::Settings,
+    pub reflection: dereflect::Settings,
     /// The layer an earlier open found for these same strokes, taken out rather than found again.
     #[serde(skip)]
-    pub found: Option<std::sync::Arc<crate::dereflect::Layer>>,
+    pub found: Option<std::sync::Arc<dereflect::Layer>>,
     /// Diffuse white where a finished picture states it rather than where its histogram puts it:
     /// a rendition shown as it was encoded.
     #[serde(default)]
@@ -426,8 +426,8 @@ pub async fn from_frame(
             (true, None) => {
                 let gpu = gpu::device()
                     .ok_or_else(|| render::base::without_a_device("the reflection removal"))?;
-                crate::dereflect::ready(gpu)
-                    .then(|| crate::dereflect::looked(gpu, resident))
+                dereflect::ready(gpu)
+                    .then(|| dereflect::looked(gpu, resident))
                     .flatten()
             }
             _ => None,
@@ -461,13 +461,13 @@ pub async fn from_frame(
         lap("defringe, camera match, levels");
         let removal = match (&request.found, gpu::device()) {
             _ if !reflection.takes_out() => None,
-            (Some(layer), _) => Some(crate::dereflect::Removal {
+            (Some(layer), _) => Some(dereflect::Removal {
                 layer: layer.clone(),
                 strength: reflection.strength,
             }),
             (None, Some(gpu)) => looked.and_then(|looked| {
                 let full = units::px::Size::exact(width, height);
-                crate::dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
+                dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
             }),
             (None, None) => None,
         };
@@ -618,7 +618,7 @@ pub struct Opened {
     pub matched: Option<fit::hdr::HdrMatch>,
     pub as_shot: Option<colour::white_balance::Illuminant>,
     /// What the open took out, kept by a host that opens this photograph again.
-    pub removal: Option<crate::dereflect::Removal>,
+    pub removal: Option<dereflect::Removal>,
 }
 
 impl Opened {

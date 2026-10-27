@@ -16,6 +16,8 @@
 //! perceptual hash survives none of it well enough to be worth a threshold; see
 //! the design document for the measurements that settled this shape.
 
+#![deny(unsafe_code)]
+
 use colour::space::LUMA709;
 use gpu::dispatch::Whole;
 use units::rgb::RgbRef;

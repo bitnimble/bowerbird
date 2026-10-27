@@ -439,6 +439,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dereflect"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "colour",
+ "denoise",
+ "fit",
+ "geometry",
+ "gpu",
+ "half",
+ "render",
+ "serde",
+ "serde_json",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1635,6 +1655,7 @@ dependencies = [
  "composition",
  "decode",
  "denoise",
+ "dereflect",
  "fit",
  "formats",
  "geometry",
@@ -1654,6 +1675,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shaders",
+ "stacks",
  "trace",
  "units",
  "uuid",
@@ -1918,6 +1940,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "stacks"
+version = "0.1.0"
+dependencies = [
+ "colour",
+ "gpu",
+ "pollster",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
 ]
 
 [[package]]

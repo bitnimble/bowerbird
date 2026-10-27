@@ -1,0 +1,13 @@
+[package]
+name = "stacks"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+colour = { path = "../colour" }
+gpu = { path = "../gpu" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+pollster = "0.4"

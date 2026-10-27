@@ -517,7 +517,7 @@ fn repairs_of(json: &str) -> Result<Vec<composite::repair::Repair>, JsValue> {
 }
 
 /// The document's reflection removal, as the page sends it.
-fn reflection_of(json: &str) -> Result<crate::dereflect::Settings, JsValue> {
+fn reflection_of(json: &str) -> Result<dereflect::Settings, JsValue> {
     serde_json::from_str(json).map_err(|e| {
         JsValue::from_str(&format!(
             "rawshim: this reflection removal is malformed: {e}"
@@ -558,7 +558,7 @@ pub fn hold_upscaler_model(manifest: String, bytes: Vec<u8>) {
 /// The reflection remover the app downloaded (`models/dereflect`'s bundle).
 #[wasm_bindgen(js_name = holdDereflectModel)]
 pub fn hold_dereflect_model(manifest: &str, bytes: &[u8]) -> Result<(), JsValue> {
-    crate::dereflect::hold_model(manifest, bytes).map_err(|why| JsValue::from_str(&why))
+    dereflect::hold_model(manifest, bytes).map_err(|why| JsValue::from_str(&why))
 }
 
 /// A print environment's map, which the page fetches before the first scene that names it.
@@ -579,12 +579,12 @@ type Donor = [units::px::Extent<units::px::Stored>; 2];
 #[derive(PartialEq)]
 struct FoundBy {
     model: u64,
-    strokes: Vec<crate::dereflect::Stroke>,
+    strokes: Vec<dereflect::Stroke>,
     detail: denoise::galosh::Detail,
     dust: denoise::dust::Settings,
 }
 
-type Found = (FoundBy, std::sync::Arc<crate::dereflect::Layer>);
+type Found = (FoundBy, std::sync::Arc<dereflect::Layer>);
 
 fn donor_of(json: &str) -> Result<Donor, JsValue> {
     let donor: [i32; 2] = serde_json::from_str(json)
@@ -2441,19 +2441,19 @@ impl HeldRaw {
     /// Taken before the awaits a layer is found across: a model handed over meanwhile is not the
     /// one that found it.
     fn found_by(
-        strokes: &[crate::dereflect::Stroke],
+        strokes: &[dereflect::Stroke],
         detail: denoise::galosh::Detail,
         dust: denoise::dust::Settings,
     ) -> FoundBy {
         FoundBy {
-            model: crate::dereflect::generation(),
+            model: dereflect::generation(),
             strokes: strokes.to_vec(),
             detail,
             dust,
         }
     }
 
-    fn found(&self, by: &FoundBy) -> Option<std::sync::Arc<crate::dereflect::Layer>> {
+    fn found(&self, by: &FoundBy) -> Option<std::sync::Arc<dereflect::Layer>> {
         self.reflection
             .borrow()
             .as_ref()
@@ -2461,7 +2461,7 @@ impl HeldRaw {
             .map(|(_, layer)| layer.clone())
     }
 
-    fn keep_found(&self, by: FoundBy, layer: &std::sync::Arc<crate::dereflect::Layer>) {
+    fn keep_found(&self, by: FoundBy, layer: &std::sync::Arc<dereflect::Layer>) {
         self.reflection.replace(Some((by, layer.clone())));
     }
 
@@ -2469,23 +2469,23 @@ impl HeldRaw {
     /// over the whole frame the open would decode, as it would have found it.
     async fn removal(
         &self,
-        settings: &crate::dereflect::Settings,
+        settings: &dereflect::Settings,
         detail: denoise::galosh::Detail,
         dust: denoise::dust::Settings,
-    ) -> Result<Option<crate::dereflect::Removal>, JsValue> {
+    ) -> Result<Option<dereflect::Removal>, JsValue> {
         if !settings.takes_out() {
             return Ok(None);
         }
         let by = HeldRaw::found_by(&settings.strokes, detail, dust);
         if let Some(layer) = self.found(&by) {
-            return Ok(Some(crate::dereflect::Removal {
+            return Ok(Some(dereflect::Removal {
                 layer,
                 strength: settings.strength,
             }));
         }
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
         let gpu = gpu::device().ok_or_else(refused)?;
-        if !crate::dereflect::ready(gpu) {
+        if !dereflect::ready(gpu) {
             return Ok(None);
         }
         let stored = self.opened_as().stored();
@@ -2506,9 +2506,9 @@ impl HeldRaw {
         let resident = frame
             .resident()
             .ok_or_else(|| JsValue::from_str("rawshim: the decode is not on the device"))?;
-        let looked = crate::dereflect::looked(gpu, resident).ok_or_else(refused)?;
+        let looked = dereflect::looked(gpu, resident).ok_or_else(refused)?;
         let full = units::px::Size::exact(frame.width, frame.height);
-        let removal = crate::dereflect::removal(
+        let removal = dereflect::removal(
             gpu,
             &looked,
             full,

@@ -70,7 +70,6 @@ pub mod debug;
 mod demosaic_tests;
 #[cfg(test)]
 mod grade_tests;
-pub mod dereflect;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
 #[cfg(feature = "renditions")]
@@ -92,8 +91,6 @@ pub mod scrub;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
 #[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
 pub mod snapshot;
-#[cfg(feature = "renditions")]
-pub mod stacks;
 pub mod tile;
 pub mod tile_grid;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
