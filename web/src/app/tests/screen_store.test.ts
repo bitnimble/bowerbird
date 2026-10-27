@@ -16,7 +16,7 @@ function read(settings: DeviceSettingsStore, reading: Partial<DynamicRange> | nu
   const range =
     reading == null
       ? null
-      : { hdr: true, measures: false, headroom: null, potential: null, ...reading };
+      : { hdr: true, measures: false, headroom: null, potential: null, peak: null, ...reading };
   return new ScreenPresenter(settings.screen, async () => range).ask();
 }
 
@@ -97,7 +97,7 @@ test('lets a slow answer land without asking over it', async () => {
   });
   const first = presenter.ask();
   await presenter.ask();
-  answer.resolve({ hdr: true, measures: true, headroom: 2, potential: null });
+  answer.resolve({ hdr: true, measures: true, headroom: 2, potential: null, peak: null });
   await first;
   expect(asked).toBe(1);
   expect(settings.peakNits).toBe(406);

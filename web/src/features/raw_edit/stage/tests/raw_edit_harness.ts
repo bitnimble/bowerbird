@@ -580,6 +580,13 @@ export async function drawnBy({ decoder }: Editor): Promise<number> {
 
 /** The editor's screen as the desktop shell would read it. */
 export function onScreen({ device }: Editor, reading: Partial<DynamicRange>): Promise<void> {
-  const range = { hdr: true, measures: false, headroom: null, potential: null, ...reading };
+  const range = {
+    hdr: true,
+    measures: false,
+    headroom: null,
+    potential: null,
+    peak: null,
+    ...reading,
+  };
   return new ScreenPresenter(device.screen, async () => range).ask();
 }

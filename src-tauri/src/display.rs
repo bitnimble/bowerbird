@@ -13,6 +13,9 @@ pub struct DynamicRange {
     headroom: Option<f64>,
     /// The most `headroom` reaches as brightness moves. Null where the platform cannot say.
     potential: Option<f64>,
+    /// The panel's own brightest, in nits, whatever the brightness. Null where the platform
+    /// cannot say.
+    peak: Option<f64>,
 }
 
 /// Null where the shell has no better answer than the page's own media query.
@@ -33,6 +36,9 @@ async fn range(window: tauri::WebviewWindow<crate::Runtime>) -> Option<DynamicRa
     answered.await.ok().flatten()
 }
 
+#[cfg(target_os = "macos")]
+const EDR_REFERENCE_WHITE_NITS: f64 = 100.0;
+
 /// Called on the main thread, which AppKit requires of every call below.
 #[cfg(target_os = "macos")]
 fn screen_range(window: &tauri::WebviewWindow<crate::Runtime>) -> Option<DynamicRange> {
@@ -49,6 +55,8 @@ fn screen_range(window: &tauri::WebviewWindow<crate::Runtime>) -> Option<Dynamic
         measures: true,
         headroom: (headroom > 1.0).then_some(headroom),
         potential: Some(potential),
+        // Potential is over a 100-nit white, not the slider's: an XDR panel's 1600 reads 16.
+        peak: (potential > 1.0).then_some(potential * EDR_REFERENCE_WHITE_NITS),
     })
 }
 
@@ -116,11 +124,31 @@ async fn range(window: tauri::WebviewWindow<crate::Runtime>) -> Option<DynamicRa
                     env.call_method(&display, "getHighestHdrSdrRatio", "()F", &[])
                         .and_then(|ratio| ratio.f())
                 );
+                let capabilities = unless_missing!(
+                    env,
+                    env.call_method(
+                        &display,
+                        "getHdrCapabilities",
+                        "()Landroid/view/Display$HdrCapabilities;",
+                        &[],
+                    )
+                    .and_then(|capabilities| capabilities.l())
+                )
+                .filter(|capabilities| !capabilities.is_null());
+                let peak = capabilities.and_then(|capabilities| {
+                    unless_missing!(
+                        env,
+                        env.call_method(&capabilities, "getDesiredMaxLuminance", "()F", &[])
+                            .and_then(|nits| nits.f())
+                    )
+                    .filter(|&nits| nits > 0.0)
+                });
                 let _ = answer.send(hdr.map(|hdr| DynamicRange {
                     hdr,
                     measures,
                     headroom: headroom.map(f64::from),
                     potential: potential.map(f64::from),
+                    peak: peak.map(f64::from),
                 }));
             });
         })
@@ -165,6 +193,7 @@ fn output_range(hwnd: isize) -> Option<DynamicRange> {
         measures: headroom.is_some(),
         headroom,
         potential: None,
+        peak: (hdr && peak > 0.0).then_some(peak),
     })
 }
 

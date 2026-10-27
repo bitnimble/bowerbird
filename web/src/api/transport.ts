@@ -126,6 +126,7 @@ const DynamicRangeSchema = z
     measures: z.boolean(),
     headroom: z.number().nullable(),
     potential: z.number().nullable(),
+    peak: z.number().nullable(),
   })
   .nullable();
 

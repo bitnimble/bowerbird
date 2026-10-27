@@ -159,7 +159,7 @@ export const SettingsStrings = {
   calibrateHdr: () => 'Calibrate HDR',
   measuredPeakNits: (nits: number) => `${nits} nits`,
   measuredPeakSdr: () => 'SDR',
-  measuredPeakPending: () => 'Measured while a photo is open',
+  measuredPeakUnknown: () => 'Unknown',
 
   groupResolution: () => 'Resolution',
   gridRenditionSize: () => 'Grid thumbnail longest edge',
