@@ -38,6 +38,19 @@ export class StageStore {
   @observable accessor region: Region | null = null;
 
   /**
+   * The region the canvas is showing, and the picture it was measured against: `region` once the
+   * draw asked for it has landed. A gesture outruns the draw, so the stage carries this onto the
+   * live view with a transform until the two agree.
+   */
+  @observable.ref accessor drawn: {
+    region: Region;
+    picture: { width: number; height: number };
+  } | null = null;
+
+  /** Whether the overview under the stage holds this photo, rather than the last one or nothing. */
+  @observable accessor overviewShown = false;
+
+  /**
    * The backing store the stage was last asked for, in device pixels.
    *
    * **Read off the element by nobody, because there is nothing to read.** The canvas belongs to

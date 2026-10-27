@@ -737,6 +737,96 @@ describe('the window each frame is drawn at', () => {
     }
   });
 
+  test('keeps the region the canvas shows until the draw of the next one has landed', async () => {
+    const whole = { x: 0, y: 0, width: 4000, height: 3000 };
+    presenter.previewExposure(1);
+    await drawn();
+    expect(stage.drawn).toEqual({ region: whole, picture: { width: 4000, height: 3000 } });
+
+    let landed: (() => void) | null = null;
+    decoder.landed = () =>
+      new Promise<void>((resolve) => {
+        landed = resolve;
+      });
+    const zoomed = { x: 100, y: 100, width: 1200, height: 675 };
+    presenter.showRegion(zoomed);
+    runFrames();
+    expect(stage.drawn?.region).toEqual(whole);
+
+    landed!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stage.drawn).toEqual({ region: zoomed, picture: { width: 4000, height: 3000 } });
+  });
+
+  describe('the overview under the stage', () => {
+    const WHOLE = { region: { x: 0, y: 0, width: 4000, height: 3000 }, width: 1024, height: 768 };
+    const overviewCanvas = {} as HTMLCanvasElement;
+    let shown: { canvas: unknown; width: number; height: number }[];
+    const show = readbackCanvases.show;
+
+    beforeEach(() => {
+      shown = [];
+      readbackCanvases.show = async (canvas, frame) => {
+        shown.push({ canvas, width: frame.width, height: frame.height });
+      };
+    });
+    afterEach(() => {
+      readbackCanvases.show = show;
+    });
+
+    test('is redrawn for an edit, and left for a zoom', async () => {
+      presenter.attachOverview(overviewCanvas);
+      await drawn();
+      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+      expect(shown).toEqual([{ canvas: overviewCanvas, width: 1024, height: 768 }]);
+      expect(stage.overviewShown).toBe(true);
+
+      presenter.showRegion({ x: 100, y: 100, width: 1200, height: 675 });
+      await drawn();
+      expect(decoder.overviews.at(-1)).toBeNull();
+      expect(shown).toHaveLength(1);
+
+      presenter.previewExposure(1);
+      await drawn();
+      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+      expect(shown).toHaveLength(2);
+    });
+
+    test('is not drawn under a print hanging in its room', async () => {
+      presenter.setSoftProof('print3d');
+      presenter.attachOverview(overviewCanvas);
+      await drawn();
+      expect(decoder.overviews.at(-1)).toBeNull();
+    });
+
+    // Zoomed, such a picture holds only a window of itself, so the overview waits for the whole.
+    test('of a picture prepared elsewhere waits for the reader to zoom back out', async () => {
+      stage.preparedElsewhere = true;
+      presenter.showRegion({ x: 100, y: 100, width: 1200, height: 675 });
+      presenter.attachOverview(overviewCanvas);
+      await drawn();
+      expect(decoder.overviews.at(-1)).toBeNull();
+
+      presenter.showRegion({ x: 0, y: 0, width: 4000, height: 3000 });
+      await drawn();
+      expect(decoder.overviews.at(-1)).toEqual(WHOLE);
+    });
+
+    test('that the page cannot draw is dropped, and the editor carries on', async () => {
+      readbackCanvases.show = async () => {
+        throw new Error('this page has no WebGPU device to draw a read-back frame with');
+      };
+      presenter.attachOverview(overviewCanvas);
+      await drawn();
+      expect(stage.status).toBe('live');
+      expect(stage.overviewShown).toBe(false);
+
+      presenter.previewExposure(1);
+      await drawn();
+      expect(decoder.overviews.at(-1)).toBeNull();
+    });
+  });
+
   test('follows a shape that changed, and leaves a zoom that did not alone', async () => {
     presenter.showRegion({ x: 100, y: 100, width: 1000, height: 750 });
     await drawn();

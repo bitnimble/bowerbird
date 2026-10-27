@@ -20,7 +20,14 @@ import { ReflectionOverlay } from '../reflection/reflection_overlay';
 import type { ReflectionStore } from '../reflection/reflection_store';
 import { LoupeOverlay } from '../loupe/loupe_overlay';
 import type { LoupeStore } from '../loupe/loupe_store';
-import { NO_SIZE, regionOf, useZoomPan } from '../../photos/viewer/zoom_pan';
+import {
+  MIDDLE_BUTTON,
+  NO_SIZE,
+  catchUpOf,
+  regionOf,
+  transformOf,
+  useZoomPan,
+} from '../../photos/viewer/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { StageStore } from './stage_store';
 import { RawEditStageStrings } from './raw_edit_stage.strings';
@@ -32,8 +39,8 @@ import { useIsTouch } from '../../../app/device';
 
 const styles = stylex.create({
   // The page's own surround rather than black: at black the letterbox read as two bars framing the
-  // photograph. Nothing on this subtree or above it may carry a filter, opacity, transform or blend
-  // mode - any of them rasterises into an SDR intermediate and the PQ tagging is silently lost.
+  // photograph. Nothing on this subtree or above it may carry a filter, opacity or blend mode - any
+  // of them rasterises into an SDR intermediate and the PQ tagging is silently lost.
   stage: {
     height: '100%',
     backgroundColor: color.ink,
@@ -44,6 +51,9 @@ const styles = stylex.create({
   reason: {
     maxWidth: '48ch',
     textAlign: 'center',
+  },
+  overview: {
+    pointerEvents: 'none',
   },
   print: { cursor: 'grab' },
   draggingPrint: { cursor: 'grabbing' },
@@ -69,31 +79,30 @@ const styles = stylex.create({
   },
 });
 
-/**
- * The graded frame in the detail stage's slot.
- *
- * One canvas, and no `<img>`, `<video>`, blob URL or track behind it: the tick draws
- * straight into an extended-range WebGPU canvas (`docs/raw-edit-gpu.md` §7).
- *
- * The element is handed to the presenter rather than configured here, and from there to the
- * worker for good: the frame is on the module's device, and a canvas is the only thing that can
- * cross to it. So this mounts it and never touches it again - the backing stageStore included.
- *
- * Zoom and pan are the viewer's, from `zoom_pan.ts`, so the gesture is the same one in both
- * places. What differs is only what a view *means*: the viewer transforms an element, and a
- * canvas has nothing to transform - the tick draws whatever rectangle it is given, so the
- * view becomes a region and the frame is redrawn at it. Which is the better end of the deal,
- * since the redraw is at the stage's own resolution rather than a magnified raster.
- */
 /** How far apart the two fingers of a pinch are. */
-const MIDDLE_BUTTON = 1;
-
 function spread(touches: Map<number, { x: number; y: number }>): number {
   const [first, second] = [...touches.values()];
   if (first == null || second == null) return 0;
   return Math.hypot(first.x - second.x, first.y - second.y);
 }
 
+/**
+ * The graded frame in the detail stage's slot.
+ *
+ * A canvas, and no `<img>`, `<video>`, blob URL or track behind it: the tick draws
+ * straight into an extended-range WebGPU canvas (`docs/raw-edit-gpu.md` §7). Under it, the
+ * overview: the whole picture, small, which the page draws from what the tick reads back.
+ *
+ * The stage element is handed to the presenter rather than configured here, and from there to
+ * the worker for good: the frame is on the module's device, and a canvas is the only thing that
+ * can cross to it. So this mounts it and touches nothing on it but its CSS transform.
+ *
+ * Zoom and pan are the viewer's, from `zoom_pan.ts`, so the gesture is the same one in both
+ * places. What differs is only what a view *means*: the viewer transforms an element, and here
+ * the view becomes a region and the frame is redrawn at it, at the stage's own resolution rather
+ * than a magnified raster. A tick is slower than the gesture, so until it lands the last frame is
+ * transformed onto the view (`catchUpOf`), with the overview under it where that falls short.
+ */
 export const RawEditStage = observer(function RawEditStage({
   stageStore,
   crop,
@@ -152,6 +161,12 @@ export const RawEditStage = observer(function RawEditStage({
     return () => presenter.attach(null);
   }, [presenter]);
 
+  const overview = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    presenter.attachOverview(overview.current);
+    return () => presenter.attachOverview(null);
+  }, [presenter]);
+
   const natural = stageStore.width === 0 ? NO_SIZE : presenter.displaySize;
   /**
    * Whether the view has to be *fitted*, which only the geometry tools need.
@@ -181,6 +196,7 @@ export const RawEditStage = observer(function RawEditStage({
     (!repair.repairing || repair.repairOptions != null) && !reflection.painting,
   );
   const { view, box, handlers, zoomed, reset } = zoom;
+  const catchUp = scenePrint ? undefined : catchUpOf(view, stageStore.drawn, box, natural);
 
   // **Back to a fitted view whenever the picture's shape changes**, and whenever either geometry
   // tool opens. A turn or a straighten is a different picture, so a view held over from the last
@@ -481,6 +497,16 @@ export const RawEditStage = observer(function RawEditStage({
         {...printHandlers}
       >
         <canvas
+          ref={overview}
+          {...stylex.props(
+            stageStyles.content,
+            stageStore.overviewShown && !scenePrint && stageStyles.ready,
+            styles.overview,
+          )}
+          style={{ transform: transformOf(view) }}
+          aria-hidden
+        />
+        <canvas
           ref={canvas}
           {...stylex.props(
             stageStyles.content,
@@ -491,6 +517,7 @@ export const RawEditStage = observer(function RawEditStage({
             scenePrint && styles.print,
             print.dragging && styles.draggingPrint,
           )}
+          style={{ transform: catchUp }}
           role="img"
           aria-label={RawEditStageStrings.picture()}
         />

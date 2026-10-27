@@ -2,8 +2,8 @@
 //
 // The tick is `rawshim`'s: it holds the frame, builds the uniform and draws onto the canvas this
 // thread hands it (`wasm.rs`). Two things cannot move there, because both are the *page's* to
-// know - the header the open answers with, which is what the panel reads, and how large a backing
-// store the reader's box is worth, which needs a layout box and a device pixel ratio.
+// know - the header the open answers with, which is what the panel reads, and how large the
+// backing stores are, which for the stage needs a layout box and a device pixel ratio.
 
 import type { Region } from '../edits';
 
@@ -23,6 +23,20 @@ import type { Region } from '../edits';
  * smooth is where a mockup outruns a reader's device.
  */
 export const SUPERSAMPLE = 1.5;
+
+const OVERVIEW_LONG_EDGE = 1024;
+
+/** The backing store for the whole picture shown under the stage: its shape, at most its own pixels. */
+export function overviewResolution(picture: { width: number; height: number }): {
+  width: number;
+  height: number;
+} {
+  const scale = Math.min(1, OVERVIEW_LONG_EDGE / Math.max(picture.width, picture.height, 1));
+  return {
+    width: Math.max(1, Math.round(picture.width * scale)),
+    height: Math.max(1, Math.round(picture.height * scale)),
+  };
+}
 
 /**
  * The backing store to give the canvas, for a CSS box and the region it is showing.

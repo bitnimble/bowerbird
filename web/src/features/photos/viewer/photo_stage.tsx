@@ -9,7 +9,7 @@ import { toggleFullscreenOf } from './fullscreen';
 import { PhotoStageStrings } from './photo_stage.strings';
 import { keepOnly, releaseHolder } from './stage_bitmaps';
 import { stepNearness } from './warm_budget';
-import { NO_SIZE, type Size, letterboxOf, useZoomPan } from './zoom_pan';
+import { NO_SIZE, type Size, letterboxOf, transformOf, useZoomPan } from './zoom_pan';
 import { ZoomControl, ZoomSlider } from './zoom_control';
 import { stageStyles } from './photo_stage.stylex';
 import { StageFrame, type FrameState } from './stage_frame';
@@ -27,7 +27,7 @@ export interface ShellFrames {
 }
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
-// gesture and cannot be transformed the way an `<img>` can.
+// gesture.
 
 // How long the previous photo may stay on screen after moving to one this stage was not
 // holding - a jump from the grid, or a rendition that had to be built. Past it the stage
@@ -852,7 +852,7 @@ export function PhotoStage({
     return () => window.removeEventListener('keydown', onKey);
   }, [keyboard, toggleFullscreen, zoom, reset]);
 
-  const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  const transform = transformOf(view);
   // The reader asked for a frame that cannot be drawn, and something else is on screen in
   // its place. Said rather than left to look like a picker that does nothing: the stage
   // holds every rendition it has painted, so the stand-in is a real picture of the same

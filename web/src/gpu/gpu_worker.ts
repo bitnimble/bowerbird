@@ -431,13 +431,20 @@ class Open {
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         editor.setReachMask(ask.reachMask?.node, ask.reachMask?.strength ?? 0);
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
+        if (ask.overview != null)
+          editor.tickOverview(ask.ev, ask.overview.region, ask.overview.width, ask.overview.height);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
         await finishDraw();
         const stage = ask.drawStage ? await heldBytes(editor.heldStage()) : null;
+        // A fallback the page can do without, so its readback failing fails nothing else.
+        const overview =
+          ask.overview != null ? await heldBytes(editor.heldOverview()).catch(() => null) : null;
         const loupe = ask.loupe != null ? await heldBytes(editor.heldLoupe()) : null;
         return {
-          value: { stage, loupe },
-          transfer: [stage?.buffer, loupe?.buffer].filter((buffer) => buffer != null),
+          value: { stage, overview, loupe },
+          transfer: [stage?.buffer, overview?.buffer, loupe?.buffer].filter(
+            (buffer) => buffer != null,
+          ),
         };
       }
     }

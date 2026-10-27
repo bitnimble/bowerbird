@@ -1,10 +1,9 @@
 // Fit, zoom and pan, apart from what is being zoomed.
 //
 // Two surfaces show a photograph now and both have to feel the same: the viewer's `<img>`,
-// which applies this as a CSS transform, and the editor's WebGPU canvas, which cannot -
-// there is no element to transform, only a region to redraw at (`raw_edit_stage.tsx`). The
-// gesture is the same gesture either way, so it lives here and each surface says what to do
-// with the result.
+// which applies this as a CSS transform, and the editor's WebGPU canvas, which redraws at a
+// region instead (`raw_edit_stage.tsx`). The gesture is the same gesture either way, so it
+// lives here and each surface says what to do with the result.
 //
 // The maths is pure and takes the viewport box as an argument rather than measuring it, so
 // it is safe to run inside a React state updater - which is where it has to run, since
@@ -40,6 +39,8 @@ export function scaleOf(percent: number, fit: number): number {
 }
 
 const WHEEL_SENSITIVITY = 0.0015;
+// A trackpad pinch arrives as ctrlKey wheel events, with deltas about half a scroll's.
+const PINCH_SENSITIVITY = 2 * WHEEL_SENSITIVITY;
 const WHEEL_IDLE_MS = 150;
 // Scales are floats off a division, so "already at this stop" needs slack.
 export const STOP_EPSILON = 0.001;
@@ -189,6 +190,39 @@ export function regionOf(
     width,
     height,
   };
+}
+
+/** The view as a CSS transform on an element fitted to the viewport, origin at its centre. */
+export function transformOf(view: View): string {
+  return `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+}
+
+/**
+ * The CSS transform that puts a canvas showing `drawn.region` (fitted, `object-fit: contain`)
+ * where `view` puts the frame. Undefined once they agree: a scale a hair off 1 resamples the
+ * settled draw and softens it. Undefined too for a draw of a picture of another shape, which no
+ * transform registers.
+ */
+export function catchUpOf(
+  view: View,
+  drawn: { region: Point & Size; picture: Size } | null,
+  box: Size,
+  natural: Size,
+): string | undefined {
+  if (box.width === 0 || box.height === 0 || natural.width === 0 || natural.height === 0) {
+    return undefined;
+  }
+  if (drawn == null || drawn.picture.width !== natural.width) return undefined;
+  if (drawn.picture.height !== natural.height) return undefined;
+  const { region } = drawn;
+  if (region.width === 0 || region.height === 0) return undefined;
+  const shown = Math.min(box.width / region.width, box.height / region.height);
+  const covered = fitScale(box, natural) * view.scale;
+  const scale = covered / shown;
+  const x = view.x + (region.x + region.width / 2 - natural.width / 2) * covered;
+  const y = view.y + (region.y + region.height / 2 - natural.height / 2) * covered;
+  if (Math.abs(scale - 1) < 1e-4 && Math.abs(x) < 0.05 && Math.abs(y) < 0.05) return undefined;
+  return transformOf({ scale, x, y });
 }
 
 /**
@@ -447,14 +481,14 @@ export function useZoomPan(
   useEffect(() => {
     const stage = gestures.current;
     if (stage == null || !enabled) return;
-    let deltaY = 0;
+    let logZoom = 0;
     let point: Point = { x: 0, y: 0 };
     let frame: number | null = null;
     let idle: ReturnType<typeof setTimeout> | undefined;
 
     function onWheel(e: WheelEvent): void {
       e.preventDefault();
-      deltaY += e.deltaY;
+      logZoom -= e.deltaY * (e.ctrlKey ? PINCH_SENSITIVITY : WHEEL_SENSITIVITY);
       point = { x: e.clientX, y: e.clientY };
       gestureRect.current ??= viewport.current?.getBoundingClientRect() ?? null;
       clearTimeout(idle);
@@ -463,9 +497,9 @@ export function useZoomPan(
     }
     function applyWheel(): void {
       frame = null;
-      if (deltaY === 0) return;
-      const factor = Math.exp(-deltaY * WHEEL_SENSITIVITY);
-      deltaY = 0;
+      if (logZoom === 0) return;
+      const factor = Math.exp(logZoom);
+      logZoom = 0;
       zoomTo((currentScale) => currentScale * factor, point);
     }
     function endWheel(): void {

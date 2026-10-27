@@ -55,6 +55,7 @@ describe('what a tick carries', () => {
           drawStage: true,
           region: null,
           loupe: null,
+          overview: null,
           adjust: null,
           geometry: null,
           proof: null,
@@ -75,6 +76,7 @@ describe('what a tick carries', () => {
         drawStage: true,
         region: null,
         loupe: null,
+        overview: null,
         adjust: null,
         geometry: null,
         proof: null,
@@ -83,6 +85,26 @@ describe('what a tick carries', () => {
         stage: null,
       }),
     ).toMatchObject({ reachMask: { node, strength: 0.5 } });
+  });
+
+  test('carries the overview as a region the module reads, and the size to draw it at', () => {
+    const overview = { region: JSON.stringify(sample.region), width: 1024, height: 768 };
+    expect(
+      OpenAskSchema.parse({
+        kind: 'tick',
+        ev: null,
+        drawStage: true,
+        region: null,
+        loupe: null,
+        overview,
+        adjust: null,
+        geometry: null,
+        proof: null,
+        print: null,
+        reachMask: null,
+        stage: null,
+      }),
+    ).toMatchObject({ overview });
   });
 
   test('names every slider as the module reads it', () => {

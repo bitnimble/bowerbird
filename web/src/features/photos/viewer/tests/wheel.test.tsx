@@ -69,6 +69,15 @@ test('a frame of trackpad wheel events zooms once, measuring the stage once', ()
   expect(measures()).toBe(1);
 });
 
+test('a trackpad pinch zooms twice as far as the same scroll', () => {
+  const { frame, seen } = open();
+
+  fireEvent.wheel(frame, { deltaY: -100, ctrlKey: true, clientX: 100, clientY: 10 });
+  flushFrame();
+
+  expect(seen.scale).toBeCloseTo(Math.exp(0.3), 5);
+});
+
 test('a large wheel delta zooms out by a factor rather than snapping to fitted', () => {
   const { frame, seen } = open();
 
