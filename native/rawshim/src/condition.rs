@@ -31,8 +31,8 @@ pub struct Condition {
 /// a limit they need, and these two kernels ask for nothing beyond a storage buffer. A shader that
 /// would not build is a panic through `on_uncaptured_error`, not a `None` anyone could handle.
 pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Condition {
-    static BUILT: std::sync::OnceLock<Condition> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Condition::new(gpu))
+    static BUILT: crate::gpu::Cache<Condition> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Condition::new(gpu))
 }
 
 impl Condition {

@@ -48,8 +48,8 @@ pub struct Rcd {
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Rcd> {
-    static BUILT: std::sync::OnceLock<Option<Rcd>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Rcd::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Rcd>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Rcd::new(gpu)).as_ref()
 }
 
 /// What the builder below writes, for `wgsl_layout`, which holds it against the struct the shader

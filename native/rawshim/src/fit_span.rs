@@ -22,8 +22,8 @@ pub(crate) struct Kernels {
 }
 
 pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fit_span"),

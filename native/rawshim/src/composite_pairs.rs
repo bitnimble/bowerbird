@@ -34,8 +34,8 @@ pub struct Coarse {
 }
 
 fn coarse_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "composite_coarse",

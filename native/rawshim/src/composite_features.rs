@@ -44,8 +44,8 @@ struct Kernels {
 }
 
 fn device(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
-    static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernels> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_features.wgsl"));
         const BINDINGS: &[(u32, wgpu::BufferBindingType)] =
             &[(0, READ), (1, WRITE), (2, READ), (3, WRITE), (20, UNIFORM)];

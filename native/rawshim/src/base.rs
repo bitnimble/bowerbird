@@ -63,8 +63,8 @@ pub struct Base {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
-    static BUILT: std::sync::OnceLock<Option<Base>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Base::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Base>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Base::new(gpu)).as_ref()
 }
 
 /// The same pipelines, built once per page.

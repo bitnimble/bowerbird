@@ -7,8 +7,8 @@ use crate::sdr_match::SdrMatch;
 const SAMPLES_PER_WORD: usize = 2;
 
 fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         crate::hdr_fit::kernel(
             gpu,
             "rematch_pq",

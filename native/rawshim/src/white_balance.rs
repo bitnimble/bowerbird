@@ -183,8 +183,8 @@ pub(crate) struct Solver {
 /// Infallible, as `condition::device` is: these kernels ask for nothing beyond two storage
 /// buffers, and a shader that would not build is a panic through `on_uncaptured_error`.
 pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
-    static BUILT: std::sync::OnceLock<Solver> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Solver> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("illuminant"),

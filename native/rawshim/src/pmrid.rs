@@ -554,9 +554,9 @@ struct Coop {
 /// where it built it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
-    static BUILT: std::sync::OnceLock<Option<Pmrid>> = std::sync::OnceLock::new();
+    static BUILT: crate::gpu::Cache<Option<Pmrid>> = crate::gpu::Cache::new();
     BUILT
-        .get_or_init(|| Some(build_kernels(gpu, weights()?, Arm::Matrix)))
+        .get(gpu, || Some(build_kernels(gpu, weights()?, Arm::Matrix)))
         .as_ref()
 }
 

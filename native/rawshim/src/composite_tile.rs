@@ -49,13 +49,13 @@ impl Layer {
 }
 
 fn gather_kernel(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "composite_gather"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "composite_gather"))
 }
 
 fn probe_kernel(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "composite_probe"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "composite_probe"))
 }
 
 fn built(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::Kernel {
@@ -411,13 +411,13 @@ fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::K
 }
 
 fn adding(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| blend_kernel(gpu, "composite_add"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || blend_kernel(gpu, "composite_add"))
 }
 
 fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| blend_kernel(gpu, "composite_resolve"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || blend_kernel(gpu, "composite_resolve"))
 }
 
 /// The layers of a window as one picture, and where anything covered it.

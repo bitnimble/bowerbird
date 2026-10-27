@@ -274,8 +274,8 @@ pub(crate) struct Resamplers {
 }
 
 pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
-    static BUILT: std::sync::OnceLock<Resamplers> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Resamplers> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fit_grids"),

@@ -50,18 +50,18 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
 }
 
 fn stacking(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_stack"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_stack"))
 }
 
 fn tinting(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_tint"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_tint"))
 }
 
 fn levelling(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_level"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_level"))
 }
 
 /// Room for a pass to write, with nothing in it: every one of these is written whole before it is

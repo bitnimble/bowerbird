@@ -64,8 +64,8 @@ const WORKGROUP_STORAGE: u32 = (2 * crate::dust::BINS as u32 + 1) * 64 * 4 + 64;
 /// None where the adapter cannot hold that. The caller's answer is to leave the photograph's
 /// particles where they are, which is a far better outcome than a failed decode.
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Find> {
-    static BUILT: std::sync::OnceLock<Option<Find>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Find::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Find>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Find::new(gpu)).as_ref()
 }
 
 impl Find {

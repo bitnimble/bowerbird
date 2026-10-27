@@ -874,8 +874,8 @@ struct FrameKernels {
 }
 
 fn frame_kernels(gpu: &'static Gpu) -> &'static FrameKernels {
-    static BUILT: std::sync::OnceLock<FrameKernels> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<FrameKernels> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dereflect_frame"),

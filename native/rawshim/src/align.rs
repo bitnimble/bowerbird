@@ -137,17 +137,17 @@ pub(crate) fn align_block() -> usize {
 
 fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BLOCK: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static REDUCE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static SITE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static DETAIL: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    static BLOCK: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static REDUCE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static SITE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static DETAIL: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
     let cell = match entry {
         "block_luma" => &BLOCK,
         "site_luma" => &SITE,
         "detail" => &DETAIL,
         _ => &REDUCE,
     };
-    cell.get_or_init(|| {
+    cell.get(gpu, || {
         crate::hdr_fit::kernel(
             gpu,
             entry,
@@ -160,17 +160,17 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
 
 fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static ALIGN: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static REFINE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static REGULARIZE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    static FILL: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    static ALIGN: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static REFINE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static REGULARIZE: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    static FILL: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
     let cell = match entry {
         "align" => &ALIGN,
         "refine" => &REFINE,
         "fill" => &FILL,
         _ => &REGULARIZE,
     };
-    cell.get_or_init(|| {
+    cell.get(gpu, || {
         crate::hdr_fit::kernel(
             gpu,
             entry,

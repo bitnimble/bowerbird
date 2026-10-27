@@ -55,13 +55,13 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
 }
 
 fn adding(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_add"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_add"))
 }
 
 fn resolving(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_resolve"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_resolve"))
 }
 
 /// The two bands of one window, over the crop-wide lowpass every source was reduced to.

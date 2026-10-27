@@ -1190,8 +1190,8 @@ impl Evaluated {
 
 /// `fit_model.slang`'s bindings: `colour.slang`'s model, and the samples in and out.
 pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fit_model"),
@@ -1423,8 +1423,8 @@ pub async fn evaluated(
 }
 
 pub(crate) fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "fit_gather",
@@ -3372,8 +3372,8 @@ const LANE_MOST_PATCH: isize = 3;
 const LANE_MOST_SEARCH: isize = 4;
 
 pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
-    static BUILT: std::sync::OnceLock<Searching> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Searching> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/correspond.wgsl"));
         const BINDINGS: &[(u32, wgpu::BufferBindingType)] = &[
             (0, READ),
@@ -3408,21 +3408,25 @@ const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
 pub(crate) fn warp_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[]))
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
+        kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[])
+    })
 }
 
 pub(crate) fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[]))
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
+        kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[])
+    })
 }
 
 const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(2, WRITE), (3, READ), (4, READ), (20, UNIFORM)];
 
 pub(crate) fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "fit_box_packed",
@@ -3434,8 +3438,8 @@ pub(crate) fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kerne
 }
 
 pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "fit_register",
@@ -3455,8 +3459,8 @@ pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel 
 }
 
 pub(crate) fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "patch_stats",
@@ -5998,8 +6002,8 @@ fn rebalanced(
 }
 
 fn balance_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
-    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         kernel(
             gpu,
             "fit_balance",

@@ -356,8 +356,8 @@ fn to_green(gains: [f32; 3]) -> [f32; 2] {
 /// failed import, and the two limits asked about below are the only ones a real adapter is
 /// likely to miss.
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Galosh> {
-    static BUILT: std::sync::OnceLock<Option<Galosh>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Galosh::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Galosh>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Galosh::new(gpu)).as_ref()
 }
 
 impl Galosh {

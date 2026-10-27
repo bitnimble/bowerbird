@@ -21,8 +21,8 @@ pub struct Linearise {
 /// Infallible for [`crate::condition::device`]'s reason: the kernel asks for nothing beyond storage
 /// buffers, so a shader that would not build is a panic rather than a `None` anybody could handle.
 pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Linearise {
-    static BUILT: std::sync::OnceLock<Linearise> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Linearise::new(gpu))
+    static BUILT: crate::gpu::Cache<Linearise> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Linearise::new(gpu))
 }
 
 impl Linearise {

@@ -331,13 +331,13 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
 }
 
 pub(crate) fn repairing(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "repair"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "repair"))
 }
 
 pub(crate) fn averaging(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "repair_cells"))
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "repair_cells"))
 }
 
 /// Every repair that reaches `frame`, in the order they were made.

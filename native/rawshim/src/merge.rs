@@ -178,8 +178,8 @@ enum Entry {
 
 fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BUILT: [std::sync::OnceLock<Kernel>; Entry::Remosaic as usize + 1] =
-        [const { std::sync::OnceLock::new() }; Entry::Remosaic as usize + 1];
+    static BUILT: [crate::gpu::Cache<Kernel>; Entry::Remosaic as usize + 1] =
+        [const { crate::gpu::Cache::new() }; Entry::Remosaic as usize + 1];
     let index = entry as usize;
     let (name, bindings): (&str, &[(u32, wgpu::BufferBindingType)]) = match entry {
         Entry::Shape => ("shape", &[(0, UNIFORM), (3, READ), (4, WRITE)]),
@@ -256,7 +256,7 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
             &[(0, UNIFORM), (11, WRITE), (18, READ), (20, WRITE)],
         ),
     };
-    BUILT[index].get_or_init(|| {
+    BUILT[index].get(gpu, || {
         crate::hdr_fit::kernel(
             gpu,
             name,

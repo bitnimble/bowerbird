@@ -64,8 +64,8 @@ pub(crate) struct Kernels {
 }
 
 pub(crate) fn device(gpu: &'static Gpu) -> Option<&'static Kernels> {
-    static BUILT: std::sync::OnceLock<Option<Kernels>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Kernels::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Kernels>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Kernels::new(gpu)).as_ref()
 }
 
 impl Kernels {

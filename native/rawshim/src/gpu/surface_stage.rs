@@ -226,7 +226,7 @@ pub fn draw(
 }
 
 pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
-    static MODULE: std::sync::OnceLock<wgpu::ShaderModule> = std::sync::OnceLock::new();
+    static MODULE: crate::gpu::Cache<wgpu::ShaderModule> = crate::gpu::Cache::new();
     static BUILT: std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>> =
         std::sync::Mutex::new(Vec::new());
     let mut built = BUILT
@@ -237,7 +237,7 @@ pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
         return pipeline.clone();
     }
     let device = gpu.describing();
-    let module = MODULE.get_or_init(|| {
+    let module = MODULE.get(gpu, || {
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stage"),
             source: wgpu::ShaderSource::Wgsl(STAGE_WGSL.into()),

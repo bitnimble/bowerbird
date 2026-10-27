@@ -1423,7 +1423,35 @@ impl Gpu {
     pub fn id(&self) -> u64 {
         self.id
     }
+}
 
+/// A stage's pipelines, built on first use and again for each device opened after a loss.
+pub struct Cache<T: 'static>(std::sync::Mutex<Option<(u64, &'static T)>>);
+
+impl<T> Cache<T> {
+    pub const fn new() -> Self {
+        Cache(std::sync::Mutex::new(None))
+    }
+
+    pub fn get(&self, gpu: &Gpu, build: impl FnOnce() -> T) -> &'static T {
+        self.on(gpu.id(), build)
+    }
+
+    fn on(&self, device: u64, build: impl FnOnce() -> T) -> &'static T {
+        let mut held = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((on, built)) = *held
+            && on == device
+        {
+            return built;
+        }
+        // Leaked like the device it was built on, which a call still running may hold.
+        let built: &'static T = Box::leak(Box::new(build()));
+        *held = Some((device, built));
+        built
+    }
+}
+
+impl Gpu {
     /// Cuts the bands dispatched from `at`, as `file:line`, smaller: a device was lost after a
     /// submission from there.
     pub fn split_bands(&self, at: &str) {
@@ -5619,6 +5647,20 @@ fn half(v: f32) -> [u8; 2] {
 #[cfg(test)]
 mod tests {
     use units::light::{Light, Stops};
+
+    #[test]
+    fn a_cache_builds_once_per_device() {
+        static BUILT: super::Cache<u64> = super::Cache::new();
+        let mut builds = 0;
+        let mut on = |device: u64| {
+            *BUILT.on(device, || {
+                builds += 1;
+                device * 10
+            })
+        };
+        assert_eq!([on(1), on(1), on(2), on(2)], [10, 10, 20, 20]);
+        assert_eq!(builds, 2);
+    }
 
     #[test]
     fn renditions_defer_canvas_and_print_pipelines_and_draws_reuse_them() {

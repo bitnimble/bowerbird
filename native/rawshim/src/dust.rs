@@ -700,8 +700,8 @@ pub struct Dust {
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> &'static Dust {
-    static BUILT: std::sync::OnceLock<Dust> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Dust::new(gpu))
+    static BUILT: crate::gpu::Cache<Dust> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Dust::new(gpu))
 }
 
 impl Dust {

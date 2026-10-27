@@ -28,8 +28,8 @@ pub struct Lslcd {
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Lslcd> {
-    static BUILT: std::sync::OnceLock<Option<Lslcd>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Lslcd::new(gpu)).as_ref()
+    static BUILT: crate::gpu::Cache<Option<Lslcd>> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || Lslcd::new(gpu)).as_ref()
 }
 
 // ---------------------------------------------------------------------------

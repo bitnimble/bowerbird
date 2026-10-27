@@ -156,23 +156,23 @@ fn built(gpu: &'static Gpu, entry: &str, uses: &'static [u32]) -> Entry {
 }
 
 fn owning(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: std::sync::OnceLock<Entry> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_owner", &[1, 2, 3, 4, 5, 10]))
+    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_owner", &[1, 2, 3, 4, 5, 10]))
 }
 
 fn seeding(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: std::sync::OnceLock<Entry> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_seed", &[4, 5, 6]))
+    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_seed", &[4, 5, 6]))
 }
 
 fn flooding(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: std::sync::OnceLock<Entry> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_flood", &[6, 7]))
+    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_flood", &[6, 7]))
 }
 
 fn settling(gpu: &'static Gpu) -> &'static Entry {
-    static BUILT: std::sync::OnceLock<Entry> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, "assembly_settle", &[4, 6, 8, 9, 10, 11]))
+    static BUILT: crate::gpu::Cache<Entry> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || built(gpu, "assembly_settle", &[4, 6, 8, 9, 10, 11]))
 }
 
 // `zeroed`, `uploaded` and `dispatch` are `assembly_analysis.rs`'s, copied rather than shared -

@@ -342,8 +342,8 @@ pub(crate) fn params_block() -> usize {
 
 pub(crate) fn copying(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
-    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| {
+    static BUILT: crate::gpu::Cache<crate::hdr_fit::Kernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || {
         crate::hdr_fit::kernel(
             gpu,
             "copy_rect",
