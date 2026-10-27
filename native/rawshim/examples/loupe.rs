@@ -77,7 +77,7 @@ fn main() {
         denoiser: rawshim::galosh::Denoiser::Galosh,
         highlight_recovery: None,
         dust: Default::default(),
-        adjust: rawshim::gpu::Adjust::none(),
+        adjust: rawshim::grade::Adjust::none(),
         levels: Some(measured.levels),
         noise_fit: frame.noise,
         capture_sigma: measured.blur,
@@ -93,15 +93,15 @@ fn main() {
     drop(frame);
     let window =
         rawshim::tile::prepared(rawshim::tile::Source::Path(raw), &request).expect("a tile");
-    let scene = window.scene(None, rawshim::gpu::Adjust::none());
+    let scene = window.scene(None, rawshim::grade::Adjust::none());
     // Diffuse white as the peak, because this writes sRGB: the same reasoning as `renders`.
     let grade = window.grade(
         &scene,
         units::light::Light::at_diffuse_white(request.grade.reference_white_nits),
-        rawshim::gpu::Output::Srgb,
+        rawshim::grade::Output::Srgb,
     );
     let width = window.width;
-    let uploaded = gpu.upload(&window.samples, &grade, &gpu.scene_peak());
+    let uploaded = rawshim::grade::device(gpu).upload(&window.samples, &grade, &rawshim::grade::device(gpu).scene_peak());
     let coded = uploaded.encode(&grade);
     // The tick the editor would pay for this tile, best of five.
     let mut tick = f64::INFINITY;

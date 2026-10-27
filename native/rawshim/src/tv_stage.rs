@@ -1,9 +1,9 @@
-//! The viewer's stage in a TV's window (`gpu::surface_stage`), for the Android shell, which owns
+//! The viewer's stage in a TV's window (`crate::grade::surface_stage`), for the Android shell, which owns
 //! the window and calls these from the thread it draws on.
 
 #![expect(unsafe_code)]
 
-use crate::gpu::surface_stage::{Display, Picture, SurfaceStage, measured};
+use crate::grade::surface_stage::{Display, Picture, SurfaceStage, measured};
 use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
 use units::light::Gain;
@@ -58,7 +58,7 @@ pub extern "C" fn bb_stage_warm(white: f32) -> c_int {
         let Some(gpu) = crate::gpu::device() else {
             return -1;
         };
-        crate::gpu::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
+        crate::grade::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
         0
     })
 }

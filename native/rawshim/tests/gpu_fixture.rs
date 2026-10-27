@@ -177,9 +177,9 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         }),
         ..HdrColour::identity()
     };
-    let at = |exposure: Option<Stops>, adjust: rawshim::gpu::Adjust| {
-        rawshim::gpu::uniform_words(
-            &rawshim::gpu::Grade {
+    let at = |exposure: Option<Stops>, adjust: rawshim::grade::Adjust| {
+        rawshim::grade::uniform_words(
+            &rawshim::grade::Grade {
                 colour: Some(&colour),
                 exposure,
                 adjust,
@@ -187,7 +187,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                     temperature: 5500.0,
                     tint: 12.0,
                 }),
-                ..rawshim::gpu::Grade::new(
+                ..rawshim::grade::Grade::new(
                     WIDTH,
                     HEIGHT,
                     tone::Levels {
@@ -204,13 +204,13 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     };
 
     // Distinct and non-zero throughout, so no two fields can be exchanged unnoticed.
-    let moved = rawshim::gpu::Adjust {
+    let moved = rawshim::grade::Adjust {
         contrast: 11.0,
         highlights: -22.0,
         shadows: 33.0,
         whites: -44.0,
         blacks: 55.0,
-        tone_curve: Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
+        tone_curve: Some(rawshim::grade::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.0], [0.3, 0.25], [1.0, 1.0]],
         }),
         vibrance: -66.0,
@@ -221,19 +221,19 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         temperature: Some(4800.0),
         tint: Some(-6.0),
         camera_balance: true,
-        colour_profile: rawshim::gpu::ColourProfile::Matched,
+        colour_profile: rawshim::grade::ColourProfile::Matched,
         colour_nodes: Vec::new(),
     };
     let cases = [
         // As it arrives on a photo nobody has edited, which is also the state the frame's own
         // words are shipped in.
-        ("rest", None, rawshim::gpu::Adjust::none()),
+        ("rest", None, rawshim::grade::Adjust::none()),
         ("moved", Some(Stops::measured(1.75)), moved.clone()),
         // Half a white balance pair, which is the case the two hosts disagreed about.
         (
             "half-balance",
             Some(Stops::measured(-2.5)),
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 tint: None,
                 ..moved.clone()
             },
@@ -297,7 +297,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
 /// a change here moves not one committed byte.
 #[test]
 fn the_editor_filters_detail_in_the_order_this_host_does() {
-    let built = format!("{}\n", rawshim::gpu::DETAIL_PASSES.join("\n"));
+    let built = format!("{}\n", rawshim::grade::DETAIL_PASSES.join("\n"));
     let path = fixture_dir().join("detail-passes.txt");
     if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
         std::fs::create_dir_all(fixture_dir()).expect("the fixture directory");
@@ -547,7 +547,7 @@ fn the_peak_reads_the_pixels_it_always_did() {
     let rows: Vec<String> = sizes
         .iter()
         .map(|(width, height)| {
-            let (stride, rows) = rawshim::gpu::sampled_rows(*width, *height);
+            let (stride, rows) = rawshim::grade::sampled_rows(*width, *height);
             format!(
                 "{width}x{height} stride {stride} samples {}",
                 *width as u32 * rows
@@ -635,21 +635,21 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
             // No peak is supplied. `upload` measures it off this very frame, through the two
             // passes the editor's open runs, so what the fixture pins is the whole of what the
             // shaders do with the samples beside it.
-            let got = gpu.encode(
+            let got = rawshim::grade::device(gpu).encode(
                 &prepared.samples,
-                &rawshim::gpu::Grade {
+                &rawshim::grade::Grade {
                     colour: colour.as_ref(),
                     exposure,
                     // The fixture is the HDR still, which is what `run` above encodes.
                     // The camera's rendering, unadjusted: these fixtures pin the grade, and
                     // a slider set here would be pinning one reader's taste instead.
-                    adjust: rawshim::gpu::Adjust::none(),
-                    ..rawshim::gpu::Grade::new(
+                    adjust: rawshim::grade::Adjust::none(),
+                    ..rawshim::grade::Grade::new(
                         prepared.width,
                         prepared.height,
                         levels,
                         grade.reference_white_nits,
-                        rawshim::gpu::Output::Pq.mastered(grade.reference_white_nits),
+                        rawshim::grade::Output::Pq.mastered(grade.reference_white_nits),
                     )
                 },
             );
@@ -700,18 +700,18 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
             };
             filter_once(&mut prepared, &grade, strengths);
 
-            let got = gpu.encode(
+            let got = rawshim::grade::device(gpu).encode(
                 &prepared.samples,
-                &rawshim::gpu::Grade {
+                &rawshim::grade::Grade {
                     colour: colour.as_ref(),
                     exposure,
-                    output: rawshim::gpu::Output::Rolled,
-                    ..rawshim::gpu::Grade::new(
+                    output: rawshim::grade::Output::Rolled,
+                    ..rawshim::grade::Grade::new(
                         prepared.width,
                         prepared.height,
                         levels,
                         grade.reference_white_nits,
-                        rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits),
+                        rawshim::grade::Output::Rolled.mastered(grade.reference_white_nits),
                     )
                 },
             );
@@ -719,7 +719,7 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
             Snapshot::signal(
                 &got,
                 frame_size(),
-                rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits),
+                rawshim::grade::Output::Rolled.mastered(grade.reference_white_nits),
             )
             .check(&format!("grade/{name}-ev{ev}-rolled"), GRADED);
         }
@@ -835,7 +835,7 @@ fn split_ground() -> Vec<u16> {
 fn graded_banded(
     gpu: &'static rawshim::gpu::Gpu,
     haze: f64,
-    adjust: rawshim::gpu::Adjust,
+    adjust: rawshim::grade::Adjust,
 ) -> Vec<u16> {
     graded_frame(gpu, banded(haze), BANDED, BANDED, adjust)
 }
@@ -874,7 +874,7 @@ fn clarity_leaves_the_finest_band_to_texture() {
         }
     }
 
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let graded = |adjust| graded_frame(gpu, frame.clone(), WIDE, TALL, adjust);
     let flat = graded(none.clone());
     // The checker: neighbouring rows, which no texel of four can tell apart.
@@ -890,11 +890,11 @@ fn clarity_leaves_the_finest_band_to_texture() {
         total / count as f64
     };
 
-    let lifted = fine(&graded(rawshim::gpu::Adjust {
+    let lifted = fine(&graded(rawshim::grade::Adjust {
         clarity: 100.0,
         ..none.clone()
     }));
-    let lowered = fine(&graded(rawshim::gpu::Adjust {
+    let lowered = fine(&graded(rawshim::grade::Adjust {
         clarity: -100.0,
         ..none.clone()
     }));
@@ -912,7 +912,7 @@ fn graded_frame(
     frame: Vec<u16>,
     width: usize,
     height: usize,
-    adjust: rawshim::gpu::Adjust,
+    adjust: rawshim::grade::Adjust,
 ) -> Vec<u16> {
     graded_frame_as(gpu, frame, width, height, adjust, None)
 }
@@ -923,12 +923,12 @@ fn graded_frame_as(
     frame: Vec<u16>,
     width: usize,
     height: usize,
-    adjust: rawshim::gpu::Adjust,
+    adjust: rawshim::grade::Adjust,
     colour: Option<&HdrColour>,
 ) -> Vec<u16> {
     let mut samples = frame;
     let grade = coded_grade(gpu, &mut samples, width, height, adjust, colour);
-    gpu.encode(&samples, &grade)
+    rawshim::grade::device(gpu).encode(&samples, &grade)
 }
 
 /// `samples` coded as the shipped grade codes them, and that grade.
@@ -937,13 +937,13 @@ fn coded_grade<'a>(
     samples: &mut [u16],
     width: usize,
     height: usize,
-    adjust: rawshim::gpu::Adjust,
+    adjust: rawshim::grade::Adjust,
     colour: Option<&'a HdrColour>,
-) -> rawshim::gpu::Grade<'a> {
+) -> rawshim::grade::Grade<'a> {
     let grade = SHIPPED;
     let levels = levels(gpu, samples, width, height, grade.white_quantile);
     rawshim::hdr::code_base(samples, levels.anchored(), grade.reference_white_nits);
-    rawshim::gpu::Grade {
+    rawshim::grade::Grade {
         adjust,
         colour,
         // A daylight baseline, so the balance test has something to move away from. The
@@ -956,8 +956,8 @@ fn coded_grade<'a>(
             temperature: 5500.0,
             tint: 12.0,
         }),
-        output: rawshim::gpu::Output::Rolled,
-        ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, DISPLAY)
+        output: rawshim::grade::Output::Rolled,
+        ..rawshim::grade::Grade::new(width, height, levels, grade.reference_white_nits, DISPLAY)
     }
 }
 
@@ -986,14 +986,14 @@ fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let flat = graded_frame(gpu, split_ground(), BANDED, BANDED, none.clone());
     let lifted = graded_frame(
         gpu,
         split_ground(),
         BANDED,
         BANDED,
-        rawshim::gpu::Adjust {
+        rawshim::grade::Adjust {
             shadows: 100.0,
             ..none.clone()
         },
@@ -1100,14 +1100,14 @@ fn highlights_reaches_furthest_into_what_is_most_blown() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let flat = graded_frame(gpu, three_grounds(), BANDED, BANDED, none.clone());
     let pulled = graded_frame(
         gpu,
         three_grounds(),
         BANDED,
         BANDED,
-        rawshim::gpu::Adjust {
+        rawshim::grade::Adjust {
             highlights: -100.0,
             ..none.clone()
         },
@@ -1194,14 +1194,14 @@ fn the_inner_pair_leave_middle_grey_to_the_exposure() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let graded = |adjust| graded_frame(gpu, four_grounds(), BANDED, BANDED, adjust);
     let flat = graded(none.clone());
-    let pulled = graded(rawshim::gpu::Adjust {
+    let pulled = graded(rawshim::grade::Adjust {
         highlights: -100.0,
         ..none.clone()
     });
-    let lifted = graded(rawshim::gpu::Adjust {
+    let lifted = graded(rawshim::grade::Adjust {
         shadows: 100.0,
         ..none.clone()
     });
@@ -1301,12 +1301,12 @@ fn blacks_reaches_the_bottom_of_a_hazy_frame() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let pulled_over = |haze: f64| {
         let frame = hazed_grounds(haze);
         let graded = |adjust| graded_frame(gpu, frame.clone(), BANDED, BANDED, adjust);
         let flat = graded(none.clone());
-        let pulled = graded(rawshim::gpu::Adjust {
+        let pulled = graded(rawshim::grade::Adjust {
             blacks: -100.0,
             ..none.clone()
         });
@@ -1417,7 +1417,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     // **Both ends, and the hazy one is not decoration.** A zone's shoulder narrows with the
     // frame's span, so on a frame whose floor is most of the way up to its
     // white the inner pair read the guided filter's field through a weight several times as
@@ -1427,7 +1427,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
         (
             "highlights at -100",
             hard_edge(0.0),
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 highlights: -100.0,
                 ..none.clone()
             },
@@ -1436,7 +1436,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
         (
             "shadows at +100 on a frame with 0.7 of a stop in it",
             hard_edge(0.6),
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 shadows: 100.0,
                 ..none.clone()
             },
@@ -1513,12 +1513,12 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
         eprintln!("SKIPPED: no adapter answered, so the white balance was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let at = |temperature: Option<f64>, tint: Option<f64>| {
         graded_banded(
             gpu,
             0.0,
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 temperature,
                 tint,
                 ..none.clone()
@@ -1603,7 +1603,7 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
     };
     let frame = blue_beside_red();
     let [_, a, b] = rawshim::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
-    let greyed = rawshim::gpu::Adjust {
+    let greyed = rawshim::grade::Adjust {
         colour_nodes: vec![rawshim::lattice::ColourNode {
             hue: b.atan2(a).to_degrees(),
             chroma: a.hypot(b),
@@ -1615,11 +1615,11 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
             chroma_reach: 40.0,
             lightness_reach: 0.0,
         }],
-        ..rawshim::gpu::Adjust::none()
+        ..rawshim::grade::Adjust::none()
     };
     let identity = HdrColour::identity();
     for (arm, colour) in [("neutral", None), ("matched", Some(&identity))] {
-        let graded = |adjust: rawshim::gpu::Adjust| {
+        let graded = |adjust: rawshim::grade::Adjust| {
             graded_frame_as(
                 gpu,
                 frame.clone(),
@@ -1629,7 +1629,7 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
                 colour,
             )
         };
-        let (plain, edited) = (graded(rawshim::gpu::Adjust::none()), graded(greyed.clone()));
+        let (plain, edited) = (graded(rawshim::grade::Adjust::none()), graded(greyed.clone()));
         assert_eq!(
             patch_interior(&edited, false),
             patch_interior(&plain, false),
@@ -1659,7 +1659,7 @@ fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
     };
     let (hue, chroma) = hue_of(RED.map(|v| v / 20000.0));
     const TURNED_TO: f64 = 140.0;
-    let turned = rawshim::gpu::Adjust {
+    let turned = rawshim::grade::Adjust {
         colour_nodes: vec![rawshim::lattice::ColourNode {
             hue,
             chroma,
@@ -1671,11 +1671,11 @@ fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
             chroma_reach: 20.0,
             lightness_reach: 0.0,
         }],
-        ..rawshim::gpu::Adjust::none()
+        ..rawshim::grade::Adjust::none()
     };
     let identity = HdrColour::identity();
     for (arm, colour) in [("neutral", None), ("matched", Some(&identity))] {
-        let graded = |adjust: rawshim::gpu::Adjust| {
+        let graded = |adjust: rawshim::grade::Adjust| {
             graded_frame_as(
                 gpu,
                 frame.clone(),
@@ -1688,7 +1688,7 @@ fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
         let mean = |pixels: Vec<[f64; 3]>| -> [f64; 3] {
             std::array::from_fn(|c| pixels.iter().map(|p| p[c]).sum::<f64>() / pixels.len() as f64)
         };
-        let was = mean(patch_interior(&graded(rawshim::gpu::Adjust::none()), false));
+        let was = mean(patch_interior(&graded(rawshim::grade::Adjust::none()), false));
         let now = mean(patch_interior(&graded(turned.clone()), false));
         let (was_hue, _) = hue_of(was);
         let (now_hue, _) = hue_of(now);
@@ -1718,10 +1718,10 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
             &mut samples,
             PATCHES_SIDE,
             PATCHES_SIDE,
-            rawshim::gpu::Adjust::none(),
+            rawshim::grade::Adjust::none(),
             colour,
         );
-        let uploaded = gpu.upload(&samples, &grade, &gpu.scene_peak());
+        let uploaded = rawshim::grade::device(gpu).upload(&samples, &grade, &rawshim::grade::device(gpu).scene_peak());
         let probed = pollster::block_on(uploaded.colour_probe(&grade, &places))
             .expect("the probe read back");
         for (place, moved) in places.iter().zip(&probed.field) {
@@ -1754,7 +1754,7 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
                 .rem_euclid(360.0),
             f64::from(dot[1]).hypot(f64::from(dot[2])),
         );
-        let greyed = rawshim::gpu::Adjust {
+        let greyed = rawshim::grade::Adjust {
             colour_nodes: vec![rawshim::lattice::ColourNode {
                 hue,
                 chroma,
@@ -1766,9 +1766,9 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
                 chroma_reach: 8.0,
                 lightness_reach: 25.0,
             }],
-            ..rawshim::gpu::Adjust::none()
+            ..rawshim::grade::Adjust::none()
         };
-        let graded = |adjust: rawshim::gpu::Adjust| {
+        let graded = |adjust: rawshim::grade::Adjust| {
             graded_frame_as(
                 gpu,
                 frame.clone(),
@@ -1779,7 +1779,7 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
             )
         };
         let (was, now) = (
-            blue_over_red(&patch_interior(&graded(rawshim::gpu::Adjust::none()), true)),
+            blue_over_red(&patch_interior(&graded(rawshim::grade::Adjust::none()), true)),
             blue_over_red(&patch_interior(&graded(greyed), true)),
         );
         assert!(
@@ -1848,19 +1848,19 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
         eprintln!("SKIPPED: no adapter answered, so the presence sliders were not run.");
         return;
     };
-    let graded = |haze: f64, adjust: rawshim::gpu::Adjust| graded_banded(gpu, haze, adjust);
-    let none = rawshim::gpu::Adjust::none();
+    let graded = |haze: f64, adjust: rawshim::grade::Adjust| graded_banded(gpu, haze, adjust);
+    let none = rawshim::grade::Adjust::none();
     let flat = graded(0.0, none.clone());
 
     for (name, apart, up, down) in [
         (
             "texture",
             1usize,
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 texture: 100.0,
                 ..none.clone()
             },
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 texture: -100.0,
                 ..none.clone()
             },
@@ -1868,11 +1868,11 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
         (
             "clarity",
             8,
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 clarity: 100.0,
                 ..none.clone()
             },
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 clarity: -100.0,
                 ..none.clone()
             },
@@ -1896,7 +1896,7 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
     let coarse = band(
         &graded(
             0.0,
-            rawshim::gpu::Adjust {
+            rawshim::grade::Adjust {
                 texture: 100.0,
                 ..none.clone()
             },
@@ -1915,7 +1915,7 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
     let hazy = graded(0.45, none.clone());
     let cleared = graded(
         0.45,
-        rawshim::gpu::Adjust {
+        rawshim::grade::Adjust {
             dehaze: 100.0,
             ..none.clone()
         },
@@ -1959,7 +1959,7 @@ fn clearing_the_haze_changes_what_shadows_is_worth() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     let hazy = hazed_grounds(0.376);
     // The bottom band, which Shadows is flat in for at either reading - so what is being compared
     // is what the slider is worth and not where its roll-off happens to fall.
@@ -1971,7 +1971,7 @@ fn clearing_the_haze_changes_what_shadows_is_worth() {
                 hazy.clone(),
                 BANDED,
                 BANDED,
-                rawshim::gpu::Adjust {
+                rawshim::grade::Adjust {
                     shadows,
                     dehaze,
                     ..none.clone()
@@ -2022,7 +2022,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
         eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
         return;
     };
-    let none = rawshim::gpu::Adjust::none();
+    let none = rawshim::grade::Adjust::none();
     // The one-column band, which is the checker that texture's own band acts on.
     let worth_at = |contrast: f64| {
         let at = |texture: f64| {
@@ -2030,7 +2030,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
                 &graded_banded(
                     gpu,
                     0.0,
-                    rawshim::gpu::Adjust {
+                    rawshim::grade::Adjust {
                         texture,
                         contrast,
                         ..none.clone()
@@ -2056,7 +2056,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
 
 /// The same dispatch's SDR arm, against its committed answer.
 ///
-/// An SDR rendition is not a second pipeline - `gpu::Output::mastered` puts its peak at diffuse
+/// An SDR rendition is not a second pipeline - `crate::grade::Output::mastered` puts its peak at diffuse
 /// white and the same grade feeds it, its highlights brought under white by the intent - so what
 /// needs checking is only the end: the sRGB primaries and transfer at 8 bits, where the still
 /// writes PQ at 16.
@@ -2085,19 +2085,19 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
         };
         filter_once(&mut prepared, &grade, strengths);
 
-        let described = rawshim::gpu::Grade {
+        let described = rawshim::grade::Grade {
             colour: colour.as_ref(),
-            output: rawshim::gpu::Output::Srgb,
-            ..rawshim::gpu::Grade::new(
+            output: rawshim::grade::Output::Srgb,
+            ..rawshim::grade::Grade::new(
                 prepared.width,
                 prepared.height,
                 levels,
                 grade.reference_white_nits,
-                rawshim::gpu::Output::Srgb.mastered(grade.reference_white_nits),
+                rawshim::grade::Output::Srgb.mastered(grade.reference_white_nits),
             )
         };
-        let peak = gpu.scene_peak();
-        let up = gpu.upload(&prepared.samples, &described, &peak);
+        let peak = rawshim::grade::device(gpu).scene_peak();
+        let up = rawshim::grade::device(gpu).upload(&prepared.samples, &described, &peak);
 
         // The sRGB arm writes 8-bit in the low byte of each `u16`, so the committed answer is
         // bytes and this is the one place the two differ in width. **Read as bytes off the
@@ -2157,10 +2157,10 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     let mut coded = frame.clone();
     rawshim::hdr::code_base(&mut coded, levels.anchored(), settings.reference_white_nits);
 
-    let grading = |geometry: rawshim::image::Geometry| rawshim::gpu::Grade {
-        output: rawshim::gpu::Output::Rolled,
+    let grading = |geometry: rawshim::image::Geometry| rawshim::grade::Grade {
+        output: rawshim::grade::Output::Rolled,
         geometry,
-        ..rawshim::gpu::Grade::new(
+        ..rawshim::grade::Grade::new(
             width,
             height,
             levels,
@@ -2169,7 +2169,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
         )
     };
 
-    let whole = gpu.encode(&coded, &grading(rawshim::image::Geometry::none()));
+    let whole = rawshim::grade::device(gpu).encode(&coded, &grading(rawshim::image::Geometry::none()));
 
     // Eighths and quarters, so every edge lands on a whole pixel of a 192x128 frame.
     for crop in [
@@ -2196,7 +2196,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
             "the crop {crop:?} came out the wrong size",
         );
 
-        let cropped = gpu.encode(&coded, &grade);
+        let cropped = rawshim::grade::device(gpu).encode(&coded, &grade);
         assert_eq!(
             cropped.len(),
             out_width * out_height * 3,

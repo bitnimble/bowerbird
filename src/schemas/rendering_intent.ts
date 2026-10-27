@@ -1,5 +1,5 @@
 import { z } from 'zod';
 
-/** How a picture is brought inside what an sRGB file or a print can show (`gpu::Intent`). */
+/** How a picture is brought inside what an sRGB file or a print can show (`grade::Intent`). */
 export const RenderingIntentSchema = z.enum(['toWhite', 'perceptual', 'relativeColorimetric']);
 export type RenderingIntent = z.infer<typeof RenderingIntentSchema>;

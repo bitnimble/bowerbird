@@ -137,16 +137,16 @@ impl<'a> Open<'a> {
 pub fn graded(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::gpu::Output,
+    output: rawshim::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
-    graded_under(opened, options, output, rawshim::gpu::Intent::default())
+    graded_under(opened, options, output, rawshim::grade::Intent::default())
 }
 
 pub fn graded_under(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::gpu::Output,
-    intent: rawshim::gpu::Intent,
+    output: rawshim::grade::Output,
+    intent: rawshim::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
@@ -156,9 +156,9 @@ pub fn graded_under(
         opened.measured.levels.anchored(),
         options.grade.reference_white_nits,
         None,
-        rawshim::gpu::Adjust {
+        rawshim::grade::Adjust {
             camera_balance: true,
-            ..rawshim::gpu::Adjust::none()
+            ..rawshim::grade::Adjust::none()
         },
         opened.frame.as_shot,
     );
@@ -166,7 +166,7 @@ pub fn graded_under(
     let coded = rawshim::hdr::encode_cut(
         gpu,
         &cutting.cut,
-        &rawshim::gpu::Grade {
+        &rawshim::grade::Grade {
             intent,
             ..scene.gpu_grade(width, height, output)
         },

@@ -1203,7 +1203,7 @@ pub(crate) fn base(
         // "the picture the reader's geometry is stated against and the presence sliders reach
         // across", and for a window of a ladder that is still the whole canvas.
         photograph: (canvas_w, canvas_h),
-        window: window.map(|_| crate::gpu::Window {
+        window: window.map(|_| crate::grade::Window {
             photograph: units::px::Size::exact(canvas_w, canvas_h),
             origin: units::px::At::exact(window_left, window_top),
         }),

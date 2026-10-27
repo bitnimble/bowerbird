@@ -66,7 +66,7 @@ fn main() {
         let matched = opened.measured.matched.as_ref();
 
         let graded = std::time::Instant::now();
-        let (rgb, out_w, out_h) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
+        let (rgb, out_w, out_h) = support::graded(&opened, &options(), rawshim::grade::Output::Srgb);
         let grade_ms = graded.elapsed().as_millis();
         let bytes: Vec<u8> = rgb.iter().map(|v| *v as u8).collect();
         let whole = units::rgb::RgbRef {

@@ -411,8 +411,8 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         content_light: None,
     };
     let output = match request.output {
-        Coding::Pq => rawshim::gpu::Output::Pq,
-        Coding::Srgb => rawshim::gpu::Output::Srgb,
+        Coding::Pq => rawshim::grade::Output::Pq,
+        Coding::Srgb => rawshim::grade::Output::Srgb,
     };
     let unopened = || Failed::Unreadable(format!("{} did not open", request.grade));
     let matched = match taken {

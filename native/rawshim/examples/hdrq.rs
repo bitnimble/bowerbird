@@ -129,8 +129,8 @@ fn main() {
     }
     .run()
     .expect("decode");
-    let (pq, w, h) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Pq);
-    let (srgb, _, _) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
+    let (pq, w, h) = support::graded(&opened, &options(edge), rawshim::grade::Output::Pq);
+    let (srgb, _, _) = support::graded(&opened, &options(edge), rawshim::grade::Output::Srgb);
     let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
 
     println!("{w}x{h}");

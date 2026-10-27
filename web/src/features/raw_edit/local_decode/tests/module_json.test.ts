@@ -1,7 +1,7 @@
 // The page's half of the tick's wire shape, against the sample the module reads.
 //
-// `native/rawshim/tests/module_json.rs` deserialises this same file into `gpu::Region`,
-// `gpu::Adjust` and `image::Geometry`, and says why both halves exist. What this side adds is
+// `native/rawshim/tests/module_json.rs` deserialises this same file into `grade::Region`,
+// `grade::Adjust` and `image::Geometry`, and says why both halves exist. What this side adds is
 // that a *typed* value produces exactly those keys: the literals below are annotated, so a field
 // renamed in `edits.ts` stops compiling here, and one added or dropped fails the comparison.
 import { describe, expect, test } from 'bun:test';

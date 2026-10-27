@@ -6,7 +6,7 @@
 //! warp and the sharpen have to be one implementation rather than two that agree today.
 //!
 //! What is *not* here is the grade. That is a dispatch over the same WGSL on either host, from a
-//! uniform each builds for itself, and the tile's half of that uniform is `gpu::uniform_words` -
+//! uniform each builds for itself, and the tile's half of that uniform is `crate::grade::uniform_words` -
 //! so a tab grades its tile through the shaders it grades everything else with rather than through
 //! a second copy of the rule.
 
@@ -55,7 +55,7 @@ pub struct TileRequest {
     /// The reader's sliders. Only the presence three are read here, for how far past the tile the
     /// guided filter reaches; the grade reads the rest.
     #[serde(default)]
-    pub adjust: crate::gpu::Adjust,
+    pub adjust: crate::grade::Adjust,
     /// The photograph's own diffuse white and scene peak, measured at the open.
     #[serde(default)]
     pub levels: Option<crate::tone::Levels>,
@@ -169,7 +169,7 @@ impl Prepared {
     pub fn scene(
         &self,
         exposure: Option<units::light::Stops>,
-        adjust: crate::gpu::Adjust,
+        adjust: crate::grade::Adjust,
     ) -> crate::tone::SceneGrade<'_> {
         crate::tone::SceneGrade::new(
             self.matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -186,9 +186,9 @@ impl Prepared {
         &self,
         scene: &'a crate::tone::SceneGrade<'a>,
         peak_nits: units::light::Light<units::light::DisplayNits>,
-        output: crate::gpu::Output,
-    ) -> crate::gpu::Grade<'a> {
-        crate::gpu::Grade {
+        output: crate::grade::Output,
+    ) -> crate::grade::Grade<'a> {
+        crate::grade::Grade {
             peak_nits,
             ..scene.gpu_grade(self.width, self.height, output)
         }
@@ -629,23 +629,23 @@ impl Grown {
 /// same: the working texture is sized off what the filter reads, so a reach measured against the
 /// photograph would be twice what a halved frame wants.
 ///
-/// Asked of [`crate::gpu::Adjust::reads_the_neighbourhood`] rather than of a list here, so the
+/// Asked of [`crate::grade::Adjust::reads_the_neighbourhood`] rather than of a list here, so the
 /// blur's reach and the decision to build a blur at all cannot disagree: Highlights and Shadows
 /// are weighted by how bright the region around a pixel is, so they read the same texture Clarity
 /// does.
 ///
 /// Zero where none of them is asked for, which is what most tiles are: this is four times the
 /// decode for a 400px tile, and it buys nothing at all when the sliders are at rest.
-fn presence_reach(adjust: &crate::gpu::Adjust, frame: Size<Drawn>) -> Span<Drawn> {
+fn presence_reach(adjust: &crate::grade::Adjust, frame: Size<Drawn>) -> Span<Drawn> {
     if !adjust.reads_the_neighbourhood() {
         return Span::ZERO;
     }
     let long = frame.long().raw();
-    let working = crate::gpu::detail_long(long);
+    let working = crate::grade::detail_long(long);
     // Texels of the working texture, then back into the frame's own pixels at the rate that
     // texture shrinks it by - rounded up, because a reach one pixel short is a filtered edge. The
     // multiplication is the conversion, and the `raw` is where the texel stops being one.
-    let texels = crate::gpu::detail_reach_texels(working);
+    let texels = crate::grade::detail_reach_texels(working);
     Span::exact(texels.raw() * long.div_ceil(working.max(1) as usize))
 }
 
@@ -783,14 +783,14 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
             // out of it because another one currently reaches further is a stage nobody will
             // think of when the other one moves.
             true => Span::exact(
-                crate::gpu::chroma_smooth_reach(units::px::Span::measured(frame.long().raw()))
+                crate::grade::chroma_smooth_reach(units::px::Span::measured(frame.long().raw()))
                     .raw()
-                    + crate::gpu::mean_block(frame.long().raw()) as usize,
+                    + crate::grade::mean_block(frame.long().raw()) as usize,
             ),
             false => Span::ZERO,
         };
     // Down to a whole texel of the blur's working texture, which is what lets that texture be the
-    // photograph's own texels rather than a set of its own between them (`gpu::detail_step`).
+    // photograph's own texels rather than a set of its own between them (`crate::grade::detail_step`).
     //
     // **An even number of them, which costs at most one texel of margin and is what lets a window
     // be copied back into the frame it came from.** A row is `width * 3` samples and two samples
@@ -798,7 +798,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     // rectangle an odd number of rows inside its window then starts where
     // `copy_buffer_to_buffer` will not begin (`wasm::HeldRaw::band_into`). Doubling the grid
     // keeps every alignment it had, being a multiple of the step either way.
-    let step: Span<Drawn> = Span::exact(crate::gpu::detail_step(frame.long().raw()) as usize * 2);
+    let step: Span<Drawn> = Span::exact(crate::grade::detail_step(frame.long().raw()) as usize * 2);
     let start = |place: Place<Drawn>| (place - reach).floor_to(step);
     // What the window has to hold before its margin: the rectangle, and wherever the fill of a
     // repair reaching it is read from.
@@ -950,7 +950,7 @@ mod tests {
             denoiser: crate::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
-            adjust: crate::gpu::Adjust::none(),
+            adjust: crate::grade::Adjust::none(),
             levels: None,
             noise_fit: None,
             capture_sigma: None,
@@ -1069,8 +1069,8 @@ mod tests {
         ));
         let grown = grown(&request).expect("a rectangle inside the photograph");
         let long = request.frame[0];
-        let block = crate::gpu::mean_block(long) as usize;
-        let smoothing = crate::gpu::chroma_smooth_reach(units::px::Span::measured(long)).raw();
+        let block = crate::grade::mean_block(long) as usize;
+        let smoothing = crate::grade::chroma_smooth_reach(units::px::Span::measured(long)).raw();
         // **The sum, not an inequality.** The smoothing alone reaches eight times a block at any
         // size, so "the margin covers a block" holds with this term deleted and would be asserting
         // nothing. What can only be true with it is that the window carries *both* stages.
@@ -1141,7 +1141,7 @@ mod tests {
         // Every slider `Adjust::reads_the_neighbourhood` names, each on its own: the blur they
         // read is built for any one of them, so a window grown for only three of the five is a
         // Shadows slider filtering against an edge the picture does not have.
-        let each: [(&str, fn(&mut crate::gpu::Adjust)); 5] = [
+        let each: [(&str, fn(&mut crate::grade::Adjust)); 5] = [
             ("clarity", |a| a.clarity = 60.0),
             ("texture", |a| a.texture = 60.0),
             ("dehaze", |a| a.dehaze = 25.0),
@@ -1150,7 +1150,7 @@ mod tests {
         ];
         for (what, set) in each {
             let mut wants = asking(asked);
-            let mut adjust = crate::gpu::Adjust::none();
+            let mut adjust = crate::grade::Adjust::none();
             set(&mut adjust);
             wants.adjust = adjust;
             let grew = grown(&wants).expect("a tile");
@@ -1169,9 +1169,9 @@ mod tests {
 
         // And a slider that does not read one leaves the window where it was.
         let mut flat = asking(asked);
-        flat.adjust = crate::gpu::Adjust {
+        flat.adjust = crate::grade::Adjust {
             contrast: 50.0,
-            ..crate::gpu::Adjust::none()
+            ..crate::grade::Adjust::none()
         };
         assert_eq!(grown(&flat).expect("a tile").window.2, quiet.window.2);
     }

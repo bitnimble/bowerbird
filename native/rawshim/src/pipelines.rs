@@ -4,7 +4,7 @@ use crate::gpu::Gpu;
 ///
 /// A builder missing from here compiles on the draw that first reaches it, freezing the page.
 pub fn build_every_pipeline(gpu: &'static Gpu) {
-    gpu.build_deferred_pipelines();
+    crate::grade::device(gpu).build_deferred_pipelines();
     crate::base::device(gpu);
     crate::condition::device(gpu);
     crate::demosaic::device(gpu);
@@ -39,8 +39,8 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::hdr_fit::search_device(gpu);
     crate::hdr_fit::stats_device(gpu);
     crate::hdr_fit::warp_device(gpu);
-    gpu.lattice_bake();
-    gpu.colour_wheel();
+    crate::lattice::bake_kernel(gpu);
+    crate::grade::device(gpu).colour_wheel();
 }
 
 #[cfg(test)]

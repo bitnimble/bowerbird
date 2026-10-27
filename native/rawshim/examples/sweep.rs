@@ -15,7 +15,7 @@
 
 mod support;
 
-use rawshim::gpu::Intent;
+use rawshim::grade::Intent;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
 use std::env;
 
@@ -241,7 +241,7 @@ fn against_camera(
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
     let (coded, width, height) =
-        support::graded_under(opened, options, rawshim::gpu::Output::Srgb, intent);
+        support::graded_under(opened, options, rawshim::grade::Output::Srgb, intent);
     let gpu = rawshim::gpu::device()?;
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
 

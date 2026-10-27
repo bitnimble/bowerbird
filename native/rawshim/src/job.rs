@@ -82,7 +82,7 @@ pub struct Target {
     pub sdr_full_chroma: bool,
     /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
     #[serde(default)]
-    pub intent: crate::gpu::Intent,
+    pub intent: crate::grade::Intent,
     /// Writes no file; still reports the descriptor.
     #[serde(default)]
     pub describe_only: bool,
@@ -205,7 +205,7 @@ pub struct Job {
     /// Defaulted whole, so a caller that knows nothing about edits sends no field and gets
     /// the picture as the camera rendered it.
     #[serde(default)]
-    pub adjust: crate::gpu::Adjust,
+    pub adjust: crate::grade::Adjust,
     /// The reader's crop, straighten and quarter turn.
     ///
     /// The crop and straighten run in the grade's dispatch. The quarter turn is written to
@@ -349,7 +349,7 @@ pub struct Outcome {
 pub struct CameraTone {
     pub exposure: Stops,
     pub saturation: f64,
-    pub tone_curve: crate::gpu::ToneCurve,
+    pub tone_curve: crate::grade::ToneCurve,
     /// None where the match leaves the white balance as shot.
     pub balance: Option<crate::white_balance::Illuminant>,
 }
@@ -617,7 +617,7 @@ pub(crate) struct Base {
     /// Every rendition's size is a bound on *this*, so it is what `run` orders the targets by.
     pub(crate) photograph: (usize, usize),
     /// Where the frame sits in that photograph, for the grade's geometry. None when it is all of it.
-    pub(crate) window: Option<crate::gpu::Window>,
+    pub(crate) window: Option<crate::grade::Window>,
     pub(crate) matched: Option<crate::hdr_fit::HdrMatch>,
     /// Everything this build now knows about the photograph, whether it was told or measured it.
     /// What is worth writing back is decided at the end of the job, once the peak is in too.
@@ -1120,7 +1120,7 @@ impl Base {
             )),
             levels: levels.anchored(),
             photograph: drawn.raw(),
-            window: Some(crate::gpu::Window {
+            window: Some(crate::grade::Window {
                 photograph: drawn,
                 origin,
             }),
@@ -1162,8 +1162,8 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     let gpu = crate::gpu::device()?;
     let grade = window.grade(
         &scene,
-        crate::gpu::Output::Pq.mastered(job.grade.reference_white_nits),
-        crate::gpu::Output::Pq,
+        crate::grade::Output::Pq.mastered(job.grade.reference_white_nits),
+        crate::grade::Output::Pq,
     );
     let width = window.width;
     // The editor's, where it sent one: the roll-off's input is a reduction over the frame it is
@@ -1172,10 +1172,12 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     // and this takes the same floor - since a number that is not a peak is a picture rather than
     // a failure.
     let peak = match job.scene_peak.filter(|nits| nits.is_a_peak()) {
-        Some(nits) => gpu.given_peak(nits.raw() as f32),
-        None => gpu.scene_peak(),
+        Some(nits) => crate::grade::device(gpu).given_peak(nits.raw() as f32),
+        None => crate::grade::device(gpu).scene_peak(),
     };
-    let coded = gpu.upload(&window.samples, &grade, &peak).encode(&grade);
+    let coded = crate::grade::device(gpu)
+        .upload(&window.samples, &grade, &peak)
+        .encode(&grade);
 
     // **Last, after the grade rather than before it.** The presence sliders read a blur built
     // from the frame that goes up, so the window has to still be carrying its halo when it does -
@@ -1724,16 +1726,16 @@ pub(crate) async fn graded_bands(
     let analysis = with_camera_match(&crate::photo_analysis::encode(known), job.camera_match);
     let scale = crate::view::Scale::for_long_edge(photograph, size.width.max(size.height));
     let output = match target.output {
-        Output::Pq => crate::gpu::Output::Pq,
-        Output::Srgb => crate::gpu::Output::Srgb,
+        Output::Pq => crate::grade::Output::Pq,
+        Output::Srgb => crate::grade::Output::Srgb,
     };
-    let peak = gpu.given_peak(scene_peak.raw() as f32);
+    let peak = crate::grade::device(gpu).given_peak(scene_peak.raw() as f32);
     let mut leak: f64 = 0.0;
     let mut light = crate::hdr_args::LightTally::default();
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
-        let band = crate::gpu::Band {
+        let band = crate::grade::Band {
             top: units::px::Place::measured(top),
             rows: units::px::Span::measured(rows),
         };
@@ -1764,7 +1766,7 @@ pub(crate) async fn graded_bands(
         let (frame, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request).await?;
         let scene = window.scene(job.exposure, job.adjust.clone());
-        let grade = crate::gpu::Grade {
+        let grade = crate::grade::Grade {
             intent: target.intent,
             ..scene.gpu_grade(window.width, window.height, output)
         }
@@ -1775,7 +1777,7 @@ pub(crate) async fn graded_bands(
         )
         .banded(band);
         let frame = frame.into_frame();
-        let up = gpu.upload_resident(&frame, &grade, &peak);
+        let up = crate::grade::device(gpu).upload_resident(&frame, &grade, &peak);
         let unread = "a band of the graded frame could not be read back";
         match target.output {
             Output::Pq => {
@@ -1923,7 +1925,7 @@ pub(crate) async fn render(
     // rebuilding the lattice, the curves and the output pair for each of them was most of
     // what a second target cost.
     // Measured on the first frame that goes up, which is the largest, and read by every
-    // rendition after it. See `gpu::ScenePeak`.
+    // rendition after it. See `crate::grade::ScenePeak`.
     //
     // The photograph's own where it has one and this job is rendering at rest: the peak is read
     // *after* the exposure (`peak.slang`), so a job carrying a gain has to find its own, but every
@@ -1950,10 +1952,10 @@ pub(crate) async fn render(
         false => None,
     };
     let scene_peak = match known_peak {
-        Some(nits) => gpu.given_peak(nits.raw() as f32),
-        None => gpu.scene_peak(),
+        Some(nits) => crate::grade::device(gpu).given_peak(nits.raw() as f32),
+        None => crate::grade::device(gpu).scene_peak(),
     };
-    let mut uploaded: Option<crate::gpu::Uploaded<'_>> = None;
+    let mut uploaded: Option<crate::grade::Uploaded<'_>> = None;
     for (index, (target, size)) in order.iter().enumerate() {
         let want = (size.width as usize, size.height as usize);
         // Never for a window: `Base::cropped` only takes that route when every target wants the
@@ -1967,10 +1969,10 @@ pub(crate) async fn render(
         }
         let mut options = encode_options(job, target, &target.output_path);
         let output = match target.output {
-            Output::Pq => crate::gpu::Output::Pq,
-            Output::Srgb => crate::gpu::Output::Srgb,
+            Output::Pq => crate::grade::Output::Pq,
+            Output::Srgb => crate::grade::Output::Srgb,
         };
-        let mut grade = crate::gpu::Grade {
+        let mut grade = crate::grade::Grade {
             intent: target.intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
         }
@@ -1985,8 +1987,10 @@ pub(crate) async fn render(
         let up = match &uploaded {
             Some(up) => up,
             None => uploaded.insert(match cut.resident() {
-                Some(frame) => gpu.upload_resident(frame, &grade, &scene_peak),
-                None => gpu.upload(
+                Some(frame) => {
+                    crate::grade::device(gpu).upload_resident(frame, &grade, &scene_peak)
+                }
+                None => crate::grade::device(gpu).upload(
                     cut.host_samples()
                         .expect("a cut holds one frame or the other"),
                     &grade,
@@ -2053,7 +2057,8 @@ pub(crate) async fn render(
     let peak: Light<DisplayNits> = match known_peak {
         Some(nits) => nits,
         None => Light::measured(f64::from(
-            gpu.peak_of(&scene_peak)
+            crate::grade::device(gpu)
+                .peak_of(&scene_peak)
                 .await
                 .ok_or("the scene peak could not be read back")?,
         )),
@@ -2409,7 +2414,7 @@ mod tests {
         CameraTone {
             exposure: Stops::measured(0.625),
             saturation: 25.0,
-            tone_curve: crate::gpu::ToneCurve::PchipCbrt3 {
+            tone_curve: crate::grade::ToneCurve::PchipCbrt3 {
                 points: vec![[0.0, 0.1], [0.5, 0.55], [1.0, 1.0]],
             },
             balance: Some(crate::white_balance::Illuminant {
@@ -2647,7 +2652,7 @@ mod tests {
             "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
             "sharpen": 0, "defringe": 0,
             "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
-            "adjust": { "toneCurve": serde_json::to_value(crate::gpu::ToneCurve::PchipCbrt3 {
+            "adjust": { "toneCurve": serde_json::to_value(crate::grade::ToneCurve::PchipCbrt3 {
                 points: units::light::IDENTITY_CURVE.to_vec()
             }).unwrap() }
         });

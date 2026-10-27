@@ -1,4 +1,4 @@
-use rawshim::gpu::{Grade, ToneCurve};
+use rawshim::grade::{Grade, ToneCurve};
 use rawshim::hdr_fit::HdrColour;
 use units::light::{CurveCode, Gain, Light, Stops, same_curve};
 
@@ -34,7 +34,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
         wgpu::BufferUsages::STORAGE,
     );
     let identity = HdrColour::identity();
-    let words = rawshim::gpu::uniform_words(grade, grade.colour.unwrap_or(&identity));
+    let words = rawshim::grade::uniform_words(grade, grade.colour.unwrap_or(&identity));
     let edits = init(
         &words
             .iter()

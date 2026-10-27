@@ -83,7 +83,7 @@ pub enum Presentation {
 pub struct Scene {
     pub paper: Paper,
     #[serde(default)]
-    pub rendering_intent: crate::gpu::Intent,
+    pub rendering_intent: crate::grade::Intent,
     #[serde(default = "yes")]
     pub black_point_compensation: bool,
     #[serde(default)]
@@ -141,7 +141,7 @@ impl Default for Scene {
         let lighting = Environment::default().lighting();
         Self {
             paper: Paper::Satin,
-            rendering_intent: crate::gpu::Intent::default(),
+            rendering_intent: crate::grade::Intent::default(),
             black_point_compensation: true,
             ink: Ink::Dye,
             print_resolution_ppi: 600.0,
@@ -540,13 +540,13 @@ mod tests {
         let gpu = crate::gpu::device().expect("print requires Vulkan");
         let device = gpu.describing();
         let mut recording = gpu.record();
-        let albedo = gpu.print_albedo_table(scene.refractive_index as f32);
+        let albedo = crate::grade::device(gpu).print_albedo_table(scene.refractive_index as f32);
         recording.holding(&albedo);
-        let environment = gpu
+        let environment = crate::grade::device(gpu)
             .print_environment(scene.environment)
             .expect("the print's environment");
         recording.holding_texture(&environment);
-        let calibration = gpu.print_light_calibration(
+        let calibration = crate::grade::device(gpu).print_light_calibration(
             scene.light_parameters(),
             scene.light_temperature_kelvin as f32,
             &environment,
@@ -679,7 +679,7 @@ mod tests {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::Sampler(gpu.print_environment_sampler()),
+                    resource: wgpu::BindingResource::Sampler(crate::grade::device(gpu).print_environment_sampler()),
                 },
             ],
         });
@@ -709,10 +709,10 @@ mod tests {
 
     fn calibrated(scene: &Scene) -> [f32; 2] {
         let gpu = crate::gpu::device().expect("print requires Vulkan");
-        let environment = gpu
+        let environment = crate::grade::device(gpu)
             .print_environment(scene.environment)
             .expect("the print's environment");
-        let calibration = gpu.print_light_calibration(
+        let calibration = crate::grade::device(gpu).print_light_calibration(
             scene.light_parameters(),
             scene.light_temperature_kelvin as f32,
             &environment,
@@ -1061,7 +1061,7 @@ mod tests {
 
     #[test]
     fn print_is_reflected_hdr_light_with_an_unprinted_back() {
-        use crate::gpu::{Canvas, Grade};
+        use crate::grade::{Canvas, Grade};
         use units::px::{Size, Span};
 
         let gpu = crate::gpu::device().expect("print requires Vulkan");
@@ -1089,8 +1089,8 @@ mod tests {
                 Light::exactly(1000.0),
             )
         };
-        let peak = gpu.scene_peak();
-        let uploaded = gpu.upload(&frame, &grade, &peak);
+        let peak = crate::grade::device(gpu).scene_peak();
+        let uploaded = crate::grade::device(gpu).upload(&frame, &grade, &peak);
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
         let center = (48 * 128 + 64) * 4;
         let mut scene = Scene {
@@ -1147,7 +1147,7 @@ mod tests {
         scene.yaw_degrees = 180.0;
         let back = uploaded.draw_print(&grade, &pyramid, &scene);
         let black_frame = vec![0; width * height * 3];
-        let black = gpu.upload(&black_frame, &grade, &peak);
+        let black = crate::grade::device(gpu).upload(&black_frame, &grade, &peak);
         let black_pyramid =
             crate::base::pyramid(gpu, base, &black_frame, (width, height)).expect("a pyramid");
         assert_eq!(back, black.draw_print(&grade, &black_pyramid, &scene));
@@ -1203,10 +1203,10 @@ mod tests {
         scene.key_lux = Light::ZERO;
         scene.fill_lux = Light::exactly(1000.0);
         scene.yaw_degrees = 70.0;
-        let pattern = gpu.upload(&checker, &reduced, &peak);
+        let pattern = crate::grade::device(gpu).upload(&checker, &reduced, &peak);
         let pattern_pyramid =
             crate::base::pyramid(gpu, base, &checker, (size, size)).expect("a pyramid");
-        let plain = gpu.upload(&grey, &reduced, &peak);
+        let plain = crate::grade::device(gpu).upload(&grey, &reduced, &peak);
         let plain_pyramid =
             crate::base::pyramid(gpu, base, &grey, (size, size)).expect("a pyramid");
         let pattern_drawn = pattern.draw_print(&reduced, &pattern_pyramid, &scene);

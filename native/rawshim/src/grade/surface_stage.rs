@@ -305,7 +305,7 @@ impl SurfaceStage {
         };
         // SAFETY: the caller's.
         let surface = unsafe {
-            gpu.instance
+            gpu.instance()
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                     raw_display_handle: Some(
                         RawDisplayHandle::Android(AndroidDisplayHandle::new()),
@@ -316,7 +316,7 @@ impl SurfaceStage {
                 })
         }
         .map_err(|refused| format!("the window refused a surface: {refused}"))?;
-        let capabilities = surface.get_capabilities(&gpu.wgpu_adapter);
+        let capabilities = gpu.surface_capabilities(&surface);
         let offered = capabilities.color_spaces(CANVAS_FORMAT);
         if !offered.contains(wgpu::SurfaceColorSpaces::EXTENDED_SRGB_LINEAR) {
             return Err(format!("the window takes no scRGB, only {offered:?}"));
@@ -386,8 +386,8 @@ impl SurfaceStage {
 
     fn configure(&mut self, gpu: &Gpu, size: Size<Canvas>) {
         let (width, height) = size.raw();
-        self.surface.configure(
-            &gpu.device,
+        gpu.configure(
+            &self.surface,
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: CANVAS_FORMAT,

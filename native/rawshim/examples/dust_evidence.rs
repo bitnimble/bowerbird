@@ -43,7 +43,7 @@ fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, us
     }
     .run()
     .expect("decode");
-    let (coded, width, height) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = support::graded(&opened, &options(), rawshim::grade::Output::Srgb);
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 

@@ -55,7 +55,7 @@ import px;
 ///
 /// The host allocates the texture, and one sized differently would filter at a different fraction
 /// of the picture - the editor's clarity and the rendition's would not be the same picture, which
-/// is the divergence DESIGN 21.1 is about. Declared here and pinned against `gpu.rs` by
+/// is the divergence DESIGN 21.1 is about. Declared here and pinned against `grade.rs` by
 /// `the_shader_sizes_match_the_buffers_allocated_for_them`.
 ///
 /// 512 rather than something nearer a sensor: nothing below is a detail operator - the finest

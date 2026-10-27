@@ -15,7 +15,7 @@ Where the code went:
 - The tick is too. `wasm.rs` holds the prepared frame on its own device, takes
   the page's canvas through `transferControlToOffscreen`, and draws onto it - so
   a tick is a region and a set of edits crossing the worker boundary, and no
-  pixels at all. `gpu.rs` records the same passes for a rendition.
+  pixels at all. `grade.rs` records the same passes for a rendition.
 - What is left on the page is `raw_edit_presenter.ts`, which decides _what_ to
   draw, and `stage_resolution.ts`, which decides how large a backing store the
   reader's box is worth - the one thing that needs a layout box and a device

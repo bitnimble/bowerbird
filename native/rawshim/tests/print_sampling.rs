@@ -1,4 +1,4 @@
-use rawshim::gpu::{Canvas, Grade};
+use rawshim::grade::{Canvas, Grade};
 use rawshim::image::Geometry;
 use rawshim::print::Scene;
 use units::light::{Light, SceneNits};
@@ -62,7 +62,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
             geometry,
             ..grade.clone()
         };
-        let peak = gpu.scene_peak();
+        let peak = rawshim::grade::device(gpu).scene_peak();
         let mut draws = Vec::new();
         for pattern in 0..3 {
             let frame: Vec<u16> = (0..size * size)
@@ -89,7 +89,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
                 .collect();
             let pyramid =
                 rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("a pyramid");
-            let uploaded = gpu.upload(&frame, &grade, &peak);
+            let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
             draws.push(uploaded.draw_print(&grade, &pyramid, &scene));
         }
         let scan: Vec<_> = (canvas / 2 - 32..canvas / 2 + 32)

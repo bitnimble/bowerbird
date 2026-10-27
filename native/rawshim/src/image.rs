@@ -520,7 +520,7 @@ pub fn geometry_footprint(
     out: (usize, usize),
     geometry: Geometry,
 ) -> (usize, usize, usize, usize) {
-    let band = crate::gpu::Band {
+    let band = crate::grade::Band {
         top: units::px::Place::measured(0),
         rows: units::px::Span::measured(out.1),
     };
@@ -539,7 +539,7 @@ pub fn rows_footprint(
     full: units::px::Size<units::px::Drawn>,
     out: units::px::Size<units::px::Output>,
     geometry: Geometry,
-    band: crate::gpu::Band,
+    band: crate::grade::Band,
 ) -> units::px::Rect<units::px::Drawn> {
     let (full, out) = (full.raw(), out.raw());
     let rows = band.top.raw()..(band.top + band.rows).raw();

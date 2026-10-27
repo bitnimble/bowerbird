@@ -89,7 +89,7 @@ public struct Illuminance : ILinear, IStandard {}
 
 /// `DisplayNits` over that peak, in 0..1, still Rec.2020 and still linear.
 ///
-/// **Not `IStandard`: this is where SDR and HDR part.** `gpu::Output::mastered` gives an sRGB target
+/// **Not `IStandard`: this is where SDR and HDR part.** `grade::Output::mastered` gives an sRGB target
 /// its peak at diffuse white and a PQ target PQ's ceiling, so 1.0 here is 203 nits or 10000.
 public struct Signal : ILinear {}
 

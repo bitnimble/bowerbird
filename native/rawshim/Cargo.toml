@@ -239,7 +239,7 @@ uuid = { version = "1", features = ["js"] }
 # same link makes that a different crate's `JsValue` than the one this crate can return.
 wasm-bindgen = "0.2.108"
 # The canvas the editor draws on, taken from the page as an `OffscreenCanvas` and turned into a
-# surface (`gpu::Canvas`). wgpu's own version and its own feature, so this unifies to the copy
+# surface (`grade::Canvas`). wgpu's own version and its own feature, so this unifies to the copy
 # already in the tree rather than adding one - the same argument as `wasm-bindgen` above.
 web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 # What an exported `async fn` expands into: the adapter request cannot block a browser's thread,

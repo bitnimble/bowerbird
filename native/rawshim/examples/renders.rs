@@ -9,7 +9,7 @@
 //!
 //! A render is a specification and nothing else - a decode, a set of edits, a size - so it belongs
 //! here rather than in Playwright. The editor's tick is the one that looks like it needs a browser
-//! and does not: `gpu.rs` runs the same grade shaders the client does.
+//! and does not: `grade.rs` runs the same grade shaders the client does.
 //!
 //! One render, because the editor and a rendition are one pipeline: the denoise is on the mosaic
 //! in `galosh.rs` and everything downstream is shared code on one host.
@@ -101,7 +101,7 @@ struct Stages<'a> {
     /// that.
     domain: Domain,
     /// How an sRGB render is brought inside its gamut.
-    intent: rawshim::gpu::Intent,
+    intent: rawshim::grade::Intent,
     /// A PQ render goes through the rendition's AVIF encoder and back before it is cut, at this
     /// quantizer and chroma. `max` ships at `(1, Yuv420)`; `(0, Yuv444)` is the pipeline's own
     /// codes in a file `avif_crop` can measure, and the gap between the two is the encoder's.
@@ -322,7 +322,7 @@ fn graded(
         levels,
         options.grade.reference_white_nits,
         stages.ev,
-        rawshim::gpu::Adjust {
+        rawshim::grade::Adjust {
             contrast: stages.contrast,
             saturation: stages.saturation_adjust,
             blacks: stages.blacks,
@@ -330,24 +330,24 @@ fn graded(
             texture: stages.texture,
             clarity: stages.clarity,
             colour_profile: if stages.none_profile {
-                rawshim::gpu::ColourProfile::None
+                rawshim::grade::ColourProfile::None
             } else {
-                rawshim::gpu::ColourProfile::Matched
+                rawshim::grade::ColourProfile::Matched
             },
             camera_balance: true,
             colour_nodes: stages.nodes.to_vec(),
-            ..rawshim::gpu::Adjust::none()
+            ..rawshim::grade::Adjust::none()
         },
         // The frame's own, as `job::run` carries it: without it the neutral arm white-balances
         // against nothing and a render's colour is not the render's.
         frame.as_shot,
     );
     let output = match stages.domain {
-        Domain::Srgb => rawshim::gpu::Output::Srgb,
-        Domain::Pq => rawshim::gpu::Output::Pq,
-        Domain::Linear => rawshim::gpu::Output::Rolled,
+        Domain::Srgb => rawshim::grade::Output::Srgb,
+        Domain::Pq => rawshim::grade::Output::Pq,
+        Domain::Linear => rawshim::grade::Output::Rolled,
     };
-    let grade = rawshim::gpu::Grade {
+    let grade = rawshim::grade::Grade {
         intent: stages.intent,
         ..scene.gpu_grade(cut.width, cut.height, output)
     };
@@ -355,7 +355,7 @@ fn graded(
     if let Some([x0, y0, x1, y1]) = stages.probe {
         let uploaded = hdr::upload_cut(gpu, &cut, &grade);
         let probed = pollster::block_on(uploaded.colour_probe(&grade, &[])).expect("the probe");
-        let across = rawshim::gpu::colour_wheel::DOTS_ACROSS;
+        let across = rawshim::grade::colour_wheel::DOTS_ACROSS;
         let down = probed.scatter.len() / across;
         for (k, [lightness, a, b, _]) in probed.scatter.iter().enumerate() {
             let (x, y) = (
@@ -505,7 +505,7 @@ fn main() {
         defocus: None,
         ev: None,
         domain: Domain::Pq,
-        intent: rawshim::gpu::Intent::default(),
+        intent: rawshim::grade::Intent::default(),
         encode: None,
         out: &out,
     };
@@ -529,8 +529,8 @@ fn main() {
                 stages.defringe = args.next().expect("a number").parse().expect("a number");
             }
             "--sdr" => stages.domain = Domain::Srgb,
-            "--relative" => stages.intent = rawshim::gpu::Intent::RelativeColorimetric,
-            "--perceptual" => stages.intent = rawshim::gpu::Intent::Perceptual,
+            "--relative" => stages.intent = rawshim::grade::Intent::RelativeColorimetric,
+            "--perceptual" => stages.intent = rawshim::grade::Intent::Perceptual,
             "--linear" => stages.domain = Domain::Linear,
             "--encode" => {
                 let spec = args.next().expect("quantizer,420|444");

@@ -1,6 +1,6 @@
 mod support;
 
-use rawshim::gpu::{Canvas, Grade, Output};
+use rawshim::grade::{Canvas, Grade, Output};
 use units::light::Light;
 use rawshim::print::{Paper, Scene};
 use units::px::Size;
@@ -63,8 +63,8 @@ fn main() -> Result<(), String> {
             Light::exactly(1000.0),
         )
     };
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+    let peak = rawshim::grade::device(gpu).scene_peak();
+    let uploaded = rawshim::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     let texture = |format| {
         gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("print HDR audit"),

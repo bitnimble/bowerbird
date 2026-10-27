@@ -16,8 +16,8 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct Sample {
-    region: rawshim::gpu::Region,
-    adjust: rawshim::gpu::Adjust,
+    region: rawshim::grade::Region,
+    adjust: rawshim::grade::Adjust,
     geometry: rawshim::image::Geometry,
     print: rawshim::print::Scene,
 }
@@ -32,7 +32,7 @@ fn sample() -> Sample {
 #[test]
 fn an_unknown_tone_curve_kind_is_refused() {
     let curve = r#"{"kind":"linearSrgb","points":[[0,0],[1,1]]}"#;
-    assert!(serde_json::from_str::<rawshim::gpu::ToneCurve>(curve).is_err());
+    assert!(serde_json::from_str::<rawshim::grade::ToneCurve>(curve).is_err());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn invalid_curve_points_are_refused_at_the_json_boundary() {
     ] {
         let mut adjust = fixture["adjust"].clone();
         adjust["toneCurve"]["points"] = serde_json::to_value(points).unwrap();
-        assert!(serde_json::from_value::<rawshim::gpu::Adjust>(adjust).is_err());
+        assert!(serde_json::from_value::<rawshim::grade::Adjust>(adjust).is_err());
     }
 }
 
@@ -69,7 +69,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.blacks, 55.0);
     assert_eq!(
         adjust.tone_curve,
-        Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
+        Some(rawshim::grade::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
         })
     );
@@ -83,7 +83,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.tint, None);
     // Off the default, which a dropped field would quietly read as.
     assert!(adjust.camera_balance);
-    assert_eq!(adjust.colour_profile, rawshim::gpu::ColourProfile::None);
+    assert_eq!(adjust.colour_profile, rawshim::grade::ColourProfile::None);
     assert_eq!(
         adjust.colour_nodes,
         vec![
@@ -134,7 +134,7 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     assert!(matches!(scene.paper, rawshim::print::Paper::Satin));
     assert_eq!(
         scene.rendering_intent,
-        rawshim::gpu::Intent::RelativeColorimetric
+        rawshim::grade::Intent::RelativeColorimetric
     );
     assert!(!scene.black_point_compensation);
     assert!(matches!(scene.ink, rawshim::print::Ink::Pigment));

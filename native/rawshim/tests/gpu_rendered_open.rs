@@ -122,14 +122,14 @@ fn graded(
 ) -> Vec<u16> {
     let gpu = rawshim::gpu::device().expect("an adapter");
     let header = &opened.header;
-    let grade = rawshim::gpu::Grade {
-        adjust: rawshim::gpu::Adjust {
+    let grade = rawshim::grade::Grade {
+        adjust: rawshim::grade::Adjust {
             temperature,
             tint,
-            ..rawshim::gpu::Adjust::none()
+            ..rawshim::grade::Adjust::none()
         },
         as_shot,
-        ..rawshim::gpu::Grade::new(
+        ..rawshim::grade::Grade::new(
             header.width,
             header.height,
             rawshim::tone::Levels {
@@ -138,10 +138,10 @@ fn graded(
                 floor: header.floor,
             },
             header.grade.reference_white_nits,
-            rawshim::gpu::Output::Pq.mastered(header.grade.reference_white_nits),
+            rawshim::grade::Output::Pq.mastered(header.grade.reference_white_nits),
         )
     };
-    gpu.encode(&opened.samples, &grade)
+    rawshim::grade::device(gpu).encode(&opened.samples, &grade)
 }
 
 #[test]

@@ -319,7 +319,7 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
-    graded_as(source, options, matched, crate::gpu::Output::Rolled)
+    graded_as(source, options, matched, crate::grade::Output::Rolled)
 }
 
 /// [`graded`] in whichever coding the caller wants out.
@@ -340,14 +340,14 @@ pub fn graded_as(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::gpu::Output,
+    output: crate::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
     graded_under(
         source,
         options,
         matched,
         output,
-        crate::gpu::Intent::default(),
+        crate::grade::Intent::default(),
     )
 }
 
@@ -356,8 +356,8 @@ pub fn graded_under(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::gpu::Output,
-    intent: crate::gpu::Intent,
+    output: crate::grade::Output,
+    intent: crate::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
     let gpu = crate::gpu::device().expect(
         "no Vulkan adapter answered, not even a software one. The grade runs on the GPU so \
@@ -387,7 +387,7 @@ pub fn graded_under(
     let graded = encode_cut(
         gpu,
         &cut,
-        &crate::gpu::Grade {
+        &crate::grade::Grade {
             intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
         },
@@ -401,7 +401,7 @@ pub fn graded_under(
 pub fn encode_cut(
     gpu: &'static crate::gpu::Gpu,
     cut: &Cut,
-    grade: &crate::gpu::Grade<'_>,
+    grade: &crate::grade::Grade<'_>,
 ) -> Vec<u16> {
     upload_cut(gpu, cut, grade).encode(grade)
 }
@@ -409,16 +409,16 @@ pub fn encode_cut(
 pub fn upload_cut(
     gpu: &'static crate::gpu::Gpu,
     cut: &Cut,
-    grade: &crate::gpu::Grade<'_>,
-) -> crate::gpu::Uploaded<'static> {
-    let peak = gpu.scene_peak();
+    grade: &crate::grade::Grade<'_>,
+) -> crate::grade::Uploaded<'static> {
+    let peak = crate::grade::device(gpu).scene_peak();
     match cut.resident() {
-        Some(frame) => gpu.upload_resident(frame, grade, &peak),
+        Some(frame) => crate::grade::device(gpu).upload_resident(frame, grade, &peak),
         None => {
             let samples = cut
                 .host_samples()
                 .expect("a cut holds one frame or the other");
-            gpu.upload(samples, grade, &peak)
+            crate::grade::device(gpu).upload(samples, grade, &peak)
         }
     }
 }
@@ -437,10 +437,10 @@ fn neutral_scene<'a>(
         levels,
         options.grade.reference_white_nits,
         None,
-        crate::gpu::Adjust {
+        crate::grade::Adjust {
             // The match was fitted under its own illuminant, so it reads wrong under any other.
             camera_balance: true,
-            ..crate::gpu::Adjust::none()
+            ..crate::grade::Adjust::none()
         },
         as_shot,
     )
@@ -495,7 +495,7 @@ fn cut_for(
 ///
 /// Coded, fitted to size, warped and sharpened - **exactly what `edit::open` hands the
 /// shader**, and for the same reason: the grade itself is one WGSL implementation now
-/// (`gpu::encode`), so whatever reaches it has to be the same thing on both hosts.
+/// (`grade::encode`), so whatever reaches it has to be the same thing on both hosts.
 ///
 /// Nothing here knows what display a rendition targets. The colour transform, the roll-off
 /// and the transfer are all downstream of this and all run in one dispatch, so a job naming
@@ -611,7 +611,7 @@ impl Cut {
             sharpen_noise,
         );
         // No transfer at all: the grade reads this same buffer through
-        // `gpu::upload_resident`, so the frame never leaves the device between the decode
+        // `grade::upload_resident`, so the frame never leaves the device between the decode
         // and the graded readback.
         Cut {
             frame: CutFrame::Device(cut),
@@ -815,7 +815,7 @@ pub fn encode_still(
     let frame = encode_cut(
         gpu,
         &cut,
-        &scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq),
+        &scene.gpu_grade(cut.width, cut.height, crate::grade::Output::Pq),
     );
     cut.release();
     encode_pq_frame(frame, cut.width, cut.height, options)

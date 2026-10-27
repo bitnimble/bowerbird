@@ -2,7 +2,7 @@
 //
 // Everything before the first slider tick - decode, prepare, fit the camera match,
 // materialise the lens warp, denoise and sharpen - with none of the per-tick half, which is
-// `gpu.rs` (`docs/gpu-editor.md`). What comes out is `Opened`: the coded frame the grade
+// `grade.rs` (`docs/gpu-editor.md`). What comes out is `Opened`: the coded frame the grade
 // reads (`tone::encode_base`), left on the device, plus the numbers the grade needs and cannot
 // re-derive from pixels.
 //
@@ -139,7 +139,7 @@ pub struct PreparedHeader {
     /// page reads a number rather than deriving one.
     pub detail: (f64, f64),
     /// The camera match's tone curve. None where no colour match applies.
-    pub camera_curve: Option<crate::gpu::ToneCurve>,
+    pub camera_curve: Option<crate::grade::ToneCurve>,
     pub camera_exposure: Option<units::light::Stops>,
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
@@ -550,7 +550,7 @@ pub async fn from_frame(
                 },
                 // At rest: the reader's sliders are the tick's, and what they would widen here is
                 // the window, which is already the whole picture.
-                adjust: crate::gpu::Adjust::none(),
+                adjust: crate::grade::Adjust::none(),
                 levels: Some(levels),
                 noise_fit,
                 capture_sigma,
@@ -645,13 +645,13 @@ impl Opened {
 pub(crate) fn camera_defaults(
     colour: Option<&crate::hdr_fit::HdrColour>,
 ) -> (
-    Option<crate::gpu::ToneCurve>,
+    Option<crate::grade::ToneCurve>,
     Option<units::light::Stops>,
     Option<f64>,
     Option<crate::white_balance::Illuminant>,
 ) {
     (
-        colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 {
+        colour.map(|c| crate::grade::ToneCurve::PchipCbrt3 {
             points: c.curve.clone(),
         }),
         colour.map(|c| c.exposure),

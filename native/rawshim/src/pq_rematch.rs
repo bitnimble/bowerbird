@@ -34,7 +34,7 @@ pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -
     let params: Vec<u8> = [
         words,
         0,
-        (crate::gpu::CANVAS_WHITE_NITS as f32).to_bits(),
+        (crate::grade::CANVAS_WHITE_NITS as f32).to_bits(),
         white,
         reads_sdr_as_power,
         0,

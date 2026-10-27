@@ -1,4 +1,5 @@
-use crate::gpu::{self, Canvas, Gpu, Grade, Texture, Uploaded};
+use crate::gpu::{self, Gpu, Texture};
+use crate::grade::{Canvas, Grade, Uploaded};
 use crate::print::{Presentation, Scene};
 use units::light::{Light, SceneNits, Stops};
 use units::px::{Extent, Size};
@@ -41,7 +42,11 @@ impl Comparison {
         let pyramid =
             crate::base::pyramid(gpu, base, &frame, (width, height)).expect("source pyramid");
         let resident = crate::resident::Resident::upload(gpu, &frame, width, height);
-        let uploaded = gpu.upload_resident(&resident, &grade, &gpu.scene_peak());
+        let uploaded = crate::grade::device(gpu).upload_resident(
+            &resident,
+            &grade,
+            &crate::grade::device(gpu).scene_peak(),
+        );
         let targets = std::array::from_fn(|_| {
             gpu.own_texture(&wgpu::TextureDescriptor {
                 label: Some("print comparison"),
@@ -371,18 +376,18 @@ fn print_peak_cache_observes_other_uploads_sharing_the_measurement() {
     };
     let code = (crate::tone::pq(Light::<SceneNits>::exactly(80.0)).raw() * 65535.0).round() as u16;
     let frame = vec![code; grade.width * grade.height * 3];
-    let peak = comparison.gpu.scene_peak();
-    let first = comparison.gpu.upload(&frame, &grade, &peak);
+    let peak = crate::grade::device(comparison.gpu).scene_peak();
+    let first = crate::grade::device(comparison.gpu).upload(&frame, &grade, &peak);
     first.collect_candidates(&grade);
-    let second = comparison.gpu.upload(&frame, &grade, &peak);
+    let second = crate::grade::device(comparison.gpu).upload(&frame, &grade, &peak);
     second.collect_candidates(&grade);
     first.peak_from_candidates(&grade);
-    let expected = comparison.gpu.read_peak(&peak);
+    let expected = crate::grade::device(comparison.gpu).read_peak(&peak);
     second.peak_from_candidates(&raised);
-    assert!(comparison.gpu.read_peak(&peak) > expected * 1.5);
+    assert!(crate::grade::device(comparison.gpu).read_peak(&peak) > expected * 1.5);
     first.peak_from_candidates(&grade);
     assert_eq!(
-        comparison.gpu.read_peak(&peak),
+        crate::grade::device(comparison.gpu).read_peak(&peak),
         expected,
         "memo reused another upload's peak"
     );

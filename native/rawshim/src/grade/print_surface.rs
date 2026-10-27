@@ -16,7 +16,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &super::dispatch::Device) -> Self {
+    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print surface"),
             source: wgpu::ShaderSource::Wgsl(
@@ -199,8 +199,8 @@ impl Uploaded<'_> {
         recording.holding_texture(&environment);
         recording.holding(&calibration);
         let (parameters, proof) = self.print_scene_binding(recording, scene, display_peak);
-        let pipelines = self.gpu.print_surface();
-        let scene_group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
+        let pipelines = self.grader.print_surface();
+        let scene_group = self.grader.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print surface scene"),
             layout: &pipelines.scene_layout,
             entries: &[
@@ -227,13 +227,13 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(
-                        &self.gpu.print_environment_pipelines().sampler,
+                        &self.grader.print_environment_pipelines().sampler,
                     ),
                 },
             ],
         });
         let lighting = self.print_lighting(recording, scene, shape, &view, &scene_group);
-        let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
+        let group = self.grader.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print surface"),
             layout: &pipelines.draw_layout,
             entries: &[
@@ -251,7 +251,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
+                    resource: wgpu::BindingResource::Sampler(&self.grader.sampler),
                 },
             ],
         });
@@ -303,7 +303,7 @@ impl Uploaded<'_> {
             }
         }
         let size: Size<Canvas> = grade.canvas.expect("print surface canvas").size;
-        let texture = self.gpu.own_texture(&wgpu::TextureDescriptor {
+        let texture = self.grader.gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("print pigment"),
             size: wgpu::Extent3d {
                 width: size.width.raw() as u32,
@@ -400,7 +400,7 @@ impl Uploaded<'_> {
             .filter(|(_, texture)| texture.size() == extent)
             .map(|(_, texture)| texture.clone())
             .unwrap_or_else(|| {
-                self.gpu.own_texture(&wgpu::TextureDescriptor {
+                self.grader.gpu.own_texture(&wgpu::TextureDescriptor {
                     label: Some("print lighting"),
                     size: extent,
                     mip_level_count: 1,
@@ -417,9 +417,9 @@ impl Uploaded<'_> {
             cached.lighting = Some((key, texture.clone()));
             return texture;
         }
-        let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
+        let group = self.grader.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print lighting"),
-            layout: &self.gpu.print_surface().field_layout,
+            layout: &self.grader.print_surface().field_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -437,9 +437,9 @@ impl Uploaded<'_> {
                 extent.height.div_ceil(8),
                 extent.depth_or_array_layers,
             ],
-            super::dispatch::Whole::Measured,
+            crate::gpu::dispatch::Whole::Measured,
             |pass| {
-                pass.set_pipeline(&self.gpu.print_surface().field);
+                pass.set_pipeline(&self.grader.print_surface().field);
                 pass.set_bind_group(0, &group, &[]);
                 pass.set_bind_group(1, scene_group, &[]);
             },

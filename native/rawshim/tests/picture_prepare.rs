@@ -133,9 +133,9 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
     let shown = |prepared: &rawshim::edit::Prepared| -> Vec<u8> {
         let gpu = rawshim::gpu::device().expect("an adapter");
         let header = &prepared.header;
-        let grade = rawshim::gpu::Grade {
-            output: rawshim::gpu::Output::Srgb,
-            ..rawshim::gpu::Grade::new(
+        let grade = rawshim::grade::Grade {
+            output: rawshim::grade::Output::Srgb,
+            ..rawshim::grade::Grade::new(
                 header.width,
                 header.height,
                 rawshim::tone::Levels {
@@ -147,7 +147,12 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
                 units::light::Light::at_diffuse_white(header.grade.reference_white_nits),
             )
         };
-        gpu.upload(&prepared.samples, &grade, &gpu.scene_peak())
+        rawshim::grade::device(gpu)
+            .upload(
+                &prepared.samples,
+                &grade,
+                &rawshim::grade::device(gpu).scene_peak(),
+            )
             .encode_bytes(&grade)
     };
     let worst = |got: &[u8]| -> u8 {

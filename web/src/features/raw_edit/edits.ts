@@ -2,7 +2,7 @@
 //
 // The shapes only, because the rules are the module's - what a stop means, which uniform slot a
 // slider lands in, what a null half of the balance does. These cross as JSON and are read by
-// `gpu::Region`, `gpu::Adjust` and `image::Geometry`, so a name that drifts is `missing field` at
+// `grade::Region`, `grade::Adjust` and `image::Geometry`, so a name that drifts is `missing field` at
 // the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
 
 import { z } from 'zod';
@@ -18,7 +18,7 @@ export interface Region {
 }
 
 /**
- * Every slider, on Camera Raw's own scales, as the document holds them - `gpu::Adjust`.
+ * Every slider, on Camera Raw's own scales, as the document holds them - `grade::Adjust`.
  *
  * A null white balance half is resolved by `white_balance.slang`. A null tone curve or saturation
  * uses the camera match's.

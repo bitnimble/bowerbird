@@ -1,4 +1,4 @@
-use rawshim::gpu::{Canvas, Grade, Intent, Output};
+use rawshim::grade::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::print::{Paper, Presentation, Scene};
 use rawshim::transfer::Primaries;
@@ -762,8 +762,8 @@ fn drawn_as(
         .flat_map(|at| coded(source(at % size)))
         .collect();
     let pyramid = rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&frame, &grade, &peak);
+    let peak = rawshim::grade::device(gpu).scene_peak();
+    let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
     match shown {
         Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
         Shown::Printed(scene, printer) => {

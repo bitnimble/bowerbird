@@ -1,4 +1,4 @@
-use rawshim::gpu::{Canvas, Grade};
+use rawshim::grade::{Canvas, Grade};
 use rawshim::image::Geometry;
 use rawshim::print::{Presentation, Scene};
 use units::light::{Gain, Light, SceneNits};
@@ -453,8 +453,8 @@ fn draw(frame: &[u16], grade: &Grade<'_>, scene: Option<&Scene>) -> Vec<f32> {
     let gpu = rawshim::gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
     let pyramid = rawshim::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(frame, grade, &peak);
+    let peak = rawshim::grade::device(gpu).scene_peak();
+    let uploaded = rawshim::grade::device(gpu).upload(frame, grade, &peak);
     match scene {
         Some(scene) => uploaded.draw_print(grade, &pyramid, scene),
         None => uploaded.draw(grade, &pyramid),

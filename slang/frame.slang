@@ -542,7 +542,7 @@ float3 coded_at(uint pixel)
         return round(min(nits.v / edit.peak, float3(1.0)) * 65535.0);
     }
     // Coded straight from the nits, with no linear `u16` between: a PQ target's peak is PQ's own
-    // ceiling (`gpu::Output::mastered`), where a linear step is 0.15 nits and bands every shadow.
+    // ceiling (`grade::Output::mastered`), where a linear step is 0.15 nits and bands every shadow.
     return round(float3(pq(measured<DisplayNits>(nits.v.r)).v, pq(measured<DisplayNits>(nits.v.g)).v,
         pq(measured<DisplayNits>(nits.v.b)).v) * 65535.0);
 }

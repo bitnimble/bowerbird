@@ -226,7 +226,7 @@ impl Cfa {
 
     /// `mosaic.slang`'s `PERIOD_W` and `PERIOD_H`, keyed by the ids its `[vk::constant_id]` fixes.
     ///
-    /// Keyed by id rather than by name for `gpu.rs`'s reason: the generated WGSL renames a
+    /// Keyed by id rather than by name for `grade.rs`'s reason: the generated WGSL renames a
     /// specialisation constant, and a key matching none of them is a pipeline the driver refuses.
     pub fn constants(&self) -> [(&'static str, f64); 2] {
         [("0", f64::from(self.width)), ("1", f64::from(self.height))]

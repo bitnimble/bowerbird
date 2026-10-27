@@ -147,22 +147,22 @@ fn every_stage_hands_its_working_planes_back() {
         floor: None,
     }
     .anchored();
-    let grade = rawshim::gpu::Grade::new(
+    let grade = rawshim::grade::Grade::new(
         WIDTH,
         HEIGHT,
         *levels,
         units::light::Light::exactly(203.0),
         units::light::Light::exactly(1000.0),
     );
-    let peak = gpu.scene_peak();
+    let peak = rawshim::grade::device(gpu).scene_peak();
     gives_it_back(gpu, "upload", || {
-        let uploaded = gpu.upload(&frame, &grade, &peak);
+        let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
         // Encoded as well as uploaded: the counts and the readback are built on the first `encode`,
         // and they are per-`Uploaded` rather than per-device, so they have to go with this one.
         let _ = uploaded.encode(&grade);
     });
 
-    let uploaded = gpu.upload(&frame, &grade, &peak);
+    let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
     let mut dragged = grade.clone();
     let mut tick = 0.0;
     let mut drag = || {

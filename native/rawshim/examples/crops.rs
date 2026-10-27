@@ -73,7 +73,7 @@ fn main() {
     }
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) = support::graded(&opened, &options, rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = support::graded(&opened, &options, rawshim::grade::Output::Srgb);
     let data: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
     eprintln!("graded {width}x{height}");
 

@@ -1,6 +1,6 @@
 mod support;
 
-use rawshim::gpu::{Canvas, Grade, Intent};
+use rawshim::grade::{Canvas, Grade, Intent};
 use units::light::Light;
 use rawshim::print::{Environment, Paper, Presentation, Scene};
 use units::px::Size;
@@ -162,8 +162,8 @@ fn main() -> Result<(), String> {
             },
         )
     };
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+    let peak = rawshim::grade::device(gpu).scene_peak();
+    let uploaded = rawshim::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
     if let Some(path) = profile {
         let icc = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;

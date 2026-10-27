@@ -158,7 +158,7 @@ pub fn prepared(
             units::px::Size::exact(width, height),
         );
         recording.submit();
-        placed = Some(crate::gpu::Window {
+        placed = Some(crate::grade::Window {
             photograph: units::px::Size::exact(cut.width, cut.height),
             origin: units::px::At::exact(x, y),
         });

@@ -223,7 +223,7 @@ Sweeping changes (shared types/shaders, FFI constants, cross-module renames, reb
 `bun run test:native
 --lib`, each affected `--test <file>`, and **`bun run build:wasm`**. Host cargo, even
 `--all-targets`, cannot compile `wasm.rs` under `#[cfg(target_arch = "wasm32")]`.
-Changes to `gpu::Grade`, `tone::Levels`, `PreparedHeader` can therefore pass host checks
+Changes to `grade::Grade`, `tone::Levels`, `PreparedHeader` can therefore pass host checks
 and break the browser.
 
 **Use `scripts/cargo.ts` for cargo.** It removes superseded artefacts; bare `cargo` leaves
@@ -321,7 +321,7 @@ in about five seconds.
   fit, quantile 0.9) and grade with `support::graded` or `support::cut` (`job::Base::build`'s
   chain). Never `decode_frame`/`fit_hdr_for`, which skip all three and move the camera match, nor
   `hdr::graded_as`, which skips the defringe and sharpens at a fixed sigma with no noise table.
-- `gpu.rs` supplies editor passes; `wasm.rs` calls `gpu::present`.
+- `grade.rs` supplies editor passes; `wasm.rs` calls `grade::present`.
   `gpu.encode(frame, grade)` needs an **already coded and warped** frame.
   `graded_as` codes for itself: passing a prepared frame codes twice, lifting/flattening the image.
 - Only denoise is `galosh.rs`, on the mosaic.
@@ -340,7 +340,7 @@ which reads `document` during import. Never preload DOM: shared server tests ass
 ## Rendering must agree between the editor and a rendition
 
 Same [photo, edits, rendition settings] must produce identical pixels. Browser `wasm.rs`
-calls `gpu::present`, sharing the rendition's WGSL and passes. Page chooses what to draw.
+calls `grade::present`, sharing the rendition's WGSL and passes. Page chooses what to draw.
 Where logic exists twice, pin agreement:
 
 - `the_draw_places_a_pixel_where_the_gather_does`: every output pixel across geometries,

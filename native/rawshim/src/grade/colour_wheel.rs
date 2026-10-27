@@ -31,7 +31,7 @@ const PROBE_BINDINGS: [(u32, Binding); 14] = [
 ];
 
 impl Pipelines {
-    pub(super) fn new(device: &super::dispatch::Device) -> Self {
+    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
         let wheel = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("colour wheel"),
             source: wgpu::ShaderSource::Wgsl(shaders::COLOUR_WHEEL.source.into()),
@@ -180,7 +180,7 @@ fn p3_of(to_p3: &[[f64; 3]; 3], opponent: [f64; 3]) -> [f64; 3] {
     })
 }
 
-impl super::Gpu {
+impl super::Grader {
     /// `target` is `CANVAS_FORMAT`, `side` square.
     pub fn draw_backdrop(
         &self,
@@ -224,7 +224,7 @@ impl super::Gpu {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let built = self.colour_wheel();
-        let group = self.bind_group(&wgpu::BindGroupDescriptor {
+        let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("colour wheel"),
             layout: &built.backdrop_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -256,14 +256,15 @@ impl super::Gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn present_backdrop(gpu: &super::Gpu, stage: &super::Stage, backdrop: &Backdrop) {
+pub fn present_backdrop(grader: &super::Grader, stage: &super::Stage, backdrop: &Backdrop) {
     use wgpu::CurrentSurfaceTexture::{Suboptimal, Success};
+    let gpu = grader.gpu;
     let mut recording = gpu.record();
     match &stage.target {
         super::StageTarget::Held(texture) => {
             let Some(texture) = texture else { return };
             recording.holding_texture(texture);
-            gpu.draw_backdrop(&mut recording, &texture.view(), backdrop);
+            grader.draw_backdrop(&mut recording, &texture.view(), backdrop);
             recording.submit();
         }
         super::StageTarget::Surface(surface, _) => {
@@ -271,7 +272,7 @@ pub fn present_backdrop(gpu: &super::Gpu, stage: &super::Stage, backdrop: &Backd
                 return;
             };
             let target = image.texture.create_view(&Default::default());
-            gpu.draw_backdrop(&mut recording, &target, backdrop);
+            grader.draw_backdrop(&mut recording, &target, backdrop);
             recording.submit();
             gpu.queue.present(image);
         }
@@ -287,7 +288,7 @@ pub struct Probed {
 }
 
 pub struct Probing {
-    gpu: &'static super::Gpu,
+    gpu: &'static crate::gpu::Gpu,
     scatter: (Buffer, usize),
     field: (Buffer, usize),
 }
@@ -308,8 +309,8 @@ impl Probing {
             }
         };
         Some(Probed {
-            scatter: super::read_back(self.gpu, &self.scatter.0, read(self.scatter.1)).await?,
-            field: super::read_back(self.gpu, &self.field.0, read(self.field.1)).await?,
+            scatter: crate::gpu::read_back(self.gpu, &self.scatter.0, read(self.scatter.1)).await?,
+            field: crate::gpu::read_back(self.gpu, &self.field.0, read(self.field.1)).await?,
         })
     }
 }
@@ -322,10 +323,11 @@ impl Uploaded<'static> {
     /// Submitted without waiting, so a caller can let go of this upload first.
     pub fn probing(&self, grade: &Grade<'_>, places: &[Place]) -> Probing {
         let described = grade.matched().unwrap_or(&self.identity);
-        let gpu = self.gpu;
+        let grader = self.grader;
+        let gpu = grader.gpu;
         let mut recording = gpu.record();
         let (edits, balance) = self.written(grade, described);
-        gpu.build_balance(&mut recording, edits, balance);
+        grader.build_balance(&mut recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
         let down = (DOTS_ACROSS as f64 * self.height as f64 / self.width as f64)
             .round()
@@ -362,7 +364,7 @@ impl Uploaded<'static> {
         };
         let scattered = answers(&mut recording, dots);
         let fielded = answers(&mut recording, places.len());
-        let built = gpu.colour_wheel();
+        let built = grader.colour_wheel();
         let group = |out: &Buffer| {
             gpu.bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("colour probe"),
@@ -390,7 +392,7 @@ impl Uploaded<'static> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 7,
-                        resource: wgpu::BindingResource::Sampler(&gpu.sampler),
+                        resource: wgpu::BindingResource::Sampler(&grader.sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 10,
@@ -398,7 +400,7 @@ impl Uploaded<'static> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 12,
-                        resource: gpu.nits_of_code.as_entire_binding(),
+                        resource: grader.nits_of_code.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 14,
@@ -430,7 +432,7 @@ impl Uploaded<'static> {
         let (scatter_group, field_group) = (group(&scattered.0), group(&fielded.0));
         recording.dispatch(
             [(dots as u32).div_ceil(64), 1, 1],
-            super::dispatch::Whole::Fixed,
+            crate::gpu::dispatch::Whole::Fixed,
             |pass| {
                 pass.set_pipeline(&built.scatter);
                 pass.set_bind_group(0, &scatter_group, &[]);
@@ -439,7 +441,7 @@ impl Uploaded<'static> {
         if !places.is_empty() {
             recording.dispatch(
                 [(places.len() as u32).div_ceil(64), 1, 1],
-                super::dispatch::Whole::Fixed,
+                crate::gpu::dispatch::Whole::Fixed,
                 |pass| {
                     pass.set_pipeline(&built.field);
                     pass.set_bind_group(0, &field_group, &[]);
@@ -501,7 +503,7 @@ mod tests {
         let row = (SIDE as usize * 8).next_multiple_of(256);
         let mut recording = gpu.record();
         recording.holding_texture(&target);
-        gpu.draw_backdrop(&mut recording, &target.view(), backdrop);
+        crate::grade::device(gpu).draw_backdrop(&mut recording, &target.view(), backdrop);
         let staged = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("wheel readback"),
             size: (row * SIDE as usize) as u64,

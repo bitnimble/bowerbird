@@ -363,7 +363,7 @@ fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), S
 }
 
 /// A PQ still's planes as its file codes them, for the viewer's stage to read
-/// (`gpu::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
+/// (`crate::grade::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
 pub struct Coded<'a> {
     /// Luma, blue, red, little-endian `u16` samples, each `strides[at]` bytes a row.
     pub planes: [&'a [u8]; 3],
@@ -1519,7 +1519,7 @@ mod tests {
         let (mut under, mut over) = (0, 0);
         for (&was, &is) in before.iter().zip(&after).step_by(7) {
             let want = matching.of_still(nits(was)).raw();
-            match nits(was).raw() < crate::gpu::CANVAS_WHITE_NITS {
+            match nits(was).raw() < crate::grade::CANVAS_WHITE_NITS {
                 true => under += 1,
                 false => over += 1,
             }

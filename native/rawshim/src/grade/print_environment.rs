@@ -1,4 +1,4 @@
-use super::{Binding, Gpu, Texture};
+use super::{Binding, Texture};
 use crate::print::environment::{self, Environment};
 
 #[cfg(test)]
@@ -19,7 +19,7 @@ pub(super) struct Pipelines {
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &super::dispatch::Device) -> Self {
+    pub(super) fn new(device: &crate::gpu::Describing<'_>) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("print environment"),
             source: wgpu::ShaderSource::Wgsl(
@@ -122,14 +122,14 @@ fn build_words(
         .collect()
 }
 
-impl Gpu {
+impl super::Grader {
     /// The environment's map, turned to where the print hangs and with its lamp taken out, down to
     /// a texel.
     pub(crate) fn print_environment(&self, environment: Environment) -> Result<Texture, String> {
         let map = environment::decode(&environment.bytes()?)?;
         let source = environment.source();
         let levels = 32 - map.width.max(map.height).leading_zeros();
-        let texture = self.own_texture(&wgpu::TextureDescriptor {
+        let texture = self.gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("print environment"),
             size: wgpu::Extent3d {
                 width: map.width,
@@ -143,7 +143,7 @@ impl Gpu {
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let mut recording = self.record();
+        let mut recording = self.gpu.record();
         recording.holding_texture(&texture);
         let texels = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print environment texels"),
@@ -171,7 +171,7 @@ impl Gpu {
             });
             let written = level_view(level);
             let group = if level == 0 {
-                self.bind_group(&wgpu::BindGroupDescriptor {
+                self.gpu.bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("print environment unpack"),
                     layout: &pipelines.unpack_layout,
                     entries: &[
@@ -191,7 +191,7 @@ impl Gpu {
                 })
             } else {
                 let finer = level_view(level - 1);
-                self.bind_group(&wgpu::BindGroupDescriptor {
+                self.gpu.bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("print environment shrink"),
                     layout: &pipelines.shrink_layout,
                     entries: &[
@@ -212,7 +212,7 @@ impl Gpu {
             };
             recording.dispatch(
                 [width.div_ceil(8), height.div_ceil(8), 1],
-                super::dispatch::Whole::Fixed,
+                crate::gpu::dispatch::Whole::Fixed,
                 |pass| {
                     pass.set_pipeline(if level == 0 {
                         &pipelines.unpack
@@ -233,7 +233,7 @@ impl Gpu {
 
     /// The map as the lamp calibration binds it.
     pub(crate) fn print_environment_group(&self, map: &Texture) -> wgpu::BindGroup {
-        self.bind_group(&wgpu::BindGroupDescriptor {
+        self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print environment map"),
             layout: &self.print_environment_pipelines().map_layout,
             entries: &[

@@ -181,13 +181,13 @@ impl RetouchedFrame {
         Ok(())
     }
 
-    /// The frame's resources for a grade, as `gpu::Gpu::upload_resident` builds them.
+    /// The frame's resources for a grade, as `grade::Grader::upload_resident` builds them.
     pub fn upload(
         &self,
-        grade: &crate::gpu::Grade<'_>,
-        peak: &crate::gpu::ScenePeak,
-    ) -> crate::gpu::Uploaded<'static> {
-        self.frame.gpu().upload_resident(&self.frame, grade, peak)
+        grade: &crate::grade::Grade<'_>,
+        peak: &crate::grade::ScenePeak,
+    ) -> crate::grade::Uploaded<'static> {
+        crate::grade::device(self.frame.gpu()).upload_resident(&self.frame, grade, peak)
     }
 
     pub fn pyramid(&self, base: &'static crate::base::Base) -> Option<crate::base::Pyramid> {

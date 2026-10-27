@@ -11,7 +11,7 @@
 //! way for the privilege of running pointwise arithmetic on a CPU. Every stage that moves here
 //! brings those two closer together, and the last one deletes them.
 //!
-//! Its own module rather than more of `gpu.rs` for the reason `demosaic.rs` is its own: the denoise
+//! Its own module rather than more of `grade.rs` for the reason `demosaic.rs` is its own: the denoise
 //! sits between them, and this one's frame is the demosaiced one.
 
 use crate::gpu::dispatch::{Banded, Whole};
@@ -61,28 +61,9 @@ pub struct Base {
     content_light: wgpu::ComputePipeline,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
     static BUILT: crate::gpu::Cache<Option<Base>> = crate::gpu::Cache::new();
     BUILT.get(gpu, || Base::new(gpu)).as_ref()
-}
-
-/// The same pipelines, built once per page.
-///
-/// Leaked into a thread local rather than held in a `OnceLock`, for [`crate::gpu::page_device`]'s
-/// reason: wgpu's WebGPU handles are `Rc`s, so a `Base` is neither `Send` nor `Sync` and cannot sit
-/// in a static.
-#[cfg(target_arch = "wasm32")]
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
-    thread_local! {
-        static BUILT: std::cell::Cell<Option<&'static Base>> = const { std::cell::Cell::new(None) };
-    }
-    if let Some(built) = BUILT.with(std::cell::Cell::get) {
-        return Some(built);
-    }
-    let built: &'static Base = Box::leak(Box::new(Base::new(gpu)?));
-    BUILT.with(|held| held.set(Some(built)));
-    Some(built)
 }
 
 /// What a caller says when there is no device to run these stages on.
@@ -4632,12 +4613,12 @@ mod tests {
         let code =
             |samples: &mut [u16]| crate::hdr::code_base(samples, levels.anchored(), REFERENCE);
         let grading = |width: usize, height: usize, geometry: crate::image::Geometry| {
-            crate::gpu::Grade {
+            crate::grade::Grade {
                 // Rolled rather than PQ, so a difference in counts is a difference in light: the
                 // transfer compresses the shadows and would flatter every number below.
-                output: crate::gpu::Output::Rolled,
+                output: crate::grade::Output::Rolled,
                 geometry,
-                ..crate::gpu::Grade::new(width, height, levels, REFERENCE, Light::exactly(1000.0))
+                ..crate::grade::Grade::new(width, height, levels, REFERENCE, Light::exactly(1000.0))
             }
         };
 
@@ -4654,7 +4635,7 @@ mod tests {
         .expect("a bending lens warps");
         let staged = grading(width, height, geometry);
         let out = staged.output_size();
-        let ours = gpu.encode(&warped, &staged);
+        let ours = crate::grade::device(gpu).encode(&warped, &staged);
 
         // The reference: the plane read at where both mappings, composed, put each output pixel.
         let tables = crate::image::ratio_tables(
@@ -4692,7 +4673,7 @@ mod tests {
             }
         }
         code(&mut fused);
-        let theirs = gpu.encode(
+        let theirs = crate::grade::device(gpu).encode(
             &fused,
             &grading(out.0, out.1, crate::image::Geometry::none()),
         );

@@ -20,7 +20,7 @@ use units::px::TUNED_ON;
 /// Half the 1616px preview Sony embeds, which is what every match fits against where a body
 /// offers it (`decode_rawler::Preview::for_the_match`); a body that offers only its full JPEG
 /// is box-averaged to the same grid in linear light by `fitted_preview_size`, so the grade's
-/// supervision footprint (`gpu::mean_block`) is one number for every body. Measured on the
+/// supervision footprint (`crate::grade::mean_block`) is one number for every body. Measured on the
 /// Canon fixture against fitting its 6000px JPEG at 1280: the fit halves, and against the
 /// camera's own crops the render moves by 0.15 to 0.47 of a count in 255.
 const FIT_LONG_EDGE: usize = 808;
@@ -193,7 +193,7 @@ impl NeighbourhoodThumb {
     }
 }
 
-/// `PartialEq` because [`crate::gpu::Uploaded`] owns a copy and refuses a grade describing a
+/// `PartialEq` because [`crate::grade::Uploaded`] owns a copy and refuses a grade describing a
 /// different one; the fields are plain numbers, so the derive is the whole comparison.
 #[derive(Clone, PartialEq)]
 pub struct HdrColour {
@@ -1135,7 +1135,7 @@ impl HdrColour {
     }
 
     pub fn saturation_slider(&self) -> f64 {
-        crate::gpu::saturation_slider(units::light::Gain::of_ratio(self.saturation))
+        crate::grade::saturation_slider(units::light::Gain::of_ratio(self.saturation))
     }
 }
 
@@ -1257,12 +1257,12 @@ pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 
 /// The grade whose uniform hands `colour.slang` the fit's own domain: white, reference and
 /// exposure at their identities, so a sample is read as itself.
-fn probe_grade(colour: &HdrColour) -> crate::gpu::Grade<'_> {
-    crate::gpu::Grade {
+fn probe_grade(colour: &HdrColour) -> crate::grade::Grade<'_> {
+    crate::grade::Grade {
         colour: Some(colour),
         // Every anchor at its identity, which is what lets `fit_model` run the grade's own stages
         // over samples that are already scene-relative.
-        ..crate::gpu::Grade::new(
+        ..crate::grade::Grade::new(
             1,
             1,
             crate::tone::Levels {
@@ -1335,7 +1335,7 @@ pub fn evaluate_over(
             usage,
         })
     };
-    let uniform: Vec<u8> = crate::gpu::uniform_words(&probe_grade(colour), colour)
+    let uniform: Vec<u8> = crate::grade::uniform_words(&probe_grade(colour), colour)
         .iter()
         .flat_map(|v| v.to_ne_bytes())
         .collect();
@@ -1352,8 +1352,8 @@ pub fn evaluate_over(
         .flat_map(|v| (*v as f32).to_ne_bytes())
         .collect();
     let matrix = init("fit model matrix", &matrix, wgpu::BufferUsages::STORAGE);
-    let (chroma, chroma_luma) = gpu.lattice(colour);
-    let curves = gpu.curves(colour);
+    let (chroma, chroma_luma) = crate::grade::device(gpu).lattice(colour);
+    let curves = crate::grade::device(gpu).curves(colour);
     let (chroma, chroma_luma, curves) = (chroma.view(), chroma_luma.view(), curves.view());
     let kernel = model_device(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -1386,7 +1386,7 @@ pub fn evaluate_over(
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: wgpu::BindingResource::Sampler(gpu.sampler()),
+                resource: wgpu::BindingResource::Sampler(crate::grade::device(gpu).sampler()),
             },
             wgpu::BindGroupEntry {
                 binding: 10,
@@ -5927,12 +5927,12 @@ fn rebalanced(
     to: crate::white_balance::Illuminant,
 ) -> Source {
     let identity = HdrColour::identity();
-    let grade = crate::gpu::Grade {
+    let grade = crate::grade::Grade {
         as_shot: Some(from),
-        adjust: crate::gpu::Adjust {
+        adjust: crate::grade::Adjust {
             temperature: Some(to.temperature),
             tint: Some(to.tint),
-            ..crate::gpu::Adjust::none()
+            ..crate::grade::Adjust::none()
         },
         ..probe_grade(&identity)
     };
@@ -5941,15 +5941,15 @@ fn rebalanced(
     recording.holding(&plane.buffer);
     let edits = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit balance edit"),
-        contents: &crate::gpu::uniform_words(&grade, &identity)
+        contents: &crate::grade::uniform_words(&grade, &identity)
             .iter()
             .flat_map(|v| v.to_ne_bytes())
             .collect::<Vec<u8>>(),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let balance = gpu.balance_buffer();
+    let balance = crate::grade::device(gpu).balance_buffer();
     recording.holding(&balance);
-    gpu.build_balance(&mut recording, &edits, &balance);
+    crate::grade::device(gpu).build_balance(&mut recording, &edits, &balance);
     let lit = rgb_buffer(&mut recording, "fit balanced", plane.width, plane.height);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit balance push"),
@@ -9263,7 +9263,7 @@ mod tests {
                 pollster::block_on(fitted_saturation(searching(), &neutral, &over, Stage::Tone))
                     .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
-            let slider = crate::gpu::saturation_slider(units::light::Gain::of_ratio(found));
+            let slider = crate::grade::saturation_slider(units::light::Gain::of_ratio(found));
             assert!(
                 (1.0 + slider / 100.0 - found).abs() < 1e-9,
                 "{found} is off the slider's step"

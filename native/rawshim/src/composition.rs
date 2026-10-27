@@ -272,7 +272,7 @@ pub fn placement(spec: &Composition, index: usize) -> Placement {
 /// million pixels and a canvas can be three hundred million, so a level is the largest halving
 /// that still leaves `supersample` canvas pixels per stage pixel - which is the point the draw
 /// stops minifying by more than two and can read the window's own buffer
-/// (`gpu.rs`, `from_frame`).
+/// (`grade.rs`, `from_frame`).
 ///
 /// Bounded below by the coarsest level rather than by zero: the picture a reader is handed before
 /// they have zoomed anywhere is the whole canvas, and the whole canvas of a pan is more than any

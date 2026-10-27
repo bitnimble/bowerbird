@@ -370,7 +370,7 @@ impl Summed {
         })
     }
 
-    fn buffer(&self, gpu: &Gpu) -> crate::gpu::Buffer {
+    fn buffer(&self, gpu: &'static Gpu) -> crate::gpu::Buffer {
         let (on, buffer) = self.on.get_or_init(|| (gpu.id(), sum(gpu, self)));
         match *on == gpu.id() {
             true => buffer.clone(),
@@ -571,7 +571,7 @@ impl ChromaMap {
     }
 
     /// The two volumes `correct` samples, baked once per map and device.
-    pub fn baked(&self, gpu: &Gpu) -> (Texture, Texture) {
+    pub fn baked(&self, gpu: &'static Gpu) -> (Texture, Texture) {
         let (baked_on, volumes) = self.baked.get_or_init(|| (gpu.id(), bake(gpu, self)));
         match *baked_on == gpu.id() {
             true => volumes.clone(),
@@ -712,6 +712,11 @@ fn square_root(a: M3) -> Option<M3> {
     }
 }
 
+pub(crate) fn bake_kernel(gpu: &'static Gpu) -> &'static BakeKernel {
+    static BUILT: crate::gpu::Cache<BakeKernel> = crate::gpu::Cache::new();
+    BUILT.get(gpu, || BakeKernel::new(gpu.describing()))
+}
+
 pub(crate) struct BakeKernel {
     interpolate_layout: wgpu::BindGroupLayout,
     interpolate: wgpu::ComputePipeline,
@@ -723,7 +728,7 @@ pub(crate) struct BakeKernel {
 }
 
 impl BakeKernel {
-    pub(crate) fn new(device: crate::gpu::Describing<'_>) -> BakeKernel {
+    fn new(device: crate::gpu::Describing<'_>) -> BakeKernel {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lattice_bake"),
             source: wgpu::ShaderSource::Wgsl(shaders::LATTICE_BAKE.source.into()),
@@ -860,7 +865,7 @@ fn dispatch(
     });
 }
 
-fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
+fn sum(gpu: &'static Gpu, summed: &Summed) -> crate::gpu::Buffer {
     let texels = (SIZE.width * SIZE.height * SIZE.depth_or_array_layers) as usize;
     let out = gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("lattice sums"),
@@ -897,7 +902,7 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
         ),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let built = gpu.lattice_bake();
+    let built = bake_kernel(gpu);
     let kernels = match summed.moves && !summed.kernels.is_empty() {
         false => kernels,
         true => {
@@ -955,7 +960,7 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
     out
 }
 
-fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
+fn bake(gpu: &'static Gpu, map: &ChromaMap) -> (Texture, Texture) {
     let volume = |label: &'static str| {
         gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -993,7 +998,7 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let (chroma_view, luma_view) = (chroma.view(), luma.view());
-    let built = gpu.lattice_bake();
+    let built = bake_kernel(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("lattice_bake"),
         layout: &built.bake_layout,

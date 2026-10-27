@@ -42,7 +42,7 @@ const PQ_MAX_NITS: f64 = 10000.0;
 ///
 /// PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates
 /// rather than being carried. That is BT.2408's own headroom above a 203-nit white, and the one
-/// clamp a scene-referred rendition takes (`gpu::Output::mastered`).
+/// clamp a scene-referred rendition takes (`crate::grade::Output::mastered`).
 ///
 /// **The domain is the caller's to name**, as it is in `prelude.slang`: the curve is absolute, so
 /// `base::coding_curve` codes the *scene's* nits with it and the roll-off compresses the
@@ -316,18 +316,18 @@ pub struct SceneGrade<'a> {
     exposure: Option<Stops>,
     /// The reader's own sliders. Settled on the photo like the levels and the colour, and
     /// for the same reason: two sizes of one photograph must not be adjusted differently.
-    adjust: crate::gpu::Adjust,
+    adjust: crate::grade::Adjust,
     /// The illuminant the decode balanced against, which the pair in `adjust` moves away from.
     /// Settled on the photo like everything else here: two sizes of it must not be balanced
     /// against two different baselines.
     as_shot: Option<crate::white_balance::Illuminant>,
-    /// The camera match, whatever `adjust`'s profile asks of it (`gpu::Grade::colour`).
+    /// The camera match, whatever `adjust`'s profile asks of it (`crate::grade::Grade::colour`).
     colour: Option<&'a HdrColour>,
 }
 
 impl<'a> SceneGrade<'a> {
     /// No frame and no GPU. The matched arm's peak is measured off the frame that is already
-    /// uploaded, by the shader, in `gpu::Uploaded::measure_peak` - so what is left here is
+    /// uploaded, by the shader, in `crate::grade::Uploaded::measure_peak` - so what is left here is
     /// what the uniform carries.
     ///
     /// Infallible, and [`Anchored`] is what makes that true rather than assumed: a white of zero
@@ -337,7 +337,7 @@ impl<'a> SceneGrade<'a> {
         levels: Anchored,
         reference: Light<SceneNits>,
         exposure: Option<Stops>,
-        adjust: crate::gpu::Adjust,
+        adjust: crate::grade::Adjust,
         as_shot: Option<crate::white_balance::Illuminant>,
     ) -> Self {
         assert!(
@@ -366,15 +366,15 @@ impl<'a> SceneGrade<'a> {
         &'a self,
         width: usize,
         height: usize,
-        output: crate::gpu::Output,
-    ) -> crate::gpu::Grade<'a> {
-        crate::gpu::Grade {
+        output: crate::grade::Output,
+    ) -> crate::grade::Grade<'a> {
+        crate::grade::Grade {
             colour: self.colour,
             exposure: self.exposure,
             adjust: self.adjust.clone(),
             as_shot: self.as_shot,
             output,
-            ..crate::gpu::Grade::new(
+            ..crate::grade::Grade::new(
                 width,
                 height,
                 self.levels,
