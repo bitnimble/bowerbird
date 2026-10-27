@@ -13,7 +13,7 @@
 use crate::composite_pairs::{Match, Pair, Pyramid};
 use crate::composite_solve::{Leash, exposure_of, framed, gains, solve};
 use crate::composition::{Composition, LensSpec, SourceSpec, VERSION};
-use crate::px::Share;
+use units::px::Share;
 
 /// One photograph offered to a composite.
 pub struct AlignSource<'a> {
@@ -553,9 +553,9 @@ async fn stacked(
             &on,
             &frame,
             preview,
-            crate::px::At::ORIGIN,
-            crate::px::At::ORIGIN,
-            crate::px::Rect::exact(0, 0, frame.width, frame.height),
+            units::px::At::ORIGIN,
+            units::px::At::ORIGIN,
+            units::px::Rect::exact(0, 0, frame.width, frame.height),
             |_, _| crate::burst::Offset::exactly(0.0, 0.0),
             crate::align::Search::unplaced(frame.width.max(frame.height)),
         );
@@ -1156,7 +1156,7 @@ pub(crate) mod tests {
         let request = crate::composite_tile::CompositeRequest {
             // The whole window, which is what an empty list means.
             parts: &[],
-            window: crate::px::Rect::exact(
+            window: units::px::Rect::exact(
                 p.canvas[0] / 2 - across / 2,
                 p.canvas[1] / 2 - down / 2,
                 across,
@@ -1167,7 +1167,7 @@ pub(crate) mod tests {
             // One window, measured off itself: what the banding rule is about is a *set* of
             // windows disagreeing, and there is one here.
             levels: None,
-            reference_white_nits: crate::light::Light::exactly(203.0),
+            reference_white_nits: units::light::Light::exactly(203.0),
             strengths: crate::image::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,

@@ -64,7 +64,7 @@ pub fn combine(base: &[u8], alternate: &[u8], quality: i32) -> Result<Vec<u8>, S
     let (base_rgb, width, height, map, terms, orientation) = compute(base, alternate)?;
 
     let base_jpeg = crate::jpeg::encode(
-        crate::rgb::RgbRef {
+        units::rgb::RgbRef {
             width,
             height,
             data: &base_rgb,

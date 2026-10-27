@@ -2,8 +2,8 @@
 //! a DNG with no embedded JPEG to fit one against.
 
 use crate::hdr_fit::{BINS, HdrColour, TRUST_CEILING};
-use crate::light::{Light, Stops};
 use rawler::tags::DngTag;
+use units::light::{Light, Stops};
 
 /// What a DNG states about drawing itself.
 #[derive(Clone, Debug, PartialEq)]
@@ -224,7 +224,7 @@ fn spline_at(points: &[[f64; 2]], slopes: &[f64], x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{Curve, Stated};
-    use crate::light::Stops;
+    use units::light::Stops;
 
     fn stated(exposure: f64, curve: Curve) -> Stated {
         Stated {
@@ -266,9 +266,9 @@ mod tests {
         let neutral_ceiling = 0.5;
         let white = 0.25 * neutral_ceiling as f64 * crate::transfer::FULL_SCALE;
         let levels = crate::tone::Levels {
-            white: crate::light::Light::measured(white),
-            peak: crate::light::Light::measured(white * 4.0),
-            floor: Some(crate::light::Light::measured(0.0)),
+            white: units::light::Light::measured(white),
+            peak: units::light::Light::measured(white * 4.0),
+            floor: Some(units::light::Light::measured(0.0)),
         };
         let mut drawn = stated(1.0, Curve::Identity);
         drawn.shadows = false;

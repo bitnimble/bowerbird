@@ -1,6 +1,6 @@
 // Pixels that know which picture they are pixels of, and what its pixels are the size of.
 //
-// `native/rawshim/src/px.rs` on this side of the boundary, and for the same reason: naming the
+// `native/units/src/px.rs` on this side of the boundary, and for the same reason: naming the
 // space says which picture a number is a number of, and does not say how finely that picture was
 // sampled. The frame a grade writes is sampled at whatever the rendition asked for, so a count of
 // its pixels is a different share of the same photograph at 3840 than at a sensor's own size -

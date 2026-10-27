@@ -1,9 +1,9 @@
 mod support;
 
 use rawshim::gpu::{Canvas, Grade, Output};
-use rawshim::light::Light;
+use units::light::Light;
 use rawshim::print::{Paper, Scene};
-use rawshim::px::Size;
+use units::px::Size;
 
 fn main() -> Result<(), String> {
     let path = std::env::args()

@@ -1,6 +1,6 @@
 use rawshim::gpu::{Grade, ToneCurve};
 use rawshim::hdr_fit::HdrColour;
-use rawshim::light::{CurveCode, Gain, Light, Stops, same_curve};
+use units::light::{CurveCode, Gain, Light, Stops, same_curve};
 
 fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> {
     let gpu = rawshim::gpu::device().expect("Vulkan adapter");
@@ -147,10 +147,10 @@ fn shader_curve_matches_the_shared_host_table() {
             points: case.points.clone(),
         });
         let results = probe("curve_draw", &inputs, &grade);
-        let tangents = rawshim::light::curve_tangents(&case.points);
+        let tangents = units::light::curve_tangents(&case.points);
         for (input, output) in inputs.iter().zip(results) {
             let code = CurveCode::of_white_ratio(Gain::of_ratio(f64::from(input[0])));
-            let expected = rawshim::light::curve_at(&case.points, &tangents, code)
+            let expected = units::light::curve_at(&case.points, &tangents, code)
                 .white_ratio()
                 .raw();
             assert!(
@@ -193,8 +193,8 @@ fn subfloor_edits_keep_colour_and_exposed_grey_is_the_contrast_pivot() {
         assert!((after[0] / after[1] - before[0] / before[1]).abs() < 1e-5);
         assert!((after[2] / after[1] - before[2] / before[1]).abs() < 1e-5);
     }
-    colour.curve = rawshim::light::IDENTITY_CURVE.to_vec();
-    let grey = (rawshim::light::PIVOT * Gain::of(colour.exposure)).raw() as f32;
+    colour.curve = units::light::IDENTITY_CURVE.to_vec();
+    let grey = (units::light::PIVOT * Gain::of(colour.exposure)).raw() as f32;
     for contrast in [-100.0, 100.0] {
         let mut grade = probe_grade(1);
         grade.colour = Some(&colour);

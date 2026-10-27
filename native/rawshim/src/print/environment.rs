@@ -1,5 +1,5 @@
-use crate::light::{Illuminance, Light};
-use crate::px::Share;
+use units::light::{Illuminance, Light};
+use units::px::Share;
 
 /// The room a print hangs in: one of Poly Haven's HDR maps (`bun run get:environments`), with its
 /// brightest light taken out and drawn as the lamp.

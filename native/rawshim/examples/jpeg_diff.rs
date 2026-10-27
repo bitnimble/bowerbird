@@ -49,7 +49,7 @@ fn main() {
         left.height,
         total / left.data.len() as f64,
     );
-    let image = rawshim::rgb::RgbRef {
+    let image = units::rgb::RgbRef {
         width: left.width,
         height: left.height,
         data: &data,

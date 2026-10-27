@@ -456,7 +456,7 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
 /// is guesswork: this puts the answer on the picture.
 fn outlined(
     recipe: &rawshim::composition::Composition,
-    picture: rawshim::rgb::RgbRef<'_>,
+    picture: units::rgb::RgbRef<'_>,
     crop: [f64; 4],
     to: &str,
 ) {
@@ -504,7 +504,7 @@ fn outlined(
         }
     }
 
-    let drawn = rawshim::rgb::RgbRef {
+    let drawn = units::rgb::RgbRef {
         data: &out,
         width: wide,
         height: tall,
@@ -692,7 +692,7 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
         ),
     };
     let mut out = vec![0u8; width * height * 3];
-    let mut blit = |picture: &rawshim::rgb::Rgb, at: (usize, usize)| {
+    let mut blit = |picture: &units::rgb::Rgb, at: (usize, usize)| {
         for y in 0..picture.height {
             for x in 0..picture.width {
                 let from = (y * picture.width + x) * 3;
@@ -743,7 +743,7 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
         sheet.dot(there, colour);
     }
 
-    let picture = rawshim::rgb::RgbRef {
+    let picture = units::rgb::RgbRef {
         width,
         height,
         data: &out,
@@ -874,7 +874,7 @@ fn climb(p: &rawshim::composition::Composition) -> f64 {
 /// Full-resolution source pixels per preview pixel, which is what the recipe's focal is scaled by.
 fn full_scale(p: &rawshim::composition::Composition) -> f64 {
     let source = &p.sources[0];
-    source.size[0].max(source.size[1]) as f64 / rawshim::px::TUNED_ON as f64
+    source.size[0].max(source.size[1]) as f64 / units::px::TUNED_ON as f64
 }
 
 /// The JPEG the search's plane is built from, for a reader who wants to see what it was given.

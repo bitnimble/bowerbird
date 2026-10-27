@@ -1019,7 +1019,7 @@ fn draw(out: &mut [[f32; 3]], size: (usize, usize), at: Affine, colour: [f32; 3]
 /// The scene as the camera's own rendering of it, which is the plane an alignment searches.
 fn write_preview(scene: &[[f32; 3]], width: usize, height: usize, to: &str) {
     let data: Vec<u8> = scene.iter().flat_map(|rgb| (*rgb).map(srgb8)).collect();
-    let picture = rawshim::rgb::RgbRef {
+    let picture = units::rgb::RgbRef {
         width,
         height,
         data: &data,

@@ -20,7 +20,7 @@ mod support;
 
 use rawshim::avif;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::light::{DisplayNits, Gain, Light};
+use units::light::{DisplayNits, Gain, Light};
 
 const HDR_QUANTIZERS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 26, 32, 40];
 const SDR_QUANTIZERS: [i32; 15] = [0, 2, 4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 40, 50, 63];

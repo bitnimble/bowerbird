@@ -1,8 +1,8 @@
 use rawshim::gpu::{Canvas, Grade};
 use rawshim::image::Geometry;
-use rawshim::light::{Light, SceneNits};
 use rawshim::print::Scene;
-use rawshim::px::Size;
+use units::light::{Light, SceneNits};
+use units::px::Size;
 
 #[test]
 fn grazing_print_preserves_detail_across_its_short_pixel_axis() {

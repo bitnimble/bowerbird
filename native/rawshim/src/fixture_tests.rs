@@ -175,7 +175,7 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
 
 /// Multiplies linear light by `1 + (corner - 1) r^2`, the shape a lens's falloff has
 /// and the one the fit models.
-fn falloff(source: &crate::rgb::Rgb, corner: f64) -> crate::rgb::Rgb {
+fn falloff(source: &units::rgb::Rgb, corner: f64) -> units::rgb::Rgb {
     let (width, height) = (source.width, source.height);
     let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt();
@@ -200,7 +200,7 @@ fn falloff(source: &crate::rgb::Rgb, corner: f64) -> crate::rgb::Rgb {
             }
         }
     }
-    crate::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height,
         data,
@@ -255,7 +255,7 @@ fn tile_job(
         geometry: crate::image::Geometry::none(),
         preserve_source_orientation: false,
         grade: crate::hdr::Grade {
-            reference_white_nits: crate::light::Light::exactly(203.0),
+            reference_white_nits: units::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
         targets: Vec::new(),
@@ -283,7 +283,7 @@ fn rendition(
     Vec<u16>,
     usize,
     usize,
-    crate::light::Light<crate::light::DisplayNits>,
+    units::light::Light<units::light::DisplayNits>,
 ) {
     let base = crate::job::Base::build(job, decode).expect("the frame");
     let scene = crate::tone::SceneGrade::new(
@@ -309,8 +309,8 @@ fn rendition(
         size.width.max(size.height) as usize,
     );
     let noise = base.sharpen_noise.at(
-        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
-        crate::px::Span::<crate::px::Drawn>::exact(size.width.max(size.height) as usize),
+        units::px::Span::<units::px::Sensor>::exact(base.sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
     let crate::job::Cutting::OnDevice(frame) = base.frame else {
         panic!("a whole-frame build leaves its frame on the device")
@@ -326,7 +326,7 @@ fn rendition(
         .resident()
         .expect("from_base leaves the cut on the device");
     let frame = gpu.upload_resident(resident, &grade, &peak).encode(&grade);
-    let measured = crate::light::Light::measured(f64::from(gpu.read_peak(&peak)));
+    let measured = units::light::Light::measured(f64::from(gpu.read_peak(&peak)));
     (frame, out_width, out_height, measured)
 }
 
@@ -534,11 +534,11 @@ mod decode_geometry {
     /// A window of a photograph on disk, at the sensor's own resolution.
     fn viewing(path: &str, tile: crate::Tile) -> crate::view::View {
         let header = crate::header::read_path(path).expect("a header");
-        crate::view::View::whole(crate::px::Size::exact(
+        crate::view::View::whole(units::px::Size::exact(
             header.width as usize,
             header.height as usize,
         ))
-        .showing(crate::px::Rect::exact(
+        .showing(units::px::Rect::exact(
             tile.left,
             tile.top,
             tile.width,
@@ -895,8 +895,8 @@ mod decode_geometry {
     /// own, and a tail light clipped in the red.
     #[test]
     fn the_denoise_at_each_setting_is_the_one_last_looked_at() {
-        use crate::px::{Drawn, Rect};
         use crate::snapshot::{Anchoring, Frame, Snapshot, Tolerance};
+        use units::px::{Drawn, Rect};
         let at = |left, top| Rect::<Drawn>::exact(left, top, 256, 256);
         let frames = [
             (
@@ -946,7 +946,7 @@ mod decode_geometry {
                 .expect("the frame has levels");
             let anchoring = Anchoring {
                 levels: levels.anchored(),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
             };
             let name = |setting| format!("denoise/{prefix}{setting}");
             Snapshot::crops(Frame::Scene(resident, anchoring), &crops)
@@ -1046,7 +1046,7 @@ mod decode_geometry {
         let request = crate::edit::EditRequest {
             long_edge: 0,
             grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
             defringe: 0.5,
@@ -1298,7 +1298,7 @@ mod decode_geometry {
             };
             let cut = pollster::block_on(async {
                 held.window(
-                    crate::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
+                    units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
                     crate::view::Scale::Full,
                     detail,
                     crate::galosh::Fit::Given(fit),
@@ -1978,8 +1978,8 @@ mod loupe_tile {
                 if place == "highlight" && what == "as metered" {
                     let frame_max = *reference.iter().max().expect("a frame");
                     let nits = |code| {
-                        crate::tone::pq_inv::<crate::light::DisplayNits>(
-                            crate::light::Light::measured(f64::from(code) / 65535.0),
+                        crate::tone::pq_inv::<units::light::DisplayNits>(
+                            units::light::Light::measured(f64::from(code) / 65535.0),
                         )
                     };
                     let share = nits(reference_max) / nits(frame_max);
@@ -2096,8 +2096,8 @@ mod loupe_tile {
                         width.max(height),
                     );
                     let noise = base.sharpen_noise.at(
-                        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
-                        crate::px::Span::<crate::px::Drawn>::exact(width.max(height)),
+                        units::px::Span::<units::px::Sensor>::exact(base.sensor_long),
+                        units::px::Span::<units::px::Drawn>::exact(width.max(height)),
                     );
                     crate::hdr::Cut::from_base(
                         frame,
@@ -2466,7 +2466,7 @@ mod loupe_tile {
             .frame
             .host();
 
-        let level = crate::light::Light::measured;
+        let level = units::light::Light::measured;
         let floor = Some(level(141.0));
         for levels in [
             crate::tone::Levels {
@@ -2751,7 +2751,7 @@ mod camera_match {
             still_chroma: crate::hdr_args::Chroma::Yuv444,
             output_path: String::new(),
             grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
             crf: 26,
@@ -3342,7 +3342,7 @@ mod camera_match {
     ///
     /// Hand-rolled rather than through `fit_warp.slang`: injecting with the same code the
     /// fit inverts would let a bug in it cancel itself out.
-    fn pincushion(source: &crate::rgb::Rgb, k1: f64, crop: f64) -> crate::rgb::Rgb {
+    fn pincushion(source: &units::rgb::Rgb, k1: f64, crop: f64) -> units::rgb::Rgb {
         let (width, height) = (source.width, source.height);
         let mut out = vec![0u8; width * height * 3];
         let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
@@ -3370,7 +3370,7 @@ mod camera_match {
                 }
             }
         }
-        crate::rgb::Rgb {
+        units::rgb::Rgb {
             width,
             height,
             data: out,
@@ -3418,10 +3418,10 @@ mod hdr_grade {
     use crate::hdr_args::{Chroma, EncodeOptions};
 
     const QUANTILE: f64 = 0.9;
-    const REFERENCE: crate::light::Light<crate::light::SceneNits> =
-        crate::light::Light::exactly(203.0);
+    const REFERENCE: units::light::Light<units::light::SceneNits> =
+        units::light::Light::exactly(203.0);
     /// What a rolled frame's `Signal` is a share of (`gpu::Output::mastered`).
-    const CEILING: crate::light::Light<crate::light::DisplayNits> = crate::light::Light::PQ_CEILING;
+    const CEILING: units::light::Light<units::light::DisplayNits> = units::light::Light::PQ_CEILING;
 
     fn options(max_edge: f64, output_path: &str) -> EncodeOptions {
         EncodeOptions {
@@ -3495,7 +3495,7 @@ mod hdr_grade {
             gpu,
             base,
             &resident,
-            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            crate::base::Gather::frame(units::px::Size::exact(width, height)),
             &fitted.lens,
         )
         .expect("the lens stage runs");
@@ -3504,11 +3504,11 @@ mod hdr_grade {
 
         let at = |data: &[u16], x: usize, y: usize| {
             let code = f64::from(data[(y * width + x) * 3 + 1]) / 65535.0;
-            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(code))
+            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(code))
         };
         let (corner_x, corner_y) = (width - 1, height - 1);
         // The corner sits at r = 1, so it takes the whole of the coefficient.
-        let floor = crate::light::Light::measured(1e-9);
+        let floor = units::light::Light::measured(1e-9);
         let corner = at(&samples, corner_x, corner_y).max(floor);
         let ratio = (at(&lit, corner_x, corner_y) / corner).raw();
         assert!(
@@ -3657,7 +3657,7 @@ mod hdr_grade {
         // quantile lands under the reference rather than on it - but nowhere near the
         // peak, which is what a lost anchor would look like.
         let of_reference = |by: f64| {
-            crate::light::Light::at_diffuse_white(REFERENCE) * crate::light::Gain::of_ratio(by)
+            units::light::Light::at_diffuse_white(REFERENCE) * units::light::Gain::of_ratio(by)
         };
         assert!(at[0] > of_reference(0.25), "diffuse white at {:?}", at[0]);
         assert!(at[0] < of_reference(1.5), "diffuse white at {:?}", at[0]);
@@ -3778,7 +3778,7 @@ mod hdr_grade {
         let pq_mean = graded
             .iter()
             .map(|s| {
-                crate::tone::pq(CEILING * crate::light::Gain::of_ratio(f64::from(*s) / full)).raw()
+                crate::tone::pq(CEILING * units::light::Gain::of_ratio(f64::from(*s) / full)).raw()
             })
             .sum::<f64>()
             / graded.len() as f64;
@@ -3853,7 +3853,7 @@ mod hdr_grade {
                 m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
-                Some(crate::light::Stops::measured(1.0)),
+                Some(units::light::Stops::measured(1.0)),
                 crate::gpu::Adjust::none(),
                 None,
             );
@@ -3953,21 +3953,21 @@ mod hdr_grade {
             if width.max(height) <= 800 {
                 Snapshot::pq(
                     &graded,
-                    crate::px::Size::<crate::px::Output>::measured(width, height),
+                    units::px::Size::<units::px::Output>::measured(width, height),
                 )
                 .check(&name, tolerance);
                 continue;
             }
             let resident = crate::resident::Resident::upload(gpu, &graded, width, height);
-            Snapshot::whole(Frame::Coded(&resident), crate::px::Span::exact(960))
+            Snapshot::whole(Frame::Coded(&resident), units::px::Span::exact(960))
                 .check(&name, tolerance);
             // The nose and whiskers on the floor, with the fur above white at their edge.
-            let detail = crate::px::Rect::<crate::px::Output> {
-                at: crate::px::At {
-                    x: crate::px::Place::measured(1150),
-                    y: crate::px::Place::measured(2000),
+            let detail = units::px::Rect::<units::px::Output> {
+                at: units::px::At {
+                    x: units::px::Place::measured(1150),
+                    y: units::px::Place::measured(2000),
                 },
-                size: crate::px::Size::measured(512, 512),
+                size: units::px::Size::measured(512, 512),
             };
             Snapshot::crops(Frame::Coded(&resident), &[detail])
                 .check(&format!("{name}-1to1"), tolerance);
@@ -3979,12 +3979,12 @@ mod hdr_grade {
 /// snapshot per setting, with every stage the claim is not about held off.
 mod pictures {
     use super::*;
-    use crate::px::{At, Output, Place, Rect, Size, Span};
     use crate::snapshot::{Anchoring, Frame, Snapshot, Tolerance};
+    use units::px::{At, Output, Place, Rect, Size, Span};
 
     /// The decode floor for a claim a frame shrunk to [`WHOLE`] answers, which lets the decode halve.
     const SHRUNK: u32 = 1600;
-    const WHOLE: Span<crate::px::Pinned> = Span::exact(960);
+    const WHOLE: Span<units::px::Pinned> = Span::exact(960);
     /// No camera match, so no lattice: every pin under it holds on SwiftShader against the
     /// 3080's, the lens gather and the sharpen included.
     const NEUTRAL: Tolerance = Tolerance {
@@ -4252,7 +4252,7 @@ mod pictures {
                 .expect("the frame has levels");
             let anchoring = Anchoring {
                 levels: levels.anchored(),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
             };
             // The denoise snapshot's, which is this path with a denoise after it.
             let tolerance = Tolerance {
@@ -4260,7 +4260,7 @@ mod pictures {
                 mean: 0.1,
             };
 
-            let drawn = crops.map(|(x, y, side)| Rect::<crate::px::Drawn>::exact(x, y, side, side));
+            let drawn = crops.map(|(x, y, side)| Rect::<units::px::Drawn>::exact(x, y, side, side));
             // The same photosites, in the orientation the file stored them in.
             let (left, top, width, height) = held.crop();
             let sensor = crops.map(|(x, y, side)| {
@@ -4275,7 +4275,7 @@ mod pictures {
                     height,
                     held.upright(),
                 );
-                Rect::<crate::px::Sensor>::exact(
+                Rect::<units::px::Sensor>::exact(
                     stored.left + left,
                     stored.top + top,
                     stored.width,
@@ -4294,8 +4294,8 @@ mod pictures {
     #[test]
     fn a_print_is_the_sheet_the_reader_is_shown() {
         use crate::gpu::{Canvas, Grade};
-        use crate::light::Light;
         use crate::print::{Paper, Presentation, Scene};
+        use units::light::Light;
 
         const CANVAS: (u32, u32) = (320, 240);
         // Wider than the pins beside it, and set by two adapters rather than by the lighting: an
@@ -4439,7 +4439,7 @@ mod pictures {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             Snapshot::pq(
                 &samples,
-                Size::<crate::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             )
             .check(name, SHEET);
         }
@@ -4473,7 +4473,7 @@ mod one_open_at_a_time {
             // whether two of them overlap, which does not depend on how big each one is.
             long_edge: 1200,
             grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
             defringe: 0.5,
@@ -4665,8 +4665,8 @@ mod tone_domain {
     use super::*;
 
     const QUANTILE: f64 = 0.995;
-    const REFERENCE_NITS: crate::light::Light<crate::light::SceneNits> =
-        crate::light::Light::exactly(203.0);
+    const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =
+        units::light::Light::exactly(203.0);
     /// What counts as leaving a band alone. Generous on purpose: the claim is disjoint ends,
     /// not a particular falloff, and the constants in `adjust.slang` are taste.
     const ALONE: f64 = 3.0;
@@ -4814,7 +4814,7 @@ mod tone_domain {
             &coded,
             &crate::gpu::Grade {
                 colour,
-                exposure: Some(crate::light::Stops::ZERO),
+                exposure: Some(units::light::Stops::ZERO),
                 adjust,
                 // The frame's own, or the balance has no illuminant to move away from and the
                 // temperature slider is the identity whatever it is set to.
@@ -4825,7 +4825,7 @@ mod tone_domain {
                     frame.height,
                     levels,
                     REFERENCE_NITS,
-                    crate::light::Light::exactly(1000.0),
+                    units::light::Light::exactly(1000.0),
                 )
             },
         )

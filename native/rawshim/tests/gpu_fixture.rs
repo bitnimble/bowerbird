@@ -22,8 +22,8 @@ use rawshim::composition::{Composition, LensSpec};
 use rawshim::hdr::{self, Prepared};
 use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
 use rawshim::image::Strengths;
-use rawshim::light::{Light, Stops};
-use rawshim::px::Size;
+use units::light::{Light, Stops};
+use units::px::Size;
 use rawshim::resident::Resident;
 use rawshim::snapshot::{Snapshot, Tolerance};
 use rawshim::tone;
@@ -38,7 +38,7 @@ const SHIPPED: hdr::Grade = hdr::Grade {
 };
 
 /// The display the editor's draws are pinned against.
-const DISPLAY: Light<rawshim::light::DisplayNits> = Light::exactly(1000.0);
+const DISPLAY: Light<units::light::DisplayNits> = Light::exactly(1000.0);
 
 const STRENGTHS: Strengths = Strengths {
     sharpen: 0.3,
@@ -126,7 +126,7 @@ fn matched() -> HdrColour {
 }
 
 /// The size every synthetic frame here is, in the grade's output pixels.
-fn frame_size() -> Size<rawshim::px::Output> {
+fn frame_size() -> Size<units::px::Output> {
     Size::measured(WIDTH, HEIGHT)
 }
 
@@ -2321,7 +2321,7 @@ fn a_panorama_window_reproduces_the_recorded_frame() {
         return;
     };
     let (spec, paths) = pano_of_two();
-    let window = rawshim::px::Rect::exact(PANO_LEFT, PANO_TOP, PANO_WIDE, PANO_TALL);
+    let window = units::px::Rect::exact(PANO_LEFT, PANO_TOP, PANO_WIDE, PANO_TALL);
     let sources: Vec<SourceFile<'_>> = paths
         .iter()
         .map(|p| SourceFile {
@@ -2435,14 +2435,14 @@ fn two_tiles_picking_two_frames(spec: Composition) -> rawshim::assembly::Drawing
         // against, so either of them here would move every pixel of it for a reason that has
         // nothing to do with §5.2.
         warp: vec![rawshim::composition::no_warp().map(|at| at as f32); 2],
-        gain: vec![rawshim::light::Gain::ONE; 2],
+        gain: vec![units::light::Gain::ONE; 2],
         feather: 0.01,
     }
 }
 
 fn assembly_request<'a>(
     sources: &'a [SourceFile<'a>],
-    window: rawshim::px::Rect<rawshim::px::Composite>,
+    window: units::px::Rect<units::px::Composite>,
 ) -> CompositeRequest<'a> {
     CompositeRequest {
         window,
@@ -2487,12 +2487,12 @@ fn an_assembly_reproduces_the_recorded_frame() {
         })
         .collect();
     let (left, top, wide, tall) = ASSEMBLY_WINDOW;
-    let request = assembly_request(&sources, rawshim::px::Rect::exact(left, top, wide, tall));
+    let request = assembly_request(&sources, units::px::Rect::exact(left, top, wide, tall));
     let hold = pollster::block_on(rawshim::assembly_render::lowpass(&recipe, &request))
         .expect("a lowpass");
     let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(&recipe, &hold, &request))
         .expect("a window");
     let got = read_codes(&out);
-    Snapshot::pq(&got, Size::<rawshim::px::Composite>::exact(wide, tall))
+    Snapshot::pq(&got, Size::<units::px::Composite>::exact(wide, tall))
         .check("composite/assembly-window", UNGRADED);
 }

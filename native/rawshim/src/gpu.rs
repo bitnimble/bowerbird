@@ -176,10 +176,10 @@ const FINE_SIGMA: f64 = 1.0 / 1024.0;
 /// **Texels of the working texture, not pixels of the frame.** The two differ by `detail_step`, and
 /// a caller that used this as a pixel reach would grow a window by a fraction of what the filter
 /// actually reads - `tile::presence_reach` is the one that converts.
-pub fn detail_reach_texels(detail_long: u32) -> crate::px::Span<crate::px::Texel> {
+pub fn detail_reach_texels(detail_long: u32) -> units::px::Span<units::px::Texel> {
     // Off the working texture's own long edge, which is what keeps it a share of the photograph
     // rather than a count of texels: `detail_reach` is `GUIDE_RADIUS` and `FINE_SIGMA` of it.
-    crate::px::Span::measured(detail_reach(detail_long))
+    units::px::Span::measured(detail_reach(detail_long))
 }
 
 pub fn detail_reach(detail_long: u32) -> usize {
@@ -220,15 +220,15 @@ const CHROMA_BLUR_REACH: u32 = 4;
 /// A 960th is four pixels at the size the viewer's rendition ships, so that rendition is
 /// unchanged and every other size now agrees with it rather than the other way about.
 ///
-/// A [`crate::px::Share`] and not a number of pixels, which is the type saying what went wrong
+/// A [`units::px::Share`] and not a number of pixels, which is the type saying what went wrong
 /// here: `Output`'s pixels are as large as the rendition is small, so it is not [`Absolute`] and
 /// a constant distance in it does not compile.
-const CHROMA_GRID: crate::px::Share = crate::px::Share::of(1, 960);
+const CHROMA_GRID: units::px::Share = units::px::Share::of(1, 960);
 
 /// This frame's pixels to a texel of `chroma_smoothed`, given the photograph it is part of.
 pub fn chroma_shrink(
-    photograph_long: crate::px::Span<crate::px::Output>,
-) -> crate::px::Span<crate::px::Output> {
+    photograph_long: units::px::Span<units::px::Output>,
+) -> units::px::Span<units::px::Output> {
     CHROMA_GRID.over(photograph_long)
 }
 
@@ -238,8 +238,8 @@ pub fn chroma_shrink(
 /// to stay this far from anything that differs, and a window that must render as the
 /// whole frame does has to carry this much of it past what it keeps.
 pub fn chroma_smooth_reach(
-    photograph_long: crate::px::Span<crate::px::Output>,
-) -> crate::px::Span<crate::px::Output> {
+    photograph_long: units::px::Span<units::px::Output>,
+) -> units::px::Span<units::px::Output> {
     chroma_shrink(photograph_long) * (CHROMA_BLUR_REACH + 2) as usize
 }
 
@@ -2747,24 +2747,24 @@ pub struct Grade<'a> {
     /// Only the presence sliders read it, through the working texture `detail.slang` blurs on: how
     /// large a share of the picture that blur covers is a property of the photograph, and a crop
     /// left to answer it from its own dimensions applies a different Clarity from the export.
-    pub photograph_long: crate::px::Span<crate::px::Output>,
+    pub photograph_long: units::px::Span<units::px::Output>,
     /// The camera match, whatever the profile: its exposure, curve and saturation are where the
     /// sliders start on both. [`Grade::matched`] is the part a None profile leaves out.
     pub colour: Option<&'a HdrColour>,
     /// `tone::Levels`, as the uniform's `white`, `source_level` and `black_floor`.
-    pub white: crate::light::Light<crate::light::Level>,
-    pub source_level: crate::light::Light<crate::light::Level>,
+    pub white: units::light::Light<units::light::Level>,
+    pub source_level: units::light::Light<units::light::Level>,
     /// None where nothing walked a histogram for this frame, and then `adjust.slang` places the low
     /// pair at their deepest - which is where a photograph with real black in it puts them anyway.
-    pub floor: Option<crate::light::Light<crate::light::Level>>,
+    pub floor: Option<units::light::Light<units::light::Level>>,
     /// What diffuse white is anchored to, which is the divisor between the scene's nits and the
     /// scene-relative units the fit and the sliders are written in.
-    pub reference_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_nits: units::light::Light<units::light::SceneNits>,
     /// Where this target's highlights roll into: [`Output::mastered`] for a rendition, and the
     /// display's own peak for a draw.
-    pub peak_nits: crate::light::Light<crate::light::DisplayNits>,
+    pub peak_nits: units::light::Light<units::light::DisplayNits>,
     /// None resolves to the camera match's exposure, or zero without a match.
-    pub exposure: Option<crate::light::Stops>,
+    pub exposure: Option<units::light::Stops>,
     /// The reader's own sliders, on Camera Raw's -100..100 scales.
     pub adjust: Adjust,
     /// The illuminant the camera balanced this frame for, which is the baseline the reader's
@@ -2801,7 +2801,7 @@ pub struct Grade<'a> {
     /// display and never looks at this.
     pub intent: Intent,
     /// How far one printed mark reaches (`print::Scene::ink_blur`); zero everywhere but a print.
-    pub print_blur: crate::px::Extent<crate::px::Output>,
+    pub print_blur: units::px::Extent<units::px::Output>,
     /// The output rows an encode writes. None writes every row.
     pub band: Option<Band>,
     /// Only the stage's draw reads it; None everywhere else.
@@ -2819,8 +2819,8 @@ pub struct ReachMask {
 /// A run of whole output rows.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Band {
-    pub top: crate::px::Place<crate::px::Output>,
-    pub rows: crate::px::Span<crate::px::Output>,
+    pub top: units::px::Place<units::px::Output>,
+    pub rows: units::px::Span<units::px::Output>,
 }
 
 /// How a picture is brought inside what its target can show. `gamut_map.slang` reads these by
@@ -2852,7 +2852,7 @@ pub struct Canvas {
     pub region: (f64, f64, f64, f64),
     /// The canvas itself, in its own pixels - the browser's, which are neither the frame's nor the
     /// output's however the two happen to compare at one zoom.
-    pub size: crate::px::Size<crate::px::Canvas>,
+    pub size: units::px::Size<units::px::Canvas>,
     /// How deep the pyramid bound with it goes. Zero draws from the frame's buffer whatever the
     /// ratio, which is what a tile does: it is only ever magnified.
     pub max_lod: u32,
@@ -2869,8 +2869,8 @@ pub struct Canvas {
 /// the crop's fractions over a picture twice the size of the one they were fractions of.
 #[derive(Clone, Copy)]
 pub struct Window {
-    pub photograph: crate::px::Size<crate::px::Drawn>,
-    pub origin: crate::px::At<crate::px::Drawn>,
+    pub photograph: units::px::Size<units::px::Drawn>,
+    pub origin: units::px::At<units::px::Drawn>,
 }
 
 impl<'a> Grade<'a> {
@@ -2880,13 +2880,13 @@ impl<'a> Grade<'a> {
         width: usize,
         height: usize,
         levels: crate::tone::Levels,
-        reference_nits: crate::light::Light<crate::light::SceneNits>,
-        peak_nits: crate::light::Light<crate::light::DisplayNits>,
+        reference_nits: units::light::Light<units::light::SceneNits>,
+        peak_nits: units::light::Light<units::light::DisplayNits>,
     ) -> Grade<'a> {
         Grade {
             width,
             height,
-            photograph_long: crate::px::Span::measured(width.max(height)),
+            photograph_long: units::px::Span::measured(width.max(height)),
             colour: None,
             white: levels.white,
             source_level: levels.peak,
@@ -2902,7 +2902,7 @@ impl<'a> Grade<'a> {
             neighbourhood_window: None,
             canvas: None,
             intent: Intent::default(),
-            print_blur: crate::px::Extent::measured(0.0),
+            print_blur: units::px::Extent::measured(0.0),
             band: None,
             reach_mask: None,
         }
@@ -2930,7 +2930,7 @@ impl<'a> Grade<'a> {
     /// photograph rather than as an error.
     pub fn within(self, photograph: (usize, usize)) -> Grade<'a> {
         Grade {
-            photograph_long: crate::px::Span::measured(photograph.0.max(photograph.1)),
+            photograph_long: units::px::Span::measured(photograph.0.max(photograph.1)),
             ..self
         }
     }
@@ -2950,8 +2950,8 @@ impl<'a> Grade<'a> {
     /// the identity over its buffer - which is why [`Grade::within`] is separable.
     pub fn windowed(
         self,
-        photograph: crate::px::Size<crate::px::Drawn>,
-        origin: crate::px::At<crate::px::Drawn>,
+        photograph: units::px::Size<units::px::Drawn>,
+        origin: units::px::At<units::px::Drawn>,
     ) -> Grade<'a> {
         Grade {
             window: Some(Window { photograph, origin }),
@@ -2976,8 +2976,8 @@ impl<'a> Grade<'a> {
     /// because a tile applies no geometry.
     pub fn neighbourhood_windowed(
         self,
-        photograph: crate::px::Size<crate::px::Drawn>,
-        origin: crate::px::At<crate::px::Drawn>,
+        photograph: units::px::Size<units::px::Drawn>,
+        origin: units::px::At<units::px::Drawn>,
     ) -> Grade<'a> {
         Grade {
             neighbourhood_window: Some(Window { photograph, origin }),
@@ -2990,9 +2990,9 @@ impl<'a> Grade<'a> {
     /// **Its own space, not a rectangle of the frame.** A straighten's bounding box can exceed the
     /// frame it was cut from, so a caller sizing a buffer or a dispatch off `width`/`height`
     /// instead of this under-allocates and writes a picture with an unwritten tail.
-    pub fn output(&self) -> crate::px::Size<crate::px::Output> {
+    pub fn output(&self) -> units::px::Size<units::px::Output> {
         let (width, height) = self.photograph();
-        crate::hdr::cropped_out(crate::px::Size::exact(width, height), self.geometry)
+        crate::hdr::cropped_out(units::px::Size::exact(width, height), self.geometry)
     }
 
     /// The same, as the two numbers a dispatch and a buffer size want.
@@ -3003,7 +3003,7 @@ impl<'a> Grade<'a> {
     /// The rows of that output an encode writes: all of them, or its band.
     pub fn written(&self) -> Band {
         self.band.unwrap_or(Band {
-            top: crate::px::Place::ORIGIN,
+            top: units::px::Place::ORIGIN,
             rows: self.output().height,
         })
     }
@@ -3056,7 +3056,7 @@ pub struct Adjust {
 
 /// A chroma gain on the Saturation slider's scale, where 0 leaves chroma alone and -100 is grey, in
 /// the whole steps the document stores.
-pub fn saturation_slider(gain: crate::light::Gain) -> f64 {
+pub fn saturation_slider(gain: units::light::Gain) -> f64 {
     ((gain.raw() - 1.0) * 100.0).round()
 }
 
@@ -3087,7 +3087,7 @@ impl TryFrom<ToneCurveData> for ToneCurve {
 
     fn try_from(value: ToneCurveData) -> Result<Self, Self::Error> {
         let ToneCurveData::PchipCbrt3 { points } = value;
-        if !crate::light::curve_is_valid(&points) {
+        if !units::light::curve_is_valid(&points) {
             return Err("tone curve points must be finite, ordered, and inside [0,1]");
         }
         Ok(Self::PchipCbrt3 { points })
@@ -3123,13 +3123,13 @@ impl Adjust {
     /// the four the match fits either unset or at the match's own values.
     pub fn at_the_camera(
         &self,
-        exposure: Option<crate::light::Stops>,
+        exposure: Option<units::light::Stops>,
         colour: Option<&HdrColour>,
     ) -> bool {
-        let curve = colour.map_or(crate::light::IDENTITY_CURVE.as_slice(), |c| {
+        let curve = colour.map_or(units::light::IDENTITY_CURVE.as_slice(), |c| {
             c.curve.as_slice()
         });
-        let camera_exposure = colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
+        let camera_exposure = colour.map_or(units::light::Stops::ZERO, |c| c.exposure);
         let saturation = colour.map_or(0.0, HdrColour::saturation_slider);
         let illuminant = colour.and_then(|c| c.illuminant);
         let balance_at_camera = match (self.temperature, self.tint) {
@@ -3154,7 +3154,7 @@ impl Adjust {
             && self
                 .tone_curve
                 .as_ref()
-                .is_none_or(|c| crate::light::same_curve(c.points(), curve))
+                .is_none_or(|c| units::light::same_curve(c.points(), curve))
     }
 
     /// Whether any slider reads the neighbourhood, and so whether `detail` has to be built.
@@ -3204,11 +3204,11 @@ impl Output {
     /// has nothing above diffuse white to put a highlight in.
     pub fn mastered(
         self,
-        reference: crate::light::Light<crate::light::SceneNits>,
-    ) -> crate::light::Light<crate::light::DisplayNits> {
+        reference: units::light::Light<units::light::SceneNits>,
+    ) -> units::light::Light<units::light::DisplayNits> {
         match self {
-            Output::Pq | Output::Rolled => crate::light::Light::PQ_CEILING,
-            Output::Srgb => crate::light::Light::at_diffuse_white(reference),
+            Output::Pq | Output::Rolled => units::light::Light::PQ_CEILING,
+            Output::Srgb => units::light::Light::at_diffuse_white(reference),
         }
     }
 }
@@ -4915,7 +4915,7 @@ impl Uploaded<'_> {
         let print_grade;
         let grade = if print.is_some() || pigment {
             print_grade = Grade {
-                peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
+                peak_nits: units::light::Light::at_diffuse_white(grade.reference_nits),
                 intent: print.map_or(grade.intent, |scene| scene.rendering_intent),
                 print_blur: print.map_or(grade.print_blur, |scene| {
                     scene.ink_blur(grade.output().long())
@@ -5132,7 +5132,7 @@ impl Uploaded<'_> {
         &self,
         recording: &mut Recording<'_>,
         scene: &crate::print::Scene,
-        display_peak: crate::light::Light<crate::light::DisplayNits>,
+        display_peak: units::light::Light<units::light::DisplayNits>,
     ) -> (Buffer, Buffer) {
         let target = crate::printer_gamut::target(scene, self.printer.borrow().as_deref());
         let target = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -5357,7 +5357,7 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
 fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> Vec<u32> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
     let shape = shape.as_ref();
-    let identity = crate::light::IDENTITY_CURVE;
+    let identity = units::light::IDENTITY_CURVE;
     let camera = grade
         .colour
         .map_or(identity.as_slice(), |c| c.curve.as_slice());
@@ -5377,7 +5377,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.peak_nits.raw());
     let camera_exposure = grade
         .colour
-        .map_or(crate::light::Stops::ZERO, |c| c.exposure);
+        .map_or(units::light::Stops::ZERO, |c| c.exposure);
     f(&mut w, grade.exposure.unwrap_or(camera_exposure).raw());
     w.push(match grade.output {
         Output::Pq => 0,
@@ -5404,7 +5404,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(0); // the alignment word before `region_origin`
     let shown = grade.canvas.unwrap_or(Canvas {
         region: (0.0, 0.0, 0.0, 0.0),
-        size: crate::px::Size::of(crate::px::Span::ZERO, crate::px::Span::ZERO),
+        size: units::px::Size::of(units::px::Span::ZERO, units::px::Span::ZERO),
         max_lod: 0,
     });
     let (canvas_w, canvas_h) = shown.size.raw();
@@ -5510,21 +5510,21 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.print_blur.raw());
     for points in [reader, camera] {
         assert!(
-            crate::light::curve_is_valid(points),
+            units::light::curve_is_valid(points),
             "not a tone curve: {points:?}"
         );
         w.push(points.len() as u32);
     }
-    w.push(u32::from(crate::light::same_curve(reader, camera)));
+    w.push(u32::from(units::light::same_curve(reader, camera)));
     for points in [reader, camera] {
-        let tangents = crate::light::curve_tangents(points);
+        let tangents = units::light::curve_tangents(points);
         for (point, tangent) in points.iter().zip(tangents) {
             for value in [point[0], point[1], tangent, 0.0] {
                 f(&mut w, value);
             }
         }
         w.resize(
-            w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4,
+            w.len() + (units::light::CURVE_MAX_POINTS - points.len()) * 4,
             0,
         );
     }
@@ -5618,7 +5618,7 @@ fn half(v: f32) -> [u8; 2] {
 
 #[cfg(test)]
 mod tests {
-    use crate::light::{Light, Stops};
+    use units::light::{Light, Stops};
 
     #[test]
     fn renditions_defer_canvas_and_print_pipelines_and_draws_reuse_them() {
@@ -5755,7 +5755,7 @@ mod tests {
     /// rows, and padding where the picture's width and height are not multiples of the block.
     #[test]
     fn the_video_planes_code_what_the_canvas_would_show() {
-        use crate::light::{DisplayNits, Light};
+        use units::light::{DisplayNits, Light};
         let gpu = super::device().expect("a Vulkan adapter");
         let (width, height) = (7u32, 5u32);
         // What `fs` writes: Display P3 over SDR white through the signed sRGB curve, past one for
@@ -5947,8 +5947,8 @@ mod tests {
                 let rows = 7.min(out_height - top);
                 let band = super::Grade {
                     band: Some(super::Band {
-                        top: crate::px::Place::measured(top),
-                        rows: crate::px::Span::measured(rows),
+                        top: units::px::Place::measured(top),
+                        rows: units::px::Span::measured(rows),
                     }),
                     ..grade.clone()
                 };
@@ -6292,7 +6292,7 @@ mod tests {
                 if name.starts_with("region_") || *name == "canvas_size" {
                     2
                 } else if name.ends_with("[CURVE_POINTS]") {
-                    crate::light::CURVE_MAX_POINTS * 4
+                    units::light::CURVE_MAX_POINTS * 4
                 } else {
                     1
                 }
@@ -6431,7 +6431,7 @@ mod tests {
         const BLOCK: usize = 64;
         // Off this frame's own long edge, the smoothing's footprint being a share of the
         // photograph rather than a fixed count of pixels.
-        let margin = 2 + super::chroma_smooth_reach(crate::px::Span::measured(1024)).raw();
+        let margin = 2 + super::chroma_smooth_reach(units::px::Span::measured(1024)).raw();
         /// One pixel wide, and away from every block edge: what says the two routes read the same
         /// *place*. A drawn canvas offset by a pixel still agrees about every block interior.
         const SPIKE: usize = 160;
@@ -6458,7 +6458,7 @@ mod tests {
         let colour = crate::hdr_fit::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
-            size: crate::px::Size::measured(width, height),
+            size: units::px::Size::measured(width, height),
             // Drawn at 1:1, where the frame's own buffer is what a canvas pixel covers.
             max_lod: 0,
         };
@@ -6591,7 +6591,7 @@ mod tests {
                 },
                 canvas: Some(super::Canvas {
                     region: (0.0, 0.0, side as f64, side as f64),
-                    size: crate::px::Size::measured(side, side),
+                    size: units::px::Size::measured(side, side),
                     max_lod: 0,
                 }),
                 reach_mask: mask,
@@ -6707,7 +6707,7 @@ mod tests {
         // The frame's own buffer, at 1:1: `max_lod` of zero is what makes it so whatever the ratio.
         let at_one = grade(super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
-            size: crate::px::Size::measured(width, height),
+            size: units::px::Size::measured(width, height),
             max_lod: 0,
         });
         // The same region on half the canvas, which is a ratio of two - the point `gpu.rs` stops
@@ -6715,7 +6715,7 @@ mod tests {
         let (canvas_w, canvas_h) = (width / 2, height / 2);
         let zoomed = grade(super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
-            size: crate::px::Size::measured(canvas_w, canvas_h),
+            size: units::px::Size::measured(canvas_w, canvas_h),
             max_lod: pyramid.levels,
         });
 
@@ -6727,7 +6727,7 @@ mod tests {
         // The smoothing's reach and two canvas pixels more in from every block edge, so all four
         // taps, the cubic's own reach and the neighbourhood the chroma is read from stay inside
         // one value at both scales.
-        let margin = super::chroma_smooth_reach(crate::px::Span::measured(width))
+        let margin = super::chroma_smooth_reach(units::px::Span::measured(width))
             .raw()
             .div_ceil(2)
             + 2;
@@ -7151,7 +7151,7 @@ mod tests {
         let colour = crate::hdr_fit::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
-            size: crate::px::Size::measured(width, height),
+            size: units::px::Size::measured(width, height),
             max_lod: 0,
         };
         let grade = |adjust| super::Grade {
@@ -7238,7 +7238,7 @@ mod tests {
         let colour = crate::hdr_fit::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
-            size: crate::px::Size::measured(width, height),
+            size: units::px::Size::measured(width, height),
             max_lod: 0,
         };
         let grade = |adjust, canvas| super::Grade {
@@ -7488,7 +7488,7 @@ mod tests {
             output: super::Output::Rolled,
             canvas: Some(super::Canvas {
                 region: (0.0, 0.0, width as f64, height as f64),
-                size: crate::px::Size::measured(width, height),
+                size: units::px::Size::measured(width, height),
                 max_lod: 0,
             }),
             ..super::Grade::new(
@@ -7812,12 +7812,12 @@ mod tests {
 
             let windowed = origin != (0, 0);
             let grade = super::Grade {
-                photograph_long: crate::px::Span::measured(full.0.max(full.1)),
+                photograph_long: units::px::Span::measured(full.0.max(full.1)),
                 geometry,
                 window: match windowed {
                     true => Some(super::Window {
-                        photograph: crate::px::Size::exact(full.0, full.1),
-                        origin: crate::px::At::exact(origin.0, origin.1),
+                        photograph: units::px::Size::exact(full.0, full.1),
+                        origin: units::px::At::exact(origin.0, origin.1),
                     }),
                     false => None,
                 },

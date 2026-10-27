@@ -5,7 +5,7 @@
 //! under it. Built once over the crop and sliced, the same canvas pixel reads the same lowpass
 //! whichever window asked for it, which is what the editor and a rendition agreeing requires.
 
-use crate::px::{Composite, Rect, Share, Span};
+use units::px::{Composite, Rect, Share, Span};
 
 /// §5.2's band split: the wavelength the low band ends at.
 pub const LAMBDA_SPLIT: Share = Share::of(1, 64);
@@ -22,7 +22,7 @@ pub struct Lowpass {
     pub bands: Vec<crate::resident::Resident>,
     /// The grid's own size, and where it sits on the canvas in canvas pixels.
     pub size: (usize, usize),
-    pub crop: Rect<crate::px::Composite>,
+    pub crop: Rect<units::px::Composite>,
     /// The white every window of this render is coded against, measured over the whole crop while
     /// the bands were being built. A strip left to measure its own is a band across the finished
     /// picture, which is `crate::composite_tile::CompositeRequest::levels`' own warning.

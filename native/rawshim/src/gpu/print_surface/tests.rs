@@ -1,7 +1,7 @@
 use crate::gpu::{self, Canvas, Gpu, Grade, Texture, Uploaded};
-use crate::light::{Light, SceneNits, Stops};
 use crate::print::{Presentation, Scene};
-use crate::px::{Extent, Size};
+use units::light::{Light, SceneNits, Stops};
+use units::px::{Extent, Size};
 
 struct Comparison {
     gpu: &'static Gpu,

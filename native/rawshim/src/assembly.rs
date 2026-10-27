@@ -2,9 +2,9 @@
 //! A recipe, not a picture, for [`crate::composition`]'s reasons.
 
 use crate::composition::Composition;
-use crate::light::Gain;
-use crate::px::Share;
 use serde::{Deserialize, Serialize};
+use units::light::Gain;
+use units::px::Share;
 
 /// What a tile asks the frame it picks for.
 ///

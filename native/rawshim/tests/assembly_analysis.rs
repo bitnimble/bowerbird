@@ -20,8 +20,8 @@ use support::{
 const SIZE: (usize, usize) = (64, 64);
 
 /// A distance on the shrunk mask, for the tests below that state one as a plain number.
-fn deep(at: f64) -> rawshim::px::Extent<rawshim::px::Shrunk> {
-    rawshim::px::Extent::exactly(at)
+fn deep(at: f64) -> units::px::Extent<units::px::Shrunk> {
+    units::px::Extent::exactly(at)
 }
 
 /// The ground a frame is built on is the ground `support::ground` describes, once it has crossed

@@ -13,7 +13,7 @@ use crate::base::Base;
 use crate::composite_align::AlignSource;
 use crate::composition::Composition;
 use crate::gpu::Gpu;
-use crate::px::{Analysis, Extent, Share, Shrunk, Span};
+use units::px::{Analysis, Extent, Share, Shrunk, Span};
 
 /// The most pieces a seam solve may answer, and the most vertices across them.
 pub const MOST_TILES: usize = 256;

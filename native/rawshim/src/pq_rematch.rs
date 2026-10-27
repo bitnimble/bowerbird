@@ -87,8 +87,8 @@ pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -
 
 #[cfg(test)]
 mod tests {
-    use crate::light::{DisplayNits, Light};
     use crate::sdr_match::SdrMatch;
+    use units::light::{DisplayNits, Light};
 
     /// Each code moves to the one `tone::pq` gives `SdrMatch::of_still` of its light, odd lengths
     /// included, through shadows the macOS match bends and highlights it only scales.

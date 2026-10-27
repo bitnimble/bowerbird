@@ -17,7 +17,7 @@ use rawshim::gpu::Output;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
 use rawshim::resident::level_of_bits;
 
-const REFERENCE_NITS: rawshim::light::Light<rawshim::light::SceneNits> =
+const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =
     support::GRADE.reference_white_nits;
 
 fn saturation(rgb: [f64; 3]) -> f64 {
@@ -47,8 +47,8 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
     // The graded frame's own nits, in plain `f64` from here down: this is a viewer's tone map
     // rather than a stage, so what it wants is the numbers.
     let nits = |code: u16| {
-        let signal = rawshim::light::Light::measured(f64::from(code) / f64::from(u16::MAX));
-        rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(signal).raw()
+        let signal = units::light::Light::measured(f64::from(code) / f64::from(u16::MAX));
+        rawshim::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
     };
     let reference = REFERENCE_NITS.raw();
     let peak = graded
@@ -190,8 +190,8 @@ fn main() {
         let scene = [0, 1, 2].map(|c| f64::from(level_of_bits(samples[p * 3 + c])) / white);
         let nits = [0, 1, 2].map(|c| {
             let signal =
-                rawshim::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));
-            rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(signal).raw()
+                units::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));
+            rawshim::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
         });
         println!(
             "{x:>4},{y:<4} {:>8.3} {:>8.3} {:>8.3} {:>6.3}   {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>6.3}",

@@ -66,7 +66,7 @@ fn main() {
         let resident = rawshim::resident::Resident::upload(gpu, &pq, width, height);
         let snapshot = Snapshot::whole(
             Frame::Coded(&resident),
-            rawshim::px::Span::exact(SNAPSHOT_LONG),
+            units::px::Span::exact(SNAPSHOT_LONG),
         );
         let written = std::path::Path::new(&out).join(format!("{name}.png"));
         std::fs::write(&written, snapshot.encode()).expect("the snapshot writes");

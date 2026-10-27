@@ -12,7 +12,7 @@
 //! lattice to read. Each of those is already an `Option` or a no-op for a RAW that arrived without
 //! an adapter, so the callers were written for it.
 
-use crate::px::{Photograph, Rect, Size};
+use units::px::{Photograph, Rect, Size};
 
 /// A photograph opened as far as the stage a setting can still move.
 pub enum Held {
@@ -126,7 +126,7 @@ pub(crate) async fn whole(
     let scale = crate::view::Scale::for_long_edge(size.raw(), at_least_long_edge);
     held.window(
         Rect {
-            at: crate::px::At::ORIGIN,
+            at: units::px::At::ORIGIN,
             size,
         },
         scale,

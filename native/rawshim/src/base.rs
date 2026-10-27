@@ -422,13 +422,13 @@ fn light_of_code(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
 }
 
 fn light_of_code_table() -> Vec<f32> {
-    let signal = |of: u16| crate::light::Light::measured(f64::from(of) / f64::from(u16::MAX));
-    let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(signal(u16::MAX));
+    let signal = |of: u16| units::light::Light::measured(f64::from(of) / f64::from(u16::MAX));
+    let ceiling = crate::tone::pq_inv::<units::light::SceneNits>(signal(u16::MAX));
     (0..=u16::MAX)
         .map(|code| {
             // A ratio, which is what the header means by normalised: both ends are the scene's
             // nits, so whatever the frame's anchor was divides out and this is the curve alone.
-            let light = crate::tone::pq_inv::<crate::light::SceneNits>(signal(code)) / ceiling;
+            let light = crate::tone::pq_inv::<units::light::SceneNits>(signal(code)) / ceiling;
             light.raw() as f32
         })
         .collect()
@@ -591,7 +591,7 @@ pub async fn prepare(
     frame: crate::resident::Resident,
     gather: Gather,
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
     strengths: crate::image::Strengths,
     sharpen_sigma: crate::image::SharpenSigma,
     sharpen_noise: crate::image::SharpenNoise,
@@ -806,10 +806,10 @@ pub fn resize_window(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     region: &crate::resident::Resident,
-    region_at: crate::px::At<crate::px::Decoded>,
-    whole: crate::px::Size<crate::px::Decoded>,
-    out: crate::px::Rect<crate::px::Drawn>,
-    whole_out: crate::px::Size<crate::px::Drawn>,
+    region_at: units::px::At<units::px::Decoded>,
+    whole: units::px::Size<units::px::Decoded>,
+    out: units::px::Rect<units::px::Drawn>,
+    whole_out: units::px::Size<units::px::Drawn>,
 ) -> crate::resident::Resident {
     let block = Reduction {
         source: region.size(),
@@ -826,22 +826,22 @@ pub fn resize_window(
 /// A pixel wider than the footprints on each side: the shader walks them in `f32` and this in
 /// `f64`, and a pixel the two round to different sides of is a weight a band would drop.
 pub fn resize_footprint(
-    whole: crate::px::Size<crate::px::Decoded>,
-    out: crate::px::Rect<crate::px::Drawn>,
-    whole_out: crate::px::Size<crate::px::Drawn>,
-) -> crate::px::Rect<crate::px::Decoded> {
+    whole: units::px::Size<units::px::Decoded>,
+    out: units::px::Rect<units::px::Drawn>,
+    whole_out: units::px::Size<units::px::Drawn>,
+) -> units::px::Rect<units::px::Decoded> {
     let (sx, sy) = resize_scale(whole.raw(), whole_out.raw());
-    let near = |at: crate::px::Place<crate::px::Drawn>, scale: f64| {
+    let near = |at: units::px::Place<units::px::Drawn>, scale: f64| {
         ((at.raw() as f64 * scale).floor() as usize).saturating_sub(1)
     };
-    let far = |at: crate::px::Place<crate::px::Drawn>,
+    let far = |at: units::px::Place<units::px::Drawn>,
                scale: f64,
-               limit: crate::px::Span<crate::px::Decoded>| {
+               limit: units::px::Span<units::px::Decoded>| {
         (((at.raw() as f64 * scale).ceil() as usize) + 1).min(limit.raw())
     };
     let past = out.past();
     let (left, top) = (near(out.at.x, sx), near(out.at.y, sy));
-    crate::px::Rect::exact(
+    units::px::Rect::exact(
         left,
         top,
         far(past.x, sx, whole.width) - left,
@@ -1606,7 +1606,7 @@ pub async fn encode_base(
     base: &'static Base,
     samples: &mut [u16],
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> Option<()> {
     if samples.is_empty() {
         return Some(());
@@ -1643,7 +1643,7 @@ pub async fn encode_base(
 /// costs nothing at this size.
 pub(crate) fn coding_curve(
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> Vec<u8> {
     let scale = reference_white_nits.raw() / levels.white.raw();
     let mut out = Vec::with_capacity((u16::MAX as usize + 1) * 2);
@@ -1655,7 +1655,7 @@ pub(crate) fn coding_curve(
             level.clamp(0.0, f32::MAX)
         };
         let nits =
-            crate::light::Light::<crate::light::SceneNits>::measured(f64::from(level) * scale);
+            units::light::Light::<units::light::SceneNits>::measured(f64::from(level) * scale);
         let coded = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round();
         out.extend_from_slice(&(coded as u16).to_le_bytes());
     }
@@ -1672,10 +1672,10 @@ pub(crate) fn coding_curve(
 /// coding's own `scale` and no curve at all.
 pub fn full_scale_light(
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> f32 {
     let ceiling =
-        crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(1.0)).raw();
+        crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(1.0)).raw();
     let scale = reference_white_nits.raw() / levels.white.raw();
     (f64::from(u16::MAX) * scale / ceiling) as f32
 }
@@ -1684,7 +1684,7 @@ pub fn full_scale_light(
 /// its variance the denoise left (`galosh::Detail::noise_left`).
 pub fn sharpen_noise(
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
     noise: Option<crate::galosh::NoiseFit>,
     noise_left: f32,
     matrix: Option<[[f32; 3]; 3]>,
@@ -1789,7 +1789,7 @@ fn encode_base_into(
     frame: &crate::gpu::Buffer,
     count: usize,
     levels: crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) {
     let words = count.div_ceil(2);
     // The scale is folded into the curve, so nothing but the two lengths crosses here.
@@ -1865,7 +1865,7 @@ pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
             let gain = crate::fit::Gain::at(a, b, radius as u8);
             match (gain - 1.0).abs() < 1e-5 {
                 true => 1.0,
-                false => crate::tone::gain_in_y(crate::light::Gain::of_ratio(gain)) as f32,
+                false => crate::tone::gain_in_y(units::light::Gain::of_ratio(gain)) as f32,
             }
         })
         .collect()
@@ -1902,9 +1902,9 @@ pub(crate) fn float_storage(
 pub struct Gather {
     /// The buffer the taps read, which is the whole frame for one and the decoded region for the
     /// other.
-    pub source: crate::px::Size<crate::px::Drawn>,
+    pub source: units::px::Size<units::px::Drawn>,
     /// The grid written.
-    pub out: crate::px::Size<crate::px::Drawn>,
+    pub out: units::px::Size<units::px::Drawn>,
     /// The photograph's centre, half a pixel back: the taps read a grid where an integer is a
     /// pixel's centre.
     ///
@@ -1923,14 +1923,14 @@ pub struct Gather {
 
 impl Gather {
     /// A whole frame onto a grid its own size, which is every warp that does not also resize.
-    pub fn frame(size: crate::px::Size<crate::px::Drawn>) -> Gather {
+    pub fn frame(size: units::px::Size<units::px::Drawn>) -> Gather {
         Gather::whole(size, size)
     }
 
     /// A whole frame onto a grid of its own, resizing where the two differ.
     pub fn whole(
-        source: crate::px::Size<crate::px::Drawn>,
-        out: crate::px::Size<crate::px::Drawn>,
+        source: units::px::Size<units::px::Drawn>,
+        out: units::px::Size<units::px::Drawn>,
     ) -> Gather {
         let (sw, sh) = source.raw();
         let (ow, oh) = out.raw();
@@ -1956,17 +1956,17 @@ impl Gather {
     /// `image::lens_footprint` reads the identical plan for what has to be *decoded*, which is a
     /// bounds question the host answers before there are any pixels to gather.
     pub fn window(
-        full: crate::px::Size<crate::px::Drawn>,
-        window: crate::px::Rect<crate::px::Drawn>,
-        region: crate::px::Rect<crate::px::Drawn>,
+        full: units::px::Size<units::px::Drawn>,
+        window: units::px::Rect<units::px::Drawn>,
+        region: units::px::Rect<units::px::Drawn>,
     ) -> Gather {
         let (fw, fh) = full.raw();
         let (window_left, window_top, window_w, window_h) = window.raw();
         let (region_left, region_top, region_w, region_h) = region.raw();
         let half2 = (fw as f64 / 2.0).powi(2) + (fh as f64 / 2.0).powi(2);
         Gather {
-            source: crate::px::Size::exact(region_w, region_h),
-            out: crate::px::Size::exact(window_w, window_h),
+            source: units::px::Size::exact(region_w, region_h),
+            out: units::px::Size::exact(window_w, window_h),
             // The frame's own, exactly as `Gather::whole` computes it for the frame this is a
             // piece of, so the two land on the same tap to the bit.
             centre: (fw as f64 / 2.0 - 0.5, fh as f64 / 2.0 - 0.5),
@@ -2820,8 +2820,8 @@ async fn read_all<const N: usize>(
 
 #[cfg(test)]
 mod tests {
-    use crate::light::{Light, SceneNits};
     use crate::resident::Resident;
+    use units::light::{Light, SceneNits};
 
     /// The reference every test here codes against, which is BT.2408's.
     const REFERENCE: Light<SceneNits> = Light::exactly(203.0);
@@ -3108,7 +3108,7 @@ mod tests {
         let light = [0.01f64, 0.001, 0.000_001];
         let sigma = 0.000_001;
         let code = |value: f64| {
-            (crate::tone::pq(crate::light::Light::<crate::light::SceneNits>::measured(
+            (crate::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
                 value.max(0.0) * 10_000.0,
             ))
             .raw()
@@ -3275,8 +3275,8 @@ mod tests {
         let base = super::device(gpu).expect("the pipelines");
         let (w, h) = (40usize, 20usize);
         let code = |nits: f64| {
-            let nits: crate::light::Light<crate::light::DisplayNits> =
-                crate::light::Light::exactly(nits);
+            let nits: units::light::Light<units::light::DisplayNits> =
+                units::light::Light::exactly(nits);
             (crate::tone::pq(nits).raw() * 65535.0).round() as u16
         };
         let mut samples: Vec<u16> = (0..w * h)
@@ -3384,7 +3384,7 @@ mod tests {
         let (w, h) = (192usize, 128usize);
         let lens = bending();
         let frame = Resident::upload(gpu, &vec![13000u16; w * h * 3], w, h);
-        let gather = super::Gather::frame(crate::px::Size::exact(w, h));
+        let gather = super::Gather::frame(units::px::Size::exact(w, h));
         let Some((warped, jacobian)) = super::warp_lens(gpu, base, &frame, gather, &lens) else {
             panic!("a bending lens warps");
         };
@@ -3476,7 +3476,7 @@ mod tests {
                 gpu,
                 base,
                 frame,
-                super::Gather::frame(crate::px::Size::exact(w, h)),
+                super::Gather::frame(units::px::Size::exact(w, h)),
                 levels,
                 REFERENCE,
                 crate::image::Strengths {
@@ -3713,11 +3713,11 @@ mod tests {
             (13, 18, 20, 11),
             (40, 28, 1, 1),
         ] {
-            let out = crate::px::Rect::exact(x, y, width, height);
+            let out = units::px::Rect::exact(x, y, width, height);
             let reads = super::resize_footprint(
-                crate::px::Size::exact(whole.0, whole.1),
+                units::px::Size::exact(whole.0, whole.1),
                 out,
-                crate::px::Size::exact(whole_out.0, whole_out.1),
+                units::px::Size::exact(whole_out.0, whole_out.1),
             );
             let (left, top, right) = (reads.at.x.raw(), reads.at.y.raw(), reads.past().x.raw());
             let region: Vec<u16> = (top..reads.past().y.raw())
@@ -3734,9 +3734,9 @@ mod tests {
                 base,
                 &held,
                 reads.at,
-                crate::px::Size::exact(whole.0, whole.1),
+                units::px::Size::exact(whole.0, whole.1),
                 out,
-                crate::px::Size::exact(whole_out.0, whole_out.1),
+                units::px::Size::exact(whole_out.0, whole_out.1),
             );
             held.reclaim();
             let band = pollster::block_on(band.into_host()).expect("the band maps");
@@ -4158,7 +4158,7 @@ mod tests {
             }
             // Back to a code the same way the shader does, by the curve rather than by a table.
             let want =
-                crate::tone::pq(full * crate::light::Gain::of_ratio(acc / total)).raw() * 65535.0;
+                crate::tone::pq(full * units::light::Gain::of_ratio(acc / total)).raw() * 65535.0;
             worst = worst.max((f64::from(out[x * 3]) - want).abs());
         }
         // Of 65535, against the 625 the truncated footprint managed on the same ramp. What is left
@@ -4439,15 +4439,15 @@ mod tests {
                         for sy in 2 * y..last_y {
                             for sx in 2 * x..last_x {
                                 let code = coarser[((sy * size.0) + sx) * 3 + channel];
-                                acc += crate::tone::pq_inv::<crate::light::SceneNits>(
-                                    crate::light::Light::measured(f64::from(code) / 65535.0),
+                                acc += crate::tone::pq_inv::<units::light::SceneNits>(
+                                    units::light::Light::measured(f64::from(code) / 65535.0),
                                 )
                                 .raw();
                                 taps += 1.0;
                             }
                         }
                         mine[((y * half.0) + x) * 3 + channel] = (crate::tone::pq(
-                            crate::light::Light::<crate::light::SceneNits>::measured(acc / taps),
+                            units::light::Light::<units::light::SceneNits>::measured(acc / taps),
                         )
                         .raw()
                             * 65535.0)
@@ -4509,7 +4509,7 @@ mod tests {
             gpu,
             base,
             &frame,
-            super::Gather::frame(crate::px::Size::exact(width, height)),
+            super::Gather::frame(units::px::Size::exact(width, height)),
             &lens,
         )
         .expect("the whole frame warps");
@@ -4526,9 +4526,9 @@ mod tests {
                 base,
                 &frame,
                 super::Gather::window(
-                    crate::px::Size::exact(width, height),
-                    crate::px::Rect::exact(left, top, cut_width, cut_height),
-                    crate::px::Rect::exact(0, 0, width, height),
+                    units::px::Size::exact(width, height),
+                    units::px::Rect::exact(left, top, cut_width, cut_height),
+                    units::px::Rect::exact(0, 0, width, height),
                 ),
                 &lens,
             )
@@ -4568,7 +4568,7 @@ mod tests {
             .flat_map(|at| [(2_000 + (at % w) * 900) as u16; 3])
             .collect();
         let flat = |scale: f64| vec![(scale - 1.0) * crate::image::SPLINE_UNIT; 2];
-        let gather = super::Gather::frame(crate::px::Size::exact(w, h));
+        let gather = super::Gather::frame(units::px::Size::exact(w, h));
         let plain = warped(gpu, base, &frame, gather, &bending()).expect("a bending lens warps");
         let scaled = crate::fit::Lens {
             tca: Some([flat(1.05), flat(0.95)]),
@@ -4666,7 +4666,7 @@ mod tests {
             gpu,
             base,
             &coded,
-            super::Gather::frame(crate::px::Size::exact(width, height)),
+            super::Gather::frame(units::px::Size::exact(width, height)),
             &lens,
         )
         .expect("a bending lens warps");
@@ -4824,7 +4824,7 @@ mod tests {
                 gpu,
                 base,
                 &samples,
-                super::Gather::frame(crate::px::Size::exact(width, height)),
+                super::Gather::frame(units::px::Size::exact(width, height)),
                 lens,
             );
             gathered.unwrap_or(samples)
@@ -4834,7 +4834,7 @@ mod tests {
                 gpu,
                 base,
                 Resident::upload(gpu, &frame, width, height),
-                super::Gather::frame(crate::px::Size::exact(width, height)),
+                super::Gather::frame(units::px::Size::exact(width, height)),
                 levels,
                 REFERENCE,
                 strengths,
@@ -5046,7 +5046,7 @@ mod tests {
             sharpen: 0.0,
             defringe: 1.0,
         };
-        let gather = super::Gather::frame(crate::px::Size::exact(width, height));
+        let gather = super::Gather::frame(units::px::Size::exact(width, height));
         let none = crate::fit::Lens::none();
 
         // What an open does: correct the linear frame for the fit, then run the chain over it.

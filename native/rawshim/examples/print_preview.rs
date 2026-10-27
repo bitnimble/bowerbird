@@ -1,9 +1,9 @@
 mod support;
 
 use rawshim::gpu::{Canvas, Grade, Intent};
-use rawshim::light::Light;
+use units::light::Light;
 use rawshim::print::{Environment, Paper, Presentation, Scene};
-use rawshim::px::Size;
+use units::px::Size;
 use rawshim::snapshot::Snapshot;
 
 fn main() -> Result<(), String> {
@@ -205,7 +205,7 @@ fn main() -> Result<(), String> {
             );
             let snapshot = Snapshot::pq(
                 &samples,
-                Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             );
             std::fs::write(
                 output.join(format!("pitch{pitch}.preview.png")),
@@ -268,7 +268,7 @@ fn main() -> Result<(), String> {
         for (view, scene) in views {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             let brightest = samples.iter().copied().max().unwrap_or(0);
-            let nits = rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(
+            let nits = rawshim::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
                 f64::from(brightest) / 65535.0,
             ))
             .raw();
@@ -285,7 +285,7 @@ fn main() -> Result<(), String> {
             );
             let snapshot = Snapshot::pq(
                 &samples,
-                Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             );
             std::fs::write(output.join(format!("{name}-{view}.png")), snapshot.encode())
                 .map_err(|error| error.to_string())?;
@@ -355,7 +355,7 @@ fn sheet_levels(
     canvas: (usize, usize),
 ) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let nits = |code: u16| {
-        rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(
+        rawshim::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
             f64::from(code) / 65535.0,
         ))
         .raw()

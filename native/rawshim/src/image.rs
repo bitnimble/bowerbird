@@ -4,7 +4,7 @@
 // entry point that picks between them.
 
 use crate::parallel::*;
-use crate::rgb::{Rgb, RgbRef};
+use units::rgb::{Rgb, RgbRef};
 
 pub const SPLINE_UNIT: f64 = 16384.0;
 
@@ -521,12 +521,12 @@ pub fn geometry_footprint(
     geometry: Geometry,
 ) -> (usize, usize, usize, usize) {
     let band = crate::gpu::Band {
-        top: crate::px::Place::measured(0),
-        rows: crate::px::Span::measured(out.1),
+        top: units::px::Place::measured(0),
+        rows: units::px::Span::measured(out.1),
     };
     rows_footprint(
-        crate::px::Size::exact(full.0, full.1),
-        crate::px::Size::measured(out.0, out.1),
+        units::px::Size::exact(full.0, full.1),
+        units::px::Size::measured(out.0, out.1),
         geometry,
         band,
     )
@@ -536,11 +536,11 @@ pub fn geometry_footprint(
 /// [`geometry_footprint`] for some of the output's rows alone, which is what a band of a render
 /// graded a band at a time reads.
 pub fn rows_footprint(
-    full: crate::px::Size<crate::px::Drawn>,
-    out: crate::px::Size<crate::px::Output>,
+    full: units::px::Size<units::px::Drawn>,
+    out: units::px::Size<units::px::Output>,
     geometry: Geometry,
     band: crate::gpu::Band,
-) -> crate::px::Rect<crate::px::Drawn> {
+) -> units::px::Rect<units::px::Drawn> {
     let (full, out) = (full.raw(), out.raw());
     let rows = band.top.raw()..(band.top + band.rows).raw();
     let (mut left, mut top) = (f64::MAX, f64::MAX);
@@ -569,7 +569,7 @@ pub fn rows_footprint(
     let end = |v: f64, limit: usize| (((v + REACH).ceil().max(0.0) as usize) + 1).min(limit);
     let (x0, y0) = (start(left, full.0), start(top, full.1));
     let (x1, y1) = (end(right, full.0), end(bottom, full.1));
-    crate::px::Rect::exact(
+    units::px::Rect::exact(
         x0,
         y0,
         x1.saturating_sub(x0).max(1),
@@ -596,8 +596,8 @@ pub fn rows_footprint(
 /// None where the lens is an identity, which is a caller that can decode its window and skip the
 /// gather entirely.
 pub fn lens_footprint(
-    full: crate::px::Size<crate::px::Drawn>,
-    window: crate::px::Rect<crate::px::Drawn>,
+    full: units::px::Size<units::px::Drawn>,
+    window: units::px::Rect<units::px::Drawn>,
     lens: &crate::fit::Lens,
 ) -> Option<(usize, usize, usize, usize)> {
     if lens.is_identity() {
@@ -674,10 +674,10 @@ fn ratio_at(table: &[f64], squared: f64) -> f64 {
 /// Where the lens gather reads the frame for each of `points` of the corrected picture, through
 /// green's table: positions stored on the picture as the lens left it, found on the decode.
 pub fn lens_sources(
-    full: crate::px::Size<crate::px::Drawn>,
-    points: &[crate::px::Point<crate::px::Drawn>],
+    full: units::px::Size<units::px::Drawn>,
+    points: &[units::px::Point<units::px::Drawn>],
     lens: &crate::fit::Lens,
-) -> Vec<crate::px::Point<crate::px::Drawn>> {
+) -> Vec<units::px::Point<units::px::Drawn>> {
     if !moves_pixels(lens.distortion.as_deref(), lens.crop) {
         return points.to_vec();
     }
@@ -694,13 +694,13 @@ pub fn lens_sources(
         rotate: 0,
         keystone: None,
     };
-    let source = |point: &crate::px::Point<crate::px::Drawn>| {
+    let source = |point: &units::px::Point<units::px::Drawn>| {
         let at = plan.at(point.x.raw(), point.y.raw(), (full_w, full_h));
         let (sx, sy) = lens.read_from(at, |squared| ratio_at(&table, squared));
         // The gather's grid puts a pixel's centre on an integer, a stored position its edge.
-        crate::px::Point {
-            x: crate::px::Coordinate::exactly(full_w as f64 / 2.0 + sx * half),
-            y: crate::px::Coordinate::exactly(full_h as f64 / 2.0 + sy * half),
+        units::px::Point {
+            x: units::px::Coordinate::exactly(full_w as f64 / 2.0 + sx * half),
+            y: units::px::Coordinate::exactly(full_h as f64 / 2.0 + sy * half),
         }
     };
     points.iter().map(source).collect()
@@ -761,8 +761,8 @@ impl SharpenNoise {
 
     pub fn at(
         self,
-        sensor: crate::px::Span<crate::px::Sensor>,
-        drawn: crate::px::Span<crate::px::Drawn>,
+        sensor: units::px::Span<units::px::Sensor>,
+        drawn: units::px::Span<units::px::Drawn>,
     ) -> SharpenNoise {
         let reduction = self.reduction.max(1);
         let decoded = sensor.raw().div_ceil(reduction).max(1);
@@ -889,7 +889,7 @@ pub(crate) const DECONVOLVE_ITERATIONS: usize = 10;
 /// **Taps and not pixels**: this is how many samples the stencil reads, and what decides how much
 /// picture they span is the sigma, which [`deconvolve_split`] composes per scale and clamps to
 /// what five of them are honest for. `sharpen.slang` declares it in the same unit.
-pub(crate) const DECONVOLVE_TAPS: crate::px::Span<crate::px::Tap> = crate::px::Span::exact(2);
+pub(crate) const DECONVOLVE_TAPS: units::px::Span<units::px::Tap> = units::px::Span::exact(2);
 
 /// The same as a plain count, for the arithmetic that indexes with it.
 pub(crate) const DECONVOLVE_RADIUS: usize = DECONVOLVE_TAPS.raw();
@@ -1597,13 +1597,13 @@ mod tests {
             read_variance: [8.0; 3],
             ..SharpenNoise::NONE
         };
-        let sensor = crate::px::Span::<crate::px::Sensor>::exact(6000);
+        let sensor = units::px::Span::<units::px::Sensor>::exact(6000);
         assert_eq!(
-            noise.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(6000)),
+            noise.at(sensor, units::px::Span::<units::px::Drawn>::exact(6000)),
             noise,
         );
         assert_eq!(
-            noise.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(3000)),
+            noise.at(sensor, units::px::Span::<units::px::Drawn>::exact(3000)),
             SharpenNoise {
                 shot_per_light: [1.0; 3],
                 read_variance: [2.0; 3],
@@ -1616,7 +1616,7 @@ mod tests {
             ..noise
         };
         assert_eq!(
-            halved.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(3000)),
+            halved.at(sensor, units::px::Span::<units::px::Drawn>::exact(3000)),
             SharpenNoise {
                 shot_per_light: [4.0, 2.0, 4.0],
                 read_variance: [8.0, 4.0, 8.0],
@@ -1624,7 +1624,7 @@ mod tests {
             },
         );
         assert_eq!(
-            halved.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(1500)),
+            halved.at(sensor, units::px::Span::<units::px::Drawn>::exact(1500)),
             SharpenNoise {
                 shot_per_light: [1.0, 0.5, 1.0],
                 read_variance: [2.0, 1.0, 2.0],
@@ -1653,7 +1653,7 @@ mod tests {
         }
         assert_eq!(least, [1, 5, 1]);
         assert_eq!(
-            third.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(2000)),
+            third.at(sensor, units::px::Span::<units::px::Drawn>::exact(2000)),
             SharpenNoise {
                 shot_per_light: [4.0, 0.8, 4.0],
                 read_variance: [8.0, 1.6, 8.0],
@@ -1680,25 +1680,25 @@ mod tests {
     fn a_window_footprint_is_the_region_its_gather_reads() {
         let (width, height) = (320usize, 240usize);
         let lens = bent();
-        let full = crate::px::Size::exact(width, height);
+        let full = units::px::Size::exact(width, height);
 
         assert!(
             lens_footprint(
                 full,
-                crate::px::Rect::exact(40, 30, 64, 48),
+                units::px::Rect::exact(40, 30, 64, 48),
                 &crate::fit::Lens::none()
             )
             .is_none()
         );
 
-        let whole = lens_footprint(full, crate::px::Rect::exact(0, 0, width, height), &lens)
+        let whole = lens_footprint(full, units::px::Rect::exact(0, 0, width, height), &lens)
             .expect("the lens bends");
         assert!(
             whole.0 + whole.2 <= width && whole.1 + whole.3 <= height,
             "{whole:?} is not inside the frame"
         );
 
-        let region = lens_footprint(full, crate::px::Rect::exact(40, 30, 64, 48), &lens)
+        let region = lens_footprint(full, units::px::Rect::exact(40, 30, 64, 48), &lens)
             .expect("the lens bends");
         assert!(
             region.0 + region.2 <= width && region.1 + region.3 <= height,

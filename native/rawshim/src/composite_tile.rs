@@ -7,8 +7,8 @@
 
 use crate::composition::{Composition, Projection, SourceSpec};
 use crate::gpu::dispatch::Whole;
-use crate::px::{Drawn, Rect, Size};
 use crate::resident::Resident;
+use units::px::{Drawn, Rect, Size};
 
 /// How a canvas coordinate reaches a source's own pixels.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -138,7 +138,7 @@ fn params(
     through: Through,
     weighed: (u32, u32, u32),
     p: &Composition,
-    window: Rect<crate::px::Composite>,
+    window: Rect<units::px::Composite>,
     scale: f64,
 ) -> Vec<u8> {
     let (left, top, width, height) = window.raw();
@@ -289,7 +289,7 @@ pub fn gather_layer(
     gpu: &'static crate::gpu::Gpu,
     from: &Gathered<'_>,
     p: &Composition,
-    window: Rect<crate::px::Composite>,
+    window: Rect<units::px::Composite>,
     scale: f64,
     weighed: Weighed<'_>,
 ) -> Layer {
@@ -448,7 +448,7 @@ impl Blending {
     pub fn over(
         gpu: &'static crate::gpu::Gpu,
         base: &'static crate::base::Base,
-        window: Rect<crate::px::Composite>,
+        window: Rect<units::px::Composite>,
     ) -> Blending {
         let (_, _, width, height) = window.raw();
         let pixels = width * height;
@@ -662,7 +662,7 @@ pub struct CompositeRequest<'a> {
     /// The rectangle to produce, **in this render's own pixels**: the canvas divided by `scale`,
     /// origin and size alike. Whole numbers either way, so a strip of an export is a strip of
     /// rows rather than a fraction of a canvas pixel.
-    pub window: Rect<crate::px::Composite>,
+    pub window: Rect<units::px::Composite>,
     /// The parts of `window` a caller actually asked for, or empty for the whole of it.
     ///
     /// **What a source is decoded for, where `window` is only what the buffer is.** A reader
@@ -675,7 +675,7 @@ pub struct CompositeRequest<'a> {
     /// already decoded and a pass over them costs a fiftieth of the decode. What lands in the
     /// corner is whatever the sources reached with the regions the parts paid for, so a caller
     /// keeps the parts it asked for and discards the rest (`wasm::HeldRaw::keep_tiles`).
-    pub parts: &'a [Rect<crate::px::Composite>],
+    pub parts: &'a [Rect<units::px::Composite>],
     /// Canvas pixels per output pixel: 1 for a loupe tile, more for a rendition.
     pub scale: f64,
     pub white_quantile: f64,
@@ -687,7 +687,7 @@ pub struct CompositeRequest<'a> {
     /// between them is a band across the finished picture. Absent only where the caller has no way
     /// to know, and then the reference's own strip measures for all of them.
     pub levels: Option<crate::tone::Anchored>,
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub strengths: crate::image::Strengths,
     pub detail: crate::galosh::Detail,
     pub sources: &'a [SourceFile<'a>],
@@ -765,11 +765,11 @@ fn whole_anchor(
                 .and_then(|a| a.from_render.levels)
                 .and_then(|m| m.levels_at(request.white_quantile))?;
             Some(crate::tone::Levels {
-                white: crate::light::Light::measured(levels.white.raw() * source.gain),
-                peak: crate::light::Light::measured(levels.peak.raw() * source.gain),
+                white: units::light::Light::measured(levels.white.raw() * source.gain),
+                peak: units::light::Light::measured(levels.peak.raw() * source.gain),
                 floor: levels
                     .floor
-                    .map(|f| crate::light::Light::measured(f.raw() * source.gain)),
+                    .map(|f| units::light::Light::measured(f.raw() * source.gain)),
             })
         })
         .collect();
@@ -827,9 +827,9 @@ pub(crate) fn combined(measured: &[crate::tone::Levels]) -> Option<crate::tone::
     let peak = peaks[((peaks.len() - 1) as f64 * peak_share.clamp(0.0, 1.0)).round() as usize];
     Some(
         crate::tone::Levels {
-            white: crate::light::Light::measured(white),
+            white: units::light::Light::measured(white),
             // A peak below the white it is anchored on is not a roll-off, it is a clip.
-            peak: crate::light::Light::measured(peak.max(white)),
+            peak: units::light::Light::measured(peak.max(white)),
             // The lowest, for the reason the peak takes the largest: the canvas's bottom is the
             // bottom of the darkest thing on it, and a floor above that leaves Blacks unable to
             // reach the frame that has the shadows in it.
@@ -1112,7 +1112,7 @@ async fn taken(
             (
                 frame,
                 Size::exact(scaled(photo_w), scaled(photo_h)),
-                crate::px::At::exact(scaled(at_x), scaled(at_y)),
+                units::px::At::exact(scaled(at_x), scaled(at_y)),
             )
         }
         // Whole, because a JPEG has no region decode: the saving is the DCT scale it is read
@@ -1120,7 +1120,7 @@ async fn taken(
         From::Camera => {
             let frame = camera_picture(file.path, wanted as u32).await?;
             let size = Size::exact(frame.width, frame.height);
-            (frame, size, crate::px::At::ORIGIN)
+            (frame, size, units::px::At::ORIGIN)
         }
     };
 
@@ -1233,11 +1233,11 @@ async fn taken(
 /// where a multiply per sample downstream would be a pass over the window.
 pub(crate) fn coded_as(anchored: crate::tone::Anchored, gain: f64) -> crate::tone::Anchored {
     crate::tone::Levels {
-        white: crate::light::Light::measured(anchored.white.raw() / gain),
-        peak: crate::light::Light::measured(anchored.peak.raw() / gain),
+        white: units::light::Light::measured(anchored.white.raw() / gain),
+        peak: units::light::Light::measured(anchored.peak.raw() / gain),
         floor: anchored
             .floor
-            .map(|f| crate::light::Light::measured(f.raw() / gain)),
+            .map(|f| units::light::Light::measured(f.raw() / gain)),
     }
     .anchored()
 }
@@ -1306,7 +1306,7 @@ const PREVIEW_BUDGET_BYTES: usize = 256 * 1024 * 1024;
 
 thread_local! {
     /// Camera pictures already decoded for the composite in hand, newest last.
-    static PREVIEWS: std::cell::RefCell<Vec<(String, u32, crate::rgb::Rgb)>> =
+    static PREVIEWS: std::cell::RefCell<Vec<(String, u32, units::rgb::Rgb)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -1342,7 +1342,7 @@ impl Drop for CameraPictures {
 /// putting one on the device is an upload and a pass - so this is the smallest thing that skips the
 /// expensive half, and at eight bits a channel it is a third of what the scene-linear frame of the
 /// same pixels would cost to hold.
-fn preview_of(path: &str, at_least_long_edge: u32) -> Result<crate::rgb::Rgb, String> {
+fn preview_of(path: &str, at_least_long_edge: u32) -> Result<units::rgb::Rgb, String> {
     if let Some(held) = PREVIEWS.with_borrow(|held| {
         held.iter()
             .find(|(of, edge, _)| of == path && *edge == at_least_long_edge)
@@ -1409,8 +1409,8 @@ pub(crate) async fn camera_picture(
     })?;
     let size = held.size();
     held.window(
-        crate::px::Rect {
-            at: crate::px::At::ORIGIN,
+        units::px::Rect {
+            at: units::px::At::ORIGIN,
             size,
         },
         crate::view::Scale::for_long_edge(size.raw(), at_least_long_edge),
@@ -1425,7 +1425,7 @@ pub(crate) async fn camera_picture(
 /// photograph and composites a window of a canvas, and never asks what a whole one is coded
 /// against.
 #[cfg(feature = "renditions")]
-pub(crate) fn camera_peak(path: &str) -> Result<crate::light::Light<crate::light::Level>, String> {
+pub(crate) fn camera_peak(path: &str) -> Result<units::light::Light<units::light::Level>, String> {
     if crate::decode_rendered::is_rendered(path) {
         // ponytail: whole decode for a header answer; a header-only coding read if it shows. Never
         // assume sRGB here: three stops out on a gain-mapped JPEG.
@@ -1435,7 +1435,7 @@ pub(crate) fn camera_peak(path: &str) -> Result<crate::light::Light<crate::light
             .ok_or_else(|| format!("{path} states no brightest level"));
     }
     // A camera's preview: eight bits of sRGB, and no gain map.
-    Ok(crate::light::Light::measured(crate::transfer::FULL_SCALE))
+    Ok(units::light::Light::measured(crate::transfer::FULL_SCALE))
 }
 
 /// Whether any source of this panorama reaches this window at all.
@@ -1467,7 +1467,7 @@ fn footprint(
     source: &SourceSpec,
     request: &CompositeRequest<'_>,
     slot: Option<u32>,
-) -> Option<Rect<crate::px::Photograph>> {
+) -> Option<Rect<units::px::Photograph>> {
     let whole = [request.window];
     let parts = match request.parts.is_empty() {
         true => &whole[..],
@@ -1507,9 +1507,9 @@ fn footprint_of(
     spec: &Composition,
     source: &SourceSpec,
     request: &CompositeRequest<'_>,
-    over: Rect<crate::px::Composite>,
+    over: Rect<units::px::Composite>,
     warps: &[[f64; 6]],
-) -> Option<Rect<crate::px::Photograph>> {
+) -> Option<Rect<units::px::Photograph>> {
     let (left, top, width, height) = over.raw();
     if width == 0 || height == 0 {
         return None;
@@ -1584,7 +1584,7 @@ pub async fn probe_layer(
     gpu: &'static crate::gpu::Gpu,
     from: &Gathered<'_>,
     p: &Composition,
-    window: Rect<crate::px::Composite>,
+    window: Rect<units::px::Composite>,
     scale: f64,
 ) -> Option<Vec<[f64; 3]>> {
     let (_, _, width, height) = window.raw();
@@ -1719,9 +1719,9 @@ mod tests {
 
     fn levels(white: f64, peak: f64) -> crate::tone::Levels {
         crate::tone::Levels {
-            white: crate::light::Light::measured(white),
-            peak: crate::light::Light::measured(peak),
-            floor: Some(crate::light::Light::measured(white / 32.0)),
+            white: units::light::Light::measured(white),
+            peak: units::light::Light::measured(peak),
+            floor: Some(units::light::Light::measured(white / 32.0)),
         }
     }
 
@@ -1907,7 +1907,7 @@ mod tests {
         // Wide enough to reach past the overlap at both ends, which is where each source is meant
         // to be alone: two 6000px frames a third apart share the middle 3300.
         let across = 5000;
-        let window: Rect<crate::px::Composite> = Rect::exact(4500 - across / 2, 2050, across, 8);
+        let window: Rect<units::px::Composite> = Rect::exact(4500 - across / 2, 2050, across, 8);
         let region: Rect<Drawn> = Rect::exact(0, 0, SOURCE[0], SOURCE[1]);
         let mut blending = Blending::over(gpu, base, window);
         for (source, nits) in [(&left, 200.0f64), (&right, 800.0)] {
@@ -1936,7 +1936,7 @@ mod tests {
         .expect("the alpha reads back");
 
         let light = |code: u16| {
-            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(
+            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
                 f64::from(code) / f64::from(u16::MAX),
             ))
             .raw()
@@ -1968,7 +1968,7 @@ mod tests {
     /// A frame every sample of which is the same code, which is what makes a blend's answer
     /// readable: whatever comes back is the mix and not the picture.
     fn flat_frame(gpu: &'static crate::gpu::Gpu, nits: f64) -> Resident {
-        let signal = crate::tone::pq(crate::light::Light::<crate::light::SceneNits>::measured(
+        let signal = crate::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
             nits,
         ));
         let code = (signal.raw() * f64::from(u16::MAX)).round() as u16;
@@ -2009,14 +2009,14 @@ mod tests {
     }
 
     /// A request over a window, for the fields `footprint` and `covered` read.
-    fn asking(window: Rect<crate::px::Composite>, scale: f64) -> CompositeRequest<'static> {
+    fn asking(window: Rect<units::px::Composite>, scale: f64) -> CompositeRequest<'static> {
         asking_parts(window, scale, &[])
     }
 
     fn asking_parts<'a>(
-        window: Rect<crate::px::Composite>,
+        window: Rect<units::px::Composite>,
         scale: f64,
-        parts: &'a [Rect<crate::px::Composite>],
+        parts: &'a [Rect<units::px::Composite>],
     ) -> CompositeRequest<'a> {
         CompositeRequest {
             window,
@@ -2024,7 +2024,7 @@ mod tests {
             scale,
             white_quantile: 0.9,
             levels: None,
-            reference_white_nits: crate::light::Light::exactly(203.0),
+            reference_white_nits: units::light::Light::exactly(203.0),
             strengths: crate::image::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
@@ -2062,7 +2062,7 @@ mod tests {
         let p = recipe(Projection::Rectilinear, Through::Corrected);
         let source = &p.sources[0];
         const SCALE: f64 = 4.0;
-        let window: Rect<crate::px::Composite> = Rect::exact(1093, 509, 64, 32);
+        let window: Rect<units::px::Composite> = Rect::exact(1093, 509, 64, 32);
         let (left, top, width, height) = window.raw();
         let region =
             footprint(&p, source, &asking(window, SCALE), None).expect("the window reaches it");
@@ -2125,8 +2125,8 @@ mod tests {
     fn a_source_no_part_reaches_is_left_out_of_the_footprint() {
         let p = recipe(Projection::Cylindrical, Through::Corrected);
         const SCALE: f64 = 1.0;
-        let whole: Rect<crate::px::Composite> = Rect::exact(0, 0, p.canvas[0], p.canvas[1]);
-        let corner: Rect<crate::px::Composite> = Rect::exact(0, 0, 1024, 1024);
+        let whole: Rect<units::px::Composite> = Rect::exact(0, 0, p.canvas[0], p.canvas[1]);
+        let corner: Rect<units::px::Composite> = Rect::exact(0, 0, 1024, 1024);
 
         let reached = |request: &CompositeRequest<'_>| -> Vec<bool> {
             p.sources
@@ -2153,7 +2153,7 @@ mod tests {
 
         // And where a source is reached by two of them, what is decoded is the box bounding those
         // two rather than the box bounding the window: a corner between them is never paid for.
-        let far: Rect<crate::px::Composite> = Rect::exact(p.canvas[0] - 1024, 0, 1024, 1024);
+        let far: Rect<units::px::Composite> = Rect::exact(p.canvas[0] - 1024, 0, 1024, 1024);
         for source in &p.sources {
             let pair = footprint(
                 &p,
@@ -2223,7 +2223,7 @@ mod tests {
         let gpu = drawing();
         let region: Rect<Drawn> = Rect::exact(0, 0, SOURCE[0], SOURCE[1]);
         let prepared = Resident::empty(gpu, 4, 4);
-        let window: Rect<crate::px::Composite> = Rect::exact(3800, 1900, WINDOW.0, WINDOW.1);
+        let window: Rect<units::px::Composite> = Rect::exact(3800, 1900, WINDOW.0, WINDOW.1);
 
         for projection in [
             Projection::Rectilinear,

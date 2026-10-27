@@ -105,11 +105,11 @@ pub struct PreparedHeader {
     pub width: usize,
     pub height: usize,
     /// `tone::Levels`: the frame's own diffuse white, peak and floor, in input levels.
-    pub white: crate::light::Light<crate::light::Level>,
-    pub peak: crate::light::Light<crate::light::Level>,
+    pub white: units::light::Light<units::light::Level>,
+    pub peak: units::light::Light<units::light::Level>,
     /// Absent where the picture was prepared without a histogram walk behind it, and then a loupe
     /// tile handing these back is refused and measures its own ([`crate::tone::Levels::usable`]).
-    pub floor: Option<crate::light::Light<crate::light::Level>>,
+    pub floor: Option<units::light::Light<units::light::Level>>,
     pub grade: hdr::Grade,
     pub strengths: Strengths,
     pub camera_match: crate::hdr_fit::CameraMatch,
@@ -140,7 +140,7 @@ pub struct PreparedHeader {
     pub detail: (f64, f64),
     /// The camera match's tone curve. None where no colour match applies.
     pub camera_curve: Option<crate::gpu::ToneCurve>,
-    pub camera_exposure: Option<crate::light::Stops>,
+    pub camera_exposure: Option<units::light::Stops>,
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
     /// The white balance the camera match sets (`HdrColour::illuminant`).
@@ -466,7 +466,7 @@ pub async fn from_frame(
                 strength: reflection.strength,
             }),
             (None, Some(gpu)) => looked.and_then(|looked| {
-                let full = crate::px::Size::exact(width, height);
+                let full = units::px::Size::exact(width, height);
                 crate::dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
             }),
             (None, None) => None,
@@ -491,7 +491,7 @@ pub async fn from_frame(
         // would get is `level / 0` rolling every pixel to display peak and `0 / 0` leaving
         // the black ones indeterminate - a flat white canvas reporting itself live. Better
         // to say so.
-        if levels.white <= crate::light::Light::ZERO {
+        if levels.white <= units::light::Light::ZERO {
             return Err("this frame is too dark to read an exposure from".to_string());
         }
         // Coded before anything reads it, exactly as `job::Base::build` codes it: what crosses
@@ -646,7 +646,7 @@ pub(crate) fn camera_defaults(
     colour: Option<&crate::hdr_fit::HdrColour>,
 ) -> (
     Option<crate::gpu::ToneCurve>,
-    Option<crate::light::Stops>,
+    Option<units::light::Stops>,
     Option<f64>,
     Option<crate::white_balance::Illuminant>,
 ) {

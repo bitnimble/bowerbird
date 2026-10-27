@@ -8,8 +8,8 @@
 use crate::composite_tile::Layer;
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
-use crate::px::{Composite, Rect};
 use crate::resident::Resident;
+use units::px::{Composite, Rect};
 
 /// `composite_gather.slang`'s own sentinel, pinned against it by
 /// `composite_tile::tests::the_unreached_sentinel_matches_the_shader`.

@@ -120,7 +120,7 @@ fn auto(
         analysed.radial.map_or(f64::NAN, |radial| {
             let plane = rawshim::assembly_planes::ANALYSIS_LONG;
             radial
-                .across(rawshim::px::Span::<rawshim::px::Analysis>::exact(plane))
+                .across(units::px::Span::<units::px::Analysis>::exact(plane))
                 .raw()
         }),
         rawshim::assembly_analysis::NEAR_IDENTITY,
@@ -249,7 +249,7 @@ fn solved(
             }
         }
     }
-    let window = rawshim::px::Rect::<rawshim::px::Composite>::exact(0, 0, width, height);
+    let window = units::px::Rect::<units::px::Composite>::exact(0, 0, width, height);
     let mut blending = Blending::over(gpu, base, window);
     for source in 0..sources {
         let weights: Vec<f32> = owner
@@ -359,7 +359,7 @@ fn through_the_render(
     let (width, height) = (render(crop_w), render(crop_h));
     println!("  crop {crop_w}x{crop_h} of the canvas, rendered {width}x{height}");
 
-    let asking = |window: rawshim::px::Rect<rawshim::px::Composite>, levels| {
+    let asking = |window: units::px::Rect<units::px::Composite>, levels| {
         rawshim::composite_tile::CompositeRequest {
             window,
             parts: &[],
@@ -377,7 +377,7 @@ fn through_the_render(
             weight: rawshim::composite_tile::Weight::Feather,
         }
     };
-    let whole = rawshim::px::Rect::exact(left, top, width, height);
+    let whole = units::px::Rect::exact(left, top, width, height);
     let started = std::time::Instant::now();
     let held = pollster::block_on(rawshim::assembly_render::lowpass(
         recipe,
@@ -396,7 +396,7 @@ fn through_the_render(
     let mut row = top;
     while row < top + height {
         let tall = STRIP_ROWS.min(top + height - row);
-        let window = rawshim::px::Rect::exact(left, row, width, tall);
+        let window = units::px::Rect::exact(left, row, width, tall);
         let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(
             recipe,
             &held,

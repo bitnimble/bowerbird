@@ -7,7 +7,7 @@
 //! over a field the device produced (`assembly_levels`), at the shrunk scale, where a figure's ring
 //! is tens of thousands of nodes. There is no second arithmetic over the picture here.
 
-use crate::light::Stops;
+use units::light::Stops;
 
 /// The side of the block one cell of the field covers.
 ///

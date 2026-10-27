@@ -302,7 +302,7 @@ pub unsafe extern "C" fn bb_prepare_picture(
         Err(error) => Err(format!("could not read the prepare: {error}")),
         Ok(command) => crate::guard("bb_prepare_picture", Err("panicked".to_string()), || {
             let rect = |[left, top, width, height]: [usize; 4]| {
-                crate::px::Rect::exact(left, top, width, height)
+                units::px::Rect::exact(left, top, width, height)
             };
             let window = command.window.map(rect);
             let parts: Vec<_> = command.parts.iter().copied().map(rect).collect();

@@ -1,8 +1,8 @@
 use rawshim::gpu::{Canvas, Grade};
 use rawshim::image::Geometry;
-use rawshim::light::{Gain, Light, SceneNits};
 use rawshim::print::{Presentation, Scene};
-use rawshim::px::Size;
+use units::light::{Gain, Light, SceneNits};
+use units::px::Size;
 
 #[test]
 fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {

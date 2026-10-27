@@ -2,7 +2,7 @@
 
 use crate::assembly_labelling::{Reader, four};
 use crate::assembly_seam::{TINT_NOISE, TINT_SIGNIFICANT, beyond};
-use crate::light::{Gain, Stops};
+use units::light::{Gain, Stops};
 
 /// By frame and the drawn tile it is read through, what that frame's light is multiplied by.
 pub(crate) type Balance = std::collections::BTreeMap<(usize, u32), Gain>;
@@ -129,7 +129,7 @@ mod tests {
     use super::*;
     use crate::assembly_labelling::{RING, stamped};
     use crate::assembly_seams::tests::{SIZE, burst, drawn, untiled};
-    use crate::px::{Shrunk, Span};
+    use units::px::{Shrunk, Span};
 
     #[test]
     fn a_piece_is_balanced_over_the_band_its_seam_is_blended_across() {

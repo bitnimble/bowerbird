@@ -37,7 +37,7 @@ fn main() {
         let bytes = std::fs::read(path).unwrap_or_else(|why| panic!("{path}: {why}"));
         rawshim::jpeg::decode(&bytes, long).unwrap_or_else(|why| panic!("{path}: {why}"))
     };
-    let shrink = |image: rawshim::rgb::Rgb| -> rawshim::rgb::Rgb {
+    let shrink = |image: units::rgb::Rgb| -> units::rgb::Rgb {
         if reduce <= 1 {
             return image;
         }
@@ -57,7 +57,7 @@ fn main() {
                 }
             }
         }
-        rawshim::rgb::Rgb {
+        units::rgb::Rgb {
             data,
             width,
             height,
@@ -65,7 +65,7 @@ fn main() {
     };
     // Trimmed to the smaller rather than refused, for the reason `stitch` gives: two pictures of one
     // scene bounded to the same long edge land a pixel apart when their sources round differently.
-    let trim = |image: rawshim::rgb::Rgb, width: usize, height: usize| -> rawshim::rgb::Rgb {
+    let trim = |image: units::rgb::Rgb, width: usize, height: usize| -> units::rgb::Rgb {
         if (image.width, image.height) == (width, height) {
             return image;
         }
@@ -75,7 +75,7 @@ fn main() {
             data[y * width * 3..(y + 1) * width * 3]
                 .copy_from_slice(&image.data[from..from + width * 3]);
         }
-        rawshim::rgb::Rgb {
+        units::rgb::Rgb {
             data,
             width,
             height,
@@ -105,7 +105,7 @@ fn main() {
     // Each side's own levels as well as the gap, because a mean absolute difference cannot tell a
     // picture that is the wrong brightness from one that is the wrong colour, and those are not the
     // same fault.
-    let levels = |image: &rawshim::rgb::Rgb| {
+    let levels = |image: &units::rgb::Rgb| {
         let mut totals = [0f64; 3];
         for p in 0..pixels {
             for c in 0..3 {

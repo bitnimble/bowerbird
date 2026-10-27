@@ -6,7 +6,7 @@
 use crate::condition::Mosaic;
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu};
-use crate::px::{Sensor, Span};
+use units::px::{Sensor, Span};
 
 pub const TILE: Span<Sensor> = Span::exact(64);
 // One step either side below the coarsest level: repeated texture finer than a search's reach
@@ -471,9 +471,9 @@ pub fn measure(
     reference: &Pyramid,
     frame: &Mosaic,
     exposure: Exposure,
-    reference_origin: crate::px::At<Sensor>,
-    frame_origin: crate::px::At<Sensor>,
-    window: crate::px::Rect<Sensor>,
+    reference_origin: units::px::At<Sensor>,
+    frame_origin: units::px::At<Sensor>,
+    window: units::px::Rect<Sensor>,
     prior_at: impl Fn(f64, f64) -> crate::burst::Offset,
     search: Search,
 ) -> Field {

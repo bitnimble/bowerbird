@@ -69,7 +69,7 @@ fn probe(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn report(label: &str, render: &rawshim::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
+fn report(label: &str, render: &units::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
     let stride = (((preview.width * preview.height) as f64 / POINTS as f64).sqrt() as usize).max(1);
     let gpu = rawshim::gpu::device().expect("an adapter");
     let ours = hdr_fit::Source {

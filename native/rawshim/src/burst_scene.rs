@@ -299,7 +299,7 @@ mod tests {
     use crate::burst::Offset;
     use crate::galosh::NoiseModel;
     use crate::merge::{Frame, Grid, Merge};
-    use crate::px::{At, Rect};
+    use units::px::{At, Rect};
 
     const WIDTH: usize = 1024;
     const HEIGHT: usize = 768;

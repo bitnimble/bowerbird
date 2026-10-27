@@ -1,9 +1,9 @@
 mod support;
 
 use rawshim::gpu::{Canvas, Grade};
-use rawshim::light::Light;
+use units::light::Light;
 use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::Size;
+use units::px::Size;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), String> {

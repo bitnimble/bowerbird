@@ -143,7 +143,7 @@ fn tile(
     y: usize,
     dx: isize,
     dy: isize,
-) -> rawshim::rgb::Rgb {
+) -> units::rgb::Rgb {
     let side = HALF * 2 * ZOOM;
     let gap = 8;
     let width = side * 3 + gap * 2;
@@ -181,7 +181,7 @@ fn tile(
             outline(&mut data, width, left, half, ink);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height: side,
         data,

@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { z } from 'zod';
 import { ICD } from './get-swiftshader';
 import { warnOfMissingFixtures } from './missing_fixtures';
 
@@ -31,7 +32,7 @@ const OPTION_VALUES = new Set([
 const USAGE = `test:native runs a named part of the Rust suite, never all of it.
 
   bun run test:native <name>          tests whose path contains <name>, e.g. galosh, demosaic::pad
-  bun run test:native --test <file>   one file in native/rawshim/tests, e.g. --test gpu_fixture
+  bun run test:native --test <file>   one integration test file, e.g. --test gpu_fixture
   bun run test:native --lib           every in-crate test
 
 Tests that decode a real RAW are behind a feature and are not compiled without it:
@@ -75,7 +76,8 @@ function main(): void {
     // Without a named target, cargo would also build the binaries and run the doctests.
     ...(scope === 'name' ? targetsFor(args) : []),
     '--manifest-path',
-    'native/rawshim/Cargo.toml',
+    'native/Cargo.toml',
+    '--workspace',
     ...args,
   ];
   const run = spawnSync('bun', ['run', resolve(import.meta.dir, 'cargo.ts'), ...cargo], {
@@ -86,7 +88,11 @@ function main(): void {
   process.exit(run.status ?? 1);
 }
 
-const CRATE = resolve(import.meta.dir, '../native/rawshim');
+const NATIVE = resolve(import.meta.dir, '../native');
+const MEMBERS = z
+  .object({ workspace: z.object({ members: z.array(z.string()) }) })
+  .parse(Bun.TOML.parse(readFileSync(resolve(NATIVE, 'Cargo.toml'), 'utf8')))
+  .workspace.members.map((member) => resolve(NATIVE, member));
 
 /**
  * The `--lib` / `--test <file>` selectors a name filter needs, and no others.
@@ -118,11 +124,14 @@ function targetsFor(args: string[]): string[] {
   const matches = (source: string): boolean => filters.some((filter) => holds(source, filter));
 
   const selectors: string[] = [];
-  if (matches(read(resolve(CRATE, 'src'), true))) selectors.push('--lib');
-  for (const file of readdirSync(resolve(CRATE, 'tests'), { withFileTypes: true })) {
-    if (!file.isFile() || !file.name.endsWith('.rs')) continue;
-    if (matches(readFileSync(resolve(CRATE, 'tests', file.name), 'utf8'))) {
-      selectors.push('--test', file.name.slice(0, -'.rs'.length));
+  if (MEMBERS.some((crate) => matches(read(resolve(crate, 'src'), true)))) selectors.push('--lib');
+  for (const crate of MEMBERS) {
+    if (!existsSync(resolve(crate, 'tests'))) continue;
+    for (const file of readdirSync(resolve(crate, 'tests'), { withFileTypes: true })) {
+      if (!file.isFile() || !file.name.endsWith('.rs')) continue;
+      if (matches(readFileSync(resolve(crate, 'tests', file.name), 'utf8'))) {
+        selectors.push('--test', file.name.slice(0, -'.rs'.length));
+      }
     }
   }
   return selectors.length > 0 ? selectors : ['--tests'];

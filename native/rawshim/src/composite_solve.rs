@@ -9,7 +9,7 @@ use crate::composite_pairs::{Match, Pair};
 use crate::composition::{
     Projection, conjugate, cross, from_axis_angle, multiply, normalise, rotate,
 };
-use crate::px::{Share, TUNED_ON};
+use units::px::{Share, TUNED_ON};
 
 /// Where every source points, in one frame.
 pub struct Solved {
@@ -70,7 +70,7 @@ const HUBER: Share = Share::of(2, TUNED_ON);
 /// **Shares rather than pixels, which is what `px` says a distance in a space like this has to
 /// be.** The search plane's pixels are not one fixed size - a RAW's preview is 1616, a grid tile
 /// is whatever the library builds them at, a body that embeds neither is something else again -
-/// so it is not [`crate::px::Absolute`] and a constant number of its pixels means a different
+/// so it is not [`units::px::Absolute`] and a constant number of its pixels means a different
 /// share of the picture in each. `px.rs` opens on this exact failure in another stage: a colour
 /// smoothing written down as a count of pixels smoothed a rendition over two and a half times as
 /// much of itself as it smoothed the same photograph at 1:1.
@@ -2182,7 +2182,7 @@ mod tests {
     /// Whether the analysis would flag this reading, on the plane these fixtures are stated on.
     fn unaligned_on(size: [usize; 2], radial_px: f64) -> bool {
         let long = size[0].max(size[1]) as f64;
-        crate::assembly_analysis::unaligned_at(crate::px::Share::measured(radial_px, long))
+        crate::assembly_analysis::unaligned_at(units::px::Share::measured(radial_px, long))
     }
 
     /// Two frames on top of each other, the second `scale` times longer in the lens, with matches

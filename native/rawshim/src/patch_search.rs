@@ -11,8 +11,8 @@
 
 use crate::assembly_labelling::RING;
 use crate::assembly_seam::{SeamField, differ};
-use crate::light::Stops;
-use crate::px::{Share, Shrunk, Span};
+use units::light::Stops;
+use units::px::{Share, Shrunk, Span};
 
 /// The radius of the patch compared around a seed, as a share of the long edge: a face and a little
 /// of what frames it.

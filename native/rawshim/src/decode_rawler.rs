@@ -96,7 +96,7 @@ pub fn upright_preview_jpeg_bytes(bytes: &[u8], want: Preview) -> Option<Vec<u8>
 ///
 /// The two that do want bytes - the editor's open and the FFI download - still have
 /// `upright_preview_jpeg`, which is where the re-encode belongs.
-pub fn upright_preview_rgb(path: &str, long_edge: usize, want: Preview) -> Option<crate::rgb::Rgb> {
+pub fn upright_preview_rgb(path: &str, long_edge: usize, want: Preview) -> Option<units::rgb::Rgb> {
     let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     upright_preview_rgb_with(
@@ -114,7 +114,7 @@ pub fn upright_preview_tile(
     path: &str,
     long_edge: usize,
     want: Preview,
-) -> Option<crate::rgb::Rgb> {
+) -> Option<units::rgb::Rgb> {
     let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     upright_preview_rgb_with(
@@ -132,8 +132,8 @@ pub fn upright_preview_rgb_with(
     decoder: &dyn rawler::decoders::Decoder,
     long_edge: usize,
     want: Preview,
-    decode: fn(&[u8], usize) -> Result<crate::rgb::Rgb, String>,
-) -> Option<crate::rgb::Rgb> {
+    decode: fn(&[u8], usize) -> Result<units::rgb::Rgb, String>,
+) -> Option<units::rgb::Rgb> {
     let params = rawler::decoders::RawDecodeParams::default();
     let previews = decoder.preview_jpegs(source, &params).ok()?;
     let jpeg = chosen(&previews, want)?;
@@ -236,7 +236,7 @@ pub(crate) async fn decode_tile_source(
         detail,
         fit,
         halo,
-        crate::px::Span::exact(0),
+        units::px::Span::exact(0),
         dust,
         Demosaiced::Here,
     )
@@ -322,7 +322,7 @@ pub(crate) async fn decode_merged_tile(
             (None, true) => crate::galosh::Fit::Only,
         },
         halo,
-        crate::px::Span::exact(reference_extra),
+        units::px::Span::exact(reference_extra),
         crate::dust::Known::Off,
         Demosaiced::Here,
     )
@@ -392,7 +392,7 @@ pub(crate) async fn decode_merged_tile(
     gpu.settle();
     lap("prepare");
     let (reference_x, reference_y) = reference.origin.raw();
-    let window = crate::px::Rect::exact(
+    let window = units::px::Rect::exact(
         reference_x + reference.crop.0,
         reference_y + reference.crop.1,
         reference.crop.2,
@@ -417,7 +417,7 @@ pub(crate) async fn decode_merged_tile(
             read,
             crate::galosh::Fit::Given(reference.noise?),
             halo,
-            crate::px::Span::exact(frame_extra),
+            units::px::Span::exact(frame_extra),
             crate::dust::Known::Off,
             Demosaiced::ByTheReference,
         )
@@ -452,8 +452,8 @@ pub(crate) async fn decode_merged_tile(
                 let projected =
                     crate::burst::prior_at(recipe, at, point, taken).unwrap_or(fallback);
                 crate::burst::Offset {
-                    x: crate::px::Extent::measured(projected.x.raw() + crop_shift_x),
-                    y: crate::px::Extent::measured(projected.y.raw() + crop_shift_y),
+                    x: units::px::Extent::measured(projected.x.raw() + crop_shift_x),
+                    y: units::px::Extent::measured(projected.y.raw() + crop_shift_y),
                 }
             },
             crate::align::Search::AROUND_PRIOR,
@@ -500,7 +500,7 @@ pub(crate) async fn decode_merged_tile(
         ),
         colour,
         highlight
-            .seen_from(crate::px::At::exact(
+            .seen_from(units::px::At::exact(
                 highlight_x * scale,
                 highlight_y * scale,
             ))
@@ -525,7 +525,7 @@ fn placed_at(view: crate::view::View, prior: crate::burst::Offset) -> crate::vie
         (at as f64 + by.round()).clamp(0.0, room.saturating_sub(extent) as f64) as usize
     };
     crate::view::View {
-        window: crate::px::Rect::exact(
+        window: units::px::Rect::exact(
             moved(x, prior.x.raw(), width, photo_w),
             moved(y, prior.y.raw(), height, photo_h),
             width,
@@ -583,13 +583,13 @@ struct RegionMosaic {
     mosaic: crate::condition::Mosaic,
     highlight: Option<crate::highlight::Field>,
     /// Where `mosaic` starts inside the wider region `highlight` was measured over.
-    highlight_at: crate::px::At<crate::px::Sensor>,
+    highlight_at: units::px::At<units::px::Sensor>,
     /// The sensor's readable area the region is cut from.
     frame: (usize, usize),
     /// What the region was denoised for, which the demosaic finishes for the upscaler.
     detail: crate::galosh::Detail,
-    origin: crate::px::At<crate::px::Sensor>,
-    photograph_origin: crate::px::At<crate::px::Sensor>,
+    origin: units::px::At<units::px::Sensor>,
+    photograph_origin: units::px::At<units::px::Sensor>,
     cfa: crate::cfa::Cfa,
     colour: crate::demosaic::Colour,
     /// The window inside the region, which is where the margin grown around it ends.
@@ -666,7 +666,7 @@ async fn region_mosaic(
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
-    extra: crate::px::Span<crate::px::Sensor>,
+    extra: units::px::Span<units::px::Sensor>,
     dust: crate::dust::Known<'_>,
     demosaiced: Demosaiced,
 ) -> Option<Region> {
@@ -880,11 +880,11 @@ async fn region_mosaic(
         },
         mosaic,
         highlight,
-        highlight_at: crate::px::At::exact(left - field_left, top - field_top),
+        highlight_at: units::px::At::exact(left - field_left, top - field_top),
         frame: (frame_w, frame_h),
         detail,
-        origin: crate::px::At::exact(left, top),
-        photograph_origin: crate::px::At::exact(origin.0, origin.1),
+        origin: units::px::At::exact(left, top),
+        photograph_origin: units::px::At::exact(origin.0, origin.1),
         cfa,
         colour,
         crop,
@@ -1067,7 +1067,7 @@ struct Sensor {
     aperture: f32,
     /// The picture's diagonal across the silicon, in millimetres, which with the diagonal in
     /// photosites is the pitch a particle's shadow is measured in (`crate::dust`).
-    diagonal_mm: crate::px::Extent<crate::px::Millimetre>,
+    diagonal_mm: units::px::Extent<units::px::Millimetre>,
 }
 
 impl Sensor {
@@ -1199,8 +1199,8 @@ async fn linear(
     let curves = plane_curves(decoder, width, height)?;
     let crop = image
         .crop_area
-        .map_or(crate::px::Rect::exact(0, 0, width, height), |area| {
-            crate::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
+        .map_or(units::px::Rect::exact(0, 0, width, height), |area| {
+            units::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
         });
     let coding = crate::transfer::Coding {
         matrix,
@@ -1787,7 +1787,7 @@ fn optics_of(
     decoder: &dyn rawler::decoders::Decoder,
     source: &rawler::rawsource::RawSource,
     params: &rawler::decoders::RawDecodeParams,
-) -> (f32, crate::px::Extent<crate::px::Millimetre>) {
+) -> (f32, units::px::Extent<units::px::Millimetre>) {
     let Ok(metadata) = decoder.raw_metadata(source, params) else {
         return (0.0, crate::dust::FULL_FRAME_DIAGONAL_MM);
     };
@@ -1810,10 +1810,10 @@ fn optics_of(
 
 /// The picture's diagonal across the silicon, or [`crate::dust::FULL_FRAME_DIAGONAL_MM`] where the
 /// two focal lengths do not give a crop factor.
-fn diagonal_mm_of(focal: f32, equivalent: f32) -> crate::px::Extent<crate::px::Millimetre> {
+fn diagonal_mm_of(focal: f32, equivalent: f32) -> units::px::Extent<units::px::Millimetre> {
     let full = crate::dust::FULL_FRAME_DIAGONAL_MM;
     crate::header::crop_of(focal, equivalent).map_or(full, |crop| {
-        crate::px::Extent::exactly(full.raw() / f64::from(crop))
+        units::px::Extent::exactly(full.raw() / f64::from(crop))
     })
 }
 
@@ -2011,7 +2011,7 @@ impl Held {
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
         let seen = self
             .highlight
-            .seen_from(crate::px::At::exact(left, top))
+            .seen_from(units::px::At::exact(left, top))
             .coloured(detail.colouring());
         let built = demosaic_at(
             gpu,
@@ -2521,10 +2521,10 @@ async fn reduced_into(
     let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, cfa, mosaic, 0);
     let placed =
         |dest: (usize, usize), inner: (usize, usize, usize, usize)| crate::demosaic::Placement {
-            stride: crate::px::Span::exact(stride),
-            crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
-            dest: crate::px::At::exact(dest.0, dest.1),
-            frame: crate::px::Size::exact(crop_w, crop_h),
+            stride: units::px::Span::exact(stride),
+            crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
+            dest: units::px::At::exact(dest.0, dest.1),
+            frame: units::px::Size::exact(crop_w, crop_h),
             orientation,
             reduce,
         };
@@ -2806,10 +2806,10 @@ async fn upscaled_in_tiles(
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
         crate::demosaic::Placement {
-            stride: crate::px::Span::exact(stride),
-            crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
-            dest: crate::px::At::exact(dest.0, dest.1),
-            frame: crate::px::Size::exact(crop_w, crop_h),
+            stride: units::px::Span::exact(stride),
+            crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
+            dest: units::px::At::exact(dest.0, dest.1),
+            frame: units::px::Size::exact(crop_w, crop_h),
             orientation,
             reduce: 1,
         }
@@ -2886,7 +2886,7 @@ async fn upscaled_in_tiles(
                     cfa,
                     &at,
                     colour,
-                    seen.inside(crate::px::At::exact(left, top)),
+                    seen.inside(units::px::At::exact(left, top)),
                     built.buffer(),
                     &native_group,
                     |recording, plane| {
@@ -2926,10 +2926,10 @@ async fn demosaic_settled_in_tiles(
 
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
         crate::demosaic::Placement {
-            stride: crate::px::Span::exact(stride),
-            crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
-            dest: crate::px::At::exact(dest.0, dest.1),
-            frame: crate::px::Size::exact(crop_w, crop_h),
+            stride: units::px::Span::exact(stride),
+            crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
+            dest: units::px::At::exact(dest.0, dest.1),
+            frame: units::px::Size::exact(crop_w, crop_h),
             orientation,
             // The demosaic has already turned every block into a pixel; this route reads its plane
             // one sample at a time.
@@ -2989,7 +2989,7 @@ async fn demosaic_settled_in_tiles(
                 cfa,
                 &at,
                 colour,
-                seen.inside(crate::px::At::exact(left, top)),
+                seen.inside(units::px::At::exact(left, top)),
                 frame.buffer(),
                 &shape_group,
                 |recording, rgb| settle(recording, rgb, (left, top, region_w, region_h)),
@@ -3468,7 +3468,7 @@ async fn as_shot_of(
 mod tests {
     #[test]
     fn a_preview_tagged_by_its_camera_turns_once() {
-        let stored = crate::rgb::Rgb {
+        let stored = units::rgb::Rgb {
             width: 40,
             height: 30,
             data: vec![128; 40 * 30 * 3],
@@ -3988,8 +3988,8 @@ mod tests {
             crate::decode::Held::Rendered(held) => held,
             crate::decode::Held::Mosaic(_) => panic!("a linear DNG was read as a mosaic"),
         };
-        let window = crate::px::Rect {
-            at: crate::px::At::ORIGIN,
+        let window = units::px::Rect {
+            at: units::px::At::ORIGIN,
             size: held.size(),
         };
         let frame = held

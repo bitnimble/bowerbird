@@ -136,7 +136,7 @@ pub struct Frame {
     pub wb_gains: [f32; 3],
     /// The level the file states diffuse white at, for a finished picture; None for a RAW, whose
     /// white is a quantile of its own scene.
-    pub stated_white: Option<crate::light::Light<crate::light::Level>>,
+    pub stated_white: Option<units::light::Light<units::light::Level>>,
 }
 
 impl Frame {
@@ -162,7 +162,7 @@ impl Frame {
     pub fn white_to_anchor(
         &self,
         asked: bool,
-    ) -> Result<Option<crate::light::Light<crate::light::Level>>, String> {
+    ) -> Result<Option<units::light::Light<units::light::Level>>, String> {
         match (asked, self.stated_white) {
             (false, _) => Ok(None),
             (true, Some(white)) => Ok(Some(white)),
@@ -176,9 +176,9 @@ impl Frame {
     /// are not interchangeable and reading either as the other renders half a frame.
     /// The borrow is a real one: the compiler will not let the `Frame` be dropped or
     /// moved while it is out, which is the whole reason this type exists.
-    pub fn rgb8(&self) -> Option<crate::rgb::RgbRef<'_>> {
+    pub fn rgb8(&self) -> Option<units::rgb::RgbRef<'_>> {
         match &self.pixels {
-            Pixels::Eight(data) => Some(crate::rgb::RgbRef {
+            Pixels::Eight(data) => Some(units::rgb::RgbRef {
                 width: self.width,
                 height: self.height,
                 data,

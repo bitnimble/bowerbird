@@ -13,7 +13,7 @@ use std::borrow::Cow;
 
 use rawshim::avif;
 use rawshim::hdr_args::{Chroma, ContentLight};
-use rawshim::light::{DisplayNits, Light};
+use units::light::{DisplayNits, Light};
 
 const LADDER_NITS: [f64; 12] = [
     203.0, 400.0, 600.0, 800.0, 1000.0, 1200.0, 1600.0, 2000.0, 3000.0, 4000.0, 6000.0, 10000.0,

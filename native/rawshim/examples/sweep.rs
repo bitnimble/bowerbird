@@ -172,7 +172,7 @@ struct Report {
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
-    exposure: rawshim::light::Stops,
+    exposure: units::light::Stops,
     curve: Vec<[f64; 2]>,
     curve_error: f64,
 }
@@ -235,7 +235,7 @@ struct Rendered {
 fn against_camera(
     opened: &support::Opened,
     options: &EncodeOptions,
-    camera: &rawshim::rgb::Rgb,
+    camera: &units::rgb::Rgb,
     intent: Intent,
 ) -> Option<Rendered> {
     // sRGB out of the same dispatch that grades, rather than a second implementation of the

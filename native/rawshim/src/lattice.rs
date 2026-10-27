@@ -8,8 +8,8 @@
 
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{Gpu, Texture};
-use crate::light::{Light, Rendered};
 use crate::tone;
+use units::light::{Light, Rendered};
 
 /// Floats a kernel occupies on the device, as `lattice_bake.slang` reads them.
 pub const KERNEL_WORDS: usize = 17;

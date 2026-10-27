@@ -1,5 +1,5 @@
-use crate::light::{DisplayNits, Gain, Illuminance, Light};
-use crate::px::{Extent, Millimetre, PrintUnit, Share, Span};
+use units::light::{DisplayNits, Gain, Illuminance, Light};
+use units::px::{Extent, Millimetre, PrintUnit, Share, Span};
 
 pub mod environment;
 
@@ -397,7 +397,7 @@ impl Scene {
 
     /// How far one printed mark reaches across a picture of the print whose long edge is `long`:
     /// the printer's pitch and the ink's spread together.
-    pub fn ink_blur(&self, long: Span<crate::px::Output>) -> Extent<crate::px::Output> {
+    pub fn ink_blur(&self, long: Span<units::px::Output>) -> Extent<units::px::Output> {
         let pitch = 25.4 / self.print_resolution_ppi;
         Share::measured(
             pitch.hypot(self.ink_spread.raw()),
@@ -423,7 +423,7 @@ impl Scene {
         (region.0 - border, region.1 - border, region.2, region.3)
     }
 
-    fn frame_border(&self, shape: (usize, usize)) -> Extent<crate::px::Output> {
+    fn frame_border(&self, shape: (usize, usize)) -> Extent<units::px::Output> {
         let share = if self.framed && !matches!(self.presentation, Presentation::Flat) {
             FRAME_BORDER
         } else {
@@ -1062,12 +1062,12 @@ mod tests {
     #[test]
     fn print_is_reflected_hdr_light_with_an_unprinted_back() {
         use crate::gpu::{Canvas, Grade};
-        use crate::px::{Size, Span};
+        use units::px::{Size, Span};
 
         let gpu = crate::gpu::device().expect("print requires Vulkan");
         let base = crate::base::device(gpu).expect("the source pyramid");
         let (width, height) = (96, 64);
-        let code = (crate::tone::pq(Light::<crate::light::SceneNits>::exactly(80.0)).raw()
+        let code = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(80.0)).raw()
             * 65535.0)
             .round() as u16;
         let frame = vec![code; width * height * 3];
@@ -1178,10 +1178,10 @@ mod tests {
         );
 
         let size = 512;
-        let white = (crate::tone::pq(Light::<crate::light::SceneNits>::exactly(203.0)).raw()
+        let white = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(203.0)).raw()
             * 65535.0)
             .round() as u16;
-        let middle = (crate::tone::pq(Light::<crate::light::SceneNits>::exactly(101.5)).raw()
+        let middle = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(101.5)).raw()
             * 65535.0)
             .round() as u16;
         let checker: Vec<u16> = (0..size * size)

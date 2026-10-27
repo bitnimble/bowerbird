@@ -17,7 +17,7 @@
 // tuning if a library renders consistently dark or hot.
 
 use crate::hdr_fit::HdrColour;
-use crate::light::{Gain, Level, Light, Nits, Pq, SceneNits, Stops};
+use units::light::{Gain, Level, Light, Nits, Pq, SceneNits, Stops};
 
 const MAX: usize = 65535;
 
@@ -166,7 +166,7 @@ pub fn body_anchor_wanted() -> bool {
 
 /// None where the body never reached [`BODY_WHITE_CODE`], which is the body saying there is no
 /// white in this picture. The caller's configured quantile answers then.
-pub fn body_white_quantile(preview: crate::rgb::RgbRef<'_>) -> Option<f64> {
+pub fn body_white_quantile(preview: units::rgb::RgbRef<'_>) -> Option<f64> {
     if !body_anchor_wanted() {
         return None;
     }
@@ -388,7 +388,7 @@ impl<'a> SceneGrade<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::light::DisplayNits;
+    use units::light::DisplayNits;
 
     /// PQ is absolute and its range runs to 10000 nits, so a 1000-nit peak encodes at about
     /// 0.752 of the code range and must not be stretched to fill it - the file would then

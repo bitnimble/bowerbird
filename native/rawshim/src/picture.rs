@@ -35,12 +35,12 @@ fn whole(job: &Job) -> Result<(usize, usize), String> {
 pub fn prepared(
     job: &Job,
     level: u32,
-    window: Option<crate::px::Rect<crate::px::Composite>>,
+    window: Option<units::px::Rect<units::px::Composite>>,
     // The parts of `window` the caller is actually short of, or empty for the whole of it. An L of
     // tiles is decoded per source for the box bounding *its own* parts rather than for the box
     // bounding all of them, which holds a corner nobody asked about
     // (`composite_tile::CompositeRequest::parts`).
-    parts: &[crate::px::Rect<crate::px::Composite>],
+    parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<crate::edit::Prepared, String> {
     let picture = whole(job)?;
     let long = picture.0.max(picture.1);
@@ -134,8 +134,8 @@ pub fn prepared(
             };
             let sigma = crate::image::deconvolve_split(capture_sigma, sensor_long, scaled_long);
             let noise = sharpen_noise.at(
-                crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-                crate::px::Span::<crate::px::Drawn>::exact(scaled_long),
+                units::px::Span::<units::px::Sensor>::exact(sensor_long),
+                units::px::Span::<units::px::Drawn>::exact(scaled_long),
             );
             // No repairs: the client draws them over whatever level and tiles it holds
             // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
@@ -153,14 +153,14 @@ pub fn prepared(
         // Crop after filtering so window boundaries keep the whole picture's neighbours.
         crate::retouched_frame::copy(
             &mut recording,
-            (source, crate::px::At::exact(x, y)),
-            (&cropped, crate::px::At::exact(0, 0)),
-            crate::px::Size::exact(width, height),
+            (source, units::px::At::exact(x, y)),
+            (&cropped, units::px::At::exact(0, 0)),
+            units::px::Size::exact(width, height),
         );
         recording.submit();
         placed = Some(crate::gpu::Window {
-            photograph: crate::px::Size::exact(cut.width, cut.height),
-            origin: crate::px::At::exact(x, y),
+            photograph: units::px::Size::exact(cut.width, cut.height),
+            origin: units::px::At::exact(x, y),
         });
         cut.release();
         cut = crate::hdr::Cut::device(cropped, width, height);
@@ -230,7 +230,7 @@ pub fn prepared(
 fn windowed(
     job: &Job,
     level: u32,
-    window: crate::px::Rect<crate::px::Composite>,
+    window: units::px::Rect<units::px::Composite>,
 ) -> Result<crate::edit::Prepared, String> {
     let held = pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?;
     let picture = held.size().raw();
@@ -351,7 +351,7 @@ mod tests {
         for level in [0, 1] {
             let whole = prepared(&job, level, None, &[]).expect("the whole picture prepares");
             job.photo_analysis = whole.header.photo_analysis.clone();
-            let rectangle = crate::px::Rect::exact(1024, 800, 400, 300);
+            let rectangle = units::px::Rect::exact(1024, 800, 400, 300);
             let cut = windowed(&job, level, rectangle).expect("the window prepares");
             assert_eq!((cut.header.width, cut.header.height), (400, 300));
             assert_eq!(

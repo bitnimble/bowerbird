@@ -5,8 +5,8 @@
 //! the shrunk scale, where a piece's boundary is a few hundred points. There is no arithmetic over
 //! a picture here.
 
-use crate::px::{Extent, Share, Shrunk, Span};
 use std::collections::{HashMap, HashSet};
+use units::px::{Extent, Share, Shrunk, Span};
 
 /// The smallest a 4-connected lobe of a solved region may be, as a share of the canvas's area.
 ///

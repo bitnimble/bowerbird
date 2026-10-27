@@ -18,7 +18,7 @@
 
 use crate::gpu::dispatch::Whole;
 use crate::image::LUMA;
-use crate::rgb::RgbRef;
+use units::rgb::RgbRef;
 
 /// Cells along one edge of the luma and chroma grids.
 const GRID: usize = 20;

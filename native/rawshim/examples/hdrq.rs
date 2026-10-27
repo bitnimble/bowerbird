@@ -15,7 +15,7 @@ mod support;
 
 use rawshim::avif;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::light::{DisplayNits, Gain, Light};
+use units::light::{DisplayNits, Gain, Light};
 
 fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {

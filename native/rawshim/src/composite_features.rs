@@ -320,7 +320,7 @@ pub fn paired(ours: &Described, theirs: &Described) -> Vec<Paired> {
 
 #[cfg(test)]
 mod tests {
-    use crate::px::{Search, Share, Span};
+    use units::px::{Search, Share, Span};
 
     /// `REACH_OF_LONG` in `composite_features.slang`, which the emitted WGSL folds into its use
     /// sites - so the `.slang` is what a test reads (`CLAUDE.md`).

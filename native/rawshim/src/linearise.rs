@@ -11,7 +11,7 @@
 //! rendition job asks for every size in turn. Each of those is this pass over a rectangle.
 
 use crate::gpu::dispatch::Whole;
-use crate::px::{At, Photograph, Rect, Size};
+use units::px::{At, Photograph, Rect, Size};
 
 pub struct Linearise {
     layout: wgpu::BindGroupLayout,
@@ -420,13 +420,13 @@ impl Picture {
 
     /// The brightest level the file can state: its transfer's top code, through the gain map at
     /// full recovery. Unbounded for floating-point samples, which state no top.
-    pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
+    pub fn peak_level(&self) -> Option<units::light::Light<units::light::Level>> {
         if self.samples.float.is_some() {
             return None;
         }
         let base = self.coding.curve.light(1.0).raw();
         let top = self.terms.as_ref().map_or(base, |map| map.brightest(base));
-        Some(crate::light::Light::measured(
+        Some(units::light::Light::measured(
             crate::transfer::FULL_SCALE * top.max(1.0),
         ))
     }
@@ -715,8 +715,8 @@ fn packed_storage(gpu: &crate::gpu::Gpu, samples: &[u16]) -> crate::gpu::Buffer 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::px::At;
     use crate::transfer::{Coding, Curve, Primaries};
+    use units::px::At;
 
     /// A source whose primaries reach outside Rec.2020, which is what an ICC profile or a `cHRM`
     /// chunk can state and what `in_gamut` exists for. ProPhoto's green against Rec.2020's other

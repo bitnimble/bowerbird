@@ -128,7 +128,7 @@ fn sized(edge: usize) -> rawshim::dust::Sensor {
         crop: (0, 0, edge, edge),
         cfa: rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
-        diagonal_mm: rawshim::px::Extent::exactly(36.0 * std::f64::consts::SQRT_2),
+        diagonal_mm: units::px::Extent::exactly(36.0 * std::f64::consts::SQRT_2),
     }
 }
 

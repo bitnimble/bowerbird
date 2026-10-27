@@ -1,7 +1,7 @@
 use super::{Binding, Buffer, Grade, Recording, Texture, Uploaded, uniform_words};
-use crate::light::Light;
+use units::light::Light;
 use crate::print::Scene;
-use crate::px::{Canvas, Size};
+use units::px::{Canvas, Size};
 
 #[cfg(test)]
 mod tests;
@@ -347,8 +347,8 @@ impl Uploaded<'_> {
             key_lux: Light::ZERO,
             fill_lux: Light::ZERO,
             light_temperature_kelvin: 6500.0,
-            white_reflectance: crate::light::Gain::of_ratio(1.0),
-            black_reflectance: crate::light::Gain::of_ratio(0.0),
+            white_reflectance: units::light::Gain::of_ratio(1.0),
+            black_reflectance: units::light::Gain::of_ratio(0.0),
             ..*scene
         };
         let mut key = normalized.uniform(Light::ZERO);

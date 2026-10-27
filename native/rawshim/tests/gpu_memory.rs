@@ -140,7 +140,7 @@ fn every_stage_hands_its_working_planes_back() {
     // What the editor pays per band sweep: `refresh_detail` replaces the whole `Uploaded`, and what
     // it holds is the blur, the chroma smoothing, the lattice, the curves and - once anything
     // encodes - a frame each of counts and readback.
-    let level = rawshim::light::Light::measured;
+    let level = units::light::Light::measured;
     let levels = rawshim::tone::Levels {
         white: level(4095.0),
         peak: level(4095.0),
@@ -151,8 +151,8 @@ fn every_stage_hands_its_working_planes_back() {
         WIDTH,
         HEIGHT,
         *levels,
-        rawshim::light::Light::exactly(203.0),
-        rawshim::light::Light::exactly(1000.0),
+        units::light::Light::exactly(203.0),
+        units::light::Light::exactly(1000.0),
     );
     let peak = gpu.scene_peak();
     gives_it_back(gpu, "upload", || {

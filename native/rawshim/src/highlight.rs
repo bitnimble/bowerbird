@@ -6,7 +6,7 @@
 
 use crate::gpu::Gpu;
 use crate::gpu::dispatch::Whole;
-use crate::px::{At, Sensor, Span};
+use units::px::{At, Sensor, Span};
 
 const CELL_SITES: usize = 4;
 

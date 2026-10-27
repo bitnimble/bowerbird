@@ -69,7 +69,7 @@ fn main() {
         let (rgb, out_w, out_h) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
         let grade_ms = graded.elapsed().as_millis();
         let bytes: Vec<u8> = rgb.iter().map(|v| *v as u8).collect();
-        let whole = rawshim::rgb::RgbRef {
+        let whole = units::rgb::RgbRef {
             width: out_w,
             height: out_h,
             data: &bytes,
@@ -97,7 +97,7 @@ fn main() {
 
 /// Mean of each channel over the whole frame. A colour shift shows here before it shows anywhere
 /// else, and it is invariant to where a crop was taken.
-fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
+fn channel_means(image: units::rgb::RgbRef<'_>) -> (f64, f64, f64) {
     let n = (image.width * image.height) as f64;
     let mut sums = [0f64; 3];
     for pixel in image.data.chunks_exact(3) {
@@ -110,7 +110,7 @@ fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
 
 /// Mean absolute Laplacian of luma: how much fine structure survived. A demosaic that smears
 /// detail drops this; one that adds zipper artefacts raises it.
-fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
+fn roughness(image: units::rgb::RgbRef<'_>) -> f64 {
     let luma = |x: usize, y: usize| -> f64 {
         let at = (y * image.width + x) * 3;
         0.2126 * f64::from(image.data[at])
@@ -134,7 +134,7 @@ fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
     }
 }
 
-fn crop(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
+fn crop(image: units::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> units::rgb::Rgb {
     let w = side.min(image.width.saturating_sub(x));
     let h = side.min(image.height.saturating_sub(y));
     let mut data = vec![0u8; w * h * 3];
@@ -142,14 +142,14 @@ fn crop(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raw
         let from = ((y + row) * image.width + x) * 3;
         data[row * w * 3..(row + 1) * w * 3].copy_from_slice(&image.data[from..from + w * 3]);
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w,
         height: h,
         data,
     }
 }
 
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,

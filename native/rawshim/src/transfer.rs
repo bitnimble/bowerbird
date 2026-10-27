@@ -39,9 +39,9 @@ impl Curve {
     ///
     /// 1.0 is diffuse white for every arm, which is what makes the two families comparable: an
     /// SDR curve's own 1.0, PQ's 203 nits, and HLG's 75% signal are the same brightness.
-    pub fn light(self, code: f64) -> crate::light::Light<crate::light::Scene> {
+    pub fn light(self, code: f64) -> units::light::Light<units::light::Scene> {
         let code = code.clamp(0.0, 1.0);
-        crate::light::Light::exactly(match self {
+        units::light::Light::exactly(match self {
             Curve::Srgb => match code <= 0.040_45 {
                 true => code / 12.92,
                 false => ((code + 0.055) / 1.055).powf(2.4),
@@ -52,7 +52,7 @@ impl Curve {
             },
             Curve::Gamma(exponent) => code.powf(f64::from(exponent)),
             Curve::Pq => {
-                crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::exactly(code))
+                crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::exactly(code))
                     .raw()
                     / REFERENCE_NITS
             }
@@ -480,8 +480,8 @@ mod tests {
         for curve in [Curve::Srgb, Curve::Rec709, Curve::Gamma(2.2), Curve::Linear] {
             assert!((curve.light(1.0).raw() - 1.0).abs() < 1e-9, "{curve:?}");
         }
-        let white: crate::light::Light<crate::light::SceneNits> =
-            crate::light::Light::exactly(203.0);
+        let white: units::light::Light<units::light::SceneNits> =
+            units::light::Light::exactly(203.0);
         let pq_white = Curve::Pq.light(crate::tone::pq(white).raw()).raw();
         assert!(
             (pq_white - 1.0).abs() < 1e-3,
@@ -628,8 +628,8 @@ mod tests {
         let pq = Coding::of(Primaries::REC2020, Curve::Pq, 10);
         let table = pq.table();
         assert_eq!(table.len(), 1024 * 3);
-        let nits: crate::light::Light<crate::light::SceneNits> =
-            crate::light::Light::exactly(203.0);
+        let nits: units::light::Light<units::light::SceneNits> =
+            units::light::Light::exactly(203.0);
         let white = table[(crate::tone::pq(nits).raw() * 1023.0).round() as usize * 3];
         assert!(
             (f64::from(white) - 1.0).abs() < 2e-3,

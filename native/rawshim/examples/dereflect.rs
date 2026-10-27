@@ -86,11 +86,11 @@ fn frame(args: &[String]) {
     );
     let (gpu, remover) = opened(bundle);
     let resident = rawshim::resident::Resident::upload(gpu, &samples, w, h);
-    let full = rawshim::px::Size::exact(w, h);
+    let full = units::px::Size::exact(w, h);
     let looked = rawshim::dereflect::looked(gpu, &resident).expect("the shrink");
     let layer = remover.layer(gpu, &looked, full, &strokes, &rawshim::fit::Lens::none());
     let before = resident.duplicate();
-    layer.take_out(gpu, &resident, rawshim::px::At::ORIGIN, full, 1.0);
+    layer.take_out(gpu, &resident, units::px::At::ORIGIN, full, 1.0);
     let levels = |frame: &rawshim::resident::Resident| {
         rawshim::resident::levels_of(&pollster::block_on(frame.host()).expect("reads back"))
     };

@@ -502,10 +502,10 @@ fn reconstruct_matrixed(
 ) -> Option<Vec<f32>> {
     let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
     let at = rawshim::demosaic::Placement {
-        stride: rawshim::px::Span::exact(width),
-        crop: rawshim::px::Rect::exact(0, 0, width, height),
-        dest: rawshim::px::At::ORIGIN,
-        frame: rawshim::px::Size::exact(width, height),
+        stride: units::px::Span::exact(width),
+        crop: units::px::Rect::exact(0, 0, width, height),
+        dest: units::px::At::ORIGIN,
+        frame: units::px::Size::exact(width, height),
         orientation: 0,
         reduce: 1,
     };

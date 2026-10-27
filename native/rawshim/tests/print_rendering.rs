@@ -1,9 +1,9 @@
 use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
-use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
 use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::Size;
 use rawshim::transfer::Primaries;
+use units::light::{DisplayNits, Gain, Light, SceneNits};
+use units::px::Size;
 
 #[test]
 fn warm_highlight_detail_survives_diffuse_light_and_glare() {

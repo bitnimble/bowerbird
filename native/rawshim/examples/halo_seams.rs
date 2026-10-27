@@ -67,8 +67,8 @@ fn main() {
     );
 
     let cut = |left: usize, top: usize, width: usize, height: usize| -> Vec<u8> {
-        let view = rawshim::view::View::whole(rawshim::px::Size::exact(photograph.0, photograph.1))
-            .showing(rawshim::px::Rect::exact(left, top, width, height));
+        let view = rawshim::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
+            .showing(units::px::Rect::exact(left, top, width, height));
         // Whatever is passed here is overridden by `set_tile_halo` for the whole sweep, which is
         // the point of the harness; the constant only names what a caller would have asked for.
         let frame = rawshim::decode_tile(
@@ -342,7 +342,7 @@ fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
     )
     .expect("the crop encodes");
 
-    let image = rawshim::rgb::RgbRef {
+    let image = units::rgb::RgbRef {
         width,
         height,
         data: rgb,

@@ -179,7 +179,8 @@ then do other work or wait for completion. **Never poll output files**: output p
 `tail` stays empty until completion.
 
 `test:native` requires a name filter, `--test <file>`, or `--lib`; no selection exits 2.
-Real RAW tests require `--features fixtures`. It covers **only `native/rawshim`**.
+Real RAW tests require `--features fixtures`. It covers **only the `native/Cargo.toml` workspace**
+(rawshim and the crates it is split into).
 Run sibling crates through `bun run scripts/cargo.ts test --manifest-path native/updater/Cargo.toml`,
 substituting `native/lensdb/Cargo.toml`, `native/heif/Cargo.toml` or `native/avif_planes/Cargo.toml`
 as needed. `lensdb` tests pin scored search against C results (DESIGN §10.8).

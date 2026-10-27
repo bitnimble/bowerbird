@@ -17,13 +17,13 @@ use crate::assembly_seam::{MinCut, NEIGHBOURS, SeamField, TIE, along_an_edge, di
 use crate::assembly_tiles::{simplify, trace};
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
-use crate::light::{Gain, Stops};
 use crate::patch_search::Patch;
-use crate::px::{At, Coordinate, Drawn, Extent, Point, Rect, Size, Stored};
 use crate::repair::{
     FEATHER_CELLS, MOST_GAIN, MOST_VERTICES, Params, Repair, bounds, cell, entry, offered_feather,
 };
 use crate::resident::Resident;
+use units::light::{Gain, Stops};
+use units::px::{At, Coordinate, Drawn, Extent, Point, Rect, Size, Stored};
 
 /// How far past the drawn loop the seam may reach: half the loop again.
 pub const GROW: usize = 12;

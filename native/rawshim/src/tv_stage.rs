@@ -4,10 +4,10 @@
 #![expect(unsafe_code)]
 
 use crate::gpu::surface_stage::{Display, Picture, SurfaceStage, measured};
-use crate::light::Gain;
-use crate::px::Size;
 use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
+use units::light::Gain;
+use units::px::Size;
 
 /// A rendition's planes on the device, with its shown size in `width` and `height`; null where
 /// the stage does not draw this file, which leaves the page drawing it.

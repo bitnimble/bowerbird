@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu};
-use crate::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 use crate::resident::Resident;
+use units::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};
 
 const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect.wgsl"));
 const WGSL_HALF: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/dereflect_half.wgsl"));

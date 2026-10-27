@@ -441,11 +441,11 @@ fn whole_levels(
         // times its gain. Where the gains are right those estimates agree; what they disagree about
         // is content, and the mean over the set is the average the whole canvas has.
         let scaled = |levels: crate::tone::Levels| crate::tone::Levels {
-            white: crate::light::Light::measured(levels.white.raw() * source.gain),
-            peak: crate::light::Light::measured(levels.peak.raw() * source.gain),
+            white: units::light::Light::measured(levels.white.raw() * source.gain),
+            peak: units::light::Light::measured(levels.peak.raw() * source.gain),
             floor: levels
                 .floor
-                .map(|f| crate::light::Light::measured(f.raw() * source.gain)),
+                .map(|f| units::light::Light::measured(f.raw() * source.gain)),
         };
         if let Some(levels) = file
             .analysis
@@ -517,7 +517,7 @@ fn whole_levels(
 fn camera_levels(
     files: &[crate::composite_tile::SourceFile<'_>],
 ) -> Result<crate::tone::Anchored, String> {
-    let white = crate::light::Light::measured(crate::transfer::FULL_SCALE);
+    let white = units::light::Light::measured(crate::transfer::FULL_SCALE);
     let mut peak = white;
     for file in files {
         peak = peak.max(crate::composite_tile::camera_peak(file.path)?);
@@ -720,7 +720,7 @@ fn union_match(
 
     // The camera's own pictures, stacked the same way: the fit reads the pair as one scene, and
     // what it compares is the content rather than the arrangement of it.
-    let mut theirs: Vec<crate::rgb::Rgb> = Vec::with_capacity(files.len());
+    let mut theirs: Vec<units::rgb::Rgb> = Vec::with_capacity(files.len());
     for file in files {
         theirs.push(crate::decode_rawler::upright_preview_rgb(
             file.path,
@@ -750,7 +750,7 @@ fn union_match(
     for camera in &theirs {
         bytes.extend_from_slice(&camera.data);
     }
-    let preview = crate::rgb::Rgb {
+    let preview = units::rgb::Rgb {
         data: bytes.into(),
         width: across,
         height: deep,
@@ -799,9 +799,9 @@ pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<
 
 /// The rectangle two of them share, or None where they share none.
 fn overlap(
-    a: crate::px::Rect<crate::px::Composite>,
-    b: crate::px::Rect<crate::px::Composite>,
-) -> Option<crate::px::Rect<crate::px::Composite>> {
+    a: units::px::Rect<units::px::Composite>,
+    b: units::px::Rect<units::px::Composite>,
+) -> Option<units::px::Rect<units::px::Composite>> {
     let (al, at, aw, ah) = a.raw();
     let (bl, bt, bw, bh) = b.raw();
     let left = al.max(bl);
@@ -809,7 +809,7 @@ fn overlap(
     let right = (al + aw).min(bl + bw);
     let bottom = (at + ah).min(bt + bh);
     (right > left && bottom > top)
-        .then(|| crate::px::Rect::exact(left, top, right - left, bottom - top))
+        .then(|| units::px::Rect::exact(left, top, right - left, bottom - top))
 }
 
 /// How a strip of a recipe is drawn.
@@ -829,10 +829,10 @@ pub(crate) fn base(
     wanted: &CompositeRecipe,
     size: u32,
     from: crate::composite_tile::From,
-    window: Option<crate::px::Rect<crate::px::Composite>>,
+    window: Option<units::px::Rect<units::px::Composite>>,
     // The parts of `window` the caller asked for, or empty for the whole of it.
     // `composite_tile::CompositeRequest::parts` says what they buy.
-    parts: &[crate::px::Rect<crate::px::Composite>],
+    parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<Base, String> {
     let mut lap = crate::clock::laps("  panorama ");
     let spec = wanted.composition();
@@ -848,7 +848,7 @@ pub(crate) fn base(
     // reader zoomed into a ladder asks for the rectangle their stage can hold, and everything
     // the grade is anchored to - the geometry, the sharpen's scale, the presence sliders' reach -
     // is still the canvas's.
-    let asked = window.unwrap_or_else(|| crate::px::Rect::exact(0, 0, canvas_w, canvas_h));
+    let asked = window.unwrap_or_else(|| units::px::Rect::exact(0, 0, canvas_w, canvas_h));
     let (window_left, window_top, width, height) = asked.raw();
     if width == 0 || height == 0 || window_left + width > canvas_w || window_top + height > canvas_h
     {
@@ -1050,12 +1050,12 @@ pub(crate) fn base(
             // The canvas's own coordinate, where `tile_runs` below stays in the buffer's: a
             // window's tile is somewhere else in the picture than it is in the buffer, and the
             // gather has to be told the first.
-            let strip = crate::px::Rect::exact(window_left + left, window_top + top, wide, deep);
+            let strip = units::px::Rect::exact(window_left + left, window_top + top, wide, deep);
             // **The caller's parts clipped to this strip**, so a source is decoded for the parts
             // of it that are actually here. This assembly walks the window in strips of its own
             // sizing, which for a tile fetch is one strip and for a rendition is many - and a
             // strip holding none of the parts is one nothing asked for.
-            let here: Vec<crate::px::Rect<crate::px::Composite>> = parts
+            let here: Vec<units::px::Rect<units::px::Composite>> = parts
                 .iter()
                 .filter_map(|part| overlap(*part, strip))
                 .collect();
@@ -1204,8 +1204,8 @@ pub(crate) fn base(
         // across", and for a window of a ladder that is still the whole canvas.
         photograph: (canvas_w, canvas_h),
         window: window.map(|_| crate::gpu::Window {
-            photograph: crate::px::Size::exact(canvas_w, canvas_h),
-            origin: crate::px::At::exact(window_left, window_top),
+            photograph: units::px::Size::exact(canvas_w, canvas_h),
+            origin: units::px::At::exact(window_left, window_top),
         }),
         matched,
         capture_sigma: analysis.from_raw.capture_sigma,
@@ -1390,7 +1390,7 @@ mod tests {
 
         const ACROSS: usize = 64;
         let request = crate::composite_tile::CompositeRequest {
-            window: crate::px::Rect::exact(
+            window: units::px::Rect::exact(
                 wide / 2 - ACROSS / 2,
                 tall / 2 - ACROSS / 2,
                 ACROSS,
@@ -1401,7 +1401,7 @@ mod tests {
             scale: 1.0,
             white_quantile: 0.9,
             levels: Some(levels),
-            reference_white_nits: crate::light::Light::exactly(203.0),
+            reference_white_nits: units::light::Light::exactly(203.0),
             strengths: crate::image::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
@@ -1454,7 +1454,7 @@ mod tests {
         // stands for, on the scale `encode_base` put them.
         let reference = 203.0;
         let level_of = |code: u16| {
-            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(
+            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
                 f64::from(code) / crate::transfer::FULL_SCALE,
             ))
             .raw()
@@ -1964,7 +1964,7 @@ mod tests {
         let part = crate::picture::prepared(
             &with_analysis,
             1,
-            Some(crate::px::Rect::exact(left, top, wide, deep)),
+            Some(units::px::Rect::exact(left, top, wide, deep)),
             &[],
         )
         .expect("a window of that level");
@@ -1992,7 +1992,7 @@ mod tests {
             crate::picture::prepared(
                 &with_analysis,
                 1,
-                Some(crate::px::Rect::exact(left, 0, strip, down)),
+                Some(units::px::Rect::exact(left, 0, strip, down)),
                 &[],
             )
             .expect("a window at one end")
@@ -2015,7 +2015,7 @@ mod tests {
         let full = crate::picture::prepared(
             &all,
             1,
-            Some(crate::px::Rect::exact(0, 0, across, down)),
+            Some(units::px::Rect::exact(0, 0, across, down)),
             &[],
         )
         .expect("the whole level as a window");
@@ -2088,20 +2088,20 @@ mod tests {
 
         // One white for both, so nothing below is the coding disagreeing.
         let levels = crate::tone::Levels {
-            white: crate::light::Light::measured(0.25 * crate::transfer::FULL_SCALE),
-            peak: crate::light::Light::measured(crate::transfer::FULL_SCALE),
+            white: units::light::Light::measured(0.25 * crate::transfer::FULL_SCALE),
+            peak: units::light::Light::measured(crate::transfer::FULL_SCALE),
             floor: None,
         }
         .anchored();
         let gathered = |scale: f64, width: usize, height: usize| {
             let request = crate::composite_tile::CompositeRequest {
-                window: crate::px::Rect::exact(0, 0, width, height),
+                window: units::px::Rect::exact(0, 0, width, height),
                 // The whole window, which is what an empty list means.
                 parts: &[],
                 scale,
                 white_quantile: 0.9,
                 levels: Some(levels),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 // Off, both of them: a sharpen or a defringe is a second difference between the
                 // two answers and neither is the filter under test.
                 strengths: crate::image::Strengths {

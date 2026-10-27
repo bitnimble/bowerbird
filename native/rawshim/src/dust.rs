@@ -25,7 +25,7 @@
 //! correction is only sound where it has passed.
 
 use crate::gpu::dispatch::Whole;
-use crate::px::{Extent, Millimetre};
+use units::px::{Extent, Millimetre};
 
 /// Profile samples per spot, spanning [`SPAN`] elliptical radii. Matched in `dust.slang`.
 pub const BINS: usize = 14;

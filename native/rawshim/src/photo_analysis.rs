@@ -194,11 +194,11 @@ pub struct MeasuredLevels {
 /// makes a rendition and the editor place the knee in the same place.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeasuredPeak {
-    pub nits: crate::light::Light<crate::light::DisplayNits>,
+    pub nits: units::light::Light<units::light::DisplayNits>,
     /// The diffuse white the value above is expressed against, and the quantile the frame it was
     /// measured on was coded with. Both reach the coding, so a peak is only an answer to a caller
     /// coding the same way.
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub white_quantile: f64,
 }
 
@@ -259,8 +259,8 @@ impl MeasuredPeak {
     pub fn nits_at(
         &self,
         white_quantile: f64,
-        reference_white_nits: crate::light::Light<crate::light::SceneNits>,
-    ) -> Option<crate::light::Light<crate::light::DisplayNits>> {
+        reference_white_nits: units::light::Light<units::light::SceneNits>,
+    ) -> Option<units::light::Light<units::light::DisplayNits>> {
         let answers = self.white_quantile == white_quantile
             && self.reference_white_nits == reference_white_nits;
         match answers {
@@ -631,7 +631,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     let saturation = at.f32()?;
     let ceiling = at.f32()?;
     let delta_e = at.f32()?;
-    let exposure = crate::light::Stops::measured(at.f32()?);
+    let exposure = units::light::Stops::measured(at.f32()?);
     let count = at.u32()? as usize;
     if count > 4096 {
         return None;
@@ -688,7 +688,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
 
     // `camera_undone` divides by the saturation.
     if !exposure.raw().is_finite()
-        || !crate::light::curve_is_valid(&curve)
+        || !units::light::curve_is_valid(&curve)
         || !(saturation > 0.0 && saturation.is_finite())
         || illuminant.is_some_and(|i| !(i.temperature > 0.0 && i.tint.is_finite()))
     {
@@ -762,10 +762,10 @@ fn put_levels(out: &mut Vec<u8>, measured: &MeasuredLevels) {
 /// its levels alone - remeasured on the next open, at the cost of one histogram walk, where a
 /// default in place of the `?` would grade every one of them against a bottom nothing measured.
 fn take_levels(at: &mut Reader<'_>) -> Option<MeasuredLevels> {
-    let white = crate::light::Light::measured(at.f64()?);
-    let peak = crate::light::Light::measured(at.f64()?);
+    let white = units::light::Light::measured(at.f64()?);
+    let peak = units::light::Light::measured(at.f64()?);
     let white_quantile = at.f64()?;
-    let floor = Some(crate::light::Light::measured(at.f64()?));
+    let floor = Some(units::light::Light::measured(at.f64()?));
     let measured = MeasuredLevels {
         levels: Levels { white, peak, floor },
         white_quantile,
@@ -788,13 +788,13 @@ fn put_peak(out: &mut Vec<u8>, peak: &MeasuredPeak) {
 
 fn take_peak(at: &mut Reader<'_>) -> Option<MeasuredPeak> {
     let peak = MeasuredPeak {
-        nits: crate::light::Light::measured(at.f64()?),
-        reference_white_nits: crate::light::Light::measured(at.f64()?),
+        nits: units::light::Light::measured(at.f64()?),
+        reference_white_nits: units::light::Light::measured(at.f64()?),
         white_quantile: at.f64()?,
     };
     let sane = peak.nits.is_a_peak()
         && peak.reference_white_nits.is_finite()
-        && peak.reference_white_nits > crate::light::Light::ZERO
+        && peak.reference_white_nits > units::light::Light::ZERO
         && quantile_like(peak.white_quantile);
     match sane {
         true => Some(peak),
@@ -974,7 +974,7 @@ impl Reader<'_> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::light::Light;
+    use units::light::Light;
 
     pub(crate) fn a_match() -> HdrMatch {
         // Values that are not round, so a field read out of the wrong offset shows up as a
@@ -1017,7 +1017,7 @@ pub(crate) mod tests {
                 ],
                 saturation: 0.937,
                 delta_e: 1.83,
-                exposure: crate::light::Stops::measured(0.625),
+                exposure: units::light::Stops::measured(0.625),
                 curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
                     .map(|point| point.map(|value| f64::from(value as f32)))
                     .to_vec(),
@@ -1473,7 +1473,7 @@ pub(crate) mod tests {
 
     #[test]
     fn invalid_stored_camera_controls_preserve_the_lens() {
-        for count in [0, 1, crate::light::CURVE_MAX_POINTS + 1] {
+        for count in [0, 1, units::light::CURVE_MAX_POINTS + 1] {
             let mut blob = everything();
             let matched = blob.from_raw.matched.as_mut().unwrap();
             matched.colour.as_mut().unwrap().curve = (0..count)
@@ -1496,7 +1496,7 @@ pub(crate) mod tests {
             .colour
             .as_mut()
             .unwrap()
-            .exposure = crate::light::Stops::measured(f64::NAN);
+            .exposure = units::light::Stops::measured(f64::NAN);
         let read = decode(&encode(&blob))
             .unwrap()
             .from_raw

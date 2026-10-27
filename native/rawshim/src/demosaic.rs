@@ -251,13 +251,13 @@ impl Rcd {
 #[derive(Clone, Copy)]
 pub struct Placement {
     /// Row stride of the source plane, in pixels: the region RCD ran over, halo included.
-    pub stride: crate::px::Span<crate::px::Sensor>,
+    pub stride: units::px::Span<units::px::Sensor>,
     /// This tile's rectangle inside that region.
-    pub crop: crate::px::Rect<crate::px::Sensor>,
+    pub crop: units::px::Rect<units::px::Sensor>,
     /// Where it lands in the unoriented cropped frame.
-    pub dest: crate::px::At<crate::px::Photograph>,
+    pub dest: units::px::At<units::px::Photograph>,
     /// The whole unoriented cropped frame.
-    pub frame: crate::px::Size<crate::px::Photograph>,
+    pub frame: units::px::Size<units::px::Photograph>,
     /// `rawler`'s orientation, as `Orientation::to_u32` numbers it.
     pub orientation: u32,
     /// Photosites a side in the block one output pixel is read from, on the route that skips the
@@ -1264,10 +1264,10 @@ mod tests {
         // number of words.
         let crop = (7usize, 5usize, 21usize, 13usize);
         let at = super::Placement {
-            stride: crate::px::Span::exact(w),
-            crop: crate::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
-            dest: crate::px::At::ORIGIN,
-            frame: crate::px::Size::exact(crop.2, crop.3),
+            stride: units::px::Span::exact(w),
+            crop: units::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
+            dest: units::px::At::ORIGIN,
+            frame: units::px::Size::exact(crop.2, crop.3),
             orientation: 0,
             reduce: 1,
         };
@@ -1742,10 +1742,10 @@ mod tests {
                     &resident,
                     crate::snapshot::Anchoring {
                         levels: levels.anchored(),
-                        reference_white_nits: crate::light::Light::exactly(203.0),
+                        reference_white_nits: units::light::Light::exactly(203.0),
                     },
                 ),
-                &[crate::px::Rect::<crate::px::Pinned>::exact(
+                &[units::px::Rect::<units::px::Pinned>::exact(
                     0,
                     0,
                     self.width,
@@ -1837,10 +1837,10 @@ mod tests {
     ) -> Vec<u16> {
         let uploaded = crate::condition::Mosaic::upload(gpu, mosaic, w, h);
         let at = super::Placement {
-            stride: crate::px::Span::exact(w),
-            crop: crate::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
-            dest: crate::px::At::ORIGIN,
-            frame: crate::px::Size::exact(crop.2, crop.3),
+            stride: units::px::Span::exact(w),
+            crop: units::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
+            dest: units::px::At::ORIGIN,
+            frame: units::px::Size::exact(crop.2, crop.3),
             orientation: 0,
             reduce: 1,
         };
@@ -1977,10 +1977,10 @@ mod tests {
 
         for orientation in 1..8u32 {
             let at = super::Placement {
-                stride: crate::px::Span::exact(w),
-                crop: crate::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
-                dest: crate::px::At::ORIGIN,
-                frame: crate::px::Size::exact(crop.2, crop.3),
+                stride: units::px::Span::exact(w),
+                crop: units::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
+                dest: units::px::At::ORIGIN,
+                frame: units::px::Size::exact(crop.2, crop.3),
                 orientation,
                 reduce: 1,
             };

@@ -32,7 +32,7 @@ fn main() {
         let bytes = std::fs::read(path).unwrap_or_else(|why| panic!("{path}: {why}"));
         rawshim::jpeg::decode(&bytes, long).unwrap_or_else(|why| panic!("{path}: {why}"))
     };
-    let panes: Vec<rawshim::rgb::Rgb> = paths.iter().map(read).collect();
+    let panes: Vec<units::rgb::Rgb> = paths.iter().map(read).collect();
     // Trimmed to the smallest rather than refused: two pictures of one scene bounded to the same
     // long edge land a pixel apart when their sources round differently, and a pane short by one
     // is not a reason to decline the comparison.
@@ -52,7 +52,7 @@ fn main() {
         }
     }
 
-    let joined = rawshim::rgb::Rgb {
+    let joined = units::rgb::Rgb {
         data,
         width,
         height,

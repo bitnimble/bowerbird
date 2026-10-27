@@ -178,12 +178,12 @@ fn pixels_read(avif: &[u8], rgba: &[u8], width: usize, height: usize) -> Result<
 
 impl Held {
     /// The picture's size the way a reader sees it.
-    pub fn size(&self) -> crate::px::Size<crate::px::Photograph> {
+    pub fn size(&self) -> units::px::Size<units::px::Photograph> {
         self.picture.upright_size()
     }
 
     /// The brightest level the file can state ([`crate::linearise::Picture::peak_level`]).
-    pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
+    pub fn peak_level(&self) -> Option<units::light::Light<units::light::Level>> {
         self.picture.peak_level()
     }
 
@@ -195,7 +195,7 @@ impl Held {
     /// would be filtering a reconstruction and calling it the sensor.
     pub fn window(
         &self,
-        window: crate::px::Rect<crate::px::Photograph>,
+        window: units::px::Rect<units::px::Photograph>,
         scale: crate::view::Scale,
     ) -> Option<crate::frame::Frame> {
         let gpu = crate::gpu::device()?;
@@ -243,7 +243,7 @@ impl Held {
             // its scene, as a RAW's is.
             stated_white: match self.camera {
                 Some(_) => None,
-                None => Some(crate::light::Light::measured(crate::transfer::FULL_SCALE)),
+                None => Some(units::light::Light::measured(crate::transfer::FULL_SCALE)),
             },
         })
     }
@@ -252,7 +252,7 @@ impl Held {
 /// A JPEG decoded upright to `long_edge` for its grid tile; `None` for any other format, whose tile
 /// is rendered.
 #[cfg(feature = "renditions")]
-pub fn preview_rgb(path: &str, long_edge: usize) -> Option<crate::rgb::Rgb> {
+pub fn preview_rgb(path: &str, long_edge: usize) -> Option<units::rgb::Rgb> {
     let mut lap = crate::clock::laps("  rendered ");
     let bytes = std::fs::read(path).ok()?;
     lap("read");

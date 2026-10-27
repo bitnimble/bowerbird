@@ -2,7 +2,7 @@
 //! projected through its lens, less any shift the camera made on purpose, as the prior the aligner
 //! searches from.
 
-use crate::px::{Extent, Sensor};
+use units::px::{Extent, Sensor};
 
 /// A stack of frames merged on the mosaic: how they were taken, and how they are weighed.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,7 +61,7 @@ pub const SHIFTS: [Offset; 4] = [
 
 pub fn prior(
     recipe: &crate::composition::Composition,
-    window: crate::px::Rect<crate::px::Photograph>,
+    window: units::px::Rect<units::px::Photograph>,
     taken: Taken,
 ) -> Option<Vec<Offset>> {
     let reference = recipe.sources.get(recipe.reference)?;
@@ -100,7 +100,7 @@ pub fn prior_at(
 mod tests {
     use super::{Offset, SHIFTS};
     use crate::align::{self, Exposure, Search};
-    use crate::px::{At, Rect};
+    use units::px::{At, Rect};
 
     #[test]
     fn prior_maps_each_lens_back_to_sensor_coordinates() {

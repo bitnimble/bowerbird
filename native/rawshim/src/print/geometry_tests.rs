@@ -1,5 +1,5 @@
 use super::Scene;
-use crate::px::Extent;
+use units::px::Extent;
 
 #[test]
 fn print_bends_along_its_long_edge_and_keeps_stock_thickness() {
@@ -278,7 +278,7 @@ fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
     });
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("print geometry scene"),
-        contents: &scene.uniform(crate::light::Light::ZERO),
+        contents: &scene.uniform(units::light::Light::ZERO),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let bytes = probes.len() as u64 * 64;

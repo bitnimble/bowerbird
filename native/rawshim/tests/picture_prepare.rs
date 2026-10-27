@@ -1,7 +1,7 @@
 #![cfg(feature = "renditions")]
 
 use rawshim::job::Job;
-use rawshim::px::Rect;
+use units::px::Rect;
 
 fn job(path: &str) -> Job {
     serde_json::from_value(serde_json::json!({
@@ -144,7 +144,7 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
                     floor: header.floor,
                 },
                 header.grade.reference_white_nits,
-                rawshim::light::Light::at_diffuse_white(header.grade.reference_white_nits),
+                units::light::Light::at_diffuse_white(header.grade.reference_white_nits),
             )
         };
         gpu.upload(&prepared.samples, &grade, &gpu.scene_peak())

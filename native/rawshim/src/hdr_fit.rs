@@ -10,9 +10,9 @@
 
 use crate::gpu::dispatch::{Banded, Whole};
 use crate::lattice::{ChromaMap, LutAxes};
-use crate::light::Light;
 use crate::parallel::*;
-use crate::px::TUNED_ON;
+use units::light::Light;
+use units::px::TUNED_ON;
 
 /// Long edge of the grid the fit runs on. Fitting small and applying at full resolution is
 /// free, and a 60MP fit is minutes of work for the same answer.
@@ -240,7 +240,7 @@ pub struct HdrColour {
     /// than chooses, and it remains one number over a whole frame - so a render is what says
     /// a render is right.
     pub delta_e: f64,
-    pub exposure: crate::light::Stops,
+    pub exposure: units::light::Stops,
     pub curve: Vec<[f64; 2]>,
     /// The white balance the camera match sets, in whole steps of both sliders: the illuminant that
     /// pulls the frame's greys onto the camera's, and the one everything above was fitted under.
@@ -1127,15 +1127,15 @@ impl HdrColour {
             chroma: None,
             neighbourhood: NeighbourhoodThumb::none(),
             delta_e: 0.0,
-            exposure: crate::light::Stops::ZERO,
-            curve: crate::light::IDENTITY_CURVE.to_vec(),
+            exposure: units::light::Stops::ZERO,
+            curve: units::light::IDENTITY_CURVE.to_vec(),
             illuminant: None,
             stated: false,
         }
     }
 
     pub fn saturation_slider(&self) -> f64 {
-        crate::gpu::saturation_slider(crate::light::Gain::of_ratio(self.saturation))
+        crate::gpu::saturation_slider(units::light::Gain::of_ratio(self.saturation))
     }
 }
 
@@ -1268,12 +1268,12 @@ fn probe_grade(colour: &HdrColour) -> crate::gpu::Grade<'_> {
             1,
             1,
             crate::tone::Levels {
-                white: crate::light::Light::measured(1.0),
-                peak: crate::light::Light::measured(1.0),
+                white: units::light::Light::measured(1.0),
+                peak: units::light::Light::measured(1.0),
                 floor: None,
             },
-            crate::light::Light::exactly(1.0),
-            crate::light::Light::exactly(1.0),
+            units::light::Light::exactly(1.0),
+            units::light::Light::exactly(1.0),
         )
     }
 }
@@ -2515,8 +2515,8 @@ async fn fit_curves(
 /// how many such pixels are needed before their average is worth acting on.
 pub(crate) const GREY_CHROMA: f64 = 0.06;
 const MIN_GREY: u64 = 200;
-const NEUTRAL_PULL_LEAST: crate::light::Gain = crate::light::Gain::of_ratio(0.9);
-const NEUTRAL_PULL_MOST: crate::light::Gain = crate::light::Gain::of_ratio(1.1);
+const NEUTRAL_PULL_LEAST: units::light::Gain = units::light::Gain::of_ratio(0.9);
+const NEUTRAL_PULL_MOST: units::light::Gain = units::light::Gain::of_ratio(1.1);
 
 /// The white balance that pulls the frame's greys onto the camera's, one step on from `from`, the
 /// illuminant `plane` is lit by. None where there are too few greys to average.
@@ -2551,7 +2551,7 @@ async fn neutral_pull(
     }
     let white = std::array::from_fn(|c| {
         let pull = pairs.grey_target[c] / ours[c].max(1e-9);
-        crate::light::Gain::of_ratio(pull.clamp(NEUTRAL_PULL_LEAST.raw(), NEUTRAL_PULL_MOST.raw()))
+        units::light::Gain::of_ratio(pull.clamp(NEUTRAL_PULL_LEAST.raw(), NEUTRAL_PULL_MOST.raw()))
     });
     let found = crate::white_balance::illuminant_for(gpu, from, white).await?;
     // Whole steps of both sliders, because that is what the document stores: a match fitted
@@ -6032,7 +6032,7 @@ pub async fn fit(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,
     levels: crate::tone::Levels,
-    preview: &crate::rgb::Rgb,
+    preview: &units::rgb::Rgb,
     lens: crate::fit::Lens,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
@@ -6055,7 +6055,7 @@ pub async fn fit(
 /// linear, so the two orders agree, and it runs over a thousandth of the pixels this way.
 pub async fn preview_planes(
     gpu: &'static crate::gpu::Gpu,
-    preview: &crate::rgb::Rgb,
+    preview: &units::rgb::Rgb,
 ) -> Option<(Source, Source)> {
     let (w, h) = (preview.width, preview.height);
     let (tw, th) = fitted_preview_size(w, h);
@@ -6127,7 +6127,7 @@ pub async fn fit_linearised(
     lens: crate::fit::Lens,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
-    if !(levels.white > crate::light::Light::ZERO) {
+    if !(levels.white > units::light::Light::ZERO) {
         return None;
     }
     // The normalisation is the only per-fit thing about the plane, and it rides the warp that
@@ -6152,10 +6152,10 @@ const CAMERA_CURVE_MAX_POINTS: usize = 6;
 const CAMERA_CURVE_SAMPLES: usize = 257;
 const CAMERA_CURVE_MAX_ERROR: f64 = 0.005;
 const CAMERA_KNOT_GAP: f64 = 0.1;
-const CAMERA_EXPOSURE_LIMIT: crate::light::Stops = crate::light::Stops::exactly(4.0);
+const CAMERA_EXPOSURE_LIMIT: units::light::Stops = units::light::Stops::exactly(4.0);
 const CAMERA_EXPOSURE_STEP: f64 = 0.01;
 const CAMERA_MIN_SLOPE: f64 = 0.02;
-const CAMERA_MIN_PIVOT_SHARE: crate::light::Gain = crate::light::Gain::of_ratio(1e-9);
+const CAMERA_MIN_PIVOT_SHARE: units::light::Gain = units::light::Gain::of_ratio(1e-9);
 
 pub async fn camera_curve_error(gpu: &'static crate::gpu::Gpu, colour: &HdrColour) -> Option<f64> {
     Some(camera_curve(gpu, colour).await?.2)
@@ -6164,9 +6164,9 @@ pub async fn camera_curve_error(gpu: &'static crate::gpu::Gpu, colour: &HdrColou
 pub(crate) async fn camera_curve(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
-) -> Option<(crate::light::Stops, Vec<[f64; 2]>, f64)> {
-    use crate::light::{CurveCode, Gain, Stops};
-    let pivot = crate::light::PIVOT;
+) -> Option<(units::light::Stops, Vec<[f64; 2]>, f64)> {
+    use units::light::{CurveCode, Gain, Stops};
+    let pivot = units::light::PIVOT;
     // Over the grade's white, which the model's output is a share of, and not the match's own: a
     // None profile renders this tone without the match, so a level left in the match's white would
     // move the whole picture when it is switched.
@@ -6239,12 +6239,12 @@ fn fitted_camera_curve(target: &[[f64; 2]], pivot: f64) -> (Vec<[f64; 2]>, f64) 
         [1.0, last + CAMERA_MIN_SLOPE],
     ];
     loop {
-        let tangents = crate::light::curve_tangents(&curve);
+        let tangents = units::light::curve_tangents(&curve);
         let mut max_error = 0.0f64;
         let mut eligible: Option<(usize, f64)> = None;
         for (index, &[x, y]) in monotone.iter().enumerate() {
             let error =
-                (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x))
+                (units::light::curve_at(&curve, &tangents, units::light::CurveCode::from_raw(x))
                     .raw()
                     - y)
                     .abs();
@@ -6266,14 +6266,14 @@ fn fitted_camera_curve(target: &[[f64; 2]], pivot: f64) -> (Vec<[f64; 2]>, f64) 
                     *value = f64::from(*value as f32);
                 }
             }
-            let tangents = crate::light::curve_tangents(&curve);
+            let tangents = units::light::curve_tangents(&curve);
             let error = monotone
                 .iter()
                 .map(|&[x, y]| {
-                    (crate::light::curve_at(
+                    (units::light::curve_at(
                         &curve,
                         &tangents,
-                        crate::light::CurveCode::from_raw(x),
+                        units::light::CurveCode::from_raw(x),
                     )
                     .raw()
                         - y)
@@ -6465,7 +6465,7 @@ pub struct Registration {
 /// the search asks about it.
 pub fn levelled_source(
     gpu: &'static crate::gpu::Gpu,
-    plane: crate::rgb::RgbRef<'_>,
+    plane: units::rgb::RgbRef<'_>,
 ) -> crate::gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit warp source"),
@@ -6775,7 +6775,7 @@ pub async fn registration(
 /// the fit grid.
 pub async fn correspondence_at(
     gpu: &'static crate::gpu::Gpu,
-    render: &crate::rgb::Rgb,
+    render: &units::rgb::Rgb,
     preview: &Source,
     lens: &crate::fit::Lens,
     points: &[(usize, usize)],
@@ -6858,8 +6858,8 @@ pub fn fitted_preview_size(width: usize, height: usize) -> (usize, usize) {
 #[cfg(test)]
 pub fn render_srgb8(
     plane: &Plane,
-    white: crate::light::Light<crate::light::Level>,
-) -> crate::rgb::Rgb {
+    white: units::light::Light<units::light::Level>,
+) -> units::rgb::Rgb {
     let white = white.raw();
     let mut data = vec![0u8; plane.width * plane.height * 3];
     let to_srgb = rec2020_to_srgb();
@@ -6873,7 +6873,7 @@ pub fn render_srgb8(
                 out[c] = (255.0 * srgb_oetf(v[c])).round() as u8;
             }
         });
-    crate::rgb::Rgb {
+    units::rgb::Rgb {
         width: plane.width,
         height: plane.height,
         data,
@@ -6901,8 +6901,8 @@ mod tests {
         let mut degenerate = colour;
         degenerate.matrix = [[0.0; 3]; 3];
         assert!(pollster::block_on(camera_curve(gpu, &degenerate)).is_none());
-        assert_eq!(degenerate.curve, crate::light::IDENTITY_CURVE);
-        assert_eq!(degenerate.exposure, crate::light::Stops::ZERO);
+        assert_eq!(degenerate.curve, units::light::IDENTITY_CURVE);
+        assert_eq!(degenerate.exposure, units::light::Stops::ZERO);
         let mut deep = HdrColour::identity();
         for channel in &mut deep.curves {
             for light in channel {
@@ -8570,7 +8570,7 @@ mod tests {
             let to = Illuminant { temperature, tint };
             let lit = pollster::block_on(read_plane(gpu, &rebalanced(gpu, &grey, from, to)))
                 .expect("the plane reads back");
-            let white = std::array::from_fn(|c| crate::light::Gain::of_ratio(lit.data[c]));
+            let white = std::array::from_fn(|c| units::light::Gain::of_ratio(lit.data[c]));
             let found = pollster::block_on(crate::white_balance::illuminant_for(gpu, from, white))
                 .expect("an illuminant");
             assert!(
@@ -9071,7 +9071,7 @@ mod tests {
             .map(|m| {
                 crate::lattice::chroma_of(
                     [m[0], m[1], m[2]]
-                        .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
+                        .map(|v| Light::<units::light::Rendered>::measured(f64::from(v))),
                 )
             })
             .collect();
@@ -9261,7 +9261,7 @@ mod tests {
                 pollster::block_on(fitted_saturation(searching(), &neutral, &over, Stage::Tone))
                     .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
-            let slider = crate::gpu::saturation_slider(crate::light::Gain::of_ratio(found));
+            let slider = crate::gpu::saturation_slider(units::light::Gain::of_ratio(found));
             assert!(
                 (1.0 + slider / 100.0 - found).abs() < 1e-9,
                 "{found} is off the slider's step"
@@ -9361,8 +9361,8 @@ mod tests {
     /// A plane already in multiples of its white, with a floor nobody measured.
     fn unit_levels() -> crate::tone::Levels {
         crate::tone::Levels {
-            white: crate::light::Light::measured(1.0),
-            peak: crate::light::Light::measured(1.0),
+            white: units::light::Light::measured(1.0),
+            peak: units::light::Light::measured(1.0),
             floor: None,
         }
     }
@@ -9378,7 +9378,7 @@ mod tests {
     /// The warm patches stop where they do because an 8-bit sRGB preview cannot hold a
     /// brighter one: rendered, render 0.62 against green's 0.20 leaves the sRGB gamut,
     /// clamps, and the fit then reads a red curve the camera never wrote.
-    fn warm_chart() -> (Plane, crate::rgb::Rgb) {
+    fn warm_chart() -> (Plane, units::rgb::Rgb) {
         const COLS: usize = 10;
         const PATCHES: usize = 80;
         const PATCH: usize = 32;
@@ -9432,7 +9432,7 @@ mod tests {
                 height: height * 2,
                 data: scene,
             },
-            render_srgb8(&camera_plane, crate::light::Light::measured(1.0)),
+            render_srgb8(&camera_plane, units::light::Light::measured(1.0)),
         )
     }
 

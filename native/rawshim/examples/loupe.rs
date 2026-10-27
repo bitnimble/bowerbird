@@ -97,7 +97,7 @@ fn main() {
     // Diffuse white as the peak, because this writes sRGB: the same reasoning as `renders`.
     let grade = window.grade(
         &scene,
-        rawshim::light::Light::at_diffuse_white(request.grade.reference_white_nits),
+        units::light::Light::at_diffuse_white(request.grade.reference_white_nits),
         rawshim::gpu::Output::Srgb,
     );
     let width = window.width;
@@ -144,7 +144,7 @@ fn main() {
             stitched[d..d + 3].copy_from_slice(&ours[s..s + 3]);
         }
     }
-    let image = rawshim::rgb::Rgb {
+    let image = units::rgb::Rgb {
         width: row,
         height: edge,
         data: stitched,

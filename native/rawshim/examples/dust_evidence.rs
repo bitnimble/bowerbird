@@ -134,7 +134,7 @@ fn main() {
     if whole {
         let (frame, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
         let small = rawshim::image::resize_to_fit(
-            rawshim::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width,
                 height,
                 data: &frame,
@@ -154,7 +154,7 @@ fn main() {
         let name = format!("{out}/dust-whole.avif");
         write(
             &name,
-            rawshim::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width: small.width,
                 height: small.height,
                 data: &data,
@@ -226,7 +226,7 @@ fn main() {
     let name = format!("{out}/dust-{}-{}.avif", at.0 as usize, at.1 as usize);
     write(
         &name,
-        rawshim::rgb::RgbRef {
+        units::rgb::RgbRef {
             width: side * 2 + GAP,
             height: side,
             data: &pair,
@@ -292,7 +292,7 @@ fn circle(data: &mut [u8], width: usize, centre: (f32, f32), radius: f32) {
 
 /// Lossless, because the whole point of the pair is a correction that moves a few hundred pixels by
 /// a few percent, and a quantizer that smoothed them would be answering a different question.
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,

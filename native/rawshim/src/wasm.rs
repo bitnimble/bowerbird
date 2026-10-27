@@ -146,7 +146,7 @@ pub struct HeldRaw {
     repairs: std::cell::RefCell<Vec<crate::repair::Repair>>,
     /// A loop about to be searched around, whose search a frame assembled from tiles holds as well
     /// as the stage (`set_searched`).
-    searched: std::cell::RefCell<Option<(Vec<crate::px::Point<crate::px::Stored>>, Option<Donor>)>>,
+    searched: std::cell::RefCell<Option<(Vec<units::px::Point<units::px::Stored>>, Option<Donor>)>>,
     /// Counts uses, so the oldest tile is the one eviction takes.
     tick: std::cell::Cell<u64>,
     /// What a tick that named no region draws, and what the reader's crop moves.
@@ -158,7 +158,7 @@ pub struct HeldRaw {
     proof_intent: std::cell::Cell<crate::gpu::Intent>,
     /// The brightest this display shows, which every draw rolls into; none where it shows nothing
     /// past SDR white.
-    display_peak: std::cell::Cell<Option<crate::light::Light<crate::light::DisplayNits>>>,
+    display_peak: std::cell::Cell<Option<units::light::Light<units::light::DisplayNits>>>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
     printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
     reach_mask: std::cell::RefCell<Option<crate::gpu::ReachMask>>,
@@ -245,7 +245,7 @@ struct Drawing {
     /// so a draw handed the buffer's size for either would crop a panorama to its viewport and
     /// clarify it as though the viewport were the photograph.
     placed: Option<crate::gpu::Window>,
-    reference_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_nits: units::light::Light<units::light::SceneNits>,
 }
 
 impl Drawing {
@@ -268,7 +268,7 @@ impl Drawing {
             // The picture's, as every other grade over this frame reads it: a presence slider's
             // reach is a fraction of the photograph, and a window told its own size would filter at
             // the wrong scale.
-            photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
+            photograph_long: units::px::Span::measured(picture_w.max(picture_h)),
             colour: self.matched.as_ref().and_then(|m| m.colour.as_ref()),
             as_shot: self.as_shot,
             window,
@@ -573,7 +573,7 @@ pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue>
 }
 
 /// Where a fill is read from, from where it lands, on the `px::Stored` grid.
-type Donor = [crate::px::Extent<crate::px::Stored>; 2];
+type Donor = [units::px::Extent<units::px::Stored>; 2];
 
 // No lens: the strokes are drawn through the open's camera match, which a layer never predates.
 #[derive(PartialEq)]
@@ -589,7 +589,7 @@ type Found = (FoundBy, std::sync::Arc<crate::dereflect::Layer>);
 fn donor_of(json: &str) -> Result<Donor, JsValue> {
     let donor: [i32; 2] = serde_json::from_str(json)
         .map_err(|e| JsValue::from_str(&format!("rawshim: this donor is malformed: {e}")))?;
-    Ok(donor.map(|step| crate::px::Extent::exactly(f64::from(step))))
+    Ok(donor.map(|step| units::px::Extent::exactly(f64::from(step))))
 }
 
 fn repair_of(json: &str) -> Result<crate::repair::Repair, JsValue> {
@@ -864,7 +864,7 @@ impl HeldRaw {
         at: (usize, usize),
         size: (usize, usize),
     ) -> Result<String, JsValue> {
-        let whole = crate::px::Size::exact(level.0, level.1);
+        let whole = units::px::Size::exact(level.0, level.1);
         let mut edges = [
             at.0,
             at.1,
@@ -883,8 +883,8 @@ impl HeldRaw {
         let held = crate::repair::reaching(
             &self.repairs.borrow(),
             whole,
-            crate::px::Rect::exact(edges[0], edges[1], edges[2] - edges[0], edges[3] - edges[1]),
-            crate::px::Span::exact(0),
+            units::px::Rect::exact(edges[0], edges[1], edges[2] - edges[0], edges[3] - edges[1]),
+            units::px::Span::exact(0),
         );
         let (left, top, wide, deep) = held.raw();
         let (at, size) = ((left, top), (wide.max(1), deep.max(1)));
@@ -1056,8 +1056,8 @@ impl HeldRaw {
         // part of the canvas, and `outside` leaves a tap that tries black - which is the edge of
         // what the reader asked to see.
         let placed = opened.header.window.map(|placed| crate::gpu::Window {
-            photograph: crate::px::Size::exact(placed.canvas.0, placed.canvas.1),
-            origin: crate::px::At::exact(placed.origin.0, placed.origin.1),
+            photograph: units::px::Size::exact(placed.canvas.0, placed.canvas.1),
+            origin: units::px::At::exact(placed.origin.0, placed.origin.1),
         });
         let (picture_w, picture_h) =
             placed.map_or((width, height), |placed| placed.photograph.raw());
@@ -1073,7 +1073,7 @@ impl HeldRaw {
         let grade = crate::gpu::Grade {
             // The picture's, not the buffer's: a presence slider's reach is a fraction of the
             // photograph, and a window told its own size would filter at the wrong scale.
-            photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
+            photograph_long: units::px::Span::measured(picture_w.max(picture_h)),
             // Unfiltered by the profile: a tick grades either way over this upload, and the
             // matched arm reads what it builds from the match.
             colour: opened.matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -1431,7 +1431,7 @@ impl HeldRaw {
             // reaches a picture with a mosaic behind it, which is never a window - but a grade
             // here that measured the buffer instead is the one asymmetry a reader of these three
             // would have to check the reachability of to trust.
-            photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
+            photograph_long: units::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
             as_shot: drawing.as_shot,
             window: drawing.placed,
@@ -1678,8 +1678,8 @@ impl HeldRaw {
         }
         let frame = crate::retouched_frame::RetouchedFrame::drawn(
             frame,
-            crate::px::Size::exact(level.0, level.1),
-            crate::px::At::exact(first.0, first.1),
+            units::px::Size::exact(level.0, level.1),
+            units::px::At::exact(first.0, first.1),
             &self.repairs.borrow(),
         )
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
@@ -1899,7 +1899,7 @@ impl HeldRaw {
         // The page's own number, entering at the boundary that knows it is stops.
         self.draw(
             &self.stage,
-            ev.map(crate::light::Stops::measured),
+            ev.map(units::light::Stops::measured),
             region.as_deref(),
             Reading::Frame,
             false,
@@ -1926,7 +1926,7 @@ impl HeldRaw {
             .resize(gpu, width, height);
         self.draw(
             &self.overview,
-            ev.map(crate::light::Stops::measured),
+            ev.map(units::light::Stops::measured),
             Some(region),
             Reading::Frame,
             false,
@@ -1941,7 +1941,7 @@ impl HeldRaw {
         let tile = self.tile.borrow();
         self.draw(
             &self.loupe,
-            ev.map(crate::light::Stops::measured),
+            ev.map(units::light::Stops::measured),
             Some(region),
             tile.as_ref().map_or(Reading::Frame, Reading::Tile),
             true,
@@ -2012,9 +2012,9 @@ impl HeldRaw {
         region: &str,
         part: impl FnOnce(
             &crate::retouched_frame::RetouchedFrame,
-            crate::px::Rect<crate::px::Drawn>,
+            units::px::Rect<units::px::Drawn>,
         ) -> Result<
-            (crate::resident::Resident, crate::px::At<crate::px::Drawn>),
+            (crate::resident::Resident, units::px::At<units::px::Drawn>),
             String,
         >,
     ) -> Result<(), JsValue> {
@@ -2028,7 +2028,7 @@ impl HeldRaw {
             };
             let (pw, ph) = drawing.picture();
             let (left, top) = ((x * pw as f64).floor(), (y * ph as f64).floor());
-            let rect = crate::px::Rect::exact(
+            let rect = units::px::Rect::exact(
                 left as usize,
                 top as usize,
                 (((x + wide) * pw as f64).ceil() - left) as usize,
@@ -2038,7 +2038,7 @@ impl HeldRaw {
                 .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
             let (width, height) = under.size();
             let window = crate::gpu::Window {
-                photograph: crate::px::Size::exact(pw, ph),
+                photograph: units::px::Size::exact(pw, ph),
                 origin: at,
             };
             let gpu = crate::gpu::device().ok_or_else(|| {
@@ -2055,7 +2055,7 @@ impl HeldRaw {
         let (width, height, window) = part;
         let drawn = self.draw(
             &self.thumbnail,
-            ev.map(crate::light::Stops::measured),
+            ev.map(units::light::Stops::measured),
             Some(region),
             Reading::Part {
                 uploaded: &uploaded,
@@ -2142,7 +2142,7 @@ impl HeldRaw {
             };
             let (w, h) = drawing.picture();
             let grade = crate::gpu::Grade {
-                photograph_long: crate::px::Span::measured(w.max(h)),
+                photograph_long: units::px::Span::measured(w.max(h)),
                 colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
                 adjust: self.adjust.borrow().clone(),
                 as_shot: drawing.as_shot,
@@ -2152,7 +2152,7 @@ impl HeldRaw {
                     drawing.height,
                     drawing.levels,
                     drawing.reference_nits,
-                    crate::light::Light::at_diffuse_white(drawing.reference_nits),
+                    units::light::Light::at_diffuse_white(drawing.reference_nits),
                 )
             };
             drawing.uploaded.probing(&grade, &places)
@@ -2170,7 +2170,7 @@ impl HeldRaw {
             .collect())
     }
 
-    fn reference_nits(&self) -> crate::light::Light<crate::light::SceneNits> {
+    fn reference_nits(&self) -> units::light::Light<units::light::SceneNits> {
         self.drawing
             .borrow()
             .as_ref()
@@ -2212,7 +2212,7 @@ impl HeldRaw {
                     "rawshim: {nits} nits is not a display's peak"
                 )));
             }
-            peak => peak.map(crate::light::Light::exactly),
+            peak => peak.map(units::light::Light::exactly),
         };
         self.display_peak.set(display_peak);
         self.proof_intent.set(
@@ -2292,7 +2292,7 @@ impl HeldRaw {
     fn draw(
         &self,
         onto: &std::cell::RefCell<Option<crate::gpu::Stage>>,
-        ev: Option<crate::light::Stops>,
+        ev: Option<units::light::Stops>,
         region: Option<&str>,
         reading: Reading<'_>,
         magnified: bool,
@@ -2329,7 +2329,7 @@ impl HeldRaw {
         let (canvas_w, canvas_h) = stage.size();
         let shown = crate::gpu::Canvas {
             region: (region.x, region.y, region.width, region.height),
-            size: crate::px::Size::measured(canvas_w as usize, canvas_h as usize),
+            size: units::px::Size::measured(canvas_w as usize, canvas_h as usize),
             // A magnifier is only ever magnified, so it reads the frame's own buffer at whatever
             // ratio rather than a level averaged for a smaller canvas. A tile or a part has no
             // levels at all: the pyramid bound beside it is the frame's.
@@ -2345,7 +2345,7 @@ impl HeldRaw {
         // clips what is left over per channel and moves the hue.
         let proofed = match (proof, self.display_peak.get()) {
             (crate::gpu::Output::Srgb, _) | (_, None) => {
-                crate::light::Light::at_diffuse_white(drawing.reference_nits)
+                units::light::Light::at_diffuse_white(drawing.reference_nits)
             }
             (_, Some(peak)) => peak,
         };
@@ -2380,7 +2380,7 @@ impl HeldRaw {
         let shows_print = on_stage || std::ptr::eq(onto, &self.overview);
         let print = if shows_print { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
-            photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
+            photograph_long: units::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
             exposure: ev,
             adjust,
@@ -2501,7 +2501,7 @@ impl HeldRaw {
             .resident()
             .ok_or_else(|| JsValue::from_str("rawshim: the decode is not on the device"))?;
         let looked = crate::dereflect::looked(gpu, resident).ok_or_else(refused)?;
-        let full = crate::px::Size::exact(frame.width, frame.height);
+        let full = units::px::Size::exact(frame.width, frame.height);
         let removal = crate::dereflect::removal(
             gpu,
             &looked,

@@ -13,9 +13,9 @@
 //! a removal's thumbnail and what a removal reopened is searched over, and both are the editor's.
 
 use crate::gpu::dispatch::Whole;
-use crate::px::{At, Drawn, Extent, Point, Rect, Size, Stored};
 use crate::repair::Repair;
 use crate::resident::Resident;
+use units::px::{At, Drawn, Extent, Point, Rect, Size, Stored};
 
 /// The pixels under one repair's footprint - its seam and the feather outside it - before any
 /// repair was drawn over them.

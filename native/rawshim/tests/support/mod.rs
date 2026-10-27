@@ -4,9 +4,9 @@
 
 use rawshim::gpu::{self, Gpu};
 use rawshim::lattice::{ChromaMap, Kernel, generator_of};
-use rawshim::light::{Light, SceneNits};
 use rawshim::resident::Resident;
 use rawshim::tone;
+use units::light::{Light, SceneNits};
 
 /// What a synthetic frame has in it. Every frame is the same textured ground so that "agrees" and
 /// "differs" both have something to measure; a patch is laid over it.

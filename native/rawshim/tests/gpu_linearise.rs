@@ -11,12 +11,12 @@
 //! Skipped loudly where no adapter answers, for `gpu_dust.rs`'s reason.
 
 use rawler::decoders::Orientation;
-use rawshim::light::{Light, SceneNits};
 use rawshim::linearise::{GainMap, Picture, Reconstruction};
-use rawshim::px::{At, Photograph, Rect, Size};
 use rawshim::resident::stored_within;
 use rawshim::transfer::{Coding, Curve, Primaries};
 use rawshim::view::Scale;
+use units::light::{Light, SceneNits};
+use units::px::{At, Photograph, Rect, Size};
 
 /// The levels a window comes back as, on the host.
 fn linearised(

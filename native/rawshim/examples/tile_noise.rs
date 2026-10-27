@@ -113,8 +113,8 @@ fn main() {
                 continue;
             }
             let view =
-                rawshim::view::View::whole(rawshim::px::Size::exact(frame.width, frame.height))
-                    .showing(rawshim::px::Rect::exact(left, top, 512, 512));
+                rawshim::view::View::whole(units::px::Size::exact(frame.width, frame.height))
+                    .showing(units::px::Rect::exact(left, top, 512, 512));
             let Some(cut) = rawshim::decode_tile(
                 &path,
                 view,

@@ -74,14 +74,14 @@ pub async fn analysis_planes(
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     let [w, h] = spec.canvas;
     let request = CompositeRequest {
-        window: crate::px::Rect::exact(0, 0, w, h),
+        window: units::px::Rect::exact(0, 0, w, h),
         parts: &[],
         // Scale 1: the decode is asked for the whole frame, so it demosaics rather than collapsing
         // quads, and the resize below is the only downsample.
         scale: 1.0,
         white_quantile: 0.995,
         levels: None,
-        reference_white_nits: crate::light::Light::exactly(203.0),
+        reference_white_nits: units::light::Light::exactly(203.0),
         strengths: crate::image::Strengths {
             sharpen: 0.0,
             defringe: 0.0,
@@ -185,10 +185,10 @@ mod tests {
             .collect();
         let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, SIDE, SIDE);
         let at = crate::demosaic::Placement {
-            stride: crate::px::Span::exact(SIDE),
-            crop: crate::px::Rect::exact(0, 0, SIDE, SIDE),
-            dest: crate::px::At::ORIGIN,
-            frame: crate::px::Size::exact(SIDE, SIDE),
+            stride: units::px::Span::exact(SIDE),
+            crop: units::px::Rect::exact(0, 0, SIDE, SIDE),
+            dest: units::px::At::ORIGIN,
+            frame: units::px::Size::exact(SIDE, SIDE),
             orientation: 0,
             reduce: 1,
         };

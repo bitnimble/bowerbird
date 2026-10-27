@@ -12,8 +12,8 @@ use crate::assembly_labelling::{Labelled, RING, Reader, labelling, stamped};
 use crate::assembly_seam::SHRINK;
 use crate::assembly_tiles::{Cell, W_MAX, enclosing, lobes, subdivide};
 use crate::assembly_volume::Volume;
-use crate::px::{Composite, Extent, Share, Shrunk, Span};
 use serde::{Deserialize, Serialize};
+use units::px::{Composite, Extent, Share, Shrunk, Span};
 
 /// A labelling of the canvas into pieces, each taking one frame.
 ///

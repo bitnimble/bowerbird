@@ -186,7 +186,6 @@ pub mod jpeg_gain_write;
 pub mod jxl_write;
 pub mod lattice;
 pub mod lens;
-pub mod light;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
 pub mod linearise;
@@ -220,13 +219,11 @@ pub mod print;
 pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
 pub mod progress;
-pub mod px;
 pub mod raw_cache;
 pub mod repair;
 pub mod repair_solve;
 pub mod resident;
 pub mod retouched_frame;
-pub mod rgb;
 pub mod scrub;
 pub mod sdr_match;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
@@ -840,7 +837,7 @@ pub fn fit_hdr_measured(
 /// after `render_base`'s sharpen, which is calibrated for the size it ran at (10.1).
 #[cfg(feature = "renditions")]
 pub fn save_avif_frame(
-    source: rgb::RgbRef<'_>,
+    source: units::rgb::RgbRef<'_>,
     quantizer: i32,
     speed: i32,
     full_chroma: bool,
@@ -911,7 +908,7 @@ fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
 /// The body's own full-size rendering: every caller here is measuring against what the camera
 /// produced rather than looking for cheap pixels, which is the distinction `Preview` draws.
 #[cfg(feature = "renditions")]
-pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
+pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<units::rgb::Rgb> {
     decode_rawler::upright_preview_rgb(path, long_edge, decode_rawler::Preview::Largest)
 }
 
@@ -1193,8 +1190,8 @@ mod tests {
         // Warmed first, because the pipelines and the adapter are built once per process and a
         // loupe asks its second question with them already up.
         let seeing = |side: usize| {
-            view::View::whole(px::Size::exact(whole.width, whole.height))
-                .showing(px::Rect::exact(2000, 1400, side, side))
+            view::View::whole(units::px::Size::exact(whole.width, whole.height))
+                .showing(units::px::Rect::exact(2000, 1400, side, side))
         };
         let sliders = galosh::Detail::at(40.0, 40.0);
         decode_tile(

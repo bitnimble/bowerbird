@@ -170,7 +170,7 @@ fn request() -> rawshim::edit::EditRequest {
     rawshim::edit::EditRequest {
         long_edge: 0,
         grade: rawshim::hdr::Grade {
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
+            reference_white_nits: units::light::Light::exactly(203.0),
             white_quantile: 0.995,
         },
         defringe: 1.0,

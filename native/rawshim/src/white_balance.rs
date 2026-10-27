@@ -87,7 +87,7 @@ pub async fn as_shot(
 pub async fn illuminant_for(
     gpu: &'static crate::gpu::Gpu,
     from: Illuminant,
-    white: [crate::light::Gain; 3],
+    white: [units::light::Gain; 3],
 ) -> Option<Illuminant> {
     let mut words = [0f32; 16];
     words[0] = from.temperature as f32;

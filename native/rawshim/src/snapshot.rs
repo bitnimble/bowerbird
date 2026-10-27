@@ -15,10 +15,10 @@
 //!   BOWERBIRD_WRITE_FIXTURES=1 bun run test:native <name>
 
 use crate::condition::Mosaic;
-use crate::light::{DisplayNits, Light, Pq, SceneNits};
-use crate::px::{Pinned, Rect, Size, Span};
 use crate::resident::Resident;
 use crate::tone::Anchored;
+use units::light::{DisplayNits, Light, Pq, SceneNits};
+use units::px::{Pinned, Rect, Size, Span};
 
 /// The nits an SDR view of a PQ snapshot puts at its white, BT.2408's reference.
 const DISPLAY_WHITE: Light<DisplayNits> = Light::exactly(203.0);
@@ -652,7 +652,7 @@ mod tests {
     /// after is 500 nits, which the upper exposure clips to white and the lower does not.
     #[test]
     fn the_side_by_side_is_before_after_difference_over_two_exposures() {
-        let nits = Light::<crate::light::SceneNits>::exactly(500.0);
+        let nits = Light::<units::light::SceneNits>::exactly(500.0);
         let code = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16;
         let (width, height, pixels) = drawn(&side_by_side_png(
             Some(&flat(32, 16, 0)),

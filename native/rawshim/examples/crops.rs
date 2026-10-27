@@ -79,7 +79,7 @@ fn main() {
 
     let crops: Vec<String> = args.collect();
     if crops.is_empty() {
-        let full = rawshim::rgb::RgbRef {
+        let full = units::rgb::RgbRef {
             width,
             height,
             data: &data,
@@ -105,7 +105,7 @@ fn main() {
         let scale = camera.width as f64 / width as f64;
         let at = |v: usize| (v as f64 * scale).round() as usize;
         let mine = cut(
-            rawshim::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width,
                 height,
                 data: &data,
@@ -146,7 +146,7 @@ fn main() {
 
 /// Two crops in one image, separated by a gap. The camera's is resampled to ours where the
 /// two were cut at different scales, so the pair is the same size and the same subject.
-fn beside(left: rawshim::rgb::RgbRef<'_>, right: rawshim::rgb::RgbRef<'_>) -> rawshim::rgb::Rgb {
+fn beside(left: units::rgb::RgbRef<'_>, right: units::rgb::RgbRef<'_>) -> units::rgb::Rgb {
     let gap = 12usize;
     let (w, h) = (left.width, left.height);
     let width = w * 2 + gap;
@@ -164,14 +164,14 @@ fn beside(left: rawshim::rgb::RgbRef<'_>, right: rawshim::rgb::RgbRef<'_>) -> ra
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height: h,
         data,
     }
 }
 
-fn mean(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
+fn mean(image: units::rgb::RgbRef<'_>) -> [f64; 3] {
     let mut sum = [0.0f64; 3];
     for p in 0..image.width * image.height {
         for c in 0..3 {
@@ -183,18 +183,18 @@ fn mean(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
 }
 
 fn cut(
-    image: rawshim::rgb::RgbRef<'_>,
+    image: units::rgb::RgbRef<'_>,
     x: usize,
     y: usize,
     w: usize,
     h: usize,
-) -> rawshim::rgb::Rgb {
+) -> units::rgb::Rgb {
     let mut data = vec![0u8; w * h * 3];
     for row in 0..h {
         let from = ((y + row) * image.width + x) * 3;
         data[row * w * 3..(row + 1) * w * 3].copy_from_slice(&image.data[from..from + w * 3]);
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w,
         height: h,
         data,
@@ -202,7 +202,7 @@ fn cut(
 }
 
 /// Both forms, because this exists to be looked at and AVIF does not open everywhere.
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,

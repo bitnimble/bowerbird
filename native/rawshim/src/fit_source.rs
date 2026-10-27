@@ -295,9 +295,9 @@ async fn run(
         // The one place a level enters the host now that `fit_scan` takes the quantile: what the
         // shader wrote, read back and named.
         crate::tone::Levels {
-            white: crate::light::Light::measured(at(0)),
-            peak: crate::light::Light::measured(at(4)),
-            floor: Some(crate::light::Light::measured(at(8))),
+            white: units::light::Light::measured(at(0)),
+            peak: units::light::Light::measured(at(4)),
+            floor: Some(units::light::Light::measured(at(8))),
         }
     })
     .await;
@@ -363,7 +363,7 @@ async fn read_plane(
 #[cfg(test)]
 pub(crate) fn uploaded_render(
     gpu: &'static crate::gpu::Gpu,
-    image: crate::rgb::RgbRef<'_>,
+    image: units::rgb::RgbRef<'_>,
 ) -> Rendered {
     let words: Vec<u8> = image
         .data
@@ -387,7 +387,7 @@ pub(crate) fn uploaded_render(
 pub async fn read_render(
     gpu: &'static crate::gpu::Gpu,
     render: &Rendered,
-) -> Option<crate::rgb::Rgb> {
+) -> Option<units::rgb::Rgb> {
     let bytes = (render.width * render.height * 3 * 4) as u64;
     let mut recording = gpu.record();
     let out = recording.buffer(&wgpu::BufferDescriptor {
@@ -408,7 +408,7 @@ pub async fn read_render(
             .collect::<Vec<u8>>()
     })
     .await?;
-    Some(crate::rgb::Rgb {
+    Some(units::rgb::Rgb {
         width: render.width,
         height: render.height,
         data,

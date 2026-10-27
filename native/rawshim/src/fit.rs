@@ -20,7 +20,7 @@
 use crate::gpu::dispatch::Whole;
 use crate::image::polynomial_knots;
 #[cfg(test)]
-use crate::rgb::RgbRef;
+use units::rgb::RgbRef;
 
 /// Long edge the fit runs at. Fitting small and applying at full resolution costs
 /// nothing measurable, and every candidate warp is O(pixels), so this is the
@@ -589,7 +589,7 @@ async fn read_rgb(
     gpu: &'static crate::gpu::Gpu,
     staging: &crate::gpu::Buffer,
     plane: &Sampled,
-) -> Option<crate::rgb::Rgb> {
+) -> Option<units::rgb::Rgb> {
     use crate::parallel::*;
     let data: Vec<u8> = crate::gpu::read_back(gpu, staging, |mapped| {
         mapped
@@ -600,7 +600,7 @@ async fn read_rgb(
             .collect()
     })
     .await?;
-    Some(crate::rgb::Rgb {
+    Some(units::rgb::Rgb {
         width: plane.width,
         height: plane.height,
         data,
@@ -1705,7 +1705,7 @@ pub(crate) fn gaussian(matrix: &[f64], rhs: &[f64], n: usize) -> Option<Vec<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rgb::Rgb;
+    use units::rgb::Rgb;
 
     fn scene(width: usize, height: usize) -> Rgb {
         // Smooth, low-gradient content: the pair gate rejects steep edges, so a

@@ -29,7 +29,7 @@ const TOE: usize = 16;
 fn grey(path: &str, values: &[u8], width: usize, height: usize) {
     let rgb: Vec<u8> = values.iter().flat_map(|v| [*v, *v, *v]).collect();
     let bytes = rawshim::jpeg::encode(
-        rawshim::rgb::RgbRef {
+        units::rgb::RgbRef {
             width,
             height,
             data: &rgb,

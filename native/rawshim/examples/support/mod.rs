@@ -7,7 +7,7 @@ use rawshim::galosh::Detail;
 use rawshim::hdr::Grade;
 use rawshim::hdr_args::EncodeOptions;
 use rawshim::image::Strengths;
-use rawshim::light::Light;
+use units::light::Light;
 
 /// `hdr_reference_white_nits` and `hdr_white_quantile` in `src/schemas/settings.ts`.
 pub const GRADE: Grade = Grade {
@@ -217,8 +217,8 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         frame.reduced,
     )
     .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
     let resident = rawshim::resident::Resident::upload(
         gpu,
@@ -231,7 +231,7 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         gpu,
         base,
         resident,
-        rawshim::base::Gather::frame(rawshim::px::Size::exact(frame.width, frame.height)),
+        rawshim::base::Gather::frame(units::px::Size::exact(frame.width, frame.height)),
         levels,
         options.grade.reference_white_nits,
         // Sharpen held back for `Cut::from_base`, after the warp.

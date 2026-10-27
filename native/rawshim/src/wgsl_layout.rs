@@ -58,7 +58,7 @@ mod tests {
     fn every_uniform_is_the_size_its_shader_reads() {
         assert_eq!(
             crate::print::Scene::default()
-                .uniform(crate::light::Light::ZERO)
+                .uniform(units::light::Light::ZERO)
                 .len(),
             112
         );
@@ -82,7 +82,7 @@ mod tests {
                 "PrintParams",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl")).to_string(),
                 crate::print::Scene::default()
-                    .uniform(crate::light::Light::ZERO)
+                    .uniform(units::light::Light::ZERO)
                     .len(),
             ),
             (

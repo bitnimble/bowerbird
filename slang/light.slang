@@ -1,6 +1,6 @@
 // Light that knows which domain it is a quantity in, and whether it is a quantity or a ratio.
 //
-// `native/rawshim/src/light.rs` on this side of the boundary, and for the same reason: a
+// `native/units/src/light.rs` on this side of the boundary, and for the same reason: a
 // photograph crosses eleven domains between the sensor and the canvas - scene-linear counts, the
 // assemble stage's fraction of full scale, nits against its own diffuse white, the scene at white
 // 1, the camera's own rendering, nits at the display, the display's

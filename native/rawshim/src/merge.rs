@@ -10,7 +10,7 @@ use crate::galosh::NoiseModel;
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu, Recording};
 use crate::hdr_fit::Kernel;
-use crate::px::{At, Sensor};
+use units::px::{At, Sensor};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

@@ -59,7 +59,7 @@ fn the_plane_matches_its_snapshot() {
         analysis: None,
     }];
     let planes = pollster::block_on(analysis_planes(&spec, &sources)).unwrap();
-    let crop = rawshim::px::Rect::<rawshim::px::Analysis>::exact(1400, 900, 128, 128);
+    let crop = units::px::Rect::<units::px::Analysis>::exact(1400, 900, 128, 128);
     // Measured against radv: 5 codes at worst, nothing on average.
     let tolerance = rawshim::snapshot::Tolerance {
         worst: 64,

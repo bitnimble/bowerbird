@@ -8,10 +8,10 @@
 use crate::assembly::Drawing;
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
-use crate::px::{Composite, Rect};
+use units::px::{Composite, Rect};
 
 /// `Assembly::feather` where a recipe names none.
-pub const FEATHER: crate::px::Share = crate::px::Share::of(1, 400);
+pub const FEATHER: units::px::Share = units::px::Share::of(1, 400);
 /// §5.2's high band, in **render pixels** - the one spatial constant here that is not a share,
 /// because anti-aliasing a staircase is a pixel-scale job.
 pub const W_HIGH_PX: f32 = 2.0;

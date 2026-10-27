@@ -113,7 +113,7 @@ impl Pipelines {
 pub struct Backdrop {
     pub lightness: f64,
     pub side: u32,
-    pub reference: crate::light::Light<crate::light::SceneNits>,
+    pub reference: units::light::Light<units::light::SceneNits>,
     /// Darkens what this node does not reach, by as much as it does not.
     pub selected: Option<crate::lattice::ColourNode>,
 }
@@ -174,7 +174,7 @@ pub fn swatch(lightness: f64, hue: f64, chroma: f64) -> [f64; 3] {
 }
 
 fn p3_of(to_p3: &[[f64; 3]; 3], opponent: [f64; 3]) -> [f64; 3] {
-    let rendered = crate::lattice::rendered_of(opponent).map(crate::light::Light::raw);
+    let rendered = crate::lattice::rendered_of(opponent).map(units::light::Light::raw);
     std::array::from_fn(|r| {
         to_p3[r]
             .iter()
@@ -472,7 +472,7 @@ mod tests {
         Backdrop {
             lightness: 70.0,
             side: SIDE,
-            reference: crate::light::Light::measured(203.0),
+            reference: units::light::Light::measured(203.0),
             selected,
         }
     }

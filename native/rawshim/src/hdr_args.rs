@@ -196,7 +196,7 @@ mod tests {
 
     /// The library's own defaults, which is what the recorded rows were captured with.
     const SHIPPING_GRADE: crate::hdr::Grade = crate::hdr::Grade {
-        reference_white_nits: crate::light::Light::exactly(203.0),
+        reference_white_nits: units::light::Light::exactly(203.0),
         white_quantile: 0.9,
     };
 

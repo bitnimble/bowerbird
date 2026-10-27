@@ -13,8 +13,8 @@ use rawshim::composite_tile::{
 use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
 use rawshim::galosh::Detail;
 use rawshim::image::Strengths;
-use rawshim::light::{Gain, Light, SceneNits};
-use rawshim::px::{Composite, Rect, Share, Span};
+use units::light::{Gain, Light, SceneNits};
+use units::px::{Composite, Rect, Share, Span};
 use rawshim::tone;
 use support::{Rig, floats_of, rig, u32s_of, upload_f32};
 
@@ -80,7 +80,7 @@ const SIZE: (usize, usize) = (128, 128);
 fn the_distance_is_signed_by_which_union_holds_the_pixel() {
     let Some(rig) = rig() else { return };
     let recipe = one_tile(2, SIZE, 1, 0.1);
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, _) = read(&rig, &w);
     let at = |x: usize, y: usize, slot: usize| signed[(y * SIZE.0 + x) * w.slots + slot];
@@ -113,7 +113,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
     // source could have stood in for the shift alone.
     recipe.warp = vec![[1.0, 0.014, 0.0, 1.0, 6.0, -2.0]];
 
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     assert_eq!(w.slots, 2, "the base and the frame its one tile picked");
 
@@ -146,7 +146,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
 fn two_unions_meeting_sum_to_one_across_the_seam() {
     let Some(rig) = rig() else { return };
     let recipe = one_tile(2, SIZE, 1, 0.1);
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, width) = read(&rig, &w);
 
@@ -193,7 +193,7 @@ fn the_width_is_half_the_corridor_between_its_two_bounds() {
             feather,
             ..one_tile(2, WIDTH_SIZE, 1, corridor)
         };
-        let window = rawshim::px::Rect::exact(0, 0, WIDTH_SIZE.0, WIDTH_SIZE.1);
+        let window = units::px::Rect::exact(0, 0, WIDTH_SIZE.0, WIDTH_SIZE.1);
         let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
         let (_, width) = read(&rig, &w);
         // The middle of the tile's left edge, which is where the seam is.
@@ -220,7 +220,7 @@ fn a_later_tile_owns_the_ground_it_overlaps() {
         0.1,
     );
 
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let weights_ = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, _) = read(&rig, &weights_);
     let slots = weights_.slots;
@@ -255,13 +255,13 @@ fn a_window_reads_the_same_field_as_the_whole_canvas() {
     let whole = pollster::block_on(weights(
         rig.gpu,
         &recipe,
-        rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1),
+        units::px::Rect::exact(0, 0, SIZE.0, SIZE.1),
         1.0,
     ));
     let part = pollster::block_on(weights(
         rig.gpu,
         &recipe,
-        rawshim::px::Rect::exact(left, top, side, side),
+        units::px::Rect::exact(left, top, side, side),
         1.0,
     ));
     let (a, _) = read(&rig, &whole);

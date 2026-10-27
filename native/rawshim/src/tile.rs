@@ -11,8 +11,8 @@
 //! a second copy of the rule.
 
 use crate::image::Strengths;
-use crate::px::{At, Drawn, Photograph, Place, Rect, Size, Span};
 use serde::Deserialize;
+use units::px::{At, Drawn, Photograph, Place, Rect, Size, Span};
 
 /// What a tile needs that its own rectangle cannot tell it.
 ///
@@ -160,7 +160,7 @@ pub struct Prepared {
     /// to hand. Whole-frame, so what a window is *given* it must hand on rather than refit.
     pub defocus: (f32, f32),
     /// The library's reference white, which the coding above already used.
-    pub(crate) reference_nits: crate::light::Light<crate::light::SceneNits>,
+    pub(crate) reference_nits: units::light::Light<units::light::SceneNits>,
 }
 
 impl Prepared {
@@ -168,7 +168,7 @@ impl Prepared {
     /// reader's own exposure and sliders.
     pub fn scene(
         &self,
-        exposure: Option<crate::light::Stops>,
+        exposure: Option<units::light::Stops>,
         adjust: crate::gpu::Adjust,
     ) -> crate::tone::SceneGrade<'_> {
         crate::tone::SceneGrade::new(
@@ -185,7 +185,7 @@ impl Prepared {
     pub fn grade<'a>(
         &self,
         scene: &'a crate::tone::SceneGrade<'a>,
-        peak_nits: crate::light::Light<crate::light::DisplayNits>,
+        peak_nits: units::light::Light<units::light::DisplayNits>,
         output: crate::gpu::Output,
     ) -> crate::gpu::Grade<'a> {
         crate::gpu::Grade {
@@ -451,8 +451,8 @@ pub async fn prepared_on_device(
         frame.reduced,
     )
     .at(
-        crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-        crate::px::Span::<crate::px::Drawn>::exact(drawn_long),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(drawn_long),
     );
     let chained = match &grown.resize {
         None => {
@@ -592,21 +592,21 @@ struct Grown {
 
 struct Resize {
     /// The whole photograph as the decode produces it, which is what the resize's ratio is of.
-    decoded: Size<crate::px::Decoded>,
-    region_at: At<crate::px::Decoded>,
+    decoded: Size<units::px::Decoded>,
+    region_at: At<units::px::Decoded>,
     /// The rectangle of the resized, uncorrected frame that region becomes: what the gather reads.
     out: Rect<Drawn>,
 }
 
 /// How far the defringe reads past the pixel it writes: `defringe.slang`'s Laplacian of luma.
-const DEFRINGE_REACH: Span<crate::px::Decoded> = Span::exact(1);
+const DEFRINGE_REACH: Span<units::px::Decoded> = Span::exact(1);
 
 impl Grown {
     /// The region to read, and at what resolution: what `decode_tile_source` takes.
     fn reading(&self) -> crate::view::View {
         crate::view::View {
-            photograph: crate::px::Size::exact(self.photograph.0, self.photograph.1),
-            window: crate::px::Rect::exact(
+            photograph: units::px::Size::exact(self.photograph.0, self.photograph.1),
+            window: units::px::Rect::exact(
                 self.decode.left,
                 self.decode.top,
                 self.decode.width,
@@ -783,7 +783,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
             // out of it because another one currently reaches further is a stage nobody will
             // think of when the other one moves.
             true => Span::exact(
-                crate::gpu::chroma_smooth_reach(crate::px::Span::measured(frame.long().raw()))
+                crate::gpu::chroma_smooth_reach(units::px::Span::measured(frame.long().raw()))
                     .raw()
                     + crate::gpu::mean_block(frame.long().raw()) as usize,
             ),
@@ -867,10 +867,10 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
         // reads past those.
         Some(_) => {
             let reads = crate::base::resize_footprint(decoded, decode, frame);
-            let near = |at: Place<crate::px::Decoded>| {
+            let near = |at: Place<units::px::Decoded>| {
                 at.max(Place::ORIGIN + DEFRINGE_REACH) - DEFRINGE_REACH
             };
-            let far = |at: Place<crate::px::Decoded>, whole: Span<crate::px::Decoded>| {
+            let far = |at: Place<units::px::Decoded>, whole: Span<units::px::Decoded>| {
                 (at + DEFRINGE_REACH).min(Place::ORIGIN + whole)
             };
             let region_at = At {
@@ -938,7 +938,7 @@ mod tests {
             tile,
             frame: [6000, 4000],
             grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
             strengths: Strengths {
@@ -1070,7 +1070,7 @@ mod tests {
         let grown = grown(&request).expect("a rectangle inside the photograph");
         let long = request.frame[0];
         let block = crate::gpu::mean_block(long) as usize;
-        let smoothing = crate::gpu::chroma_smooth_reach(crate::px::Span::measured(long)).raw();
+        let smoothing = crate::gpu::chroma_smooth_reach(units::px::Span::measured(long)).raw();
         // **The sum, not an inequality.** The smoothing alone reaches eight times a block at any
         // size, so "the margin covers a block" holds with this term deleted and would be asserting
         // nothing. What can only be true with it is that the window carries *both* stages.

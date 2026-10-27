@@ -62,7 +62,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
 use rawshim::galosh::{Denoiser, Detail, NoiseFit};
-use rawshim::light::Light;
+use units::light::Light;
 
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
@@ -557,8 +557,8 @@ fn sharpened(
         measured.reduced,
     )
     .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(sensor_long),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(sensor_long),
     );
     let defringe = measured.defringe.map_or(
         rawshim::base::Defringe::Measure,
@@ -600,7 +600,7 @@ fn sharpened(
                 gpu,
                 base,
                 resident,
-                rawshim::base::Gather::frame(rawshim::px::Size::exact(width, height)),
+                rawshim::base::Gather::frame(units::px::Size::exact(width, height)),
                 levels,
                 white,
                 support::STRENGTHS.before_the_fit(),
@@ -619,7 +619,7 @@ fn sharpened(
             let coded = rawshim::hdr::Cut::from_base(prepared, None, size, amount, sigma, noise)
                 .into_samples();
             light.extend(coded[..width * height * 3].iter().map(|&code| {
-                let nits = rawshim::tone::pq_inv::<rawshim::light::SceneNits>(Light::measured(
+                let nits = rawshim::tone::pq_inv::<units::light::SceneNits>(Light::measured(
                     f64::from(code) / f64::from(u16::MAX),
                 ));
                 (nits.raw() / white.raw()) as f32
@@ -699,10 +699,10 @@ fn halved(
 
 fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
     rawshim::demosaic::Placement {
-        stride: rawshim::px::Span::exact(width),
-        crop: rawshim::px::Rect::exact(0, 0, width, height),
-        dest: rawshim::px::At::ORIGIN,
-        frame: rawshim::px::Size::exact(width, height),
+        stride: units::px::Span::exact(width),
+        crop: units::px::Rect::exact(0, 0, width, height),
+        dest: units::px::At::ORIGIN,
+        frame: units::px::Size::exact(width, height),
         orientation: 0,
         reduce: 1,
     }

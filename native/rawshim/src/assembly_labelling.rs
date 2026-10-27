@@ -8,7 +8,7 @@ use crate::assembly::{Assembly, Takes};
 use crate::assembly_seam::{MinCut, NEIGHBOURS, SHRINK, TIE, along_an_edge, differ, disagreement};
 use crate::assembly_volume::Volume;
 use crate::patch_search::{clears, tracked};
-use crate::px::{Analysis, Share, Shrunk, Span};
+use units::px::{Analysis, Share, Shrunk, Span};
 
 /// No tile, where a cell or a frame's reading of it has none.
 pub(crate) const NO_TILE: u32 = u32::MAX;

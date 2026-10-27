@@ -540,7 +540,7 @@ async fn slopes(frame: &crate::tca_device::Frame) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rgb::Rgb;
+    use units::rgb::Rgb;
 
     /// A frame of edges at every orientation, so the regression sees radial gradients
     /// wherever it looks rather than only along one axis.

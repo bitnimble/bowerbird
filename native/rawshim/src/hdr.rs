@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 const MATCH_PREVIEW: usize = 0;
 
 /// The preview the camera match is fitted against, by path.
-pub fn match_preview(raw_path: &str) -> Option<crate::rgb::Rgb> {
+pub fn match_preview(raw_path: &str) -> Option<units::rgb::Rgb> {
     crate::decode_rawler::upright_preview_rgb(
         raw_path,
         MATCH_PREVIEW,
@@ -43,7 +43,7 @@ pub fn match_preview(raw_path: &str) -> Option<crate::rgb::Rgb> {
 /// `match_preview` honours the preview's own tag and turns the pixels after; a preview with a
 /// tag of its own would come out differently through the two, and
 /// `both_hosts_take_the_same_preview_pixels` is what holds them to one answer.
-pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<crate::rgb::Rgb> {
+pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
     let jpeg = crate::decode_rawler::upright_preview_jpeg_bytes(
         bytes,
         crate::decode_rawler::Preview::for_the_match(),
@@ -61,7 +61,7 @@ pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<crate::rgb::Rgb> {
 #[serde(rename_all = "camelCase")]
 pub struct Grade {
     /// Nits diffuse white maps to (BT.2408 HDR Reference White).
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     /// Quantile of the frame taken as diffuse white.
     pub white_quantile: f64,
 }
@@ -99,7 +99,7 @@ pub async fn fit_match_from(
     gpu: &'static crate::gpu::Gpu,
     frame: &crate::resident::Resident,
     quantile: f64,
-    preview: &crate::rgb::Rgb,
+    preview: &units::rgb::Rgb,
     lens: crate::fit::Lens,
     as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
@@ -197,7 +197,7 @@ pub async fn fit_all_from_preview(
     frame: &crate::resident::Resident,
     quantile: f64,
     geometry: crate::fit::Geometry,
-    preview: &crate::rgb::Rgb,
+    preview: &units::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
     camera_match: CameraMatch,
     as_shot: Option<crate::white_balance::Illuminant>,
@@ -217,7 +217,7 @@ pub async fn fit_all_from_preview(
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
     let (plane, rendered, levels) = (prepared.plane, prepared.rendered, prepared.levels);
     lap("plane, levels, render");
-    if !(levels.white > crate::light::Light::ZERO) {
+    if !(levels.white > units::light::Light::ZERO) {
         return None;
     }
     let (wide_jpeg, searched) = hdr_fit::preview_planes(gpu, preview).await?;
@@ -278,7 +278,7 @@ fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Optio
 pub fn code_base(
     samples: &mut [u16],
     levels: tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) {
     let coded = crate::gpu::device()
         .and_then(crate::base::device)
@@ -540,14 +540,14 @@ enum CutFrame {
 /// was cut from, so what comes back is its own space - which is why `encode` indexes
 /// `output_width` and a caller that sized a buffer off the frame instead under-allocated it.
 pub fn cropped_out(
-    frame: crate::px::Size<crate::px::Drawn>,
+    frame: units::px::Size<units::px::Drawn>,
     geometry: image::Geometry,
-) -> crate::px::Size<crate::px::Output> {
+) -> units::px::Size<units::px::Output> {
     let (width, height) = cropped_size(frame.width.raw(), frame.height.raw(), geometry);
     // The extent of a frame that is about to exist, which is the one thing `Output` can be given
     // from outside: its pixels are as large as the rendition is small, so nothing in that space
     // can be written down and everything else in it is derived from this.
-    crate::px::Size::measured(width, height)
+    units::px::Size::measured(width, height)
 }
 
 pub fn cropped_size(width: usize, height: usize, geometry: image::Geometry) -> (usize, usize) {
@@ -604,7 +604,7 @@ impl Cut {
             gpu,
             base,
             frame,
-            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            crate::base::Gather::frame(units::px::Size::exact(width, height)),
             lens,
             sharpen,
             sharpen_sigma,

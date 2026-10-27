@@ -5,8 +5,8 @@
 use super::{CANVAS_FORMAT, CANVAS_WHITE_NITS, Gpu, Texture};
 use crate::avif::Coded;
 use crate::hdr_fit;
-use crate::light::{DisplayNits, Gain, Light};
-use crate::px::{At, Canvas, Extent, Output, Place, Rect, Size, Span};
+use units::light::{DisplayNits, Gain, Light};
+use units::px::{At, Canvas, Extent, Output, Place, Rect, Size, Span};
 
 const STAGE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/stage.wgsl"));
 

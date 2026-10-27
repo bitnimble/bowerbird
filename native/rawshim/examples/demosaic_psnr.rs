@@ -163,7 +163,7 @@ fn main() {
                 .iter()
                 .map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
                 .collect();
-            let image = rawshim::rgb::RgbRef {
+            let image = units::rgb::RgbRef {
                 width: w,
                 height: h,
                 data: &bytes,
@@ -171,7 +171,7 @@ fn main() {
             let jpeg = rawshim::jpeg::encode(image, 95).expect("the reconstruction encodes");
             std::fs::write(format!("{into}-{name}.jpg"), jpeg).expect("it writes");
             let flat: Vec<u8> = truth.data.clone();
-            let image = rawshim::rgb::RgbRef {
+            let image = units::rgb::RgbRef {
                 width: truth.width,
                 height: truth.height,
                 data: &flat,
@@ -218,7 +218,7 @@ fn main() {
 /// covers everything from flat to beyond the sampling limit. Grey, deliberately - every channel
 /// carries the same signal, so any colour in the reconstruction is an artefact of the demosaic and
 /// nothing else.
-fn chirp(side: usize) -> rawshim::rgb::Rgb {
+fn chirp(side: usize) -> units::rgb::Rgb {
     let mut data = vec![0u8; side * side * 3];
     let centre = side as f64 / 2.0;
     for r in 0..side {
@@ -234,7 +234,7 @@ fn chirp(side: usize) -> rawshim::rgb::Rgb {
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: side,
         height: side,
         data,
@@ -242,7 +242,7 @@ fn chirp(side: usize) -> rawshim::rgb::Rgb {
 }
 
 /// Box-downsamples by two. See the call site for why the measurement depends on it.
-fn halve(image: &rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
+fn halve(image: &units::rgb::Rgb) -> units::rgb::Rgb {
     let (w, h) = (image.width / 2, image.height / 2);
     let mut data = vec![0u8; w * h * 3];
     for r in 0..h {
@@ -260,7 +260,7 @@ fn halve(image: &rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w,
         height: h,
         data,
@@ -304,7 +304,7 @@ fn bilinear(mosaic: &[f32], w: usize, h: usize, cfa: [u32; 4]) -> Vec<f32> {
 }
 
 /// Per-channel and overall PSNR against the ground truth, over the interior only.
-fn psnr(truth: &rawshim::rgb::Rgb, got: &[f32], w: usize, h: usize) -> [f64; 4] {
+fn psnr(truth: &units::rgb::Rgb, got: &[f32], w: usize, h: usize) -> [f64; 4] {
     let mut sse = [0f64; 3];
     let mut count = 0u64;
     for r in EDGE..h.saturating_sub(EDGE) {

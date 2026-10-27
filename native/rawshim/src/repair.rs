@@ -13,11 +13,11 @@
 
 use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
-use crate::light::Gain;
-use crate::px::{
+use crate::resident::Resident;
+use units::light::Gain;
+use units::px::{
     At, Coordinate, Drawn, Extent, Point, Rect, STORED_LONG, Share, Size, Span, Stored,
 };
-use crate::resident::Resident;
 
 /// The schema's `MOST_REPAIRS` and `MOST_REPAIR_VERTICES`.
 pub const MOST_REPAIRS: usize = 64;

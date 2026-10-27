@@ -77,7 +77,7 @@ fn main() {
         data[into..into + pw * 3].copy_from_slice(&preview.data[from..from + pw * 3]);
     }
 
-    let cropped = rawshim::rgb::Rgb {
+    let cropped = units::rgb::Rgb {
         data,
         width: pw,
         height: ph,

@@ -1,7 +1,7 @@
 //! How a platform shows a PQ video's SDR range (`slang/sdr_match.slang`), which the 10-bit copies
 //! and the editor's video frames made for it are coded to match.
 
-use crate::light::{DisplayNits, Light};
+use units::light::{DisplayNits, Light};
 
 const MAC_VIDEO_WHITE_NITS: f64 = 100.0;
 const SDR_READ_POWER: f64 = 2.2;

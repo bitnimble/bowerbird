@@ -357,7 +357,7 @@ pub enum Command {
 pub struct GradeSpec {
     #[serde(default)]
     pub output_path: String,
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub white_quantile: f64,
     pub crf: i32,
     pub preset: i32,
@@ -487,9 +487,9 @@ fn hdr_match(
 #[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn luma_quantiles(
     samples: &[u16],
-    peak_nits: crate::light::Light<crate::light::DisplayNits>,
+    peak_nits: units::light::Light<units::light::DisplayNits>,
     wanted: &[f64],
-) -> Vec<crate::light::Light<crate::light::DisplayNits>> {
+) -> Vec<units::light::Light<units::light::DisplayNits>> {
     if wanted.is_empty() {
         return Vec::new();
     }
@@ -507,8 +507,8 @@ pub(crate) fn luma_quantiles(
     wanted
         .iter()
         .map(|q| match luma.is_empty() {
-            true => crate::light::Light::ZERO,
-            false => crate::light::Light::measured(
+            true => units::light::Light::ZERO,
+            false => units::light::Light::measured(
                 luma[((q * (luma.len() - 1) as f64).floor() as usize).min(luma.len() - 1)],
             ),
         })
@@ -565,7 +565,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             image_paths,
             raw_path,
         } => {
-            let images: Vec<crate::rgb::Rgb> = image_paths
+            let images: Vec<units::rgb::Rgb> = image_paths
                 .iter()
                 .map(|path| {
                     let encoded =
@@ -664,7 +664,7 @@ fn tile_crops(
     window: usize,
     scale: usize,
 ) -> Result<Reply, String> {
-    let images: Vec<crate::rgb::Rgb> = image_paths
+    let images: Vec<units::rgb::Rgb> = image_paths
         .iter()
         .map(|path| {
             let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
@@ -733,7 +733,7 @@ fn tile_crops(
 }
 
 /// The pixel at a fractional position, so images of different shapes compare.
-fn sample(image: crate::rgb::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
+fn sample(image: units::rgb::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
     let x = ((u * image.width as f64) as usize).min(image.width.saturating_sub(1));
     let y = ((v * image.height as f64) as usize).min(image.height.saturating_sub(1));
     let i = (y * image.width + x) * 3;

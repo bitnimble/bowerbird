@@ -15,7 +15,7 @@
 //! `sdr-*` clips above diffuse white rather than rolling: the roll is `colour.slang`'s and a second
 //! answer to it here would be a second tone map to keep in agreement with the first.
 
-use rawshim::light::{DisplayNits, Light, Pq};
+use units::light::{DisplayNits, Light, Pq};
 
 const DIFFUSE_WHITE_NITS: f64 = 203.0;
 
@@ -84,7 +84,7 @@ fn main() {
             .collect();
         for (name, data) in [("pq", pq), ("linear", linear), ("sdr", sdr)] {
             let image = magnify(
-                rawshim::rgb::Rgb {
+                units::rgb::Rgb {
                     width: side,
                     height: side,
                     data,
@@ -138,7 +138,7 @@ fn channel_roughness(cut: &[u16], side: usize) -> [Stats; 3] {
     })
 }
 
-fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
+fn magnify(image: units::rgb::Rgb, by: usize) -> units::rgb::Rgb {
     if by <= 1 {
         return image;
     }
@@ -150,7 +150,7 @@ fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
             out[(y * w * by + x) * 3..][..3].copy_from_slice(&image.data[from..from + 3]);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w * by,
         height: h * by,
         data: out,

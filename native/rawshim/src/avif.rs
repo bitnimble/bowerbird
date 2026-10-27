@@ -13,7 +13,7 @@
 // limited-range quantisation is libavif's own `avifImageRGBToYUV`.
 
 use crate::raw;
-use crate::rgb::Rgb;
+use units::rgb::Rgb;
 
 /// CICP, the only signalling that matters (`hdr_args::cicp`).
 pub struct Cicp {
@@ -481,7 +481,7 @@ pub fn ten_bit_copy(
                     .ok_or("the rematched copy did not read back")?;
             let shown = |nits: u16| {
                 matching
-                    .of_still(crate::light::Light::exactly(f64::from(nits)))
+                    .of_still(units::light::Light::exactly(f64::from(nits)))
                     .raw()
             };
             let light = tags.light.map(|light| crate::hdr_args::ContentLight {
@@ -1511,7 +1511,7 @@ mod tests {
         );
 
         let nits = |code: u16| {
-            crate::tone::pq_inv::<crate::light::DisplayNits>(crate::light::Light::exactly(
+            crate::tone::pq_inv::<units::light::DisplayNits>(units::light::Light::exactly(
                 f64::from(code) / 65535.0,
             ))
         };

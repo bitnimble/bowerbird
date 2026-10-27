@@ -47,7 +47,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 
-fn laplacians(image: rawshim::rgb::RgbRef<'_>) -> Vec<f64> {
+fn laplacians(image: units::rgb::RgbRef<'_>) -> Vec<f64> {
     let luma = |i: usize| {
         0.2126 * f64::from(image.data[i * 3])
             + 0.7152 * f64::from(image.data[i * 3 + 1])
@@ -67,7 +67,7 @@ fn laplacians(image: rawshim::rgb::RgbRef<'_>) -> Vec<f64> {
 /// different percentiles: the median is what the pipeline estimates *noise* with, and a flat frame
 /// is most of any photograph, so it says nothing about an edge. The mean and the top percentile are
 /// where a reduction that lost detail shows.
-fn detail(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
+fn detail(image: units::rgb::RgbRef<'_>) -> (f64, f64, f64) {
     let mut laps = laplacians(image);
     let mean = laps.iter().sum::<f64>() / laps.len() as f64;
     let mid = laps.len() / 2;
@@ -87,7 +87,7 @@ fn detail(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
 /// Laplacian run on that.
 const CHROMA_BLOCK: usize = 8;
 
-fn chroma_noise(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64) {
+fn chroma_noise(image: units::rgb::RgbRef<'_>) -> (f64, f64) {
     let (bw, bh) = (image.width / CHROMA_BLOCK, image.height / CHROMA_BLOCK);
     let mut planes = [vec![0.0; bw * bh], vec![0.0; bw * bh]];
     for by in 0..bh {
@@ -136,7 +136,7 @@ fn chroma_noise(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64) {
 /// cutting at size and reducing afterwards, so an arm that reduces the whole render *this* way
 /// says whether the kernel accounts for what the two arms disagree about - in the frame's own
 /// coding rather than in light, which is the one way it is not `reduce.slang`.
-fn area_reduce(source: rawshim::rgb::RgbRef<'_>, width: usize, height: usize) -> rawshim::rgb::Rgb {
+fn area_reduce(source: units::rgb::RgbRef<'_>, width: usize, height: usize) -> units::rgb::Rgb {
     let sx = source.width as f64 / width as f64;
     let sy = source.height as f64 / height as f64;
     let mut data = vec![0u8; width * height * 3];
@@ -163,7 +163,7 @@ fn area_reduce(source: rawshim::rgb::RgbRef<'_>, width: usize, height: usize) ->
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height,
         data,
@@ -179,7 +179,7 @@ fn rmse(a: &[u8], b: &[u8]) -> f64 {
     (sum / a.len() as f64).sqrt()
 }
 
-fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
+fn cut(image: units::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> units::rgb::Rgb {
     let x = x.min(image.width.saturating_sub(side));
     let y = y.min(image.height.saturating_sub(side));
     let mut data = vec![0u8; side * side * 3];
@@ -188,14 +188,14 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raws
         data[row * side * 3..(row + 1) * side * 3]
             .copy_from_slice(&image.data[from..from + side * 3]);
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: side,
         height: side,
         data,
     }
 }
 
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
     rawshim::avif::encode_rendition(
         image.data.into(),
         image.width,
@@ -214,7 +214,7 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
 }
 
 /// At the quantizer the SDR rendition ships, since what survives a reduction has to be paid for.
-fn shipped_bytes(image: rawshim::rgb::RgbRef<'_>) -> f64 {
+fn shipped_bytes(image: units::rgb::RgbRef<'_>) -> f64 {
     let file =
         rawshim::avif::encode_rgb8(image.data.into(), image.width, image.height, 13, 10, false)
             .expect("the encode");
@@ -252,7 +252,7 @@ fn main() {
 
     // Onto the other's exact grid, so the two are comparable pixel for pixel rather than nearly.
     let reduced = rawshim::image::resize(
-        rawshim::rgb::RgbRef {
+        units::rgb::RgbRef {
             width: ww,
             height: wh,
             data: &whole,
@@ -262,7 +262,7 @@ fn main() {
     );
 
     let boxed = area_reduce(
-        rawshim::rgb::RgbRef {
+        units::rgb::RgbRef {
             width: ww,
             height: wh,
             data: &whole,
@@ -271,7 +271,7 @@ fn main() {
         dh,
     );
 
-    let a = rawshim::rgb::RgbRef {
+    let a = units::rgb::RgbRef {
         width: dw,
         height: dh,
         data: &direct,

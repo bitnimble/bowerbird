@@ -36,7 +36,7 @@
 // through `edit::fit`, which reads the embedded preview through here, so no client decodes a JPEG
 // of its own; only the server's grid tile goes through libjpeg-turbo.
 
-use crate::rgb::{Rgb, RgbRef};
+use units::rgb::{Rgb, RgbRef};
 
 /// Decodes a JPEG, bounded to `long_edge` on its longest side. 0 decodes it whole.
 ///

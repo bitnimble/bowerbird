@@ -53,13 +53,13 @@ impl Scale {
     /// folded into one `of`.
     pub fn span(
         self,
-        of: crate::px::Span<crate::px::Photograph>,
-    ) -> crate::px::Span<crate::px::Drawn> {
+        of: units::px::Span<units::px::Photograph>,
+    ) -> units::px::Span<units::px::Drawn> {
         // **A distance that is not zero does not become zero.** Halving one pixel floors to none,
         // and a window that had a pixel in it and now has none is an empty crop: a panorama whose
         // source clips the window by a single column hands that crop to a region decode, and
         // `Placement::oriented_rect` computes `frame_w - 1` on it and underflows.
-        crate::px::Span::exact(match of.raw() {
+        units::px::Span::exact(match of.raw() {
             0 => 0,
             raw => self.of(raw).max(1),
         })
@@ -68,19 +68,19 @@ impl Scale {
     /// A near edge of the photograph, in the pixels the decode produces.
     pub fn at(
         self,
-        place: crate::px::Place<crate::px::Photograph>,
-    ) -> crate::px::Place<crate::px::Drawn> {
-        crate::px::Place::exact(self.of(place.raw()))
+        place: units::px::Place<units::px::Photograph>,
+    ) -> units::px::Place<units::px::Drawn> {
+        units::px::Place::exact(self.of(place.raw()))
     }
 
     /// A far edge, rounded out so the rectangle it closes covers every pixel asked for.
     pub fn past(
         self,
-        place: crate::px::Place<crate::px::Photograph>,
-    ) -> crate::px::Place<crate::px::Drawn> {
+        place: units::px::Place<units::px::Photograph>,
+    ) -> units::px::Place<units::px::Drawn> {
         match self {
-            Scale::Full => crate::px::Place::exact(place.raw()),
-            Scale::Half => crate::px::Place::exact(place.raw().div_ceil(2)),
+            Scale::Full => units::px::Place::exact(place.raw()),
+            Scale::Half => units::px::Place::exact(place.raw().div_ceil(2)),
         }
     }
 
@@ -91,48 +91,48 @@ impl Scale {
     /// promise.
     pub fn read_at(
         self,
-        place: crate::px::Place<crate::px::Drawn>,
-    ) -> crate::px::Place<crate::px::Photograph> {
+        place: units::px::Place<units::px::Drawn>,
+    ) -> units::px::Place<units::px::Photograph> {
         match self {
-            Scale::Full => crate::px::Place::exact(place.raw()),
-            Scale::Half => crate::px::Place::exact(place.raw() * 2),
+            Scale::Full => units::px::Place::exact(place.raw()),
+            Scale::Half => units::px::Place::exact(place.raw() * 2),
         }
     }
 
     /// The same, for a distance.
     pub fn read_span(
         self,
-        span: crate::px::Span<crate::px::Drawn>,
-    ) -> crate::px::Span<crate::px::Photograph> {
+        span: units::px::Span<units::px::Drawn>,
+    ) -> units::px::Span<units::px::Photograph> {
         match self {
-            Scale::Full => crate::px::Span::exact(span.raw()),
-            Scale::Half => crate::px::Span::exact(span.raw() * 2),
+            Scale::Full => units::px::Span::exact(span.raw()),
+            Scale::Half => units::px::Span::exact(span.raw() * 2),
         }
     }
 
     /// The whole photograph as a decode that is resized before it is corrected produces it.
     pub fn decoded(
         self,
-        photograph: crate::px::Size<crate::px::Photograph>,
-    ) -> crate::px::Size<crate::px::Decoded> {
+        photograph: units::px::Size<units::px::Photograph>,
+    ) -> units::px::Size<units::px::Decoded> {
         let (width, height) = (self.span(photograph.width), self.span(photograph.height));
-        crate::px::Size::exact(width.raw(), height.raw())
+        units::px::Size::exact(width.raw(), height.raw())
     }
 
     /// [`Scale::read_at`], for a region of that decode.
     pub fn read_decoded(
         self,
-        place: crate::px::Place<crate::px::Decoded>,
-    ) -> crate::px::Place<crate::px::Photograph> {
-        self.read_at(crate::px::Place::exact(place.raw()))
+        place: units::px::Place<units::px::Decoded>,
+    ) -> units::px::Place<units::px::Photograph> {
+        self.read_at(units::px::Place::exact(place.raw()))
     }
 
     /// [`Scale::read_span`], for a region of that decode.
     pub fn read_decoded_span(
         self,
-        span: crate::px::Span<crate::px::Decoded>,
-    ) -> crate::px::Span<crate::px::Photograph> {
-        self.read_span(crate::px::Span::exact(span.raw()))
+        span: units::px::Span<units::px::Decoded>,
+    ) -> units::px::Span<units::px::Photograph> {
+        self.read_span(units::px::Span::exact(span.raw()))
     }
 
     /// The scale worth taking to render `photograph` no larger than `long_edge` on its long side.
@@ -160,19 +160,19 @@ impl Scale {
 #[derive(Clone, Copy)]
 pub struct View {
     /// The whole picture, at the sensor's resolution.
-    pub photograph: crate::px::Size<crate::px::Photograph>,
+    pub photograph: units::px::Size<units::px::Photograph>,
     /// What is wanted of it, in the photograph's own pixels.
-    pub window: crate::px::Rect<crate::px::Photograph>,
+    pub window: units::px::Rect<units::px::Photograph>,
     pub scale: Scale,
 }
 
 impl View {
     /// The whole photograph, at the sensor's resolution.
-    pub fn whole(photograph: crate::px::Size<crate::px::Photograph>) -> View {
+    pub fn whole(photograph: units::px::Size<units::px::Photograph>) -> View {
         View {
             photograph,
-            window: crate::px::Rect {
-                at: crate::px::At::ORIGIN,
+            window: units::px::Rect {
+                at: units::px::At::ORIGIN,
                 size: photograph,
             },
             scale: Scale::Full,
@@ -185,34 +185,34 @@ impl View {
     }
 
     /// The same photograph, showing `window` of it.
-    pub fn showing(self, window: crate::px::Rect<crate::px::Photograph>) -> View {
+    pub fn showing(self, window: units::px::Rect<units::px::Photograph>) -> View {
         View { window, ..self }
     }
 
     /// Whether this is the whole picture rather than a piece of one.
     pub fn is_whole(&self) -> bool {
-        self.window.at == crate::px::At::ORIGIN && self.window.size == self.photograph
+        self.window.at == units::px::At::ORIGIN && self.window.size == self.photograph
     }
 
     /// The buffer this view produces, in its own pixels.
-    pub fn size(&self) -> crate::px::Size<crate::px::Drawn> {
-        crate::px::Size {
+    pub fn size(&self) -> units::px::Size<units::px::Drawn> {
+        units::px::Size {
             width: self.scale.span(self.window.size.width),
             height: self.scale.span(self.window.size.height),
         }
     }
 
     /// The photograph as this view draws it, which is what a geometry's fractions are of.
-    pub fn drawn(&self) -> crate::px::Size<crate::px::Drawn> {
-        crate::px::Size {
+    pub fn drawn(&self) -> units::px::Size<units::px::Drawn> {
+        units::px::Size {
             width: self.scale.span(self.photograph.width),
             height: self.scale.span(self.photograph.height),
         }
     }
 
     /// Where the window starts, in the buffer's own pixels.
-    pub fn origin(&self) -> crate::px::At<crate::px::Drawn> {
-        crate::px::At {
+    pub fn origin(&self) -> units::px::At<units::px::Drawn> {
+        units::px::At {
             x: self.scale.at(self.window.at.x),
             y: self.scale.at(self.window.at.y),
         }
@@ -241,9 +241,9 @@ mod tests {
 
     #[test]
     fn a_window_keeps_the_photographs_coordinates_and_converts_once() {
-        let photograph = crate::px::Size::exact(6000, 4000);
+        let photograph = units::px::Size::exact(6000, 4000);
         let view = View::whole(photograph)
-            .showing(crate::px::Rect::exact(1000, 800, 2000, 1600))
+            .showing(units::px::Rect::exact(1000, 800, 2000, 1600))
             .at(Scale::Half);
         // The window is still named where it is in the photograph...
         assert_eq!(view.window.raw(), (1000, 800, 2000, 1600));
@@ -268,14 +268,14 @@ mod tests {
     /// tile can see.
     #[test]
     fn a_far_edge_rounds_out_and_a_near_edge_floors() {
-        let near: crate::px::Place<crate::px::Photograph> = crate::px::Place::exact(101);
+        let near: units::px::Place<units::px::Photograph> = units::px::Place::exact(101);
         assert_eq!(Scale::Half.at(near).raw(), 50);
         assert_eq!(Scale::Half.past(near).raw(), 51);
         assert_eq!(Scale::Full.at(near).raw(), 101);
         assert_eq!(Scale::Full.past(near).raw(), 101);
 
         // And back up lands on a whole CFA site, which is what a halved decode needs of its region.
-        assert_eq!(Scale::Half.read_at(crate::px::Place::exact(50)).raw(), 100);
-        assert_eq!(Scale::Half.read_span(crate::px::Span::exact(50)).raw(), 100);
+        assert_eq!(Scale::Half.read_at(units::px::Place::exact(50)).raw(), 100);
+        assert_eq!(Scale::Half.read_span(units::px::Span::exact(50)).raw(), 100);
     }
 }

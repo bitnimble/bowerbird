@@ -46,8 +46,8 @@ fn main() {
     // loupe's second tile is the one that matters.
     let halo = rawshim::RENDITION_TILE_HALO;
     let view =
-        rawshim::view::View::whole(rawshim::px::Size::exact(whole.width, whole.height)).showing(
-            rawshim::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
+        rawshim::view::View::whole(units::px::Size::exact(whole.width, whole.height)).showing(
+            units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
         );
     let glass = rawshim::dust::Known::Off;
     rawshim::decode_rawler::decode_tile(

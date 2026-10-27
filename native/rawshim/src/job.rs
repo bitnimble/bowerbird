@@ -24,11 +24,11 @@ use crate::decode::Source as Raw;
 use crate::hdr;
 use crate::hdr_args::{self, Chroma, EncodeOptions};
 use crate::image::Strengths;
-use crate::light::{DisplayNits, Light, Stops};
 #[cfg(feature = "renditions")]
 use crate::stacks;
 use crate::tone;
 use serde::{Deserialize, Serialize};
+use units::light::{DisplayNits, Light, Stops};
 
 /// Where a rendition's pixels come from.
 #[derive(Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -532,7 +532,7 @@ const CHROMA_LEAK_TILE_FRACTION: f64 = 0.15;
 /// has no other reason to need a device. Taking one for the whole job would refuse to catalogue
 /// such a photograph on a machine with no Vulkan, over a descriptor it is allowed to do without.
 #[cfg(feature = "renditions")]
-fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mut Outcome) {
+fn describe_if_grid(image: units::rgb::RgbRef<'_>, target: &Target, outcome: &mut Outcome) {
     if target.rendition != Rendition::Grid {
         return;
     }
@@ -547,7 +547,7 @@ fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mu
 
 #[cfg(feature = "renditions")]
 fn save_avif(
-    image: crate::rgb::RgbRef<'_>,
+    image: units::rgb::RgbRef<'_>,
     target: &Target,
     rotate: u16,
     exif: Option<&[u8]>,
@@ -664,9 +664,9 @@ pub(crate) fn assembled(
     job: &Job,
     size: u32,
     rendered: &[&Target],
-    window: Option<crate::px::Rect<crate::px::Composite>>,
+    window: Option<units::px::Rect<units::px::Composite>>,
     // The parts of `window` a caller asked for, or empty for the whole of it.
-    parts: &[crate::px::Rect<crate::px::Composite>],
+    parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<Base, String> {
     match &job.composite {
         // A composite of its sources, which is a coded frame with levels and a colour match
@@ -818,12 +818,12 @@ impl Base {
         lap("defringe, camera match, levels");
         // After the open, so the match and the levels are the photograph's whatever is taken out:
         // the camera's JPEG still shows the reflection.
-        let full = crate::px::Size::exact(width, height);
+        let full = units::px::Size::exact(width, height);
         let removal = looked.and_then(|looked| {
             crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
         });
         if let Some(removal) = &removal {
-            removal.take_out(gpu, &resident, crate::px::At::ORIGIN, full);
+            removal.take_out(gpu, &resident, units::px::At::ORIGIN, full);
             lap("reflection");
         }
         // Carried from an earlier pass or read off the frame just measured; the sensor's own long
@@ -865,7 +865,7 @@ impl Base {
             gpu,
             base,
             resident,
-            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            crate::base::Gather::frame(units::px::Size::exact(width, height)),
             levels,
             job.grade.reference_white_nits,
             strengths,
@@ -1007,7 +1007,7 @@ impl Base {
         };
         let out = sized(rendered.first()?);
         let scale = crate::view::Scale::for_long_edge(photograph, out.0.max(out.1) as u32);
-        let drawn = crate::view::View::whole(crate::px::Size::exact(photograph.0, photograph.1))
+        let drawn = crate::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
             .at(scale)
             .drawn();
         if rendered.iter().any(|target| sized(target) != out) || out != drawn.raw() {
@@ -1105,10 +1105,10 @@ impl Base {
         // is the photograph's and `keep` is what `tile::grown` measured inside the window it built,
         // so the two only subtract once the first has been through the same conversion the second
         // already has. `drawn` is the photograph at this scale for the same reason.
-        let asked_at: crate::px::At<crate::px::Photograph> = crate::px::At::exact(asked.0, asked.1);
-        let origin: crate::px::At<crate::px::Drawn> = crate::px::At {
-            x: scale.at(asked_at.x) - crate::px::Span::exact(window.keep[0]),
-            y: scale.at(asked_at.y) - crate::px::Span::exact(window.keep[1]),
+        let asked_at: units::px::At<units::px::Photograph> = units::px::At::exact(asked.0, asked.1);
+        let origin: units::px::At<units::px::Drawn> = units::px::At {
+            x: scale.at(asked_at.x) - units::px::Span::exact(window.keep[0]),
+            y: scale.at(asked_at.y) - units::px::Span::exact(window.keep[1]),
         };
         Some(Ok(Base {
             width: window.width,
@@ -1264,7 +1264,7 @@ pub(crate) fn whole_removal(job: &Job) -> Option<crate::dereflect::Removal> {
             job.dust.wanted(stored.from_raw.dust.as_deref()),
         )?;
         let looked = crate::dereflect::looked(gpu, frame.resident()?)?;
-        let full = crate::px::Size::exact(frame.width, frame.height);
+        let full = units::px::Size::exact(frame.width, frame.height);
         crate::dereflect::removal(gpu, &looked, full, &job.reflection, matched.as_ref())
             .map(|removal| removal.layer)
     })?;
@@ -1283,8 +1283,8 @@ fn repaired(cut: &hdr::Cut, job: &Job) -> Result<(), String> {
     // What each was drawn over is the editor's to keep (`repaired`), and a rendition keeps nothing.
     crate::repair::apply(
         frame,
-        crate::px::Size::exact(cut.width, cut.height),
-        crate::px::At::ORIGIN,
+        units::px::Size::exact(cut.width, cut.height),
+        units::px::At::ORIGIN,
         &job.repairs,
     )
     .map(drop)
@@ -1444,7 +1444,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                 }
             });
             if let Some(preview) = preview {
-                let image = crate::rgb::RgbRef {
+                let image = units::rgb::RgbRef {
                     width: preview.width,
                     height: preview.height,
                     data: &preview.data,
@@ -1663,7 +1663,7 @@ async fn bands(
             if target.rendition == Rendition::Grid {
                 let samples = bands.concat();
                 describe_if_grid(
-                    crate::rgb::RgbRef {
+                    units::rgb::RgbRef {
                         width,
                         height,
                         data: &samples,
@@ -1716,7 +1716,7 @@ pub(crate) async fn graded_bands(
     let options = encode_options(job, target, &target.output_path);
     let size = drawn_size(job, photograph, &options);
     let drawn =
-        crate::px::Size::<crate::px::Drawn>::exact(size.width as usize, size.height as usize);
+        units::px::Size::<units::px::Drawn>::exact(size.width as usize, size.height as usize);
     let geometry = job.pixel_geometry();
     let out = hdr::cropped_out(drawn, geometry);
     let (out_width, out_height) = out.raw();
@@ -1734,8 +1734,8 @@ pub(crate) async fn graded_bands(
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
         let band = crate::gpu::Band {
-            top: crate::px::Place::measured(top),
-            rows: crate::px::Span::measured(rows),
+            top: units::px::Place::measured(top),
+            rows: units::px::Span::measured(rows),
         };
         let (left, top_read, width, height) =
             crate::image::rows_footprint(drawn, out, geometry, band).raw();
@@ -1771,7 +1771,7 @@ pub(crate) async fn graded_bands(
         .showing(geometry)
         .windowed(
             drawn,
-            crate::px::At::exact(window.origin.0, window.origin.1),
+            units::px::At::exact(window.origin.0, window.origin.1),
         )
         .banded(band);
         let frame = frame.into_frame();
@@ -1906,8 +1906,8 @@ pub(crate) async fn render(
                 size.width.max(size.height) as usize,
             );
             let noise = sharpen_noise.at(
-                crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-                crate::px::Span::<crate::px::Drawn>::exact(size.width.max(size.height) as usize),
+                units::px::Span::<units::px::Sensor>::exact(sensor_long),
+                units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
             );
             let cut = hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma, noise);
             repaired(&cut, job)?;
@@ -2331,7 +2331,7 @@ fn write(
             hdr::encode_pq_frame_rotated(frame, width, height, options, rotate, exif)?;
         }
         Coded::Srgb(data) => {
-            let image = crate::rgb::RgbRef {
+            let image = units::rgb::RgbRef {
                 width,
                 height,
                 data: &data,
@@ -2572,7 +2572,7 @@ mod tests {
             })
             .collect();
         let as_stored = crate::jpeg::encode(
-            crate::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width,
                 height,
                 data: &data,
@@ -2591,7 +2591,7 @@ mod tests {
             .collect();
         let expected = stacks::describe(
             gpu,
-            crate::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width: stored.height,
                 height: stored.width,
                 data: &upright,
@@ -2648,7 +2648,7 @@ mod tests {
             "sharpen": 0, "defringe": 0,
             "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
             "adjust": { "toneCurve": serde_json::to_value(crate::gpu::ToneCurve::PchipCbrt3 {
-                points: crate::light::IDENTITY_CURVE.to_vec()
+                points: units::light::IDENTITY_CURVE.to_vec()
             }).unwrap() }
         });
         value["adjust"]["toneCurve"]["points"] = serde_json::json!([[0.5, 0.0], [0.4, 1.0]]);

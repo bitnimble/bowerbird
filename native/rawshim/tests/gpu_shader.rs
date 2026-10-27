@@ -152,7 +152,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
                 f_push(&mut words, value);
             }
         }
-        words.resize(words.len() + (rawshim::light::CURVE_MAX_POINTS - 2) * 4, 0);
+        words.resize(words.len() + (units::light::CURVE_MAX_POINTS - 2) * 4, 0);
     }
     f_push(&mut words, 0.0); // camera_exposure
     f_push(&mut words, 0.0); // camera_saturation
