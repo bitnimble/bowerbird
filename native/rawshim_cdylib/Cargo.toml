@@ -1,0 +1,18 @@
+[package]
+name = "rawshim_cdylib"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+# The file every host loads: librawshim.so, rawshim.dll, librawshim.dylib, wasm-pack's rawshim.js.
+name = "rawshim"
+# Its own crate so rawshim is rlib-only: cargo gives a cdylib no unit id, and kache keeps
+# incremental state only for units with one.
+crate-type = ["cdylib"]
+
+[features]
+default = ["renditions"]
+renditions = ["rawshim/renditions"]
+
+[dependencies]
+rawshim = { path = "../rawshim", default-features = false }

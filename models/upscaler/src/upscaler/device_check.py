@@ -21,7 +21,7 @@ from training.mosaic import stabilise
 from training.pmrid import REPOSITORY
 from upscaler.model import load, stabiliser, upscaled
 
-BENCH = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "upscale_bench"
+BENCH = REPOSITORY / "native" / "target" / "quick" / "examples" / "upscale_bench"
 SMALL_TILE = 96
 
 

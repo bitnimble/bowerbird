@@ -23,7 +23,7 @@ from training.metrics import psnr
 from training.mosaic import stabilise, unstabilise
 from training.pmrid import REPOSITORY, example_environment
 
-EXAMPLE = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "dereflect"
+EXAMPLE = REPOSITORY / "native" / "target" / "quick" / "examples" / "dereflect"
 BUILD = "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml --example dereflect"
 AGREEMENT_DB = 80.0
 STAGE_AGREEMENT_DB = 60.0

@@ -409,7 +409,12 @@ pub fn scratch() -> std::path::PathBuf {
 }
 
 pub fn dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/snapshots")
+    // At run time, not `env!`: a compiled-in checkout path keeps the library from being shared
+    // across worktrees' build caches.
+    std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("snapshots are checked under cargo"),
+    )
+    .join("../../test/fixtures/snapshots")
 }
 
 /// An SDR PNG of before, after and where they differ, as columns, enlarged to be read: what an

@@ -57,7 +57,7 @@ const HALVINGS: usize = 32;
 
 /// The plan for walking the weights, which is 20KB of names and offsets and is embedded on both
 /// hosts. The weights themselves are four megabytes and are not ([`weights`]).
-const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.pmrid/weights.json"));
+const MANIFEST: &str = include_str!("../.pmrid/weights.json");
 
 /// The weights as `bun run get:models` unpacks them.
 ///
@@ -70,10 +70,7 @@ const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.pmrid
 /// them at all ([`crate::wasm::hold_pmrid_weights`]).
 #[cfg(not(target_arch = "wasm32"))]
 fn weights() -> Option<&'static [u8]> {
-    Some(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/.pmrid/weights.bin"
-    )))
+    Some(include_bytes!("../.pmrid/weights.bin"))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -451,7 +448,7 @@ const LANES: usize = 32;
 /// Neither is read in a browser, which has no passthrough shader to be handed either kernel.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const SPIRV_FRAGMENT: usize = 16;
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
 const METAL_FRAGMENT: usize = 8;
 
 /// The output rows a workgroup of `separable_<rows>`, `pointwise_<rows>` and `upsample_<rows>`
@@ -734,6 +731,7 @@ fn passthrough(
         ..Default::default()
     };
     match backend {
+        #[cfg(target_vendor = "apple")]
         wgpu::Backend::Metal => {
             handed.msl = Some(
                 include_str!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.metal")).into(),

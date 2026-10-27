@@ -326,7 +326,7 @@ COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
 RUN --mount=type=cache,id=bowerbird-cargo-registry,target=/root/.cargo/registry \
     --mount=type=cache,id=bowerbird-native-target,target=/build/target \
   RUSTFLAGS="-C target-cpu=x86-64" cargo build --release \
-    --manifest-path native/rawshim/Cargo.toml \
+    --manifest-path native/rawshim_cdylib/Cargo.toml \
     --target x86_64-unknown-linux-gnu \
     --target-dir /build/target \
   && cp /build/target/x86_64-unknown-linux-gnu/release/librawshim.so /build/librawshim.so
@@ -345,7 +345,7 @@ RUN rustup target add wasm32-unknown-unknown wasm32-wasip1-threads \
   && curl -sSfL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
      | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/wasm-pack' \
   && bun run build:wasm \
-  && rm -rf native/rawshim/target
+  && rm -rf native/target
 
 # The package alone, so the release workflow can hand in the one its `wasm` job built
 # (`--build-context wasm=native/rawshim/pkg`) and skip the stage above.

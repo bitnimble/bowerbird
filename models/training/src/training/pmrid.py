@@ -16,7 +16,7 @@ import numpy as np
 T = TypeVar("T")
 
 REPOSITORY = Path(__file__).resolve().parents[4]
-SERVER = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "pmrid_server"
+SERVER = REPOSITORY / "native" / "target" / "quick" / "examples" / "pmrid_server"
 BUILD = (
     "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml"
     " --example pmrid_server"

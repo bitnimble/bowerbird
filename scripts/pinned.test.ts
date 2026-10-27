@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { alreadyPinned, fetchPinned, pin, recordPin } from './pinned';
+import { alreadyPinned, fetchPinned, linkPinned, pin, pinnedLink, recordPin } from './pinned';
 
 test('a download is tried again after a 503 and not after a 404', async () => {
   const answers = [503, 200, 404];
@@ -38,5 +38,36 @@ test('a tree built from other flags is not the pinned one', () => {
     expect(alreadyPinned(home, pin('1.4.2', []))).toBe(false);
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('re-pointing a link at an existing tree makes its files newer than the last build', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'bb-relink-'));
+  const name = `relink-test-${process.pid}`;
+  const LONG_AGO = new Date('2020-01-01T00:00:00Z');
+  const tree = (label: string): string => {
+    const home = path.join(root, label);
+    mkdirSync(home);
+    writeFileSync(path.join(home, 'bowerbird-pin.json'), label);
+    utimesSync(path.join(home, 'bowerbird-pin.json'), LONG_AGO, LONG_AGO);
+    return home;
+  };
+  const touched = (home: string): boolean =>
+    statSync(path.join(home, 'bowerbird-pin.json')).mtimeMs > LONG_AGO.getTime();
+  try {
+    const older = tree('older');
+    const newer = tree('newer');
+
+    linkPinned(name, newer);
+    expect(touched(newer)).toBe(false);
+
+    linkPinned(name, newer);
+    expect(touched(newer)).toBe(false);
+
+    linkPinned(name, older);
+    expect(touched(older)).toBe(true);
+  } finally {
+    rmSync(pinnedLink(name), { force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });

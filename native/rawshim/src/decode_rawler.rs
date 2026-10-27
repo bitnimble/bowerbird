@@ -3493,9 +3493,11 @@ mod tests {
     fn the_uncached_read_is_the_file() {
         // Two pages and a bit, so there is a tail and more than one page to get in the wrong order.
         let want: Vec<u8> = (0..9001u32).map(|i| (i % 251) as u8).collect();
-        // Under the build directory rather than the temporary one, which is tmpfs on most
+        // Beside the test binary rather than in the temporary directory, which is tmpfs on most
         // machines - and tmpfs refuses the flag, so the whole test would skip itself.
-        let path = std::path::Path::new(env!("OUT_DIR")).join("uncached-read.bin");
+        let path = std::env::current_exe()
+            .expect("the test binary's path")
+            .with_file_name("uncached-read.bin");
         std::fs::write(&path, &want).expect("wrote the file");
 
         match super::uncached(&path) {

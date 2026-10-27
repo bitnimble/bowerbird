@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 const ROOT = resolve(import.meta.dir, '..');
 const manifests = [
   'native/rawshim/Cargo.toml',
+  'native/rawshim_cdylib/Cargo.toml',
   'native/heif/Cargo.toml',
   'native/lensdb/Cargo.toml',
   'native/updater/Cargo.toml',

@@ -1037,16 +1037,10 @@ impl Halving {
 /// The model this build carries: the plan for walking the weights, embedded on both hosts, and the
 /// weights, embedded in a rendition's binary and fetched by a page, as `pmrid::weights` says why.
 /// An app that has downloaded a newer one hands it over with [`hold_model`].
-const MANIFEST: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/.upscaler/weights.json"
-));
+const MANIFEST: &str = include_str!("../.upscaler/weights.json");
 
 #[cfg(not(target_arch = "wasm32"))]
-const BUNDLED: Option<&[u8]> = Some(include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/.upscaler/weights.bin"
-)));
+const BUNDLED: Option<&[u8]> = Some(include_bytes!("../.upscaler/weights.bin"));
 
 #[cfg(target_arch = "wasm32")]
 const BUNDLED: Option<&[u8]> = None;
@@ -1431,6 +1425,7 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, fragment: usize, blocks: &[u16]) -> Optio
         ..Default::default()
     };
     match (gpu.backend, fragment) {
+        #[cfg(target_vendor = "apple")]
         (wgpu::Backend::Metal, METAL_FRAGMENT) => {
             handed.msl = Some(
                 include_str!(concat!(env!("OUT_DIR"), "/passthrough/upscale_coop.metal")).into(),

@@ -5,10 +5,6 @@ version = "0.1.0"
 # `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
 edition = "2024"
 
-# cdylib so Bun can dlopen it. rlib so the grade microbench example can link the same crate.
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [features]
 default = ["renditions"]
 
@@ -217,49 +213,6 @@ moxcms = "0.9.1"
 # The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
 # callers sit inside their own parallelism. libavif and libjxl are linked on top, through
 # build.rs, and only for a `renditions` build.
-
-# An index product that wraps is a picture that comes out wrong rather than a crash, and
-# these run over tens of millions of samples. Keep that failure loud in release.
-#
-# Applies when this crate is the root - the server's `build:native` and `cargo test`. The
-# shells set their own, because cargo reads profiles from the top-level package only.
-[profile.release]
-overflow-checks = true
-# Cargo defaults to per-crate optimisation in sixteen independent units. The decode's hot
-# loops cross crate boundaries into `rawler` and `fast_image_resize`, which is exactly what
-# those defaults leave on the table: on the shells the same change took the Windows binary
-# from 26MB of `.text` to 7.
-lto = "fat"
-codegen-units = 1
-
-# What every build that is not being shipped uses: the tests and any local `build:native`.
-#
-# **Same optimisation and the same overflow checks; the whole-program link is dropped and the
-# codegen is cached.** Fat LTO into one codegen unit is worth 25% of the library's size and,
-# measured here, nothing at all in speed: a 61MP decode ran 1635-1666ms under `release` and 1687ms
-# under this, and the grade 1485-1664ms against 1481ms. What it costs is the build - 43s against
-# 19s, and almost all of it serial, since one codegen unit and a whole-program link leave nothing
-# to run in parallel. That is the wrong trade to pay on every edit and the right one to pay once,
-# on the artefact a user installs.
-#
-# `opt-level` and `overflow-checks` are deliberately not relaxed. A debug decode is six times
-# slower - measured, 229s of fixture suite against 36s - and the overflow checks are the
-# reason a wrapping index over tens of millions of samples is a loud failure rather than a
-# quietly wrong picture, which is exactly what the tests are for.
-#
-# **`incremental`, and so no LTO at all.** A crate is rustc's compilation unit, so an edit anywhere
-# in this one recompiles all of it: there is no per-module cache to hit, and the only thing that
-# reuses work across edits is incremental's own codegen units. The two settings go together rather
-# than being two choices - cargo disables incremental when LTO is on, and says so - and this is the
-# profile nothing ships from, so what is being traded away is a link nobody measures.
-#
-# **Not the benchmark's profile.** `scripts/bench.ts` builds `--release`, which is what
-# `test/fixtures/bench.budget.json` is recorded against, so nothing here can move a budget.
-[profile.quick]
-inherits = "release"
-lto = false
-codegen-units = 16
-incremental = true
 
 # Vulkan without wgpu in the way, for the one thing WGSL cannot say: the cooperative matrices a
 # tensor core is reached through. Already in the tree - it is what wgpu's own Vulkan backend calls -

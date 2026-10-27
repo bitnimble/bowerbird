@@ -836,8 +836,9 @@ The part worth spelling out is that **the tick path needs no wasm at all**.
 
 So the wasm build stops being something the desktop app carries and becomes the
 _web_ build's business only. That is not a fork in the source: `rawshim` already
-compiles as a cdylib for wasm and an rlib for the server, and this is the same
-arrangement with the desktop app as a third consumer of the native side.
+compiles as an rlib and, through `rawshim_cdylib`, a cdylib for wasm and the
+server, and this is the same arrangement with the desktop app as a third
+consumer of the native side.
 
 Keeping wasm open under Tauri retains browser costs, 6.7MB module and `SharedArrayBuffer`.
 Tauri-controlled headers make isolation available but don't justify it.

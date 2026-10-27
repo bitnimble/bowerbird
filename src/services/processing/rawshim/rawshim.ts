@@ -41,8 +41,8 @@ const CANDIDATES = [
   //
   // `quick` before `release`: `build:native` writes the first, and a `release` left over from a
   // packaging run would otherwise shadow every rebuild since.
-  path.join(import.meta.dir, '../../../../native/rawshim/target/quick', LIB),
-  path.join(import.meta.dir, '../../../../native/rawshim/target/release', LIB),
+  path.join(import.meta.dir, '../../../../native/target/quick', LIB),
+  path.join(import.meta.dir, '../../../../native/target/release', LIB),
   LIB,
 ];
 

@@ -8,6 +8,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn main() {
     // Every path named here must exist. Cargo cannot stat a missing one, so it treats the script
@@ -20,6 +21,7 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     shaders(&out);
     weights();
+    environments();
 
     // Only a `renditions` build binds anything: rawler reads the RAWs, and libavif and libjxl are
     // the server's alone. An editor build links no C at all.
@@ -53,6 +55,23 @@ fn weights() {
             );
         }
     }
+}
+
+/// The pinned tree `.environments` links to rather than the link, so every worktree on one pin
+/// compiles the same library and a build cache can share it. Left as the link when it is missing,
+/// for `print::Environment::bytes` to name the getter.
+fn environments() {
+    let link = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+        .join(".environments");
+    // Newer whenever the link's tree changes: a fresh tree is newly written, and `linkPinned`
+    // touches an old one it re-points to. Named only when present: cargo reruns the script on
+    // every build for a path it cannot stat.
+    let pin = link.join("bowerbird-pin.json");
+    if pin.exists() {
+        println!("cargo:rerun-if-changed={}", pin.display());
+    }
+    let tree = link.canonicalize().unwrap_or(link);
+    println!("cargo:rustc-env=BOWERBIRD_ENVIRONMENTS={}", tree.display());
 }
 
 /// Every shader the crate reads, compiled into `$OUT_DIR/wgsl` under the name it is asked for.
@@ -107,6 +126,10 @@ fn shaders(out: &Path) {
     std::fs::create_dir_all(staged.join("galosh")).expect("create the staged shader directory");
     std::fs::create_dir_all(out.join("passthrough")).expect("create the staged shader directory");
 
+    let target = |key: &str| env::var(format!("CARGO_CFG_TARGET_{key}")).unwrap_or_default();
+    let has_vulkan = target("ARCH") != "wasm32";
+    let has_metal = target("VENDOR") == "apple";
+    let mut compiles = Vec::new();
     for (from, to) in gather(Path::new("../../slang")) {
         // A file declaring itself a module is one another file imports, not a stage of its own.
         // Compiling it alone would emit a module with no entry point, which is a shader nothing can
@@ -118,8 +141,9 @@ fn shaders(out: &Path) {
         }
         // `slang/passthrough` is what WGSL cannot say - today the cooperative matrices a matrix
         // unit is reached through, which no browser exposes - so it is handed to the driver in the
-        // driver's own language, and both are emitted because which one a machine takes is the
-        // adapter's answer rather than the build's (`pmrid::coop_kernels`).
+        // driver's own language: SPIR-V for every native target, MSL for the Apple ones wgpu has a
+        // Metal backend on, and which of those a machine takes is the adapter's answer
+        // (`pmrid::passthrough`).
         //
         // **The fragment differs, and the shader takes it as a define.** A Vulkan cooperative
         // matrix is 16x16 on the parts this was measured on; Metal's `simdgroup_matrix` is 8x8 and
@@ -131,30 +155,69 @@ fn shaders(out: &Path) {
                     out.join("passthrough")
                         .join(name.replace(".slang", extension))
                 };
-                compile(&slangc, &from, &at(".spv"), &[], &[]);
-                compile(
-                    &slangc,
-                    &from,
-                    &at(".metal"),
-                    &dispatched(&source),
-                    &["-DFRAGMENT=8"],
-                );
+                if has_vulkan {
+                    compiles.push(Compile {
+                        from: from.clone(),
+                        to: at(".spv"),
+                        entry_points: Vec::new(),
+                        defines: &[],
+                    });
+                }
+                if has_metal {
+                    compiles.push(Compile {
+                        entry_points: dispatched(&source),
+                        from,
+                        to: at(".metal"),
+                        defines: &["-DFRAGMENT=8"],
+                    });
+                }
             }
             None => {
                 let to = staged.join(to.replace(".slang", ".wgsl"));
-                compile(&slangc, &from, &to, &[], &[]);
+                compiles.push(Compile {
+                    from: from.clone(),
+                    to: to.clone(),
+                    entry_points: Vec::new(),
+                    defines: &[],
+                });
                 // A shader that leaves its arena's type to the build is compiled holding it in
                 // `half` as well, for the host whose matrix units read that arena in place.
                 if source.lines().any(|line| line == "#ifndef STORED") {
-                    let half = to.with_file_name(format!(
-                        "{}_half.wgsl",
-                        to.file_stem().expect("a shader's name").to_string_lossy(),
-                    ));
-                    compile(&slangc, &from, &half, &[], &["-DSTORED=half"]);
+                    compiles.push(Compile {
+                        from,
+                        to: to.with_file_name(format!(
+                            "{}_half.wgsl",
+                            to.file_stem().expect("a shader's name").to_string_lossy(),
+                        )),
+                        entry_points: Vec::new(),
+                        defines: &["-DSTORED=half"],
+                    });
                 }
             }
         }
     }
+
+    let next = AtomicUsize::new(0);
+    let jobs = env::var("NUM_JOBS")
+        .ok()
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(1);
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| {
+                while let Some(it) = compiles.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    compile(&slangc, &it.from, &it.to, &it.entry_points, it.defines);
+                }
+            });
+        }
+    });
+}
+
+struct Compile {
+    from: PathBuf,
+    to: PathBuf,
+    entry_points: Vec<String>,
+    defines: &'static [&'static str],
 }
 
 /// The pinned compiler, the one an environment names, or whatever is on `PATH`.

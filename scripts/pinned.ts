@@ -9,12 +9,15 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -57,10 +60,22 @@ export function linkPinned(name: string, home: string): void {
   // The Docker stage that fetches a tree copies in the scripts and nothing else, so the crate
   // directory the link goes in is not there to link into.
   mkdirSync(CRATE, { recursive: true });
-  rmSync(pinnedLink(name), { recursive: true, force: true });
+  const link = pinnedLink(name);
+  const previous = lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink()
+    ? statSync(link, { throwIfNoEntry: false })
+    : undefined;
+  rmSync(link, { recursive: true, force: true });
   // A directory symlink on Windows needs Developer Mode or elevation; a junction needs neither
   // and is the same thing to every reader of the path.
-  symlinkSync(home, pinnedLink(name), process.platform === 'win32' ? 'junction' : undefined);
+  symlinkSync(home, link, process.platform === 'win32' ? 'junction' : undefined);
+  const current = statSync(home);
+  if (previous == null || (previous.dev === current.dev && previous.ino === current.ino)) return;
+  // `build.rs` reruns on the mtimes of files it watches through the link, and a tree linked back
+  // to keeps the ones it was made with, older than the build that read the tree it replaced.
+  const now = new Date();
+  for (const entry of readdirSync(home, { withFileTypes: true })) {
+    if (entry.isFile()) utimesSync(resolve(home, entry.name), now, now);
+  }
 }
 
 /**

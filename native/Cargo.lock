@@ -1449,6 +1449,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawshim_cdylib"
+version = "0.1.0"
+dependencies = [
+ "rawshim",
+]
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

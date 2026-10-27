@@ -110,14 +110,16 @@ impl Environment {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
-        let path = format!(
-            "{}/.environments/{}.hdr",
-            env!("CARGO_MANIFEST_DIR"),
-            self.name()
-        );
+        let path = std::path::Path::new(env!("BOWERBIRD_ENVIRONMENTS"))
+            .join(format!("{}.hdr", self.name()));
         std::fs::read(&path)
             .map(std::borrow::Cow::Owned)
-            .map_err(|error| format!("{path}: {error}. `bun run get:environments` fetches it"))
+            .map_err(|error| {
+                format!(
+                    "{}: {error}. `bun run get:environments` fetches it",
+                    path.display()
+                )
+            })
     }
 
     #[cfg(target_arch = "wasm32")]
