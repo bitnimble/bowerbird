@@ -86,7 +86,10 @@ export const TileMenu = observer(function TileMenu({
       {children}
       <Menu.Root
         open={opened != null}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          // Opened with no trigger, base-ui takes the menu for hover-opened and closes it when
+          // the pointer leaves it.
+          if (details.reason === 'trigger-hover') return details.cancel();
           if (!next) setOpened(null);
         }}
       >

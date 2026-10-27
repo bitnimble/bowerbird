@@ -61,6 +61,20 @@ test('copies the edits of one photo and pastes them onto another', async ({ page
   expect(pasted.doc.cropLeft).toBe(0);
 });
 
+test('stays open while the pointer crosses the grid', async ({ page }) => {
+  await gotoLibrary(page, TILE_MENU_PHOTOS_DIR);
+  await tiles(page).nth(0).click({ button: 'right' });
+  await expect(menuOf(page)).toBeVisible();
+
+  await menuOf(page).getByRole('menuitem', { name: 'Copy edits' }).hover();
+  // The menu's backdrop covers the grid, which `hover()` would wait out.
+  const box = await tiles(page).nth(1).boundingBox();
+  if (box == null) throw new Error('the second tile is not on screen');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 });
+  await expect(menuOf(page)).toBeVisible();
+  await page.keyboard.press('Escape');
+});
+
 test('acts on the whole selection from a selected tile', async ({ page }) => {
   await gotoLibrary(page, TILE_MENU_PHOTOS_DIR);
   await tiles(page).nth(0).click({ button: 'right' });
