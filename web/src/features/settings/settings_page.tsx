@@ -284,8 +284,9 @@ export const MeasuredDisplayPeak = observer(function MeasuredDisplayPeak(): JSX.
 
 function measuredPeak(screen: ScreenStore): string {
   if (!screen.hdr) return SettingsStrings.measuredPeakSdr();
-  if (screen.peakNits == null) return SettingsStrings.measuredPeakPending();
-  return SettingsStrings.measuredPeakNits(Math.round(screen.peakNits));
+  const peak = screen.reading?.peak;
+  if (peak == null) return SettingsStrings.measuredPeakUnknown();
+  return SettingsStrings.measuredPeakNits(Math.round(peak));
 }
 
 const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {

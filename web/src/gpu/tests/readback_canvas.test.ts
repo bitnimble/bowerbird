@@ -27,13 +27,13 @@ afterEach(async () => {
 
 test('WebKit keeps a canvas on the page where the screen can open past what a transferred one shows', async () => {
   browsing(SAFARI);
-  await screen({ hdr: true, measures: true, headroom: null, potential: 16 });
+  await screen({ hdr: true, measures: true, headroom: null, potential: 16, peak: 1600 });
   expect(drawsOnThePage(800)).toBe(true);
 });
 
 test('WebKit transfers a canvas on a screen that never passes that', async () => {
   browsing(SAFARI);
-  await screen({ hdr: true, measures: true, headroom: 2, potential: 4 });
+  await screen({ hdr: true, measures: true, headroom: 2, potential: 4, peak: 400 });
   expect(drawsOnThePage(812)).toBe(false);
   expect(drawsOnThePage(null)).toBe(false);
 });
@@ -46,7 +46,7 @@ test('WebKit keeps a canvas on the page for a configured peak past that, in a br
 
 test('Chromium always transfers, at the full peak', async () => {
   browsing(CHROME);
-  await screen({ hdr: true, measures: true, headroom: 8, potential: 16 });
+  await screen({ hdr: true, measures: true, headroom: 8, potential: 16, peak: 1600 });
   expect(drawsOnThePage(1624)).toBe(false);
   expect(transferredPeakNits(1624)).toBe(1624);
 });

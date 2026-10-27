@@ -26,7 +26,10 @@ export class ScreenStore {
     return this.reading?.measures === true;
   }
 
-  /** The brightest a draw can show right now. Null until the shell reads the headroom. */
+  /**
+   * The brightest a draw can show right now, over a white at `SDR_WHITE_NITS` rather than the
+   * screen's own, so it grows as the screen dims. Null until the shell reads the headroom.
+   */
   @computed
   get peakNits(): number | null {
     const headroom = this.reading?.headroom;
