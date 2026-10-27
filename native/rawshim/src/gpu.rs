@@ -5912,8 +5912,8 @@ mod tests {
         }
     }
 
-    /// An encode written a band of rows at a time is the whole encode, through a geometry that
-    /// sends each output row somewhere across the frame.
+    /// An encode written a band of rows at a time is the whole encode, PQ and sRGB alike, through a
+    /// geometry that sends each output row somewhere across the frame.
     #[test]
     fn a_grade_written_in_bands_is_the_grade_written_whole() {
         let Some(gpu) = super::device() else {
@@ -5928,33 +5928,35 @@ mod tests {
             peak: Light::measured(60_000.0),
             floor: None,
         };
-        let grade = super::Grade::new(
-            width,
-            height,
-            levels,
-            Light::exactly(203.0),
-            Light::exactly(1000.0),
-        )
-        .showing(geometry([0.05, 0.1, 0.9, 0.95], 3.5, 90, None));
+        let reference = Light::exactly(203.0);
+        let hdr = super::Grade::new(width, height, levels, reference, Light::exactly(1000.0))
+            .showing(geometry([0.05, 0.1, 0.9, 0.95], 3.5, 90, None));
+        let sdr = super::Grade {
+            output: super::Output::Srgb,
+            peak_nits: super::Output::Srgb.mastered(reference),
+            ..hdr.clone()
+        };
         let peak = gpu.given_peak(4000.0);
-        let up = gpu.upload(&frame, &grade, &peak);
-        let whole = up.encode(&grade);
+        for (name, grade) in [("pq", hdr), ("srgb", sdr)] {
+            let up = gpu.upload(&frame, &grade, &peak);
+            let whole = up.encode(&grade);
 
-        let (out_width, out_height) = grade.output_size();
-        let mut stitched = Vec::with_capacity(whole.len());
-        for top in (0..out_height).step_by(7) {
-            let rows = 7.min(out_height - top);
-            let band = super::Grade {
-                band: Some(super::Band {
-                    top: crate::px::Place::measured(top),
-                    rows: crate::px::Span::measured(rows),
-                }),
-                ..grade.clone()
-            };
-            assert_eq!(band.written_size(), (out_width, rows));
-            stitched.extend(up.encode(&band));
+            let (out_width, out_height) = grade.output_size();
+            let mut stitched = Vec::with_capacity(whole.len());
+            for top in (0..out_height).step_by(7) {
+                let rows = 7.min(out_height - top);
+                let band = super::Grade {
+                    band: Some(super::Band {
+                        top: crate::px::Place::measured(top),
+                        rows: crate::px::Span::measured(rows),
+                    }),
+                    ..grade.clone()
+                };
+                assert_eq!(band.written_size(), (out_width, rows));
+                stitched.extend(up.encode(&band));
+            }
+            assert_eq!(stitched, whole, "{name} in bands");
         }
-        assert_eq!(stitched, whole);
     }
 
     /// The device is opened at the adapter's texture limit rather than WebGPU's default of 8192.

@@ -176,10 +176,9 @@ holds at that luma and hue is compressed from 0.9 of the limit (perceptual, to w
 with black point compensation and otherwise floors at it. Two of the intents are Lightroom's;
 absolute colorimetric proofs one medium on another, which a print of a photograph never asks for.
 To white is what every SDR rendition, export and proof gets unless the reader picks another. Its
-lower knee is a choice with a cost: whenever the frame holds highlights past white, diffuse white
-and up to a stop and a half under it land below where perceptual puts them. On a camera-matched
-photo it changes little, since the match already carries the camera's own highlight rendering up
-to white. The target is an interface, so
+lower knee is a choice with a cost: when the frame holds highlights well past white, diffuse white
+and up to a stop and a half under it land below where perceptual puts them. The target is an
+interface, so
 sRGB and generic paper are the cube in closed form, and a printer profile is a table of its maximum
 chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by

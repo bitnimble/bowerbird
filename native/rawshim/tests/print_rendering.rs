@@ -445,6 +445,8 @@ fn perceptual_keeps_a_highlights_colour_that_relative_clips() {
     );
 }
 
+/// To white lets a saturated highlight give up colour on its way under white: paler than perceptual
+/// leaves it, short of the white relative clips it to.
 #[test]
 fn to_white_takes_a_saturated_highlight_towards_white() {
     let colour = HdrColour::identity();
@@ -476,7 +478,7 @@ fn to_white_takes_a_saturated_highlight_towards_white() {
 fn to_white_rolls_from_its_own_knee() {
     let colour = HdrColour::identity();
     let moved = |probe: f64| {
-        let lit = move |column: usize| if column < 6 { [100.0; 3] } else { [probe; 3] };
+        let lit = |column: usize| if column < 6 { [40.0; 3] } else { [probe; 3] };
         let [relative, to_white] = [Intent::RelativeColorimetric, Intent::ToWhite].map(|intent| {
             luminance(sample_as(&lit, lit_evenly(intent), [16, 16], Some(&colour))).raw()
         });
@@ -511,7 +513,8 @@ fn a_colorimetric_intent_leaves_what_the_paper_holds() {
 }
 
 /// The 1.3x-white probe lies above the knee. Perceptual compresses it beneath a 4x-white patch;
-/// relative preserves its level until the paper clips it.
+/// relative preserves its level until the paper clips it; to white, rolling from lower down,
+/// compresses it further than perceptual.
 #[test]
 fn the_intents_differ_under_a_blown_highlight() {
     let colour = HdrColour::identity();
