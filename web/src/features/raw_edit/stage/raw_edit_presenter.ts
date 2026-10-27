@@ -5,6 +5,7 @@ import {
   type Denoiser,
   type EditDoc,
   type EditState,
+  neutralEdits,
   type ToneCurve,
 } from '../../../../../src/schemas/photo_edits';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
@@ -444,6 +445,8 @@ export class RawEditPresenter {
    * document it is prepared at. A deep link with no row yet asks for the detail instead, since
    * answering "an ordinary photograph" for a composite means downloading a file that does not exist.
    *
+   * `rematch` resets the edits to the camera match this open finds, after `forgetAnalysis`.
+   *
    * Never rejects: both callers fire this and forget it, so anything escaping would leave
    * the page at "loading" with no reason given.
    */
@@ -451,6 +454,7 @@ export class RawEditPresenter {
     photoId: string,
     longEdge: number | ViewerRendition,
     summary: PhotoSummary | null,
+    rematch = false,
   ): Promise<void> {
     this.begin();
     this.edit.begin(photoId);
@@ -538,7 +542,8 @@ export class RawEditPresenter {
       this.took(header);
       this.opened(header, local.onTheBackend);
       const tone = this.stage.cameraTone;
-      if (!fromRendition && tone != null) void this.edit.applyCameraMatch(tone);
+      if (rematch) this.resetToCameraMatch();
+      else if (!fromRendition && tone != null) void this.edit.applyCameraMatch(tone);
       // The canvas goes to the worker, where the frame is. Re-attached rather than left as it
       // was: the observer needs a region to size against, and there was none when React handed
       // the element over.
@@ -843,6 +848,18 @@ export class RawEditPresenter {
   resetToCameraMatch(): void {
     const tone = this.stage.cameraTone;
     if (tone != null) this.edit.resetToCameraMatch(tone);
+  }
+
+  /** So the next open of this photo measures it, and matches the camera, afresh. */
+  async forgetAnalysis(): Promise<void> {
+    if (this.photoId == null) return;
+    // Else the reopen reads a revision a save still in flight moves past, and its reset conflicts.
+    await this.edit.drained();
+    await photosApi.forgetAnalysis(this.photoId);
+  }
+
+  resetAllEdits(): void {
+    this.edit.settle(neutralEdits());
   }
 
   flushReprepare(): void {

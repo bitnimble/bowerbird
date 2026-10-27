@@ -9,7 +9,9 @@ import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import type { Span } from '../../../ui/virtual_rows';
+import { readSetting, writeSetting } from '../../../app/local_setting';
 import type { ViewerStore } from './viewer_store';
+import { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, type PanelColumn } from './viewer_edges';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 // How many photographs' details and develop documents are kept once read. A detail is a row
@@ -32,8 +34,17 @@ function keep<T>(cache: Map<string, T>, photoId: string, value: T): void {
   }
 }
 
+const PANEL_WIDTH_STEP = 16;
+
+const panelWidthKey = (column: PanelColumn): string => `bowerbird.detail.panels.${column}.width`;
+
+const clampPanel = (width: number): number =>
+  Math.round(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, width)));
+
 export class ViewerPresenter {
-  constructor(private readonly store: ViewerStore) {}
+  constructor(private readonly store: ViewerStore) {
+    this.restorePanelWidths();
+  }
 
   @action.bound
   clearNeighbourhood(): void {
@@ -201,6 +212,28 @@ export class ViewerPresenter {
   setDetailBox(width: number, height: number): void {
     this.store.detailWidth = width;
     this.store.detailHeight = height;
+  }
+
+  @action.bound
+  setPanelWidth(column: PanelColumn, width: number): void {
+    this.store.panelWidths = { ...this.store.panelWidths, [column]: clampPanel(width) };
+    writeSetting(panelWidthKey(column), String(this.store.panelWidths[column]));
+  }
+
+  @action.bound
+  nudgePanelWidth(column: PanelColumn, steps: number): void {
+    // From the width on screen: the stored one can sit past the cap, where a step moves nothing.
+    this.setPanelWidth(column, this.store.shownPanelWidth(column) + steps * PANEL_WIDTH_STEP);
+  }
+
+  @action.bound
+  private restorePanelWidths(): void {
+    for (const column of ['view', 'edit'] as const) {
+      const width = Number(readSetting(panelWidthKey(column)));
+      if (Number.isFinite(width) && width > 0) {
+        this.store.panelWidths = { ...this.store.panelWidths, [column]: clampPanel(width) };
+      }
+    }
   }
 
   @action.bound

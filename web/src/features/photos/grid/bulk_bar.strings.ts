@@ -1,6 +1,6 @@
 export const BulkBarStrings = {
   rebuildThumbnails: () => 'Rebuild thumbnails',
-  refreshMetadata: () => 'Update photo details',
+  refreshMetadata: () => 'Refresh metadata',
   // The ellipsis is the promise the dialog keeps: nothing is written until the
   // reader has answered the format, the size and where the files go.
   exportPhotos: () => 'Export photos…',
@@ -11,9 +11,9 @@ export const BulkBarStrings = {
   moveCountToBin: (count: number) => `Move ${count} to Bin`,
 
   /** Hiding keeps every file and every edit, so it says nothing about deleting. */
-  hide: () => 'Hide',
+  hide: () => 'Hide from library',
   unhide: () => 'Unhide',
-  hideCount: (count: number) => `Hide ${count} ${count === 1 ? 'photo' : 'photos'}`,
+  hideCount: (count: number) => `Hide ${count} ${count === 1 ? 'photo' : 'photos'} from library`,
   unhideCount: (count: number) => `Unhide ${count} ${count === 1 ? 'photo' : 'photos'}`,
 
   selection: () => 'Selection',

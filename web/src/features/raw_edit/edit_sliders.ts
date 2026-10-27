@@ -43,7 +43,7 @@ export interface SliderSpec {
  * reader arriving from either program reaches for the fourth row expecting Whites, and the
  * labels are that program's labels, so the column has to be as well.
  */
-export const LIGHT: readonly SliderSpec[] = [
+export const TONE: readonly SliderSpec[] = [
   {
     key: 'exposure',
     label: RawEditPanelStrings.exposure(),
@@ -166,7 +166,7 @@ export const REFLECTION: SliderSpec = {
 };
 
 /** Every slider whose value is a plain number, in the order the panel shows them. */
-export const EDIT_SLIDERS: readonly SliderSpec[] = [...LIGHT, ...COLOUR, ...EFFECTS, ...DETAIL];
+export const EDIT_SLIDERS: readonly SliderSpec[] = [...TONE, ...COLOUR, ...EFFECTS, ...DETAIL];
 
 /// Signed only where the track has a negative half; `+33` on a 0-to-100 slider states a
 /// direction it has no opposite of.

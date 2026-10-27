@@ -16,7 +16,6 @@ import {
   firstPhotoId,
   frames,
   gotoPhoto,
-  photoAction,
   photoStage,
   savedRev,
   softProof,
@@ -153,7 +152,6 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
 
   // The camera neutral reaches the client too: what the sliders *do* with it is
   // `raw_edit_presenter.test.ts`, and a header without it leaves the pair absent entirely.
-  await page.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(
     page
       .getByRole('group', { name: 'White balance' })
@@ -764,10 +762,10 @@ test('opening and closing the editor leaves the history alone', async ({ page })
   await page.goto(route(PathSegment.photos(), photoId));
   await expect(page.getByRole('button', { name: 'More' })).toBeEnabled();
 
-  // Through the menu the reader uses, because it is the Edit row's link that puts anything in
-  // the history and `/edit` in the address arrives without having followed it.
+  // Through the button the reader uses, because it is Edit's link that puts anything in the
+  // history and `/edit` in the address arrives without having followed it.
   const before = await page.evaluate(() => history.length);
-  await photoAction(page, 'Actions', 'Edit', { exact: true });
+  await page.getByRole('link', { name: 'Edit', exact: true }).click();
   await expect(editTools(page)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(editTools(page)).toBeHidden();
@@ -892,7 +890,7 @@ test('the info tab holds the metadata panels', async ({ page }) => {
   await expect(panel('Info')).toBeVisible();
   await expect(panel('Camera').getByText('Body', { exact: true })).toBeVisible();
   await expect(panel('Original')).toBeVisible();
-  await expect(panel('Light')).toHaveCount(0);
+  await expect(panel('Tone')).toHaveCount(0);
 });
 
 test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({

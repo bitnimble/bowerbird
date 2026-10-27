@@ -3,8 +3,9 @@ import { RadioGroup } from '@base-ui-components/react/radio-group';
 import { Toggle } from '@base-ui-components/react/toggle';
 import { ToggleGroup } from '@base-ui-components/react/toggle-group';
 import * as stylex from '@stylexjs/stylex';
-import { buttonStyles } from './button';
+import { ButtonHint, buttonStyles } from './button';
 import { focusRing } from './focus_ring';
+import { LabelFit } from './label_fit';
 import type { Option } from './option';
 import { color, size } from './tokens.stylex';
 import { Tooltip } from './tooltip';
@@ -38,12 +39,17 @@ const styles = stylex.create({
   item: {
     height: '100%',
     borderWidth: 0,
-    borderRightWidth: { default: '1px', ':last-child': 0 },
+    // On the left of all but the first: a radio is followed by its hidden input, so the last one
+    // is never `:last-child`.
+    borderLeftWidth: { default: '1px', ':first-child': 0 },
     borderRadius: 0,
     transition: 'background-color 150ms ease, color 150ms ease',
     backgroundColor: { default: color.slateSoft, [CHECKED]: color.satin, [PRESSED]: color.satin },
     color: { default: color.bone, [CHECKED]: INK_ON_SATIN, [PRESSED]: INK_ON_SATIN },
     fontWeight: { default: null, [CHECKED]: 600, [PRESSED]: 600 },
+  },
+  chosen: {
+    fontWeight: 600,
   },
   pick: {
     backgroundColor: { default: color.slateSoft, [CHECKED]: color.satin, [PRESSED]: color.moss },
@@ -104,19 +110,32 @@ const styles = stylex.create({
  * The two render identically. What differs is the role, the arrow keys, and that a radio cannot
  * be un-chosen - which is what a one-of-N means, and which the toggle group has to ignore an
  * empty selection by hand to imitate.
+ *
+ * Options marked `iconOnly` are labelled where the row has room for every label, and otherwise
+ * only the chosen one is.
  */
-export function SegmentedControl<T extends string>({
-  options,
-  value,
-  held = null,
-  onChange,
-  label,
-  stretch = false,
-  as = 'toggle',
-  focusable = true,
-  style,
-  itemStyle,
-}: {
+export function SegmentedControl<T extends string>(props: SegmentedControlProps<T>): JSX.Element {
+  const { options } = props;
+  const fitted = options.some((option) => option.iconOnly === true);
+  if (!fitted) return <Segments {...props} labelled={() => true} />;
+  return (
+    <LabelFit
+      items={options.map(({ value, icon, label, hint }) => ({ key: value, icon, label, hint }))}
+      selected={props.held ?? props.value}
+      rowStyle={styles.group}
+      itemStyle={(labelled, selected) => [
+        buttonStyles.base,
+        !labelled && buttonStyles.icon,
+        styles.item,
+        selected && styles.chosen,
+      ]}
+    >
+      {(labelled) => <Segments {...props} labelled={labelled} />}
+    </LabelFit>
+  );
+}
+
+type SegmentedControlProps<T extends string> = {
   options: Option<T>[];
   value: T | null;
   /**
@@ -136,13 +155,28 @@ export function SegmentedControl<T extends string>({
   focusable?: boolean;
   style?: stylex.StyleXStyles;
   itemStyle?: stylex.StyleXStyles;
-}): JSX.Element {
+};
+
+function Segments<T extends string>({
+  options,
+  value,
+  held = null,
+  onChange,
+  label,
+  stretch = false,
+  as = 'toggle',
+  focusable = true,
+  style,
+  itemStyle,
+  labelled,
+}: SegmentedControlProps<T> & { labelled: (value: string) => boolean }): JSX.Element {
   const group = stylex.props(styles.group, stretch && styles.groupStretch, style);
   const tabIndex = focusable ? undefined : -1;
+  const shown = (option: Option<T>): boolean => option.iconOnly !== true || labelled(option.value);
   const item = (option: Option<T>): ReturnType<typeof stylex.props> =>
     stylex.props(
       buttonStyles.base,
-      option.iconOnly === true && buttonStyles.icon,
+      !shown(option) && buttonStyles.icon,
       focusRing.inside,
       styles.item,
       option.tone != null && styles[option.tone],
@@ -153,12 +187,12 @@ export function SegmentedControl<T extends string>({
       itemStyle,
     );
   const iconName = (option: Option<T>): string | undefined =>
-    option.iconOnly === true ? option.label : undefined;
+    shown(option) ? undefined : option.label;
   const contents = (option: Option<T>): JSX.Element => (
     <>
       {option.icon}
-      {option.iconOnly === true ? null : option.label}
-      {option.hint != null && <span {...stylex.props(buttonStyles.hint)}>{option.hint}</span>}
+      {shown(option) && option.label}
+      {shown(option) && option.hint != null && <ButtonHint>{option.hint}</ButtonHint>}
     </>
   );
 

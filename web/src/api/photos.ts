@@ -362,6 +362,9 @@ export const photosApi = {
   analysisUrl: (photoId: string): string =>
     route(PathSegment.image(), photoId, PathSegment.analysis()),
 
+  forgetAnalysis: (photoId: string): Promise<void> =>
+    request(NothingSchema, 'DELETE', route(PathSegment.image(), photoId, PathSegment.analysis())),
+
   /**
    * One picture of this photograph, coded, for a client that will grade it itself.
    *

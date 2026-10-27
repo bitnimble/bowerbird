@@ -81,7 +81,7 @@ export const RawEditPanelStrings = {
   editedElsewhere: () => 'These edits changed on another device. Reopen this photo to see them.',
   couldNotSave: () => "We couldn't save your edits. Try again.",
 
-  groupLight: () => 'Light',
+  groupTone: () => 'Tone',
   groupWhiteBalance: () => 'White balance',
   groupColour: () => 'Colour',
   groupEffects: () => 'Effects',

@@ -9,8 +9,6 @@ const COARSE = '@media (pointer: coarse)';
 const STRIP_HANDLE = '8px';
 /** How far past that gutter the grab reaches, into the gap between the strip and the photograph. */
 const HANDLE_OVERHANG = '6px';
-/** How long the bar under a finger is drawn, which is a grip rather than the whole edge. */
-const GRAB_LENGTH = '36px';
 
 // Not `ICON`, which is the size a control's icons are: these sit in a badge whose siblings are 9px
 // uppercase, and a glyph at control size towers over the words beside it.
@@ -817,27 +815,9 @@ export const strip = stylex.create({
     overflowX: 'hidden',
     overflowY: 'auto',
   },
+  // Over the scroller, which is positioned itself and would otherwise paint across it.
   handle: {
-    position: 'absolute',
-    // Over the scroller, which is positioned itself and would otherwise paint across it.
     zIndex: 3,
-    touchAction: 'none',
-    outline: 'none',
-    '::after': {
-      content: '""',
-      position: 'absolute',
-      left: '50%',
-      top: '50%',
-      transform: 'translate(-50%, -50%)',
-      borderRadius: size.radius,
-      // The grab a finger is given is drawn in the furniture's own grey: it is on screen the
-      // whole time the strip is, and an accent bar the width of the window reads as a state
-      // rather than as something to hold.
-      backgroundColor: { default: color.satin, [COARSE]: color.boneDim },
-      transitionProperty: 'width, height',
-      transitionDuration: '150ms',
-      transitionTimingFunction: 'ease',
-    },
   },
   handleX: {
     // Out into the gap above, never down over the cells: a finger's worth of grab there is a
@@ -846,23 +826,12 @@ export const strip = stylex.create({
     left: 0,
     right: 0,
     height: `calc(${STRIP_HANDLE} + ${HANDLE_OVERHANG})`,
-    cursor: 'row-resize',
-    '::after': {
-      width: { default: '100%', [COARSE]: GRAB_LENGTH },
-      // Drawn from the start under a finger, which has no hover to reveal it with.
-      height: { default: 0, [COARSE]: '4px', ':hover': '3px', ':focus-visible': '3px' },
-    },
   },
   handleY: {
     top: 0,
     bottom: 0,
     left: `calc(0px - ${HANDLE_OVERHANG})`,
     width: `calc(${STRIP_HANDLE} + ${HANDLE_OVERHANG})`,
-    cursor: 'col-resize',
-    '::after': {
-      height: { default: '100%', [COARSE]: GRAB_LENGTH },
-      width: { default: 0, [COARSE]: '4px', ':hover': '3px', ':focus-visible': '3px' },
-    },
   },
   thickness: (thickness: number) => ({ [gridVars.strip]: `${thickness}px` }),
 });

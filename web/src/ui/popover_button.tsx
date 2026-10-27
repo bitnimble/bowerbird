@@ -35,7 +35,11 @@ export function PopoverButton({
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Tooltip label={iconOnly ? label : undefined}>
         <Popover.Trigger
-          {...buttonProps('default', iconOnly, badge != null && buttonStyles.holdsBadge)}
+          {...buttonProps(
+            active ? 'primary' : 'default',
+            iconOnly,
+            badge != null && buttonStyles.holdsBadge,
+          )}
           aria-label={label}
           aria-pressed={active}
         >

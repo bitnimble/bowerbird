@@ -1,10 +1,11 @@
 import { Tabs } from '@base-ui-components/react/tabs';
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Fragment, useLayoutEffect, useMemo, type ReactNode } from 'react';
+import { createContext, Fragment, useLayoutEffect, useMemo, type ReactNode } from 'react';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
-import { color } from '../../ui/tokens.stylex';
+import { LabelFit } from '../../ui/label_fit';
+import { color, size } from '../../ui/tokens.stylex';
 import { Tooltip } from '../../ui/tooltip';
 import { EditTabsPresenter } from './edit_tabs_presenter';
 import { EditTabsStore } from './edit_tabs_store';
@@ -21,14 +22,27 @@ const styles = stylex.create({
     alignContent: 'start',
     gap: '8px',
   },
-  tabs: {
-    display: 'flex',
-    gap: '4px',
+  strip: {
+    justifyContent: 'flex-start',
     borderBottomWidth: '1px',
     borderBottomStyle: 'solid',
     borderBottomColor: color.slate,
   },
+  tabs: {
+    display: 'flex',
+    flexGrow: 1,
+    gap: '2px',
+  },
   tab: {
+    flexGrow: 1,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '3px',
+    height: 'auto',
+    minHeight: size.controlH,
+    paddingBlock: '5px',
+    paddingInline: '6px',
+    fontSize: '11.5px',
     borderColor: 'transparent',
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
@@ -37,6 +51,12 @@ const styles = stylex.create({
     boxShadow: { default: null, [ACTIVE]: `inset 0 -2px 0 ${color.satin}` },
   },
 });
+
+/** Null where groups are not collapsible: a phone's sheet shows one at a time. */
+export const GroupCollapse = createContext<{
+  store: EditTabsStore;
+  presenter: EditTabsPresenter;
+} | null>(null);
 
 export type EditTab = {
   id: string;
@@ -59,13 +79,19 @@ export const EditTabs = observer(function EditTabs({
 }): JSX.Element {
   const store = useMemo(() => new EditTabsStore(), []);
   const presenter = useMemo(() => new EditTabsPresenter(store), [store]);
+  const collapse = useMemo(() => ({ store, presenter }), [store, presenter]);
   const ids = tabs?.map((tab) => tab.id).join(' ');
   // Layout effect: a passive one paints the old tab for a frame before the new one's.
   useLayoutEffect(() => {
     if (ids != null && ids !== '') presenter.syncTabs(ids.split(' '));
   }, [ids, presenter]);
-  const contents = (shown: readonly EditPanel[]): ReactNode =>
-    shown.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>);
+  const contents = (shown: readonly EditPanel[]): ReactNode => (
+    <GroupCollapse.Provider value={collapse}>
+      {shown.map(({ id, content }) => (
+        <Fragment key={id}>{content}</Fragment>
+      ))}
+    </GroupCollapse.Provider>
+  );
 
   const first = tabs?.[0];
   if (tabs == null || first == null) {
@@ -83,19 +109,38 @@ export const EditTabs = observer(function EditTabs({
       onValueChange={presenter.select}
       {...stylex.props(styles.root, style)}
     >
-      <Tabs.List aria-label={MobileEditPanelsStrings.tabs()} {...stylex.props(styles.tabs)}>
-        {tabs.map((tab) => (
-          <Tooltip key={tab.id} label={tab.title}>
-            <Tabs.Tab
-              value={tab.id}
-              aria-label={tab.title}
-              {...stylex.props(buttonStyles.base, buttonStyles.icon, focusRing.inside, styles.tab)}
-            >
-              {tab.icon}
-            </Tabs.Tab>
-          </Tooltip>
-        ))}
-      </Tabs.List>
+      <LabelFit
+        items={tabs.map(({ id, icon, title }) => ({ key: id, icon, label: title }))}
+        selected={selected.id}
+        rowStyle={styles.tabs}
+        itemStyle={(labelled) => [buttonStyles.base, !labelled && buttonStyles.icon, styles.tab]}
+        style={styles.strip}
+      >
+        {(labelled) => (
+          <Tabs.List aria-label={MobileEditPanelsStrings.tabs()} {...stylex.props(styles.tabs)}>
+            {tabs.map((tab) => {
+              const named = labelled(tab.id);
+              return (
+                <Tooltip key={tab.id} label={named ? undefined : tab.title}>
+                  <Tabs.Tab
+                    value={tab.id}
+                    aria-label={named ? undefined : tab.title}
+                    {...stylex.props(
+                      buttonStyles.base,
+                      !named && buttonStyles.icon,
+                      focusRing.inside,
+                      styles.tab,
+                    )}
+                  >
+                    {tab.icon}
+                    {named && tab.title}
+                  </Tabs.Tab>
+                </Tooltip>
+              );
+            })}
+          </Tabs.List>
+        )}
+      </LabelFit>
       {notice}
       <Tabs.Panel value={selected.id} {...stylex.props(panelStyles.panel)}>
         {contents(selected.panels)}

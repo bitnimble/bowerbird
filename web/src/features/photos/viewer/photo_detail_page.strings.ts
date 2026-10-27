@@ -71,12 +71,19 @@ export const PhotoDetailStrings = {
   resetToCameraMatch: () => 'Reset edits to camera match',
   resetToCameraMatchQuestion: () => 'Reset edits to camera match?',
   resetToCameraMatchWarning: () =>
-    'This removes your exposure, saturation, tone curve, and colour profile edits.',
+    'We match the camera again and replace your exposure, white balance, saturation, tone curve, and colour profile edits.',
+  rematchFailed: () => "We couldn't match the camera again.",
+  /** Wherever it is offered: the viewer's Edits panel and the editor's menu. */
+  resetAllEdits: () => 'Reset all edits',
+  resetAllEditsQuestion: () => 'Reset all edits?',
+  resetAllEditsWarning: () =>
+    'Every edit goes back to neutral, including the crop. You can undo this in the editor.',
   reset: () => 'Reset',
   previousPhoto: () => 'Previous photo',
   nextPhoto: () => 'Next photo',
   hideMetadata: () => 'Hide metadata',
   showMetadata: () => 'Show metadata',
+  resizePanels: () => 'Resize panels',
   more: () => 'More',
 
   sectionEdit: () => 'Edit',

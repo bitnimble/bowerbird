@@ -6,7 +6,7 @@ import { color, font, size } from './tokens.stylex';
 import { Tooltip } from './tooltip';
 
 type ButtonVariant = 'default' | 'primary' | 'danger' | 'ghost';
-type StyleArg = stylex.StyleXArray<
+export type StyleArg = stylex.StyleXArray<
   | null
   | undefined
   | boolean
@@ -15,7 +15,9 @@ type StyleArg = stylex.StyleXArray<
 >;
 type StyleProps = ReturnType<typeof stylex.props>;
 
-const HOVER = ':hover:not(:disabled)';
+// `focusableWhenDisabled` leaves the button enabled and sets `aria-disabled` instead.
+const DISABLED = '[aria-disabled="true"]';
+const HOVER = ':hover:not(:disabled):not([aria-disabled="true"])';
 const INK_ON_SATIN = '#08111f';
 
 /**
@@ -34,8 +36,8 @@ export const buttonStyles = stylex.create({
     borderRadius: size.radius,
     paddingBlock: 0,
     paddingInline: '10px',
-    cursor: { default: 'pointer', ':disabled': 'not-allowed' },
-    opacity: { default: null, ':disabled': 0.45 },
+    cursor: { default: 'pointer', ':disabled': 'not-allowed', [DISABLED]: 'not-allowed' },
+    opacity: { default: null, ':disabled': 0.45, [DISABLED]: 0.45 },
     color: color.bone,
     display: 'inline-flex',
     alignItems: 'center',
@@ -73,11 +75,14 @@ export const buttonStyles = stylex.create({
     marginLeft: 'auto',
     color: color.boneDim,
   },
+  // At the label's own size, so the two share a baseline.
   hint: {
-    fontFamily: font.mono,
-    fontSize: '11px',
     opacity: 0.55,
     marginLeft: '1px',
+  },
+  hintText: {
+    fontFamily: font.mono,
+    fontSize: '11px',
   },
   badge: {
     position: 'absolute',
@@ -89,6 +94,8 @@ export const buttonStyles = stylex.create({
     paddingInline: '4px',
     borderRadius: '8px',
     backgroundColor: color.satin,
+    // Parted from a pressed trigger, which is the same satin.
+    boxShadow: `0 0 0 2px ${color.ink}`,
     color: INK_ON_SATIN,
     fontFamily: font.mono,
     fontSize: '11px',
@@ -146,10 +153,19 @@ interface ButtonProps {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'default', iconOnly = false, style, render, tooltip, ...props },
+  {
+    variant = 'default',
+    iconOnly = false,
+    style,
+    render,
+    tooltip,
+    focusableWhenDisabled,
+    ...props
+  },
   ref,
 ): JSX.Element {
-  const styled = buttonProps(variant, iconOnly, style);
+  const pressed = variant === 'default' && props['aria-pressed'] === true;
+  const styled = buttonProps(pressed ? 'primary' : variant, iconOnly, style);
   return (
     <Tooltip label={tooltip ?? (iconOnly ? props['aria-label'] : undefined)}>
       {/* A link that looks like a button is still a link. Handing it to base-ui would
@@ -157,7 +173,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {render != null ? (
         cloneElement(render, { ...styled, ...props, ref })
       ) : (
-        <BaseButton ref={ref} {...styled} {...props} />
+        <BaseButton
+          ref={ref}
+          focusableWhenDisabled={focusableWhenDisabled}
+          {...styled}
+          {...props}
+        />
       )}
     </Tooltip>
   );
@@ -167,9 +188,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 export function ButtonHint({
   children,
   style,
+  'aria-hidden': ariaHidden,
 }: {
   children: ReactNode;
   style?: stylex.StyleXStyles;
+  'aria-hidden'?: boolean;
 }): JSX.Element {
-  return <span {...stylex.props(buttonStyles.hint, style)}>{children}</span>;
+  return (
+    <span aria-hidden={ariaHidden} {...stylex.props(buttonStyles.hint, style)}>
+      <span {...stylex.props(buttonStyles.hintText)}>{children}</span>
+    </span>
+  );
 }

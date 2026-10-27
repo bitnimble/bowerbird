@@ -1,6 +1,6 @@
 import { Menu } from '@base-ui-components/react/menu';
 import * as stylex from '@stylexjs/stylex';
-import { buttonStyles } from './button';
+import { ButtonHint } from './button';
 import { menuStyles } from './menu_styles';
 import type { Option } from './option';
 import { Tooltip } from './tooltip';
@@ -28,9 +28,9 @@ export function MenuAction<T extends string>({
         {/* Out of the accessible name: it would read as part of the label ("Embedded
             JPEG I"), and the shortcut is already announced by the ? help. */}
         {option.hint != null && (
-          <span {...stylex.props(buttonStyles.hint, menuStyles.hint)} aria-hidden>
+          <ButtonHint style={menuStyles.hint} aria-hidden>
             {option.hint}
-          </span>
+          </ButtonHint>
         )}
       </Menu.Item>
     </Tooltip>

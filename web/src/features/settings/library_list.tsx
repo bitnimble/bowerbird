@@ -366,6 +366,7 @@ const FolderSettings = observer(function FolderSettings({
 
       <SettingRow
         label={SettingsStrings.includeNonRaw()}
+        hint={SettingsStrings.includeNonRawHint()}
         onReset={resetTo(
           library.include_non_raw,
           defaults?.include_non_raw,

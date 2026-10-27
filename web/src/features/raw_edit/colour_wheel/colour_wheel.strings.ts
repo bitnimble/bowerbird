@@ -7,7 +7,7 @@ export const ColourWheelStrings = {
   showProfileChanges: () => 'Show colour profile changes',
   wheel: () => 'Colour wheel',
   lightness: () => 'Lightness',
-  // A lightness the wheel edits colours at, not the Light panel's tone sliders of the same names.
+  // A lightness the wheel edits colours at, not the Tone panel's sliders of the same names.
   shadows: () => 'Shadows',
   darks: () => 'Darks',
   midtones: () => 'Midtones',

@@ -51,6 +51,7 @@ import type { ListingStore } from './grid/listing_store';
 import type { MarksStore } from './grid/marks_store';
 import type { StacksStore } from './grid/stacks_store';
 import type { ViewerStore } from './viewer/viewer_store';
+import type { PanelColumn } from './viewer/viewer_edges';
 import type { RenderingIntent } from '../../../../src/schemas/rendering_intent';
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
@@ -553,6 +554,14 @@ export class PhotosPresenter {
   setDetailBox(width: number, height: number): void {
     this.viewerPresenter.setDetailBox(width, height);
   }
+
+  setPanelWidth = (column: PanelColumn, width: number): void => {
+    this.viewerPresenter.setPanelWidth(column, width);
+  };
+
+  nudgePanelWidth = (column: PanelColumn, steps: number): void => {
+    this.viewerPresenter.nudgePanelWidth(column, steps);
+  };
 
   /** Which rendition the viewer proofs an HDR frame against. Nothing is saved: it is a way of looking. */
   chooseProof = (proof: 'hdr' | 'srgb'): void => {
@@ -1068,6 +1077,10 @@ export class PhotosPresenter {
 
   async turn(photoId: string, by: 90 | -90): Promise<void> {
     await this.detailPresenter.turn(photoId, by);
+  }
+
+  async resetEdits(photoId: string): Promise<void> {
+    await this.detailPresenter.resetEdits(photoId);
   }
   /**
    * @returns whether the write landed. Stack triage needs to know: it advances a

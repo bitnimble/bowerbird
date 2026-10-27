@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { FolderOpen, HardDriveDownload } from 'lucide-react';
+import { FolderOpen, HardDriveDownload, ListRestart } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect } from 'react';
 import { PathSegment, route } from '../../../../../src/schemas/route';
@@ -26,7 +26,8 @@ import { Text } from '../../../ui/text';
 import { Tooltip } from '../../../ui/tooltip';
 import { AlbumsPageStrings } from '../../albums/albums_page.strings';
 import { ShootPhotosStrings } from '../../shoots/shoot_photos_page.strings';
-import type { Row as MetaRow } from './edit_rows';
+import { editRows, type Row as MetaRow } from './edit_rows';
+import { confirmResetAll } from './edit_option';
 import { EditsPanel } from './edits_panel';
 import { MetaPanel } from './meta_panel';
 import { DetailRating } from './detail_rating';
@@ -110,21 +111,36 @@ export const PhotoEdits = observer(function PhotoEdits({
   style,
 }: DetailPanelProps): JSX.Element {
   const store = useViewerStore();
-  const { photos } = usePresenters();
+  const { photos, confirm } = usePresenters();
   useEffect(() => void photos.loadEdits(photoId), [photoId, photos]);
 
   const detail = store.detailFor(photoId);
+  const doc = store.editsFor(photoId);
+  const frame = detail == null ? null : { width: detail.width, height: detail.height };
   return (
     <EditsPanel
       title={PhotoDetailStrings.edits()}
-      doc={store.editsFor(photoId)}
-      frame={detail == null ? null : { width: detail.width, height: detail.height }}
+      doc={doc}
+      frame={frame}
       defaultOpen={defaultOpen}
       style={style}
     >
       {/* Under the rows whatever they are, because an undo back to neutral leaves a document
           with nothing to list and a render that is still of the settings before it. */}
       {detail?.rendition_stale === true && <StaleRendition photoId={photoId} />}
+      {doc != null && editRows(doc, frame).length > 0 && (
+        <Button
+          style={styles.resetEdits}
+          onClick={() =>
+            void confirmResetAll(confirm).then((reset) => {
+              if (reset) void photos.resetEdits(photoId);
+            })
+          }
+        >
+          <ListRestart size={ICON} />
+          {PhotoDetailStrings.resetAllEdits()}
+        </Button>
+      )}
     </EditsPanel>
   );
 });

@@ -4,6 +4,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileScan,
   FolderInput,
   FolderOpen,
   HardDrive,
@@ -17,7 +18,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  RotateCw,
   Tag,
   ThumbsDown,
   ThumbsUp,
@@ -298,7 +298,7 @@ export const photoOptions = ({
     label: BulkBarStrings.rebuildThumbnails(),
     icon: <Image size={ICON} />,
   },
-  { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
+  { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <FileScan size={ICON} /> },
   ...(hide == null ? [] : [{ value: 'hide' as const, label: hide, icon: <EyeOff size={ICON} /> }]),
   ...(unhide == null
     ? []

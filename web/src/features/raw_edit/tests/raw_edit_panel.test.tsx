@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { neutralEdits } from '../../../../../src/schemas/photo_edits';
 import { registerDom } from '../../../test_dom';
+import { MemoryStorage } from '../../../test_storage';
 import { CropStore } from '../crop/crop_store';
 import { EditStore } from '../edit/edit_store';
 import { KeystoneStore } from '../keystone/keystone_store';
@@ -181,16 +182,36 @@ function showTab(name: string): void {
 }
 
 describe('the edit panel', () => {
-  test('shows only the chosen tab, Light first', () => {
+  test('shows only the chosen tab, Tone first', () => {
     open();
-    expect(screen.getByRole('tab', { name: 'Light', selected: true })).not.toBeNull();
-    expect(screen.getByRole('group', { name: 'Light' })).not.toBeNull();
-    expect(screen.queryByRole('group', { name: 'White balance' })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Tone', selected: true })).not.toBeNull();
+    for (const name of ['Tone', 'White balance', 'Colour']) {
+      expect(screen.getByRole('group', { name })).not.toBeNull();
+    }
+    expect(screen.queryByRole('group', { name: 'Effects' })).toBeNull();
 
-    showTab('Colour');
-    expect(screen.queryByRole('group', { name: 'Light' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'White balance' })).not.toBeNull();
-    expect(screen.getByRole('group', { name: 'Colour' })).not.toBeNull();
+    showTab('Detail');
+    expect(screen.queryByRole('group', { name: 'Tone' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Detail' })).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Effects' })).not.toBeNull();
+  });
+
+  test('folds a group to its heading and back, and keeps it folded for the next editor', () => {
+    globalThis.localStorage = new MemoryStorage();
+    open();
+    const heading = (): HTMLElement => screen.getByRole('button', { name: 'Colour' });
+    expect(heading().getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('slider', { name: 'Saturation' })).not.toBeNull();
+
+    act(() => fireEvent.click(heading()));
+    expect(heading().getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('slider', { name: 'Saturation' })).toBeNull();
+
+    cleanup();
+    open();
+    expect(heading().getAttribute('aria-expanded')).toBe('false');
+    act(() => fireEvent.click(heading()));
+    expect(screen.getByRole('slider', { name: 'Saturation' })).not.toBeNull();
   });
 
   test('hands the chosen tab back once a tool lets go of the panel', () => {
@@ -203,7 +224,7 @@ describe('the edit panel', () => {
     expect(screen.getByRole('tab', { name: 'Geometry', selected: true })).not.toBeNull();
   });
 
-  test('selects the soft proof tab when a proof is chosen, and Light once it is gone', () => {
+  test('selects the soft proof tab when a proof is chosen, and Tone once it is gone', () => {
     const { stage } = open();
     showTab('Detail');
 
@@ -213,13 +234,13 @@ describe('the edit panel', () => {
 
     act(() => runInAction(() => (stage.softProof = 'hdr')));
     expect(screen.queryByRole('tab', { name: 'Soft proof' })).toBeNull();
-    expect(screen.getByRole('tab', { name: 'Light', selected: true })).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Tone', selected: true })).not.toBeNull();
   });
 
   test('selects the soft proof tab again when another proof is chosen', () => {
     const { stage, print } = open();
     act(() => runInAction(() => (stage.softProof = 'srgb')));
-    showTab('Light');
+    showTab('Tone');
 
     act(() =>
       runInAction(() => {
@@ -252,16 +273,9 @@ describe('the edit panel', () => {
       <p>Camera details</p>,
     );
     act(() => runInAction(() => (stage.softProof = 'srgb')));
-    expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
-      'Light',
-      'Colour',
-      'Effects',
-      'Detail',
-      'Retouch',
-      'Geometry',
-      'Info',
-      'Soft proof',
-    ]);
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label') ?? tab.textContent),
+    ).toEqual(['Tone', 'Detail', 'Retouch', 'Geometry', 'Info', 'Soft proof']);
     expect(screen.queryByText('Camera details')).toBeNull();
 
     showTab('Info');
@@ -269,9 +283,9 @@ describe('the edit panel', () => {
     expect(screen.queryByRole('group', { name: 'Tone mapping' })).toBeNull();
   });
 
-  test('opens on Light when a proof is already in force', () => {
+  test('opens on Tone when a proof is already in force', () => {
     open({}, null, false, 'live', undefined, true, true, 'srgb');
-    expect(screen.getByRole('tab', { name: 'Light', selected: true })).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Tone', selected: true })).not.toBeNull();
     expect(screen.getByRole('tab', { name: 'Soft proof', selected: false })).not.toBeNull();
   });
 
@@ -349,7 +363,6 @@ describe('the edit panel', () => {
 
   test('closes the white balance pair on a file that records no neutral', () => {
     open();
-    showTab('Colour');
     expect(screen.queryByRole('slider', { name: RawEditPanelStrings.temperature() })).toBeNull();
     expect(screen.getByRole('group', { name: 'White balance' }).textContent).toContain(
       'Camera white balance unavailable for this file',
@@ -367,13 +380,12 @@ describe('the edit panel', () => {
 
   test('shows the exposure and saturation the camera match wrote, and resets them to 0', () => {
     const { calls } = open({ exposure: 0.35, saturation: 17 });
-    const light = within(screen.getByRole('group', { name: 'Light' }));
-    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe(
+    const tone = within(screen.getByRole('group', { name: 'Tone' }));
+    expect((tone.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe(
       '+0.35 EV',
     );
     screen.getByLabelText('Reset Exposure').click();
 
-    showTab('Colour');
     expect(
       (screen.getByRole('textbox', { name: 'Saturation value' }) as HTMLInputElement).value,
     ).toBe('+17');
@@ -387,7 +399,6 @@ describe('the edit panel', () => {
   test('offers nothing to reset on exposure and saturation at 0', () => {
     open();
     expect((screen.getByLabelText('Reset Exposure') as HTMLButtonElement).disabled).toBe(true);
-    showTab('Colour');
     expect((screen.getByLabelText('Reset Saturation') as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -437,7 +448,7 @@ describe('the edit panel', () => {
           presenter={recording().presenter}
         />,
       );
-      expect(screen.getByRole('group', { name: 'Light' })).not.toBeNull();
+      expect(screen.getByRole('group', { name: 'Tone' })).not.toBeNull();
       if (groups.length === 0) expect(screen.queryByRole('tab', { name: 'Soft proof' })).toBeNull();
       else showTab('Soft proof');
       for (const name of groups) expect(screen.getByRole('group', { name })).not.toBeNull();
@@ -453,7 +464,6 @@ describe('the edit panel', () => {
       { temperature: 6500, tint: 20, whiteBalanceMode: 'Custom' },
       { temperature: 5487.3, tint: 11.4 },
     );
-    showTab('Colour');
 
     // Either half, because the pair moves as one: a temperature beside the camera's own tint
     // is not the balance the camera made.
@@ -565,7 +575,7 @@ describe('the edit panel', () => {
       expect(screen.getByRole('button', { name: 'Brush' }).getAttribute('aria-pressed')).toBe(
         'true',
       );
-      showTab('Light');
+      showTab('Tone');
       expect(brushing.calls).toEqual([{ name: 'reflection.setBrushing', value: false }]);
     });
 
@@ -676,7 +686,7 @@ describe('the edit panel', () => {
 
     const contrast = screen.getByRole('slider', { name: 'Contrast' }) as HTMLInputElement;
     expect(contrast.value).toBe('40');
-    expect(within(screen.getByRole('group', { name: 'Light' })).getByText('+40')).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'Tone' })).getByText('+40')).toBeTruthy();
     expect(contrast.disabled).toBe(true);
     // The reset too, and it is the one that bites: a settle writes to the server, so a row
     // whose slider is greyed but whose arrow is not would save a photograph nobody has seen.
@@ -684,7 +694,6 @@ describe('the edit panel', () => {
     expect(calls).toEqual([]);
     // And nothing claiming the file has no neutral: the illuminant is off a header that has
     // not arrived, which is not the same as a camera that recorded none.
-    showTab('Colour');
     expect(screen.getByRole('group', { name: 'White balance' })).not.toBeNull();
     expect(screen.queryByText('Camera white balance unavailable for this file')).toBeNull();
   });

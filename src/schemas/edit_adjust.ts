@@ -1,7 +1,6 @@
 import type { JobAdjust } from './jobs';
 import {
   IDENTITY_TONE_CURVE,
-  sameEditValue,
   TEMPERATURE_KELVIN,
   TINT,
   type CameraTone,
@@ -39,25 +38,8 @@ export function withCameraMatch(doc: EditDoc, tone: CameraTone): EditDoc {
   return { ...doc, ...asEdits(tone), awaitsCameraMatch: false };
 }
 
-const CAMERA_MATCH_FIELDS = [
-  'exposure',
-  'saturation',
-  'toneCurve',
-  'whiteBalanceMode',
-  'temperature',
-  'tint',
-  'colourProfile',
-] as const;
-
-export function cameraMatchReset(
-  tone: CameraTone,
-): Pick<EditDoc, (typeof CAMERA_MATCH_FIELDS)[number]> {
+export function cameraMatchReset(tone: CameraTone): Partial<EditDoc> {
   return { ...asEdits(tone), colourProfile: 'matched' };
-}
-
-export function atCameraMatch(doc: EditDoc, tone: CameraTone): boolean {
-  const reset = cameraMatchReset(tone);
-  return CAMERA_MATCH_FIELDS.every((field) => sameEditValue(doc[field], reset[field]));
 }
 
 function asEdits(

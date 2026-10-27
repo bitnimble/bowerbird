@@ -13,6 +13,7 @@ import type { Originals } from '../../services/blobs/originals';
 import { isRendered, originalMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg, scrubIdentifying } from '../../services/processing/rawshim/raw_decoder';
 import {
+  forgetPhotoAnalysis,
   readPhotoAnalysis,
   writePhotoAnalysis,
 } from '../../services/processing/analysis/photo_analysis_store';
@@ -306,6 +307,9 @@ export class ImageApi {
     app.put(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) =>
       this.keepPhotoAnalysis(c),
     );
+    app.delete(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) =>
+      this.forgetPhotoAnalysis(c),
+    );
     // One picture of this photograph, coded, for a client that will grade it itself. What makes a
     // composite openable at all: the editor holds one frame and a panorama is several, so what
     // crosses is the canvas rather than the sources behind it.
@@ -430,6 +434,14 @@ export class ImageApi {
       throw new AppError('VALIDATION_ERROR', `a photo analysis is not ${analysis.length} bytes`);
     }
     writePhotoAnalysis(getDataPath(library), photoId, analysis);
+    return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
+  }
+
+  private async forgetPhotoAnalysis(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { library } = this.photoRenditions.locate(photoId);
+    await forgetPhotoAnalysis(getDataPath(library), photoId);
     return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
   }
 

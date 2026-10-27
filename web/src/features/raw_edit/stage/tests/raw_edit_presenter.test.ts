@@ -26,6 +26,7 @@ import {
   type EditState,
 } from '../../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../../api/photo_edits';
+import { photosApi } from '../../../../api/photos';
 import { ApiError } from '../../../../api/request';
 import { readbackCanvases } from '../../../../gpu/readback_canvas';
 import { vp9Encoder } from '../../../../vp9/vp9_encoder';
@@ -156,12 +157,10 @@ describe('a slider reaching the picture', () => {
       temperature: 3200,
       tint: 10,
     });
-    expect(stage.atCameraMatch).toBe(false);
 
     presenter.resetToCameraMatch();
     await drawn();
 
-    expect(stage.atCameraMatch).toBe(true);
     expect(decoder.exposure).toBe(0.35);
     expect(decoder.adjust).toMatchObject({
       saturation: 17,
@@ -173,6 +172,52 @@ describe('a slider reaching the picture', () => {
     expect(edit.doc?.whiteBalanceMode).toBe('Custom');
     expect(decoder.adjust?.toneCurve).toEqual(toneCurve);
     expect(edit.doc?.sharpening).toBe(80);
+  });
+
+  test('resets every edit to neutral, camera match included', async () => {
+    stage.cameraExposure = 0.35;
+    stage.cameraSaturation = 17;
+    stage.cameraCurve = IDENTITY_TONE_CURVE;
+    presenter.settle({ exposure: 1, contrast: 20, rotate: 90, saturation: -20 });
+
+    presenter.resetAllEdits();
+    await drawn();
+
+    expect(edit.doc).toEqual(neutralEdits());
+    expect(decoder.exposure).toBe(0);
+  });
+
+  test('forgets the analysis only once the saves in flight have landed', async () => {
+    const order: string[] = [];
+    const save = photoEditsApi.save;
+    const forgetAnalysis = photosApi.forgetAnalysis;
+    let land = (): void => {};
+    photoEditsApi.save = (_photoId, doc, rev): Promise<EditState> =>
+      new Promise((resolve) => {
+        land = () => {
+          order.push('saved');
+          resolve({ doc, rev: rev + 1, canUndo: true, canRedo: false });
+        };
+      });
+    photosApi.forgetAnalysis = async (photoId) => {
+      order.push(`forgot ${photoId}`);
+    };
+    try {
+      Object.assign(presenter, { photoId: 'p1' });
+      Object.assign(presenter.edit, { photoId: 'p1' });
+      presenter.settle({ exposure: 1 });
+      const forgetting = presenter.forgetAnalysis();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(order).toEqual([]);
+
+      land();
+      await forgetting;
+
+      expect(order).toEqual(['saved', 'forgot p1']);
+    } finally {
+      photoEditsApi.save = save;
+      photosApi.forgetAnalysis = forgetAnalysis;
+    }
   });
 
   test('writes the camera match into an unedited photo once, as what the open started from', async () => {

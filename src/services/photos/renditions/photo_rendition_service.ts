@@ -11,6 +11,7 @@ import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { MediaListing } from '../../libraries/media_listing';
 import { renditionCurrent, type RenditionFetchService } from '../../blobs/rendition_fetch_service';
 import { extractMetadata, type HeaderMetadata } from '../../processing/analysis/metadata';
+import { forgetPhotoAnalysis } from '../../processing/analysis/photo_analysis_store';
 import type { ProcessingService } from '../../processing/pipeline/processing_service';
 import {
   renditionVariant,
@@ -181,6 +182,13 @@ export class PhotoRenditionService {
       log.warn('could not read a header ahead of its tile', { photo: photoId, err });
     }
   }
+
+  /** Drops what was measured of the photograph, camera match included, so it is fitted afresh. */
+  async forgetAnalysis(photoId: string): Promise<void> {
+    const { library } = this.locate(photoId);
+    await forgetPhotoAnalysis(getDataPath(library), photoId);
+  }
+
   buildRendition(photoId: string, rendition: Rendition, force = false): Promise<void> {
     return this.build(photoId, rendition, { force, hdr: null, via: null });
   }

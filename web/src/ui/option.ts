@@ -9,8 +9,8 @@ export interface Option<T extends string> {
   tone?: 'pick' | 'reject';
   // Keyboard shortcut, shown dimmed after the label.
   hint?: string;
-  // Show the icon alone. The label still names the control for screen readers
-  // and as a tooltip, so an icon-only button is never anonymous.
+  // Show the icon alone where a row has no room for every label. The label still names the
+  // control for screen readers and as a tooltip, so an icon-only button is never anonymous.
   iconOnly?: boolean;
   // In a menu: red, and fenced off below a rule so it is not a neighbour of the
   // action above it.

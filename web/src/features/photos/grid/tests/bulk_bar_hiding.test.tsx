@@ -51,7 +51,7 @@ async function hidingRows(rows: PhotoSummary[], total = rows.length): Promise<st
 }
 
 test('one shown photo offers Hide alone', async () => {
-  expect(await hidingRows([photo('p1', false)])).toEqual(['Hide']);
+  expect(await hidingRows([photo('p1', false)])).toEqual(['Hide from library']);
 });
 
 test('one hidden photo offers Unhide alone', async () => {
@@ -59,16 +59,18 @@ test('one hidden photo offers Unhide alone', async () => {
 });
 
 test('several shown photos count what Hide changes', async () => {
-  expect(await hidingRows([photo('p1', false), photo('p2', false)])).toEqual(['Hide 2 photos']);
+  expect(await hidingRows([photo('p1', false), photo('p2', false)])).toEqual([
+    'Hide 2 photos from library',
+  ]);
 });
 
 test('a mixed selection offers both, each counting its own', async () => {
   expect(await hidingRows([photo('p1', false), photo('p2', true), photo('p3', true)])).toEqual([
-    'Hide 1 photo',
+    'Hide 1 photo from library',
     'Unhide 2 photos',
   ]);
 });
 
 test('a selection past the loaded rows offers both, uncounted', async () => {
-  expect(await hidingRows([photo('p1', false)], 3)).toEqual(['Hide', 'Unhide']);
+  expect(await hidingRows([photo('p1', false)], 3)).toEqual(['Hide from library', 'Unhide']);
 });

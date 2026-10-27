@@ -41,7 +41,7 @@ export const CreateLibraryRequestSchema = z.object({
   // already grouped the frames it was going to group, and turning it off
   // afterwards leaves them grouped (§19.4).
   include_subfolders: z.boolean().default(true),
-  include_non_raw: z.boolean().default(false),
+  include_non_raw: z.boolean().default(true),
   rendition_source: RenditionSourceSchema.default('render'),
   render_skip_full: OptionalStagesSchema.default([]),
   render_skip_max: OptionalStagesSchema.default([]),
@@ -72,9 +72,8 @@ export const LibrarySchema = z.object({
   // What a photo whose edit names no denoiser is denoised with, in every rendition of it.
   denoiser: DenoiserSchema.default('galosh'),
   include_subfolders: z.boolean().default(true),
-  // Whether JPEG, PNG, HEIC and AVIF are photographs here. Off by default: beside
-  // a folder of RAWs they are usually the camera's own copies of frames the
-  // library already holds, and importing both makes every frame two rows.
+  // Whether JPEG, PNG, HEIC and AVIF are photographs here. A camera's own copy beside its RAW
+  // joins the RAW's row rather than making a second one.
   include_non_raw: z.boolean().default(false),
   // Automatic photo stacking (§19.4). Per library rather than global because one
   // catalogue may be burst-heavy sport and another a studio where every frame is
@@ -124,6 +123,9 @@ export const LibrarySettingsSchema = LibrarySchema.pick({
   auto_stack: true,
   auto_stack_similarity: true,
   auto_stack_window_seconds: true,
+}).extend({
+  // A new library's default, which is on; the column's stays off for the rows made before.
+  include_non_raw: CreateLibraryRequestSchema.shape.include_non_raw,
 });
 export type LibrarySettings = z.infer<typeof LibrarySettingsSchema>;
 export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = LibrarySettingsSchema.parse({});
