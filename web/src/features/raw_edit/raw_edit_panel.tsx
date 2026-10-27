@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
-import { Contrast, Eye, Grid3x3, Info, Palette, Shapes, Sparkles, Sun } from 'lucide-react';
+import { Eye, Grid3x3, Info, Shapes, Sparkles, Sun } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
+import { useContext } from 'react';
 import { CheckLabel } from '../../ui/check_label';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
@@ -13,7 +14,7 @@ import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
 import { EditSlider } from './edit_slider';
-import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
+import { COLOUR, DETAIL, DUST, EFFECTS, TONE, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 import { TEMPERATURE_KELVIN, TINT, type ColourProfile } from '../../../../src/schemas/photo_edits';
@@ -30,7 +31,7 @@ import type { PrintStore } from './print/print_store';
 import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type EditPanel } from './mobile_edit_panels';
-import { EditTabs, type EditTab } from './edit_tabs';
+import { EditTabs, GroupCollapse, type EditTab } from './edit_tabs';
 import { SoftProofMenuStrings } from './proof/soft_proof_menu.strings';
 import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
 import { ColourWheelEditor } from './colour_wheel/colour_wheel_editor';
@@ -77,36 +78,45 @@ const TEMPERATURE_RANGE = { ...TEMPERATURE_KELVIN, step: 1 };
 const TINT_RANGE = { ...TINT, step: 1 };
 
 /** `busy` is the two mosaic groups' only: see `StageStore.repreparing`. */
-function Group({
+const Group = observer(function Group({
+  id,
   title,
   busy,
   children,
 }: {
+  id: string;
   title: string;
   busy?: boolean;
   children: React.ReactNode;
 }): JSX.Element {
+  const collapse = useContext(GroupCollapse);
   return (
     <Panel
       style={styles.group}
       titleStyle={styles.groupTitle}
-      title={
-        <>
-          {title}
-          {busy === true && (
-            <span
-              {...stylex.props(styles.spinner)}
-              role="status"
-              aria-label={RawEditPanelStrings.rebuildingThePhoto()}
-            />
-          )}
-        </>
+      title={title}
+      collapse={
+        collapse == null
+          ? undefined
+          : {
+              collapsed: collapse.store.collapsed.has(id),
+              onToggle: () => collapse.presenter.toggleCollapsed(id),
+            }
+      }
+      titleEnd={
+        busy === true && (
+          <span
+            {...stylex.props(styles.spinner)}
+            role="status"
+            aria-label={RawEditPanelStrings.rebuildingThePhoto()}
+          />
+        )
       }
     >
       {children}
     </Panel>
   );
-}
+});
 
 /**
  * Taking the sensor's dust off: a switch, and two sliders that mean nothing without it.
@@ -313,7 +323,7 @@ function panelGroup(id: string, title: string, content: React.ReactNode, busy = 
     id,
     title,
     content: (
-      <Group title={title} busy={busy}>
+      <Group id={id} title={title} busy={busy}>
         {content}
       </Group>
     ),
@@ -433,25 +443,18 @@ export const RawEditPanel = observer(function RawEditPanel({
     const proof = proofPanels(stage.softProof, print, presenter.print, !stage.editable);
     tabs = [
       {
-        id: 'light',
-        title: RawEditPanelStrings.groupLight(),
+        id: 'tone',
+        title: RawEditPanelStrings.groupTone(),
         icon: <Sun size={ICON} />,
         panels: [
           panelGroup(
-            'light',
-            RawEditPanelStrings.groupLight(),
+            'tone',
+            RawEditPanelStrings.groupTone(),
             <>
-              {sliders(LIGHT)}
+              {sliders(TONE)}
               <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
             </>,
           ),
-        ],
-      },
-      {
-        id: 'colour',
-        title: RawEditPanelStrings.groupColour(),
-        icon: <Palette size={ICON} />,
-        panels: [
           panelGroup(
             'white-balance',
             RawEditPanelStrings.groupWhiteBalance(),
@@ -471,12 +474,6 @@ export const RawEditPanel = observer(function RawEditPanel({
             </>,
           ),
         ],
-      },
-      {
-        id: 'effects',
-        title: RawEditPanelStrings.groupEffects(),
-        icon: <Contrast size={ICON} />,
-        panels: [panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS))],
       },
       {
         id: 'detail',
@@ -510,6 +507,7 @@ export const RawEditPanel = observer(function RawEditPanel({
             </>,
             stage.repreparing,
           ),
+          panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS)),
           ...(stage.mosaic
             ? [
                 panelGroup(

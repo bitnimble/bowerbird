@@ -136,10 +136,10 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
       stage.addEventListener(type, () => events.push(type));
     }
   });
-  await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
-  const panel = page.getByRole('tabpanel', { name: 'Light', exact: true });
+  await tabs.getByRole('tab', { name: 'Tone', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Tone', exact: true });
   const panelEvenHidden = page.getByRole('tabpanel', {
-    name: 'Light',
+    name: 'Tone',
     exact: true,
     includeHidden: true,
   });
@@ -156,7 +156,7 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   ).toEqual([]);
   await tabs.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Colour', exact: true })).toBeVisible();
-  await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
+  await tabs.getByRole('tab', { name: 'Tone', exact: true }).click();
   // Through the hidden panel too: isolating the slider hides its panel for the whole drag.
   const slider = panelEvenHidden.getByRole('slider', {
     name: 'Exposure',
@@ -196,7 +196,7 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   expect(
     await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents')),
   ).toEqual([]);
-  await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
+  await tabs.getByRole('tab', { name: 'Tone', exact: true }).click();
   await expect(panel).not.toBeVisible();
   await expect(panelEvenHidden).toHaveCSS('visibility', 'hidden');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
@@ -254,7 +254,7 @@ test.describe('zoom on a high density phone display with small memory', () => {
   });
 
   for (const { tool, panel, slider } of [
-    { tool: 'Cursor', panel: 'Light', slider: 'Exposure' },
+    { tool: 'Cursor', panel: 'Tone', slider: 'Exposure' },
     { tool: 'Print', panel: 'Lighting', slider: 'Ambient light' },
   ]) {
     test(`tapping the photo in ${tool} loads detail and keeps sliders usable`, async ({ page }) => {

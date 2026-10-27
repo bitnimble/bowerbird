@@ -608,14 +608,14 @@ test("the editor's menu opens the filmstrip under its tabs, and a tile opens its
   expect(after.height).toBeLessThan(before.height);
 
   // An open panel's backdrop covers the page, but not the strip: it still scrolls under a finger.
-  await tabs.getByRole('tab', { name: 'Light' }).click();
+  await tabs.getByRole('tab', { name: 'Tone' }).click();
   await expect(page.getByRole('tabpanel')).toBeVisible();
   const underFinger = await page.evaluate(
     ({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="list"]')?.ariaLabel ?? null,
     { x: box.x + box.width / 2, y: box.y + box.height / 2 },
   );
   expect(underFinger).toMatch(/^\d+ photos$/);
-  await tabs.getByRole('tab', { name: 'Light' }).click();
+  await tabs.getByRole('tab', { name: 'Tone' }).click();
 
   const entries = await page.evaluate(() => history.length);
   await frames(tiles(page).last()).click();

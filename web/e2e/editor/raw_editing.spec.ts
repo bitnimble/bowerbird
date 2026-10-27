@@ -152,7 +152,6 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
 
   // The camera neutral reaches the client too: what the sliders *do* with it is
   // `raw_edit_presenter.test.ts`, and a header without it leaves the pair absent entirely.
-  await page.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(
     page
       .getByRole('group', { name: 'White balance' })
@@ -891,7 +890,7 @@ test('the info tab holds the metadata panels', async ({ page }) => {
   await expect(panel('Info')).toBeVisible();
   await expect(panel('Camera').getByText('Body', { exact: true })).toBeVisible();
   await expect(panel('Original')).toBeVisible();
-  await expect(panel('Light')).toHaveCount(0);
+  await expect(panel('Tone')).toHaveCount(0);
 });
 
 test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({

@@ -1,5 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
+import { ChevronDown } from 'lucide-react';
 import { createContext, useContext, useId, type ReactNode } from 'react';
+import { focusRing } from './focus_ring';
 import { Text } from './text';
 import { color } from './tokens.stylex';
 
@@ -31,7 +33,31 @@ const styles = stylex.create({
   titleBare: {
     marginTop: 0,
   },
+  // The whole heading, so the target is the row rather than the words.
+  toggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexGrow: 1,
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: '2px',
+    backgroundColor: 'transparent',
+    color: { default: 'inherit', ':hover': color.bone },
+    font: 'inherit',
+    textAlign: 'start',
+    cursor: 'pointer',
+  },
+  chevron: {
+    flexShrink: 0,
+    transition: 'rotate 150ms ease',
+  },
+  chevronShut: {
+    rotate: '-90deg',
+  },
 });
+
+export type PanelCollapse = { collapsed: boolean; onToggle: () => void };
 
 /** True inside a popup, which is already the box a panel would draw. */
 export const PanelsInPopup = createContext(false);
@@ -43,9 +69,15 @@ export function Panel({
   role = 'group',
   style,
   titleStyle,
+  collapse,
+  titleEnd,
   children,
 }: {
   title?: ReactNode;
+  /** Makes the heading a button that shows and hides the rest. */
+  collapse?: PanelCollapse;
+  /** Beside the heading, outside its button. */
+  titleEnd?: ReactNode;
   role?: 'group' | 'listitem';
   titleStyle?: stylex.StyleXStyles;
   /**
@@ -58,6 +90,7 @@ export function Panel({
 }): JSX.Element {
   const bare = useContext(PanelsInPopup);
   const titleId = useId();
+  const bodyId = useId();
   return (
     <div
       {...stylex.props(styles.panel, flush && styles.flush, bare && styles.bare, style)}
@@ -66,10 +99,33 @@ export function Panel({
     >
       {title != null && (
         <PanelTitle id={titleId} style={titleStyle}>
-          {title}
+          {collapse == null ? (
+            title
+          ) : (
+            <button
+              type="button"
+              aria-expanded={!collapse.collapsed}
+              aria-controls={bodyId}
+              onClick={collapse.onToggle}
+              {...stylex.props(styles.toggle, focusRing.ring)}
+            >
+              <ChevronDown
+                size={12}
+                {...stylex.props(styles.chevron, collapse.collapsed && styles.chevronShut)}
+              />
+              {title}
+            </button>
+          )}
+          {titleEnd}
         </PanelTitle>
       )}
-      {children}
+      {collapse == null ? (
+        children
+      ) : (
+        <div id={bodyId} hidden={collapse.collapsed}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

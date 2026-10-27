@@ -29,7 +29,7 @@ test('a touch drag moves the thumb on every move while the picture is still draw
       />
     </MemoryRouter>,
   );
-  act(() => fireEvent.click(screen.getByRole('tab', { name: 'Light' })));
+  act(() => fireEvent.click(screen.getByRole('tab', { name: 'Tone' })));
   const slider = screen.getByRole('slider', { name: 'Exposure' });
 
   fireEvent(slider, pointerEvent('pointerdown', { touch: true, x: 100, y: 10 }));

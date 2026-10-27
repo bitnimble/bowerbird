@@ -279,7 +279,7 @@ stack) stay lower case, as do other terms except at the start of a string.
 | Term                                                                  | What it is                                                                           | Avoid                                |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
 | edit                                                                  | A change to how a photo looks, made in the editor                                    | adjustment, develop, tweak           |
-| Light, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels                 |
+| Tone, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels                 |
 | crop, straighten, perspective                                         | Geometry tools                                                                       | trim, level, keystone                |
 | guide                                                                 | A line drawn to straighten or correct perspective against                            | helper line                          |
 | dust removal                                                          | Removing spots left by sensor dust                                                   | spot healing, clean up               |

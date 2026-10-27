@@ -1,11 +1,11 @@
 import { Tabs } from '@base-ui-components/react/tabs';
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Fragment, useLayoutEffect, useMemo, type ReactNode } from 'react';
+import { createContext, Fragment, useLayoutEffect, useMemo, type ReactNode } from 'react';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { LabelFit } from '../../ui/label_fit';
-import { color } from '../../ui/tokens.stylex';
+import { color, size } from '../../ui/tokens.stylex';
 import { Tooltip } from '../../ui/tooltip';
 import { EditTabsPresenter } from './edit_tabs_presenter';
 import { EditTabsStore } from './edit_tabs_store';
@@ -30,9 +30,20 @@ const styles = stylex.create({
   },
   tabs: {
     display: 'flex',
-    gap: '4px',
+    flexGrow: 1,
+    gap: '2px',
   },
+  // The label under the icon, which costs height the strip has rather than width it hasn't.
   tab: {
+    flexGrow: 1,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: '3px',
+    height: 'auto',
+    minHeight: size.controlH,
+    paddingBlock: '5px',
+    paddingInline: '6px',
+    fontSize: '11.5px',
     borderColor: 'transparent',
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
@@ -41,6 +52,12 @@ const styles = stylex.create({
     boxShadow: { default: null, [ACTIVE]: `inset 0 -2px 0 ${color.satin}` },
   },
 });
+
+/** Null where groups are not collapsible: a phone's sheet shows one at a time. */
+export const GroupCollapse = createContext<{
+  store: EditTabsStore;
+  presenter: EditTabsPresenter;
+} | null>(null);
 
 export type EditTab = {
   id: string;
@@ -63,13 +80,19 @@ export const EditTabs = observer(function EditTabs({
 }): JSX.Element {
   const store = useMemo(() => new EditTabsStore(), []);
   const presenter = useMemo(() => new EditTabsPresenter(store), [store]);
+  const collapse = useMemo(() => ({ store, presenter }), [store, presenter]);
   const ids = tabs?.map((tab) => tab.id).join(' ');
   // Layout effect: a passive one paints the old tab for a frame before the new one's.
   useLayoutEffect(() => {
     if (ids != null && ids !== '') presenter.syncTabs(ids.split(' '));
   }, [ids, presenter]);
-  const contents = (shown: readonly EditPanel[]): ReactNode =>
-    shown.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>);
+  const contents = (shown: readonly EditPanel[]): ReactNode => (
+    <GroupCollapse.Provider value={collapse}>
+      {shown.map(({ id, content }) => (
+        <Fragment key={id}>{content}</Fragment>
+      ))}
+    </GroupCollapse.Provider>
+  );
 
   const first = tabs?.[0];
   if (tabs == null || first == null) {
