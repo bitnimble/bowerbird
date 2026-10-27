@@ -2,6 +2,7 @@ import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
 import { describe } from '../../../errors';
 import { newId } from '../../../../../src/schemas/id';
+import { neutralEdits } from '../../../../../src/schemas/photo_edits';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import type { AppSettingsPresenter } from '../../settings/app_settings_presenter';
@@ -152,6 +153,24 @@ export class DetailPresenter {
         // pinning the file on screen would keep from ever showing.
         const raw = this.store.photoFor(photoId)?.is_raw !== false;
         this.viewer.turned(photoId, saved.doc, rendition, raw && this.isCurrent(photoId));
+        await photoEditsApi.finish(photoId);
+        await this.refresh();
+      } catch (err) {
+        this.fail(err);
+      }
+    });
+  }
+
+  /** One save, so the editor's undo can take it back, and the picture rebuilt from it. */
+  async resetEdits(photoId: string): Promise<void> {
+    await this.enqueue(async () => {
+      try {
+        const current = await photoEditsApi.get(photoId);
+        const saved = await photoEditsApi.save(photoId, neutralEdits(), current.rev, newId());
+        this.editsGeneration++;
+        // A crop or a turn going back reshapes the picture.
+        this.viewer.forgetEdits(photoId, true);
+        this.viewer.rememberEdits(photoId, saved.doc);
         await photoEditsApi.finish(photoId);
         await this.refresh();
       } catch (err) {

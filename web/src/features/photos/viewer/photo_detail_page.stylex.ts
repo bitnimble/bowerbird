@@ -164,6 +164,9 @@ export const styles = stylex.create({
   noticeText: {
     margin: 0,
   },
+  resetEdits: {
+    marginTop: '8px',
+  },
   clip: {
     display: 'block',
     overflow: 'hidden',

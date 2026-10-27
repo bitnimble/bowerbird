@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FileImage,
+  FileScan,
   FileType,
   FolderOpen,
   GalleryThumbnails,
@@ -17,6 +18,7 @@ import {
   Info,
   Layers,
   Layers2,
+  ListRestart,
   Maximize,
   Maximize2,
   RefreshCw,
@@ -69,7 +71,7 @@ import type { ViewerStore } from './viewer_store';
 import { renditionLabel } from '../renditions';
 import { DetailRating } from './detail_rating';
 import type { DetailMode } from './detail_mode';
-import { editOption, fetchOriginalThenEdit } from './edit_option';
+import { confirmResetAll, editOption, fetchOriginalThenEdit } from './edit_option';
 import { nameOf, useStep } from './detail_navigation';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
@@ -155,7 +157,7 @@ const ROTATE_ACTIONS: Option<ViewAction>[] = [
   { value: 'rotateRight', label: EditToolsStrings.rotateRight(), icon: <RotateCw size={ICON} /> },
 ];
 
-type EditAction = 'undo' | 'redo' | 'cameraMatch';
+type EditAction = 'undo' | 'redo' | 'cameraMatch' | 'resetAll';
 
 type Action = 'editMerge' | 'metadata' | 'rerender' | 'hide' | 'delete';
 
@@ -187,7 +189,7 @@ function actions({
           },
         ]
       : []),
-    { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
+    { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <FileScan size={ICON} /> },
     {
       value: 'rerender',
       label: rerendering
@@ -228,6 +230,7 @@ export const DetailNav = observer(function DetailNav({
   zoomRef,
   mode,
   edit,
+  onRematch,
 }: {
   photoId: string;
   /** Where the stage draws its zoom readout. */
@@ -259,12 +262,22 @@ export const DetailNav = observer(function DetailNav({
     loupe: LoupeStore;
     presenter: RawEditPresenter;
   } | null;
+  /** Measures the photo again and resets the edits to that camera match. */
+  onRematch: () => void;
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
   const replicationStore = useReplicationStore();
   const libraries = useLibrariesStore();
-  const { photos, export: exportPhotos, feedback, frameTv, replication, confirm } = usePresenters();
+  const {
+    photos,
+    export: exportPhotos,
+    feedback,
+    frameTv,
+    replication,
+    confirm,
+    toasts,
+  } = usePresenters();
   const navigate = useNavigate();
   const mobile = useIsMobile();
   const photo = store.detailFor(photoId);
@@ -340,22 +353,35 @@ export const DetailNav = observer(function DetailNav({
     value: 'cameraMatch',
     label: PhotoDetailStrings.resetToCameraMatch(),
     icon: <Camera size={ICON} />,
-    disabled:
-      edit == null ||
-      !edit.stage.editable ||
-      edit.stage.cameraTone == null ||
-      edit.stage.atCameraMatch,
+    disabled: edit == null || !edit.stage.editable || edit.stage.cameraTone == null,
+  };
+  const resetAll: Option<EditAction> = {
+    value: 'resetAll',
+    label: PhotoDetailStrings.resetAllEdits(),
+    icon: <ListRestart size={ICON} />,
+    disabled: edit == null || !edit.stage.editable,
   };
   const onEditAction = async (action: EditAction): Promise<void> => {
     if (action === 'undo') return edit?.presenter.undo();
     if (action === 'redo') return edit?.presenter.redo();
+    if (action === 'resetAll') {
+      if (await confirmResetAll(confirm)) edit?.presenter.resetAllEdits();
+      return;
+    }
     const confirmed = await confirm.ask({
       title: PhotoDetailStrings.resetToCameraMatchQuestion(),
       body: PhotoDetailStrings.resetToCameraMatchWarning(),
       action: PhotoDetailStrings.reset(),
       tone: 'danger',
     });
-    if (confirmed) edit?.presenter.resetToCameraMatch();
+    if (!confirmed) return;
+    try {
+      await edit?.presenter.forgetAnalysis();
+    } catch {
+      toasts.show(PhotoDetailStrings.rematchFailed());
+      return;
+    }
+    onRematch();
   };
 
   const editSection = editing
@@ -363,7 +389,7 @@ export const DetailNav = observer(function DetailNav({
         menuSection({
           label: PhotoDetailStrings.sectionEdit(),
           // A phone's bar has no width for undo and redo beside the tools.
-          options: [...(mobile ? undoRedo : []), resetToCameraMatch],
+          options: [...(mobile ? undoRedo : []), resetToCameraMatch, resetAll],
           onSelect: (action) => void onEditAction(action),
         }),
       ]
@@ -620,6 +646,7 @@ export const DetailNav = observer(function DetailNav({
       {stripOpen != null && !mobile && (
         <Button
           iconOnly
+          variant={stripOpen ? 'primary' : 'default'}
           aria-label={
             stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()
           }
@@ -749,6 +776,7 @@ function PanelsToggle({ open, onToggle }: { open: boolean; onToggle: () => void 
   return (
     <Button
       iconOnly
+      variant={open ? 'primary' : 'default'}
       aria-label={open ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
       aria-expanded={open}
       onClick={onToggle}

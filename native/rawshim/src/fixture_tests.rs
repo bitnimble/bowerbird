@@ -4603,7 +4603,7 @@ mod tile_header {
 
     /// **The catalogue's answer cannot depend on which pass read the file.** A tile job reports
     /// these fields off the source it lifts the preview from, where the `HeaderPool` read behind
-    /// the detail route and "Update photo details" goes through `header::read_path` - so a field
+    /// the detail route and "Refresh metadata" goes through `header::read_path` - so a field
     /// that came back differently would date, orient or credit a photograph according to which read
     /// wrote it.
     #[test]

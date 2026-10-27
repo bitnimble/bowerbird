@@ -1,6 +1,6 @@
 import { Menu } from '@base-ui-components/react/menu';
 import * as stylex from '@stylexjs/stylex';
-import { ClipboardCopy, ClipboardPaste, ExternalLink } from 'lucide-react';
+import { ClipboardCopy, ClipboardPaste, ScanEye } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -29,7 +29,7 @@ import { InStrip, StripOpensEditor, useOpenPhoto } from './photo_tile';
 import { TileMenuContext, type OpenTileMenu } from './tile_menu_context';
 import { TileMenuStrings } from './tile_menu.strings';
 
-type OpenAction = 'open' | 'edit';
+type OpenAction = 'view' | 'edit';
 type EditsAction = 'copy' | 'paste';
 
 interface Opened {
@@ -137,9 +137,9 @@ const TileMenuItems = observer(function TileMenuItems({
   const opening: Option<OpenAction>[] = single
     ? [
         {
-          value: 'open',
-          label: TileMenuStrings.open(),
-          icon: <ExternalLink size={ICON} />,
+          value: 'view',
+          label: TileMenuStrings.view(),
+          icon: <ScanEye size={ICON} />,
           link: <Link to={pathOf(photo.id)} replace={inEditor} />,
         },
         ...(inEditor
@@ -183,11 +183,27 @@ const TileMenuItems = observer(function TileMenuItems({
       tooltip: clipboard.copied == null ? TileMenuStrings.nothingCopied() : undefined,
     },
   ];
+  // Null where the rows to count are not all here, which offers both: the server settles each.
+  const hiding = selected
+    ? marks.selectedHiding
+    : single
+      ? { hidden: photo.is_hidden ? 1 : 0, shown: photo.is_hidden ? 0 : 1 }
+      : null;
   const acting = photoOptions({
     bin: count < 2 ? BulkBarStrings.moveToBin() : BulkBarStrings.moveCountToBin(count),
     revealable: single && canRevealFile() && !isComposite(photo),
-    hide: null,
-    unhide: null,
+    hide:
+      hiding?.shown === 0
+        ? null
+        : count < 2
+          ? BulkBarStrings.hide()
+          : BulkBarStrings.hideCount(count),
+    unhide:
+      hiding?.hidden === 0
+        ? null
+        : count < 2
+          ? BulkBarStrings.unhide()
+          : BulkBarStrings.unhideCount(count),
   });
 
   return (
@@ -231,6 +247,8 @@ const TileMenuItems = observer(function TileMenuItems({
             else if (action === 'reveal') void photos.revealOriginal(photo.id);
             else if (action === 'thumbnails') void photos.rebuildTiles(target);
             else if (action === 'metadata') void photos.refreshMetadata(target);
+            else if (action === 'hide') void photos.hidePhotos(target, true);
+            else if (action === 'unhide') void photos.hidePhotos(target, false);
             else if (action === 'bin') void photos.deletePhotos(target);
           }}
         />

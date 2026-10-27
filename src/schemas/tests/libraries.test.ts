@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { inferredLibraryName } from '../../utils/library_name';
 import {
   CreateLibraryRequestSchema,
+  DEFAULT_LIBRARY_SETTINGS,
   LibrarySchema,
   UpdateLibraryRequestSchema,
 } from '../libraries';
@@ -75,5 +76,12 @@ describe('CreateLibraryRequestSchema.bin_name', () => {
     for (const bin_name of ['', '   ', '.', '..', 'a/b', 'a\\b', '../escape']) {
       expect(() => CreateLibraryRequestSchema.parse({ ...base, bin_name })).toThrow();
     }
+  });
+});
+
+describe('include_non_raw', () => {
+  it('is on for a new library, and Settings resets to that', () => {
+    expect(CreateLibraryRequestSchema.parse(base).include_non_raw).toBe(true);
+    expect(DEFAULT_LIBRARY_SETTINGS.include_non_raw).toBe(true);
   });
 });

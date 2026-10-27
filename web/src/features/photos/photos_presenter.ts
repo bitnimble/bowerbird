@@ -1078,6 +1078,10 @@ export class PhotosPresenter {
   async turn(photoId: string, by: 90 | -90): Promise<void> {
     await this.detailPresenter.turn(photoId, by);
   }
+
+  async resetEdits(photoId: string): Promise<void> {
+    await this.detailPresenter.resetEdits(photoId);
+  }
   /**
    * @returns whether the write landed. Stack triage needs to know: it advances a
    * round on the strength of a rejection, and `patch` otherwise swallows a failure

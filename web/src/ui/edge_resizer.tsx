@@ -1,17 +1,16 @@
 import * as stylex from '@stylexjs/stylex';
 import { useRef } from 'react';
+import { focusRing } from './focus_ring';
 import { stopFlings } from './stop_flings';
 import { color, size } from './tokens.stylex';
 
 const COARSE = '@media (pointer: coarse)';
-/** How long the bar under a finger is drawn, which is a grip rather than the whole edge. */
 const GRAB_LENGTH = '36px';
 
 const styles = stylex.create({
   edge: {
     position: 'absolute',
     touchAction: 'none',
-    outline: 'none',
     '::after': {
       content: '""',
       position: 'absolute',
@@ -19,9 +18,6 @@ const styles = stylex.create({
       top: '50%',
       transform: 'translate(-50%, -50%)',
       borderRadius: size.radius,
-      // The grab a finger is given is drawn in the furniture's own grey: it is on screen the
-      // whole time the edge is, and an accent bar the length of the window reads as a state
-      // rather than as something to hold.
       backgroundColor: { default: color.satin, [COARSE]: color.boneDim },
       transitionProperty: 'width, height',
       transitionDuration: '150ms',
@@ -72,8 +68,7 @@ export function EdgeResizer({
   onDoubleClick?: () => void;
   style?: stylex.StyleXStyles;
 }): JSX.Element {
-  // A delta from where the drag started rather than the pointer's distance from the far edge,
-  // which would need the panel's box read back on every move.
+  // Delta from the grab point: the far edge's distance would need a layout read per move.
   const grabbed = useRef({ x: 0, y: 0, value: 0, axis });
   const hold = (e: { clientX: number; clientY: number }): void => {
     grabbed.current = { x: e.clientX, y: e.clientY, value, axis };
@@ -82,7 +77,13 @@ export function EdgeResizer({
   return (
     <div
       ref={stopFlings}
-      {...stylex.props(styles.edge, axis === 'x' ? styles.sideways : styles.upDown, style)}
+      {...stylex.props(
+        styles.edge,
+        // The `::after` bar marks focus.
+        focusRing.none,
+        axis === 'x' ? styles.sideways : styles.upDown,
+        style,
+      )}
       role="separator"
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       aria-label={label}
@@ -98,9 +99,7 @@ export function EdgeResizer({
       }}
       onPointerMove={(e) => {
         if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-        // A panel's size can decide which edge it is on (`stripEdge`), so a drag can swap its
-        // own axis under itself. Taken from here on the new one, rather than subtracting a
-        // distance down the screen from one across it.
+        // A drag can swap the panel's edge (`stripEdge`); restart the delta on the new axis.
         if (grabbed.current.axis !== axis) hold(e);
         const moved = axis === 'x' ? e.clientX - grabbed.current.x : e.clientY - grabbed.current.y;
         onResize(grabbed.current.value + grows * moved);

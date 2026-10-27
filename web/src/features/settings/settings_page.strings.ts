@@ -34,6 +34,7 @@ export const SettingsStrings = {
   libraryFolderHint: () => "Bowerbird doesn't move any files when you change this.",
   includeSubfolders: () => 'Include subfolders',
   includeNonRaw: () => 'Import JPEG, PNG, HEIC, and AVIF too',
+  includeNonRawHint: () => 'RAW+JPEG pairs are deduplicated automatically.',
   /** The flag and its one line, here and in the add-library dialog. */
   readOnly: () => 'Read-only mode',
   readOnlyHint: () => "When enabled, Bowerbird doesn't change your photo files on disk",

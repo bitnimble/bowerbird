@@ -315,15 +315,10 @@ export const MergePage = observer(function MergePage(): JSX.Element {
           <Redo2 size={ICON} />
           {MergePageStrings.redo()}
         </Button>
-        <Button
-          variant={store.showingLines ? 'primary' : 'default'}
-          onClick={presenter.toggleLines}
-          aria-pressed={store.showingLines}
-        >
+        <Button onClick={presenter.toggleLines} aria-pressed={store.showingLines}>
           {MergePageStrings.toggleTileLines()}
         </Button>
         <Button
-          variant={store.removing ? 'primary' : 'default'}
           onClick={presenter.toggleRemoving}
           aria-pressed={store.removing}
           disabled={store.readOnly}

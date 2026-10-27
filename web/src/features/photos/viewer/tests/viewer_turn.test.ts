@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { type EditState } from '../../../../../../src/schemas/photo_edits';
+import { neutralEdits, type EditState } from '../../../../../../src/schemas/photo_edits';
 import { type PhotoDetail } from '../../../../../../src/schemas/photos';
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { photosApi } from '../../../../api/photos';
@@ -105,6 +105,34 @@ test('late edits read cannot overwrite viewer turn', async () => {
   release(old);
   await loading;
   expect(store.editsFor('p1')?.rotate).toBe(90);
+});
+
+test('resetting all edits saves the neutral document once and rebuilds from it', async () => {
+  let state: EditState = {
+    doc: EditDocSchema.parse({ exposure: 1.5, rotate: 90, contrast: 20 }),
+    rev: 3,
+    canUndo: true,
+    canRedo: false,
+  };
+  const revisions: number[] = [];
+  let finished = 0;
+  photoEditsApi.get = async () => state;
+  photoEditsApi.save = async (_photoId, doc, rev) => {
+    revisions.push(rev);
+    state = { ...state, doc, rev: rev + 1 };
+    return state;
+  };
+  photoEditsApi.finish = async () => {
+    finished++;
+  };
+  photosApi.get = async () => ({ id: 'p1', shown_rendition: 'full' }) as PhotoDetail;
+  const { store, presenter } = build();
+
+  await presenter.resetEdits('p1');
+
+  expect(revisions).toEqual([3]);
+  expect(store.editsFor('p1')).toEqual(neutralEdits());
+  expect(finished).toBe(1);
 });
 
 test('only changed embedded orientation invalidates its decoded URL', () => {

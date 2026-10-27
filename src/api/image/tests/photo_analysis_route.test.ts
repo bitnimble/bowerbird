@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { Hono } from 'hono';
 import { PathSegment, route } from '../../../schemas/route';
-import { writePhotoAnalysis } from '../../../services/processing/analysis/photo_analysis_store';
+import {
+  readPhotoAnalysis,
+  writePhotoAnalysis,
+} from '../../../services/processing/analysis/photo_analysis_store';
 import { dataPathForLibraryId } from '../../../utils/paths';
 import { localOriginals } from '../../../services/blobs/originals_for_testing';
 import { ImageApi } from '../image_api';
@@ -97,5 +100,18 @@ describe('PUT /image/:photoId/analysis', () => {
     const got = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()));
     expect(got.status).toBe(200);
     expect((await got.arrayBuffer()).byteLength).toBe(13);
+  });
+});
+
+describe('DELETE /image/:photoId/analysis', () => {
+  it('forgets the analysis, so the next open measures the photo again', async () => {
+    writePhotoAnalysis(dataPathForLibraryId('lib-forgets'), 'p1', analysisOf(5000, 1));
+    const app = serving('lib-forgets');
+
+    const forgot = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()), {
+      method: 'DELETE',
+    });
+    expect(forgot.status).toBe(204);
+    expect(readPhotoAnalysis(dataPathForLibraryId('lib-forgets'), 'p1')).toBeUndefined();
   });
 });

@@ -98,9 +98,9 @@ export function Panel({
       aria-labelledby={title == null ? undefined : titleId}
     >
       {title != null && (
-        <PanelTitle id={titleId} style={titleStyle}>
+        <PanelTitle style={titleStyle}>
           {collapse == null ? (
-            title
+            <span id={titleId}>{title}</span>
           ) : (
             <button
               type="button"
@@ -113,7 +113,7 @@ export function Panel({
                 size={12}
                 {...stylex.props(styles.chevron, collapse.collapsed && styles.chevronShut)}
               />
-              {title}
+              <span id={titleId}>{title}</span>
             </button>
           )}
           {titleEnd}

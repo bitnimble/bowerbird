@@ -94,6 +94,8 @@ export const buttonStyles = stylex.create({
     paddingInline: '4px',
     borderRadius: '8px',
     backgroundColor: color.satin,
+    // Parted from a pressed trigger, which is the same satin.
+    boxShadow: `0 0 0 2px ${color.ink}`,
     color: INK_ON_SATIN,
     fontFamily: font.mono,
     fontSize: '11px',
@@ -162,7 +164,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   },
   ref,
 ): JSX.Element {
-  const styled = buttonProps(variant, iconOnly, style);
+  const pressed = variant === 'default' && props['aria-pressed'] === true;
+  const styled = buttonProps(pressed ? 'primary' : variant, iconOnly, style);
   return (
     <Tooltip label={tooltip ?? (iconOnly ? props['aria-label'] : undefined)}>
       {/* A link that looks like a button is still a link. Handing it to base-ui would

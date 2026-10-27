@@ -35,7 +35,11 @@ export function CheckMenu<T extends string>({
       {/* The trigger is the button itself, not a wrapper around one: base-ui
           needs a real <button> for its keyboard and ARIA wiring. */}
       <Tooltip label={tooltip}>
-        <Menu.Trigger {...buttonProps('default', false)} aria-pressed={active} disabled={disabled}>
+        <Menu.Trigger
+          {...buttonProps(active ? 'primary' : 'default', false)}
+          aria-pressed={active}
+          disabled={disabled}
+        >
           {trigger}
         </Menu.Trigger>
       </Tooltip>

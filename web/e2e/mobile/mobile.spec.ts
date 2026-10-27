@@ -470,7 +470,7 @@ test('the bar keeps to one line, without the controls a finger makes redundant',
   await expect(nav.getByRole('button', { name: 'Download' })).toHaveCount(0);
   await nav.getByRole('button', { name: 'More' }).click();
   // Every menu the viewer has, in the one popup - the same one a wide window gets.
-  await expect(page.getByRole('menuitem', { name: 'Update photo details' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Refresh metadata' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Download original' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Fullscreen' })).toBeVisible();
   // Out of the middle of a long popup: the one item that destroys something sits

@@ -21,7 +21,7 @@ import { findOriginalsAnywhere, isStrayOriginal } from './scan';
 // The subdirectories of a data directory that hold generated files, and so the
 // only ones a file may be deleted from one at a time. Everything else under
 // there - a stray the user left - is not ours to remove.
-const GENERATED_DIRS = ['renditions', 'hdr', 'drafts'];
+const GENERATED_DIRS = ['renditions', 'hdr', 'drafts', 'analysis'];
 const log = new Logger('deletions');
 
 /**

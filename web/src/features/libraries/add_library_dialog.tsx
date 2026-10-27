@@ -260,6 +260,9 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
                 />
                 {SettingsStrings.includeNonRaw()}
               </CheckLabel>
+              <Text variant="mono" as="p">
+                {SettingsStrings.includeNonRawHint()}
+              </Text>
             </Field>
 
             <Field>

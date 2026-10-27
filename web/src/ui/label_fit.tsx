@@ -12,8 +12,6 @@ const styles = stylex.create({
     flexBasis: 0,
     overflow: 'hidden',
   },
-  // The row with only the selected label, so a bar wraps it onto a line of its own before
-  // squeezing it narrower than that.
   least: (width: number) => ({ minWidth: `${width}px` }),
   ghost: {
     position: 'absolute',
@@ -53,8 +51,7 @@ export function LabelFit({
   const [widths, setWidths] = useState({ slot: 0, every: 0, least: 0 });
 
   useLayoutEffect(() => {
-    // Once at mount, before paint: the observer's first report lands after it, which drew
-    // every row icon-only for a frame.
+    // Once at mount: the observer's first report lands after paint, flashing icon-only rows.
     setWidths({
       slot: slot.current?.clientWidth ?? 0,
       every: every.current?.offsetWidth ?? 0,

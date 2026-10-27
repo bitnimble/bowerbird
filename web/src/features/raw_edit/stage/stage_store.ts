@@ -1,6 +1,5 @@
 import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
-import { atCameraMatch } from '../../../../../src/schemas/edit_adjust';
 import type {
   CameraTone,
   EditDoc,
@@ -129,12 +128,6 @@ export class StageStore {
     const { cameraExposure: exposure, cameraSaturation: saturation, cameraCurve: toneCurve } = this;
     if (exposure == null || saturation == null || toneCurve == null) return null;
     return { exposure, saturation, toneCurve, balance: this.cameraBalance };
-  }
-
-  @computed get atCameraMatch(): boolean {
-    const doc = this.edit.doc;
-    const tone = this.cameraTone;
-    return doc != null && tone != null && atCameraMatch(doc, tone);
   }
 
   /**

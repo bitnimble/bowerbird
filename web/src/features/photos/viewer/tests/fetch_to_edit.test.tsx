@@ -76,6 +76,7 @@ function Page({ elsewhere }: { elsewhere: OriginalElsewhere }): JSX.Element {
         onFullscreen={() => {}}
         mode={detailMode(pathname)}
         edit={null}
+        onRematch={() => {}}
       />
       <output aria-label="Address">{pathname}</output>
     </>

@@ -222,7 +222,8 @@ export class ViewerPresenter {
 
   @action.bound
   nudgePanelWidth(column: PanelColumn, steps: number): void {
-    this.setPanelWidth(column, this.store.panelWidths[column] + steps * PANEL_WIDTH_STEP);
+    // From the width on screen: the stored one can sit past the cap, where a step moves nothing.
+    this.setPanelWidth(column, this.store.shownPanelWidth(column) + steps * PANEL_WIDTH_STEP);
   }
 
   @action.bound

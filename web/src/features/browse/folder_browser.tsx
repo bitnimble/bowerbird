@@ -262,6 +262,7 @@ const FolderTree = observer(function FolderTree({
         {canCreate && (
           <Button
             iconOnly
+            variant={naming != null ? 'primary' : 'default'}
             aria-label={FolderBrowserStrings.createFolder()}
             aria-expanded={naming != null}
             disabled={listing == null}

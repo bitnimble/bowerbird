@@ -53,17 +53,16 @@ test('the add-library dialog warns that a bin name the root already uses will be
 
 // Asked in the dialog rather than left to Settings, because the import begins as the row lands
 // (§9.8) - so a library added with it left alone has already walked past every JPEG beside its
-// RAWs by the time anyone could switch it on. Off by default, which is the whole point of asking:
-// one frame arriving as two rows is what the default is protecting against.
-test('the add-library dialog offers the finished formats, switched off', async ({ page }) => {
+// RAWs by the time anyone could switch it off.
+test('the add-library dialog offers the finished formats, switched on', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await page.getByRole('button', { name: 'Add library' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Add library' });
   const nonRaw = dialog.getByRole('checkbox', { name: 'Import JPEG, PNG, HEIC, and AVIF too' });
-  await expect(nonRaw).not.toBeChecked();
-  await nonRaw.check();
   await expect(nonRaw).toBeChecked();
+  await nonRaw.uncheck();
+  await expect(nonRaw).not.toBeChecked();
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

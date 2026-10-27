@@ -33,7 +33,6 @@ const styles = stylex.create({
     flexGrow: 1,
     gap: '2px',
   },
-  // The label under the icon, which costs height the strip has rather than width it hasn't.
   tab: {
     flexGrow: 1,
     flexDirection: 'column',

@@ -318,6 +318,10 @@ export class EditPresenter {
     });
   }
 
+  async drained(): Promise<void> {
+    while (this.writing != null) await this.writing;
+  }
+
   private async exclusively(write: () => Promise<void>): Promise<void> {
     const writing = write().finally(() => {
       this.writing = null;

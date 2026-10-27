@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ICON } from '../../../ui/icon';
 import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
+import type { ConfirmPresenter } from '../../confirm/confirm_presenter';
 import type { ReplicationPresenter } from '../../replication/replication_presenter';
 import { fetchOriginalRefusal } from './detail_labels';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
@@ -51,6 +52,15 @@ export function editOption({
     keepsMenuOpen: true,
     ...(refusal == null ? {} : { tooltip: refusal }),
   };
+}
+
+export function confirmResetAll(confirm: Pick<ConfirmPresenter, 'ask'>): Promise<boolean> {
+  return confirm.ask({
+    title: PhotoDetailStrings.resetAllEditsQuestion(),
+    body: PhotoDetailStrings.resetAllEditsWarning(),
+    action: PhotoDetailStrings.reset(),
+    tone: 'danger',
+  });
 }
 
 /** Opens the editor once the original has landed, where `edit` still wants it to. */

@@ -267,16 +267,15 @@ export class PhotosApi {
         PathSegment.param('rendition'),
         PathSegment.job(),
       ),
-      (c) => {
+      async (c) => {
         const rendition = c.req.param('rendition') ?? '';
         if (!isRendition(rendition) || rendition === 'grid') {
           throw new AppError('NOT_FOUND', `not a rendition the viewer can build: ${rendition}`);
         }
-        const job = this.renditions.renditionJob(
-          c.req.param('id'),
-          rendition,
-          c.req.query('force') === 'true',
-        );
+        const force = c.req.query('force') === 'true';
+        // Before the job is handed out: a client rendering it keeps the picture, not what it measured.
+        if (force) await this.renditions.forgetAnalysis(c.req.param('id'));
+        const job = this.renditions.renditionJob(c.req.param('id'), rendition, force);
         return c.json(
           respond(
             RenditionJobResponseSchema,

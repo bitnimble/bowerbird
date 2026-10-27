@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../../logger';
+import { deleteGeneratedFile } from '../../../utils/deletions';
 import { photoAnalysisPathFor } from '../../../utils/paths';
 
 const log = new Logger('processing');
@@ -28,6 +29,11 @@ export function readPhotoAnalysis(dataPath: string, photoId: string): number[] |
   } catch {
     return undefined;
   }
+}
+
+/** So the next render, rendition, editor open or loupe tile measures the photograph afresh. */
+export async function forgetPhotoAnalysis(dataPath: string, photoId: string): Promise<void> {
+  await deleteGeneratedFile(dataPath, photoAnalysisPathFor(dataPath, photoId));
 }
 
 export function writePhotoAnalysis(dataPath: string, photoId: string, analysis: Uint8Array): void {

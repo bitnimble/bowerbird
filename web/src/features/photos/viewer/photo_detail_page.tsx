@@ -87,7 +87,7 @@ type EditVisit = {
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
   const store = useViewerStore();
-  const { photos, appSettings, editsClipboard } = usePresenters();
+  const { photos, appSettings, editsClipboard, toasts } = usePresenters();
   const device = useDeviceSettingsStore();
   const mobile = useIsMobile();
   const touch = useIsTouch();
@@ -208,7 +208,15 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const [opened, setOpened] = useState<{ visit: EditVisit; presenter: RawEditPresenter } | null>(
     null,
   );
+  const [rematches, setRematches] = useState(0);
+  const rematchNext = useRef(false);
+  const rematch = useCallback(() => {
+    rematchNext.current = true;
+    setRematches((count) => count + 1);
+  }, []);
   useLayoutEffect(() => {
+    const rematching = rematchNext.current;
+    rematchNext.current = false;
     // Until the visit for this mode exists: one held over from the last would be closed.
     if (mode === 'view' || visit == null || visit.key !== visitKey) return;
     const presenter = new RawEditPresenter(
@@ -243,9 +251,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         photoId,
         mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE,
         store.photoFor(photoId),
+        rematching,
       )
       .then(() => {
         startingRotation = visit.edit.doc?.rotate ?? 0;
+        if (rematching && visit.stage.live && visit.stage.cameraTone == null) {
+          toasts.show(PhotoDetailStrings.rematchFailed());
+        }
       });
     return () => {
       detachClipboard?.();
@@ -258,7 +270,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           startingRotation != null && startingRotation !== visit.edit.doc?.rotate,
         );
     };
-  }, [mode, photoId, photos, editsClipboard, touch, device, visit, visitKey, store]);
+  }, [
+    mode,
+    photoId,
+    photos,
+    editsClipboard,
+    toasts,
+    touch,
+    device,
+    visit,
+    visitKey,
+    store,
+    rematches,
+  ]);
   // Held over a step until the next photo's presenter replaces it, so nothing remounts between.
   const session =
     visit != null && opened?.visit === visit && visit.key === visitKey
@@ -375,13 +399,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const panelsOffered = !mobile && mode === 'view';
   const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
   const panelColumn = previewing ? 'edit' : 'view';
-  // Half the frame at most, so a width dragged out on a wide window leaves a narrow one its photo.
-  // What the drag starts from too, or the edge would sit still until the pointer passed the cap.
-  const panelWidth =
-    store.detailWidth > 0
-      ? Math.min(store.panelWidths[panelColumn], Math.max(PANEL_MIN_WIDTH, store.detailWidth / 2))
-      : store.panelWidths[panelColumn];
-  // The panels' grid gap is all the spacing between them beside and below the stage.
+  const panelWidth = store.shownPanelWidth(panelColumn);
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
   const metaPanels =
@@ -465,6 +483,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           </div>
           <Button
             iconOnly
+            variant={stripOpen ? 'primary' : 'default'}
             aria-label={
               stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()
             }
@@ -475,6 +494,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           </Button>
           <Button
             iconOnly
+            variant={sheetOpen ? 'primary' : 'default'}
             aria-label={
               sheetOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()
             }
@@ -523,6 +543,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         zoomRef={setZoomSlot}
         mode={mode}
         edit={session}
+        onRematch={rematch}
       />
 
       <div
