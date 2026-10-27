@@ -354,7 +354,7 @@ mod decode_geometry {
             )
             .expect("the frame decodes");
 
-        let cfa = crate::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
+        let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
         assert_eq!(cfa.period(), (6, 6));
         assert_eq!(
             cfa.counts(),
@@ -391,7 +391,7 @@ mod decode_geometry {
                 false,
             )
             .expect("the frame decodes");
-        let cfa = crate::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
+        let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
         assert!(cfa.is_xtrans(), "an X-Trans II sensor is still X-Trans");
         assert_eq!(cfa.counts(), [8, 20, 8]);
     }

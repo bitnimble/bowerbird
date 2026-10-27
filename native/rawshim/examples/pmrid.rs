@@ -60,7 +60,7 @@ fn main() {
     );
 
     let network = rawshim::pmrid::device(gpu).expect("the network built");
-    let filter = |window: &mut rawshim::condition::Mosaic| {
+    let filter = |window: &mut mosaic::condition::Mosaic| {
         let started = std::time::Instant::now();
         rawshim::pmrid::denoise(
             gpu,
@@ -142,14 +142,14 @@ fn main() {
     };
     let (noisy, galosh) = (cut(&samples), cut(&galosh));
 
-    let mut window = rawshim::condition::Mosaic::upload(gpu, &noisy, w, h);
+    let mut window = mosaic::condition::Mosaic::upload(gpu, &noisy, w, h);
     eprintln!("the window denoised in {:?}", filter(&mut window));
     let pmrid = pollster::block_on(window.read(gpu)).expect("reads back");
 
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
+        pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,

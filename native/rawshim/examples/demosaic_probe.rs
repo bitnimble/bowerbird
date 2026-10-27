@@ -38,7 +38,7 @@ fn main() {
         panic!("not integer samples");
     };
     let w = image.width;
-    let cfa = rawshim::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern");
+    let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern");
     let (pw, ph) = cfa.period();
     let gains = rawshim::decode_rawler::channel_ceilings(&image);
     let white = rawshim::decode_rawler::saturation_of(&image);
@@ -56,7 +56,7 @@ fn main() {
     println!("pattern {pw}x{ph}, white {white}, gains {gains:?}");
 
     let gpu = gpu::device().expect("a Vulkan adapter");
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
 
     for (wx, wy, side) in windows {
         // Onto the period, so the window's phase is the frame's.
@@ -86,8 +86,8 @@ fn main() {
             sum[2] / seen[2].max(1.0),
         ];
 
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, &window, side, side);
-        let plane = pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &window, side, side);
+        let plane = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,

@@ -376,9 +376,9 @@ fn developed(
             request.develop
         )));
     }
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, width, height);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
-    let colour = rawshim::demosaic::Colour {
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, width, height);
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let colour = mosaic::demosaic::Colour {
         matrix: request.matrix,
         ceiling: request.ceilings,
     };
@@ -483,8 +483,8 @@ fn denoised(
     network: &rawshim::pmrid::Pmrid,
     request: &Denoise,
 ) -> Result<serde_json::Value, Failed> {
-    let cfa = rawshim::cfa::Cfa::bayer(request.cfa)
-        .filter(rawshim::cfa::Cfa::is_bayer)
+    let cfa = mosaic::cfa::Cfa::bayer(request.cfa)
+        .filter(mosaic::cfa::Cfa::is_bayer)
         .ok_or_else(|| Failed::Error("not a Bayer pattern".into()))?;
     if !request
         .gains
@@ -508,7 +508,7 @@ fn denoised(
     let mut filtered = Vec::with_capacity(samples.len());
     for one in samples.chunks_exact(size) {
         let mut mosaic =
-            rawshim::condition::Mosaic::upload(gpu, one, request.width, request.height);
+            mosaic::condition::Mosaic::upload(gpu, one, request.width, request.height);
         filter(gpu, network, &mut mosaic, &cfa, request.gains, request.fit);
         let read = pollster::block_on(mosaic.read(gpu))
             .ok_or_else(|| Failed::Error("a mosaic did not read back".into()))?;
@@ -536,7 +536,7 @@ fn sharpened(
         None => &measured(&request.sharpen)?,
     };
     let base = rawshim::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
-    let rcd = rawshim::demosaic::device(gpu)
+    let rcd = mosaic::demosaic::device(gpu)
         .ok_or_else(|| Failed::Error("no demosaic kernels".into()))?;
     let matrix = measured.matrix;
     let levels = measured.levels.anchored();
@@ -575,7 +575,7 @@ fn sharpened(
         .map(|(_, variant)| variant)
         .collect();
 
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let halving = request
         .supersampled
         .then(|| rawshim::upscale::Halving::new(gpu));
@@ -583,7 +583,7 @@ fn sharpened(
         Some(_) => (width / 2, height / 2),
         None => (width, height),
     };
-    let colour = rawshim::demosaic::Colour {
+    let colour = mosaic::demosaic::Colour {
         matrix,
         ceiling: request.gains,
     };
@@ -658,24 +658,24 @@ fn measured(path: &str) -> Result<Measured, Failed> {
 #[allow(clippy::too_many_arguments)]
 fn halved(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     halving: &rawshim::upscale::Halving,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
-    colour: rawshim::demosaic::Colour,
+    colour: mosaic::demosaic::Colour,
 ) -> Result<Vec<u16>, Failed> {
-    let upscaled = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let upscaled = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
     let (out_width, out_height) = (width / 2, height / 2);
     // No photo-sized mosaic crosses, so no photosite reads as clipped for the colour pass's fills.
-    let native = rawshim::condition::Mosaic::plane(gpu, out_width, out_height);
+    let native = mosaic::condition::Mosaic::plane(gpu, out_width, out_height);
     let at = whole(out_width, out_height);
-    let into = rawshim::demosaic::frame_buffer(gpu, out_width * out_height);
-    let (_held, upscaled_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &upscaled, 0);
-    let (_held, native_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &native, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, out_width * out_height);
+    let (_held, upscaled_shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &upscaled, 0);
+    let (_held, native_shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &native, 0);
     let field = highlight_field(gpu, &native, cfa, colour)?;
-    pollster::block_on(rawshim::demosaic::demosaic_halved_into(
+    pollster::block_on(mosaic::demosaic::demosaic_halved_into(
         gpu,
         rcd,
         &upscaled,
@@ -689,7 +689,7 @@ fn halved(
         |recording, plane| halving.halve(gpu, recording, plane, (width, height)),
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
-    pollster::block_on(rawshim::demosaic::read_frame(
+    pollster::block_on(mosaic::demosaic::read_frame(
         gpu,
         &into,
         out_width * out_height,
@@ -697,8 +697,8 @@ fn halved(
     .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
 }
 
-fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
-    rawshim::demosaic::Placement {
+fn whole(width: usize, height: usize) -> mosaic::demosaic::Placement {
+    mosaic::demosaic::Placement {
         stride: units::px::Span::exact(width),
         crop: units::px::Rect::exact(0, 0, width, height),
         dest: units::px::At::ORIGIN,
@@ -710,19 +710,19 @@ fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
 
 fn demosaic(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
-    colour: rawshim::demosaic::Colour,
+    colour: mosaic::demosaic::Colour,
 ) -> Result<Vec<u16>, Failed> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
     let at = whole(width, height);
-    let into = rawshim::demosaic::frame_buffer(gpu, width * height);
-    let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, width * height);
+    let (_held, shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
     let field = highlight_field(gpu, &uploaded, cfa, colour)?;
-    pollster::block_on(rawshim::demosaic::demosaic_into(
+    pollster::block_on(mosaic::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
@@ -734,17 +734,17 @@ fn demosaic(
         &shape,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
-    pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))
+    pollster::block_on(mosaic::demosaic::read_frame(gpu, &into, width * height))
         .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
 }
 
 fn highlight_field(
     gpu: &'static gpu::Gpu,
-    mosaic: &rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
-    colour: rawshim::demosaic::Colour,
-) -> Result<rawshim::highlight::Field, Failed> {
-    rawshim::highlight::measure(gpu, mosaic, cfa, colour.ceiling)
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
+    colour: mosaic::demosaic::Colour,
+) -> Result<mosaic::highlight::Field, Failed> {
+    mosaic::highlight::measure(gpu, mosaic, cfa, colour.ceiling)
         .ok_or_else(|| Failed::Error("the highlight field was not measured".into()))
 }
 
@@ -767,8 +767,8 @@ impl Drop for Arenas {
 fn filter(
     gpu: &'static gpu::Gpu,
     network: &rawshim::pmrid::Pmrid,
-    mosaic: &mut rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     fit: NoiseFit,
 ) {

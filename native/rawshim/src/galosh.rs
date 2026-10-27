@@ -93,7 +93,7 @@ fn coarsest_site(side: usize) -> usize {
 }
 
 /// The halo a region of this pattern needs at least, past the `halo` its caller asked for.
-pub fn reach(cfa: &crate::cfa::Cfa, halo: usize) -> usize {
+pub fn reach(cfa: &mosaic::cfa::Cfa, halo: usize) -> usize {
     let side = site_side(cfa).unwrap_or(2);
     halo.max(PYRAMID_REACH_SITES * coarsest_site(side))
 }
@@ -103,7 +103,7 @@ pub fn reach(cfa: &crate::cfa::Cfa, halo: usize) -> usize {
 /// Claims on one number: the coarsest level's block stride, so every level's blocks sit where the
 /// whole frame's do, and a whole period of the pattern, since the site transform is the period's.
 /// So an origin owes the first common multiple: 64 on Bayer, 96 on X-Trans.
-pub fn lattice(cfa: &crate::cfa::Cfa) -> (usize, usize) {
+pub fn lattice(cfa: &mosaic::cfa::Cfa) -> (usize, usize) {
     let multiple = |a: usize, b: usize| a / gcd(a, b) * b;
     let side = site_side(cfa).unwrap_or(2);
     let blocks = PYRAMID_STRIDE * coarsest_site(side);
@@ -192,13 +192,13 @@ pub struct Galosh {
 }
 
 /// Whether this pattern's mosaic is one GALOSH can filter at all.
-pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
+pub fn filters(cfa: &mosaic::cfa::Cfa) -> bool {
     site_side(cfa).is_some()
 }
 
 /// Photosites a side of the smallest square that tiles the period with every colour in each: 2 on
 /// Bayer, 3 on X-Trans.
-fn site_side(cfa: &crate::cfa::Cfa) -> Option<usize> {
+fn site_side(cfa: &mosaic::cfa::Cfa) -> Option<usize> {
     let (pw, ph) = cfa.period();
     (2..=3).find(|&side| {
         pw % side == 0
@@ -211,7 +211,7 @@ fn site_side(cfa: &crate::cfa::Cfa) -> Option<usize> {
                                 == colour
                         })
                     };
-                    [crate::cfa::RED, crate::cfa::GREEN, crate::cfa::BLUE]
+                    [mosaic::cfa::RED, mosaic::cfa::GREEN, mosaic::cfa::BLUE]
                         .into_iter()
                         .all(colours)
                 })
@@ -223,7 +223,7 @@ fn site_side(cfa: &crate::cfa::Cfa) -> Option<usize> {
 /// site's mean, its red-blue and magenta-green differences, then each colour's photosites against
 /// their own mean as gradients across the site. Orthonormal, so the GAT's unit white noise stays
 /// unit and white in every plane, and the transpose undoes it.
-fn site_transform(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
+fn site_transform(cfa: &mosaic::cfa::Cfa, side: usize) -> Vec<f32> {
     let (pw, ph) = cfa.period();
     let planes = side * side;
     let mut table = Vec::new();
@@ -243,9 +243,9 @@ fn site_transform(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
                     .collect()
             };
             let (red, green, blue) = (
-                of(crate::cfa::RED),
-                of(crate::cfa::GREEN),
-                of(crate::cfa::BLUE),
+                of(mosaic::cfa::RED),
+                of(mosaic::cfa::GREEN),
+                of(mosaic::cfa::BLUE),
             );
             let mut candidates = vec![
                 vec![1.0; planes],
@@ -258,7 +258,7 @@ fn site_transform(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
                 let (xx, yy) = (x * x, y * y);
                 [x, y, x * y, xx, yy, xx * y, x * yy, xx * yy]
             };
-            for wanted in [crate::cfa::GREEN, crate::cfa::RED, crate::cfa::BLUE] {
+            for wanted in [mosaic::cfa::GREEN, mosaic::cfa::RED, mosaic::cfa::BLUE] {
                 for term in 0..8 {
                     candidates.push(
                         (0..planes)
@@ -306,7 +306,7 @@ fn site_transform(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
 /// What `pyr_shrink` reads to find a block's colours from its first three planes: those planes of
 /// a flat colour per colour (3x3, plane by colour), its inverse (colour by plane), and each colour's
 /// share of the four parity slots the dark references are kept by (3x4).
-fn colour_basis(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
+fn colour_basis(cfa: &mosaic::cfa::Cfa, side: usize) -> Vec<f32> {
     let table = site_transform(cfa, side);
     let mut flat = [[0.0f64; 3]; 3];
     for k in 0..side * side {
@@ -779,8 +779,8 @@ impl Detail {
     };
 
     /// How much colour a reconstructed highlight keeps.
-    pub fn colouring(&self) -> crate::highlight::Colouring {
-        crate::highlight::Colouring::at(self.highlight_recovery.unwrap_or(100.0) / 100.0)
+    pub fn colouring(&self) -> mosaic::highlight::Colouring {
+        mosaic::highlight::Colouring::at(self.highlight_recovery.unwrap_or(100.0) / 100.0)
     }
 
     /// Whether either half is still a measurement rather than a number.
@@ -962,8 +962,8 @@ fn table_key(fit: &NoiseFit) -> (u32, u32) {
 pub async fn denoise(
     gpu: &gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     amounts: Amounts,
 ) -> NoiseFit {
@@ -987,8 +987,8 @@ pub async fn denoise(
 pub async fn denoise_with(
     gpu: &gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     amounts: Amounts,
     fit: NoiseFit,
@@ -1049,8 +1049,8 @@ pub const PROGRESS_TILE: usize = 2048;
 pub async fn denoise_in_tiles(
     gpu: &'static gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &mut crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     amounts: Amounts,
     fit: NoiseFit,
@@ -1072,7 +1072,7 @@ pub async fn denoise_in_tiles(
     // so filtering in place would denoise a halo-wide band twice everywhere but the first tile.
     // Seeded from the caller's, so a region too small to filter is left as it arrived rather than
     // left as zeroes.
-    let filtered = crate::condition::Mosaic::plane(gpu, width, height);
+    let filtered = mosaic::condition::Mosaic::plane(gpu, width, height);
     {
         let bytes = (width * height * 4) as u64;
         let mut recording = gpu.record();
@@ -1113,8 +1113,8 @@ pub async fn denoise_in_tiles(
 pub async fn fit(
     gpu: &gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
 ) -> NoiseFit {
     // Straight off the caller's frame: a fit stops before `pyr_restore`, which is the only
@@ -1170,8 +1170,8 @@ enum Work {
 async fn run(
     gpu: &gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     work: Work,
 ) -> NoiseFit {
@@ -2358,7 +2358,7 @@ mod tests {
             .collect();
         let amounts = Amounts::from_sliders(50.0, 50.0);
         let denoised = |fit: super::NoiseFit| {
-            let out = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+            let out = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
             pollster::block_on(super::denoise_with(
                 gpu,
                 kernels,
@@ -2448,10 +2448,10 @@ mod tests {
         for cfa in [rggb(), xtrans()] {
             // The frame's own, handed to every tile: measured per tile it would be each tile's
             // statistics, which is a different denoise before any halo is considered.
-            let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+            let uploaded = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
             let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &cfa, gains));
             let denoised = |samples: &[f32]| {
-                let whole = crate::condition::Mosaic::upload(gpu, samples, w, h);
+                let whole = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
                 pollster::block_on(super::denoise_with(
                     gpu, kernels, &whole, &cfa, gains, amounts, fit,
                 ));
@@ -2480,7 +2480,7 @@ mod tests {
             }
 
             for tile in [300usize, 700] {
-                let mut tiled = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+                let mut tiled = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
                 let mut ticks = Vec::new();
                 pollster::block_on(super::denoise_in_tiles(
                     gpu,
@@ -2586,7 +2586,7 @@ mod tests {
         // Two orders under the noisy frame above, which is where the fitted slope falls under
         // what the table could be summed for.
         let clean = frame_with_noise(width, height, 0.0005);
-        let uploaded = crate::condition::Mosaic::upload(gpu, &clean, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &clean, width, height);
         let fit = pollster::block_on(denoise(
             gpu,
             galosh,
@@ -2647,7 +2647,7 @@ mod tests {
             })
             .collect();
 
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -2698,7 +2698,7 @@ mod tests {
             })
             .collect();
 
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -2745,7 +2745,7 @@ mod tests {
                 level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma
             })
             .collect();
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         let measured = pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb(), UNGAINED));
         pollster::block_on(super::denoise_with(
             gpu,
@@ -2812,7 +2812,7 @@ mod tests {
                 level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * 0.01 * level.sqrt()
             })
             .collect();
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         let fit = pollster::block_on(denoise(
             gpu,
             galosh,
@@ -2865,7 +2865,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb(), UNGAINED))
         };
         let (clean, defective) = (fitted(false), fitted(true));
@@ -2905,7 +2905,7 @@ mod tests {
                     level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma
                 })
                 .collect();
-            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             let fit = pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb(), UNGAINED));
 
             assert!(
@@ -2954,7 +2954,7 @@ mod tests {
             })
             .collect();
 
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -2994,7 +2994,7 @@ mod tests {
             .chunks_exact(4)
             .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
             .collect();
-        let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
+        let rcd = mosaic::demosaic::device(gpu).expect("the demosaic kernels");
         let low_pass = |plane: &[f64], hole: isize| -> Vec<f64> {
             let mut smoothed = plane.to_vec();
             for (stride, size) in [(1, width), (width, height)] {
@@ -3082,16 +3082,16 @@ mod tests {
                     samples[index(x, y)] = mosaic[y * width + x];
                 }
             }
-            let cfa = crate::cfa::Cfa::bayer(quad).expect("the plate's Bayer pattern");
+            let cfa = mosaic::cfa::Cfa::bayer(quad).expect("the plate's Bayer pattern");
             let fit = NoiseFit {
                 alpha: 9.370247e-5,
                 sigma_sq: 5.7659613e-6,
                 unified_sigma: 1.4446775,
                 dark_ref,
             };
-            let filtered = |colour: f32| -> crate::condition::Mosaic {
+            let filtered = |colour: f32| -> mosaic::condition::Mosaic {
                 let uploaded =
-                    crate::condition::Mosaic::upload(gpu, &samples, sample_width, sample_height);
+                    mosaic::condition::Mosaic::upload(gpu, &samples, sample_width, sample_height);
                 // The top of the Luminance track: the grain a lower position keeps is light, which a
                 // colour difference in gamma over a coloured plate reads as colour.
                 let amounts = Amounts {
@@ -3177,7 +3177,7 @@ mod tests {
                         "{orientation}, colour {colour}, blue rim row {y}: R {red:.5}, B {blue:.5}"
                     );
                 }
-                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(
+                let rgb = pollster::block_on(mosaic::demosaic::demosaic_plane(
                     gpu,
                     rcd,
                     &uploaded,
@@ -3280,7 +3280,7 @@ mod tests {
             })
             .collect();
 
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -3311,7 +3311,7 @@ mod tests {
             .unwrap_or_else(|held| held.into_inner());
         let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
-        let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
+        let rcd = mosaic::demosaic::device(gpu).expect("the demosaic kernels");
         let fit = NoiseFit {
             alpha: 1e-5,
             sigma_sq: 1e-6,
@@ -3321,8 +3321,8 @@ mod tests {
 
         let (width, height) = (256, 192);
         for quad in [[0, 1, 1, 2], [2, 1, 1, 0], [1, 0, 2, 1], [1, 2, 0, 1]] {
-            let cfa = crate::cfa::Cfa::bayer(quad).expect("Bayer pattern");
-            let green_at_origin = cfa.colour_at(0, 0) == crate::cfa::GREEN;
+            let cfa = mosaic::cfa::Cfa::bayer(quad).expect("Bayer pattern");
+            let green_at_origin = cfa.colour_at(0, 0) == mosaic::cfa::GREEN;
             let diagonal = if green_at_origin { 1.0 } else { -1.0 };
             let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
             let scene = |x: usize, y: usize| {
@@ -3345,7 +3345,7 @@ mod tests {
                 .collect();
 
             let error_at = |colour: f32| {
-                let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
                 pollster::block_on(super::denoise_with(
                     gpu,
                     galosh,
@@ -3355,7 +3355,7 @@ mod tests {
                     Amounts { luma: 0.0, colour },
                     fit,
                 ));
-                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(
+                let rgb = pollster::block_on(mosaic::demosaic::demosaic_plane(
                     gpu,
                     rcd,
                     &uploaded,
@@ -3368,7 +3368,7 @@ mod tests {
                     },
                 ))
                 .expect("the grey picture");
-                let margin = crate::demosaic::MARGIN as usize;
+                let margin = mosaic::demosaic::MARGIN as usize;
                 let mut sums = [0.0f64; 7];
                 for y in height / 2 + margin..height - margin {
                     for x in margin..width - margin {
@@ -3453,7 +3453,7 @@ mod tests {
             })
             .collect();
 
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -3483,12 +3483,12 @@ mod tests {
 
     /// The pattern every synthetic frame here is written in, `frame_with_noise`'s four levels
     /// being indexed by the same 2x2 slot.
-    fn rggb() -> crate::cfa::Cfa {
-        crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern")
+    fn rggb() -> mosaic::cfa::Cfa {
+        mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern")
     }
 
-    fn xtrans() -> crate::cfa::Cfa {
-        crate::cfa::tests::parse(crate::cfa::tests::XTRANS, 6, 6)
+    fn xtrans() -> mosaic::cfa::Cfa {
+        mosaic::cfa::parse(mosaic::cfa::XTRANS, 6, 6)
     }
 
     /// Xorshift from `seed`, uniform on [0, 1).
@@ -3502,7 +3502,7 @@ mod tests {
     }
 
     /// The mosaic back on the host, which is where these tests compare frames.
-    fn read(gpu: &gpu::Gpu, mosaic: &crate::condition::Mosaic) -> Vec<f32> {
+    fn read(gpu: &gpu::Gpu, mosaic: &mosaic::condition::Mosaic) -> Vec<f32> {
         pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
     }
 
@@ -3556,7 +3556,7 @@ mod tests {
             .unwrap_or_else(|held| held.into_inner());
         let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
-        let cfa = crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
+        let cfa = mosaic::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
         assert!(!cfa.is_bayer() && super::filters(&cfa));
         let (width, height) = (64, 64);
         let level = 0.25;
@@ -3568,7 +3568,7 @@ mod tests {
         };
         for colour in [0.0, 3.0] {
             let mosaic =
-                crate::condition::Mosaic::upload(gpu, &vec![level; width * height], width, height);
+                mosaic::condition::Mosaic::upload(gpu, &vec![level; width * height], width, height);
             pollster::block_on(super::denoise_with(
                 gpu,
                 galosh,
@@ -3604,7 +3604,7 @@ mod tests {
                 *value += 0.02;
             }
         }
-        let original = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let original = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         let fit = pollster::block_on(super::fit(gpu, galosh, &original, &rggb(), UNGAINED));
         for colour in [1.0, 1.35, 2.0, 3.0] {
             let uploaded = original.duplicate(gpu);
@@ -3653,7 +3653,7 @@ mod tests {
         let gpu = gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (256, 192);
-        let source = crate::condition::Mosaic::upload(gpu, &frame(width, height), width, height);
+        let source = mosaic::condition::Mosaic::upload(gpu, &frame(width, height), width, height);
         let fit = pollster::block_on(super::fit(gpu, galosh, &source, &rggb(), UNGAINED));
         let at = |colour| {
             let mosaic = source.duplicate(gpu);
@@ -3733,7 +3733,7 @@ mod tests {
             worst
         };
         for luma in [0.8f32, 0.992] {
-            let mosaic = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let mosaic = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             pollster::block_on(denoise(
                 gpu,
                 galosh,
@@ -3768,7 +3768,7 @@ mod tests {
 
         let (width, height) = (256, 192);
         let noisy = frame(width, height);
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -3837,7 +3837,7 @@ mod tests {
             let (pw, ph) = cfa.period();
             let mut previous = f64::INFINITY;
             for colour in [1.2, 1.8, 2.4, 3.0] {
-                let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
                 pollster::block_on(denoise(
                     gpu,
                     galosh,
@@ -3906,7 +3906,7 @@ mod tests {
                     level + bell * deviation(colour, level)
                 })
                 .collect();
-            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             pollster::block_on(denoise(
                 gpu,
                 galosh,
@@ -3973,7 +3973,7 @@ mod tests {
                 (level + bright + (uniform() + uniform() - 1.0) * 0.05).clamp(0.0, 1.0)
             })
             .collect();
-        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
         pollster::block_on(denoise(
             gpu,
             galosh,
@@ -4028,9 +4028,9 @@ mod tests {
         };
         let gains = [1.0, 0.5, 0.7];
         for cfa in [rggb(), xtrans()] {
-            let measured = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let measured = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             let fit = pollster::block_on(denoise(gpu, galosh, &measured, &cfa, gains, amounts));
-            let given = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let given = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             pollster::block_on(super::denoise_with(
                 gpu, galosh, &given, &cfa, gains, amounts, fit,
             ));
@@ -4064,10 +4064,10 @@ mod tests {
             colour: 0.0,
         };
         for cfa in [rggb(), xtrans()] {
-            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let uploaded = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
             let fit = pollster::block_on(super::fit(gpu, galosh, &uploaded, &cfa, gains));
             for given in [true, false] {
-                let denoised = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                let denoised = mosaic::condition::Mosaic::upload(gpu, &noisy, width, height);
                 match given {
                     true => pollster::block_on(super::denoise_with(
                         gpu, galosh, &denoised, &cfa, gains, nothing, fit,
@@ -4095,7 +4095,7 @@ mod tests {
     fn every_site_transform_is_orthonormal() {
         let patterns = [
             rggb(),
-            crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern"),
+            mosaic::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern"),
             xtrans(),
         ];
         for cfa in patterns {

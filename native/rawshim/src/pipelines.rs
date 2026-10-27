@@ -6,14 +6,14 @@ use gpu::Gpu;
 pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::grade::device(gpu).build_deferred_pipelines();
     crate::base::device(gpu);
-    crate::condition::device(gpu);
-    crate::demosaic::device(gpu);
+    mosaic::condition::device(gpu);
+    mosaic::demosaic::device(gpu);
     crate::dust::device(gpu);
     crate::dust_find::device(gpu);
     crate::galosh::device(gpu);
-    crate::highlight::device(gpu);
+    mosaic::highlight::device(gpu);
     crate::linearise::device(gpu);
-    crate::lslcd::device(gpu);
+    mosaic::lslcd::device(gpu);
     crate::planes::kernel(gpu);
     crate::pmrid::device(gpu);
     crate::repair::averaging(gpu);

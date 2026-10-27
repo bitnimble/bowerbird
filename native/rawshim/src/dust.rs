@@ -398,7 +398,7 @@ pub struct Sensor {
     ///
     /// Read through [`Sensor::picture`], never directly: this comes out of the file.
     pub crop: (usize, usize, usize, usize),
-    pub cfa: crate::cfa::Cfa,
+    pub cfa: mosaic::cfa::Cfa,
     pub aperture: f32,
     /// How long [`Sensor::picture`]'s diagonal is across the silicon, in millimetres, which with its
     /// diagonal in photosites is the pitch a particle's shadow is predicted in.
@@ -514,7 +514,7 @@ fn working(sensor: &Sensor) -> (usize, usize) {
 /// None where the frame has no adapter, no usable aperture, or is too small to band-pass.
 pub async fn detect(
     gpu: &'static gpu::Gpu,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     sensor: &Sensor,
 ) -> Option<Vec<Spot>> {
     // Ahead of everything else: a frame this wide open has no answer worth a sweep of the device.
@@ -756,7 +756,7 @@ impl Dust {
 /// window goes through [`apply`].
 pub async fn run(
     gpu: &'static gpu::Gpu,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     sensor: &Sensor,
     wanted: &Wanted<'_>,
 ) -> Option<Vec<Spot>> {
@@ -789,7 +789,7 @@ pub async fn run(
 /// on the right rows of a band or a loupe tile.
 pub fn apply(
     gpu: &'static gpu::Gpu,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     known: &Known<'_>,
     origin: (usize, usize),
 ) {
@@ -829,7 +829,7 @@ struct Params {
 pub fn correct(
     gpu: &gpu::Gpu,
     kernels: &Dust,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     spots: &[Spot],
     removal: Removal,
     origin: (usize, usize),
@@ -906,7 +906,7 @@ mod tests {
             width: edge,
             height: edge,
             crop: (0, 0, edge, edge),
-            cfa: crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
+            cfa: mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
             aperture: WIDEST_USEFUL_APERTURE,
             diagonal_mm: Extent::exactly(36.0 * std::f64::consts::SQRT_2),
         }

@@ -148,6 +148,34 @@ pub fn srgb_oetf(value: f64) -> f64 {
     }
 }
 
+/// `prelude.slang`'s `GAMUT_FLOOR`, held against the shader by
+/// `the_gamut_floor_is_the_one_the_shader_declares`: where the grade holds a colour's lowest
+/// channel, as a fraction of its luma.
+pub const GAMUT_FLOOR: f64 = 0.02;
+
+/// `prelude.slang`'s `in_gamut` on the host, for the tests that hold a pass to it: the lowest
+/// channel eased into [`GAMUT_FLOOR`] of the luma through a knee at twice that, the luma kept.
+pub fn in_gamut(v: [f64; 3]) -> [f64; 3] {
+    // The positive part's luma, as the shader takes it: a negative channel is why this is reached
+    // and green's weight is the largest of the three, so the triple's own luma subtracts the
+    // out-of-gamut channel from the in-gamut ones. `prelude.slang` carries the measurement.
+    let luma: f64 = (0..3).map(|c| LUMA[c] * v[c].max(0.0)).sum();
+    if luma <= 0.0 {
+        return [0.0; 3];
+    }
+    let x = v.iter().copied().fold(f64::INFINITY, f64::min) / luma;
+    if x >= 2.0 * GAMUT_FLOOR {
+        return v;
+    }
+    let held = GAMUT_FLOOR * (1.0 + ((x - 2.0 * GAMUT_FLOOR) / GAMUT_FLOOR).exp());
+    let scale = (1.0 - held) / (1.0 - x);
+    let pulled: [f64; 3] = std::array::from_fn(|c| luma + (v[c] - luma) * scale);
+    // The mix keeps the triple's weighted mean, not the positive part's, so the target is restored
+    // by a uniform scale - a brightness rather than a hue, and one the floor is invariant under.
+    let achieved: f64 = (0..3).map(|c| LUMA[c] * pulled[c]).sum();
+    pulled.map(|v| v * luma / achieved.max(1e-12))
+}
+
 /// A 3x3 inverse, by solving the matrix against each basis vector. None when singular.
 pub fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let columns: [[f64; 3]; 3] = [
@@ -162,6 +190,91 @@ pub fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 
 #[cfg(test)]
 mod tests {
+    use super::{GAMUT_FLOOR, LUMA, in_gamut};
+
+    /// The floor is stated twice, and a host copy that drifted would have two tests holding two
+    /// passes to two different knees.
+    #[test]
+    fn the_gamut_floor_is_the_one_the_shader_declares() {
+        const SOURCE: &str = include_str!("../../../slang/prelude.slang");
+        let line = format!("public static const float GAMUT_FLOOR = {GAMUT_FLOOR};");
+        assert!(
+            SOURCE.contains(&line),
+            "prelude.slang does not say `{line}`"
+        );
+    }
+
+    /// The knee is the identity inside it, continuous and C1 at it, and holds the floor past it.
+    ///
+    /// **The luma it keeps is the positive part's**, which is the whole of what a negative channel
+    /// changes here. Held against the triple's own, a colour far outside the gamut is pulled towards
+    /// a grey its out-of-gamut channel darkened - green's weight being the largest of the three -
+    /// and the further out it is the darker that grey. The pane in `prelude.slang`'s measurement
+    /// lost five and a half times its brightness that way, and the ratio the correction's strength
+    /// divides by carried the photosites' noise with it.
+    #[test]
+    fn the_knee_holds_the_floor_without_a_step() {
+        let luma = |v: [f64; 3]| -> f64 { (0..3).map(|c| LUMA[c] * v[c].max(0.0)).sum() };
+        let inside = [0.5, 0.1, 0.05];
+        assert_eq!(
+            in_gamut(inside),
+            inside,
+            "a colour inside the knee is untouched"
+        );
+        let mut last = in_gamut([0.5, 0.1, 0.06])[2];
+        for step in 1..=200 {
+            let v = [0.5, 0.1, 0.06 - 0.001 * f64::from(step)];
+            let held = in_gamut(v);
+            assert!(
+                (luma(held) - luma(v)).abs() < 1e-9,
+                "the luma moved at {v:?}"
+            );
+            let lowest = held.iter().copied().fold(f64::INFINITY, f64::min);
+            assert!(
+                lowest >= GAMUT_FLOOR * luma(v) - 1e-9,
+                "under the floor at {v:?}: {held:?}"
+            );
+            // Falls to the floor and then sits on it, rather than falling forever. The floor is a
+            // fraction of the colour's own luma and that luma is now held, so a colour pushed
+            // further out keeps the channel where it is instead of carrying it down - which is the
+            // whole of what was wrong. What must not happen is a *step*, in either direction.
+            //
+            // It does creep up on the way, by 8.4e-7 over the whole sweep, because the rescale that
+            // restores the luma grows as the colour goes further out while the floor it multiplies
+            // is already flat. Measured rather than allowed for: the bound is ten times it.
+            assert!(
+                held[2] - last < 1e-5 && last - held[2] < 0.002,
+                "a step at {v:?}"
+            );
+            last = held[2];
+        }
+    }
+
+    /// What the positive part buys, stated as the property the picture actually needed.
+    ///
+    /// **A colour's brightness must not fall as it is pushed further outside the gamut.** The rule
+    /// gives up saturation, which is its whole purpose; giving up brightness as well is what put a
+    /// stained glass pane at a twentieth of diffuse white where the body that shot it rendered it
+    /// near white. Swept over a blue leaving the hull, the held colour's own positive luma is flat
+    /// where the triple's falls away.
+    #[test]
+    fn a_colour_further_outside_the_gamut_does_not_come_back_darker() {
+        let bright = |v: [f64; 3]| -> f64 { (0..3).map(|c| LUMA[c] * v[c].max(0.0)).sum() };
+        let mut least = f64::INFINITY;
+        let mut most: f64 = 0.0;
+        for step in 0..=200 {
+            // Green driven further negative, which is what a camera matrix does to a narrow blue.
+            let v = [0.02, -0.002 * f64::from(step), 0.9];
+            let held = bright(in_gamut(v));
+            least = least.min(held);
+            most = most.max(held);
+        }
+        assert!(
+            most / least < 1.02,
+            "the held brightness ran from {least} to {most} as the colour left the gamut",
+        );
+    }
+
     #[test]
     fn solve_row_reports_a_singular_system() {
         let singular = [[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [3.0, 6.0, 9.0]];

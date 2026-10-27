@@ -69,12 +69,12 @@ fn every_stage_hands_its_working_planes_back() {
     match rawshim::galosh::device(gpu) {
         None => eprintln!("SKIPPED: this adapter has no room for the noise fit's workgroup."),
         Some(kernels) => gives_it_back(gpu, "denoise", || {
-            let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
+            let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
             pollster::block_on(rawshim::galosh::denoise(
                 gpu,
                 kernels,
                 &mosaic,
-                &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+                &mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
                 rawshim::galosh::UNGAINED,
                 Amounts::from_sliders(50.0, 50.0),
             ));
@@ -82,15 +82,15 @@ fn every_stage_hands_its_working_planes_back() {
     }
 
     // RCD's nine planes, which the tiled walk takes per tile rather than once.
-    match rawshim::demosaic::device(gpu) {
+    match mosaic::demosaic::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build RCD."),
         Some(rcd) => gives_it_back(gpu, "demosaic", || {
-            let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
-            pollster::block_on(rawshim::demosaic::demosaic_plane(
+            let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
+            pollster::block_on(mosaic::demosaic::demosaic_plane(
                 gpu,
                 rcd,
                 &mosaic,
-                &rawshim::cfa::Cfa::bayer(CFA).unwrap(),
+                &mosaic::cfa::Cfa::bayer(CFA).unwrap(),
                 |plane| plane.len(),
             ));
         }),

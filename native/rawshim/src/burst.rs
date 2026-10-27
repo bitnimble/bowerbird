@@ -151,11 +151,11 @@ mod tests {
 
     fn mosaic(
         gpu: &'static gpu::Gpu,
-        cfa: &crate::cfa::Cfa,
+        cfa: &mosaic::cfa::Cfa,
         width: usize,
         height: usize,
         displacement: [f32; 2],
-    ) -> crate::condition::Mosaic {
+    ) -> mosaic::condition::Mosaic {
         let samples: Vec<f32> = (0..height)
             .flat_map(|y| {
                 (0..width).map(move |x| {
@@ -167,7 +167,7 @@ mod tests {
                 })
             })
             .collect();
-        crate::condition::Mosaic::upload(gpu, &samples, width, height)
+        mosaic::condition::Mosaic::upload(gpu, &samples, width, height)
     }
 
     fn floats(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, count: usize) -> Vec<f32> {
@@ -192,7 +192,7 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let (width, height) = (768, 640);
         let reference = mosaic(gpu, &cfa, width, height, [0.0, 0.0]);
         let translated = mosaic(gpu, &cfa, width, height, [3.4, -12.7]);
@@ -240,7 +240,7 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let (width, height) = (768, 640);
         let reference = mosaic(gpu, &cfa, width, height, [0.0, 0.0]);
         let one_site = mosaic(gpu, &cfa, width, height, [0.0, -1.0]);
@@ -273,8 +273,8 @@ mod tests {
         };
         let (width, height) = (768, 640);
         let samples = vec![0.25; width * height];
-        let reference = crate::condition::Mosaic::upload(gpu, &samples, width, height);
-        let frame = crate::condition::Mosaic::upload(gpu, &samples, width, height);
+        let reference = mosaic::condition::Mosaic::upload(gpu, &samples, width, height);
+        let frame = mosaic::condition::Mosaic::upload(gpu, &samples, width, height);
         let pyramid = align::Pyramid::of(gpu, &reference, Exposure::UNCLIPPED);
         let field = align::measure(
             gpu,

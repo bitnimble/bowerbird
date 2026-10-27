@@ -45,7 +45,7 @@ fn main() {
         eprintln!("no GPU adapter");
         return;
     };
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         eprintln!("the demosaic would not build");
         return;
     };
@@ -93,7 +93,7 @@ fn main() {
         // RGGB, which is what the majority of the library's sensors use. The algorithm is
         // phase-agnostic, so the choice only decides which samples survive.
         let quad = [0u32, 1, 1, 2];
-        let cfa = rawshim::cfa::Cfa::bayer(quad).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer(quad).expect("RGGB is a pattern");
         let colour_at = |r: usize, c: usize| usize::from(cfa.colour_at(r, c));
 
         // Poisson-Gaussian noise on the mosaic, at the shape `galosh::NoiseModel` describes: the
@@ -133,9 +133,9 @@ fn main() {
             }
         }
 
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
         let started = std::time::Instant::now();
-        let Some(out) = pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let Some(out) = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,

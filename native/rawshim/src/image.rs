@@ -1636,7 +1636,7 @@ mod tests {
             reduction: 3,
             ..noise
         };
-        let cfa = crate::cfa::tests::parse(crate::cfa::tests::XTRANS, 6, 6);
+        let cfa = mosaic::cfa::parse(mosaic::cfa::XTRANS, 6, 6);
         let mut least = [usize::MAX; 3];
         for row in 0..6 {
             for col in 0..6 {

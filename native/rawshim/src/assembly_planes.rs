@@ -159,7 +159,7 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let Some(rcd) = crate::demosaic::device(gpu) else {
+        let Some(rcd) = mosaic::demosaic::device(gpu) else {
             return;
         };
         let Some(base) = crate::base::device(gpu) else {
@@ -169,7 +169,7 @@ mod tests {
         const SIDE: usize = 384;
         const SIGNAL: f64 = 0.25;
         const SIGMA: f64 = 0.02;
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
         // Uniform, scaled to one sigma exactly: what is asserted is a scale rather than a tail.
         let mosaic: Vec<f32> = (0..SIDE * SIDE)
             .map(|at| {
@@ -183,8 +183,8 @@ mod tests {
                 (SIGNAL + SIGMA * 12f64.sqrt() * u) as f32
             })
             .collect();
-        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, SIDE, SIDE);
-        let at = crate::demosaic::Placement {
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &mosaic, SIDE, SIDE);
+        let at = mosaic::demosaic::Placement {
             stride: units::px::Span::exact(SIDE),
             crop: units::px::Rect::exact(0, 0, SIDE, SIDE),
             dest: units::px::At::ORIGIN,
@@ -192,18 +192,18 @@ mod tests {
             orientation: 0,
             reduce: 1,
         };
-        let frame = crate::demosaic::frame_buffer(gpu, SIDE * SIDE);
+        let frame = mosaic::demosaic::frame_buffer(gpu, SIDE * SIDE);
         // The identity, so what comes out is the mosaic's own channels and the number below is the
         // reconstruction rather than a camera's mixing of it.
         let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let colour = crate::demosaic::Colour {
+        let colour = mosaic::demosaic::Colour {
             matrix: identity,
             ceiling: [1.0; 3],
         };
-        let (_shape, shapes) = crate::demosaic::shape_group(gpu, rcd, &cfa, &uploaded, 0);
-        let field = crate::highlight::measure(gpu, &uploaded, &cfa, colour.ceiling)
+        let (_shape, shapes) = mosaic::demosaic::shape_group(gpu, rcd, &cfa, &uploaded, 0);
+        let field = mosaic::highlight::measure(gpu, &uploaded, &cfa, colour.ceiling)
             .expect("the highlight field");
-        pollster::block_on(crate::demosaic::demosaic_into(
+        pollster::block_on(mosaic::demosaic::demosaic_into(
             gpu,
             rcd,
             &uploaded,
@@ -215,7 +215,7 @@ mod tests {
             &shapes,
         ))
         .expect("the demosaic runs");
-        let demosaiced = pollster::block_on(crate::demosaic::read_frame(gpu, &frame, SIDE * SIDE))
+        let demosaiced = pollster::block_on(mosaic::demosaic::read_frame(gpu, &frame, SIDE * SIDE))
             .expect("the frame reads back");
         let resident = colour::resident::Resident::upload(gpu, &demosaiced, SIDE, SIDE);
 
@@ -232,7 +232,7 @@ mod tests {
                 .expect("the resize runs");
             let samples = pollster::block_on(small.host()).expect("the plane reads back");
             // Past RCD's own margin, which is border-filled rather than reconstructed.
-            let skip = (crate::demosaic::MARGIN as usize * out).div_ceil(SIDE) + 2;
+            let skip = (mosaic::demosaic::MARGIN as usize * out).div_ceil(SIDE) + 2;
             let mut levels = Vec::new();
             let mut plain = Vec::new();
             for y in skip..out - skip {

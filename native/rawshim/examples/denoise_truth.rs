@@ -109,7 +109,7 @@ fn main() {
         counts[0], counts[1], counts[2]
     );
 
-    let window = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
+    let window = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &window, &cfa, gains));
     assert!(
         fit.usable(),
@@ -139,7 +139,7 @@ fn main() {
             other => {
                 assert_eq!(other, "galosh", "{other} is not a denoiser");
                 let amounts: Amounts = Detail::AUTO.amounts(Some(fit));
-                let mosaic = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
+                let mosaic = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
                 pollster::block_on(rawshim::galosh::denoise_with(
                     gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
                 ));
@@ -324,15 +324,15 @@ fn median(values: &[f32]) -> f32 {
 
 fn write_png(
     gpu: &'static gpu::Gpu,
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     samples: &[f32],
     side: usize,
     lift: f32,
     to: &str,
 ) {
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, side, side);
-    let rgb = pollster::block_on(rawshim::demosaic::demosaic_plane(
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, side, side);
+    let rgb = pollster::block_on(mosaic::demosaic::demosaic_plane(
         gpu,
         rcd,
         &uploaded,

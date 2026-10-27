@@ -78,7 +78,7 @@ fn the_kernel_divides_the_shadow_it_was_given_back_out() {
         "the planted shadow is only {deepest}, so nothing is being tested"
     );
 
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &before, width, height);
     dust::correct(
         gpu,
         dust::device(gpu),
@@ -126,7 +126,7 @@ fn sized(edge: usize) -> rawshim::dust::Sensor {
         width: edge,
         height: edge,
         crop: (0, 0, edge, edge),
-        cfa: rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
+        cfa: mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
         diagonal_mm: units::px::Extent::exactly(36.0 * std::f64::consts::SQRT_2),
     }
@@ -172,7 +172,7 @@ fn found_in(
 ) -> Option<Vec<Spot>> {
     let gpu = gpu::device()?;
     let samples = planted(plane, spots);
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
     pollster::block_on(rawshim::dust::detect(gpu, &mosaic, sensor))
 }
 
@@ -258,7 +258,7 @@ fn a_frame_that_is_not_square_answers_the_right_way_round() {
         width: 1200,
         height: 800,
         crop: (0, 0, 1200, 800),
-        cfa: rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
+        cfa: mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
         diagonal_mm: rawshim::dust::FULL_FRAME_DIAGONAL_MM,
     };
@@ -430,7 +430,7 @@ fn an_elongated_particle_is_divided_out_at_its_own_angle() {
     };
 
     let before = shadowed(width, height, &spot, LEVEL);
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &before, width, height);
     dust::correct(
         gpu,
         dust::device(gpu),
@@ -469,7 +469,7 @@ fn a_spot_below_the_reader_bar_is_left_alone() {
     };
     let before = shadowed(width, height, &spot, 0.5);
 
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &before, width, height);
     dust::correct(
         gpu,
         dust::device(gpu),
@@ -502,7 +502,7 @@ fn a_window_corrects_where_the_frame_would_have() {
     let whole = shadowed(width, height, &spot, LEVEL);
 
     let correct = |samples: &[f32], w: usize, h: usize, origin: (usize, usize)| {
-        let mosaic = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
+        let mosaic = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
         dust::correct(
             gpu,
             dust::device(gpu),
@@ -558,7 +558,7 @@ fn no_intensity_is_no_change_at_all() {
     let spot = a_spot(32.0, 32.0);
     let before = shadowed(width, height, &spot, 0.5);
 
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &before, width, height);
     dust::correct(
         gpu,
         dust::device(gpu),

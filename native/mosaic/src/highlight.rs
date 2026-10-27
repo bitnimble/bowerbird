@@ -16,7 +16,7 @@ const LEVELS: usize = 5;
 
 fn site(cfa: &crate::cfa::Cfa) -> usize {
     let (period_w, period_h) = cfa.period();
-    crate::decode_rawler::reduction(cfa).unwrap_or(period_w.max(period_h))
+    cfa.reduction().unwrap_or(period_w.max(period_h))
 }
 
 /// Photosites around a place that its field depends on: every level's cell above level 0 lends
@@ -32,7 +32,7 @@ pub fn grid(cfa: &crate::cfa::Cfa) -> usize {
     CELL_SITES * site(cfa) << (LEVELS - 1)
 }
 
-/// What `measure` writes, for `wgsl_layout`, which holds it against the struct the shader declares.
+/// What `measure` writes, for `every_uniform_is_the_size_its_shader_reads`, which holds it against the struct the shader declares.
 #[cfg(test)]
 pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
@@ -53,7 +53,7 @@ struct Params {
     ceiling: [f32; 4],
 }
 
-pub(crate) struct Kernels {
+pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     seed: wgpu::ComputePipeline,
     seed_xtrans: wgpu::ComputePipeline,
@@ -61,7 +61,7 @@ pub(crate) struct Kernels {
     pull: wgpu::ComputePipeline,
 }
 
-pub(crate) fn device(gpu: &'static Gpu) -> Option<&'static Kernels> {
+pub fn device(gpu: &'static Gpu) -> Option<&'static Kernels> {
     static BUILT: gpu::Cache<Option<Kernels>> = gpu::Cache::new();
     BUILT.get(gpu, || Kernels::new(gpu)).as_ref()
 }

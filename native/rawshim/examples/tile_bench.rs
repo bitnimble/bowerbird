@@ -9,7 +9,7 @@ fn main() {
     let gpu = gpu::device().expect("an adapter");
     let galosh = rawshim::galosh::device(gpu).expect("the denoise");
     let amounts = rawshim::galosh::Amounts::from_sliders(40.0, 40.0);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
 
     println!(
         "{:>7}  {:>9}  {:>9}  {:>9}",
@@ -26,7 +26,7 @@ fn main() {
                 0.25 + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.02
             })
             .collect();
-        let mosaic = rawshim::condition::Mosaic::upload(gpu, &mosaic, side, side);
+        let mosaic = mosaic::condition::Mosaic::upload(gpu, &mosaic, side, side);
 
         let started = std::time::Instant::now();
         pollster::block_on(rawshim::galosh::denoise(

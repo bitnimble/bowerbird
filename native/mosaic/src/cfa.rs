@@ -149,6 +149,21 @@ impl Cfa {
         })
     }
 
+    /// Photosites a side in the smallest block of this pattern that holds every colour, which is the
+    /// factor a frame skipping the demosaic reduces by.
+    ///
+    /// **2 and 3 rather than one number, because the two patterns differ in exactly this.** A Bayer
+    /// 2x2 carries a red, a blue and two greens; no 2x2 of a 6x6 carries all three, and X-Trans's
+    /// smallest window that does is the 3x3 - which every one of them is
+    /// (`every_three_by_three_window_holds_every_colour`). None for a pattern with no such block,
+    /// which takes the demosaic at every size.
+    pub fn reduction(&self) -> Option<usize> {
+        if self.is_bayer() {
+            return Some(2);
+        }
+        self.is_xtrans().then_some(3)
+    }
+
     /// A region lifted out of the frame keeps the frame's colours only if its origin sits on a whole
     /// period; otherwise every photosite in it is relabelled.
     pub fn aligned(&self, left: usize, top: usize) -> bool {
@@ -248,32 +263,33 @@ pub struct Shape {
     pad: [u32; 2],
 }
 
-/// What [`Cfa::shape`] writes, for `wgsl_layout`, which holds it against the struct the module
+/// What [`Cfa::shape`] writes, for `every_uniform_is_the_size_its_shader_reads`, which holds it against the struct the module
 /// declares.
 #[cfg(test)]
 pub(crate) fn shape_block() -> usize {
     std::mem::size_of::<Shape>()
 }
 
+/// The pattern `rawler/data/cameras/fuji/x-h2.toml` carries, which is the phase the X-H2 and the
+/// GFX 100 write, as [`parse`] reads it.
+pub const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";
+
+/// A pattern written as its colours' letters, row-major: `"RGGB"` at 2 by 2.
+pub fn parse(pattern: &str, width: usize, height: usize) -> Cfa {
+    let colours: Vec<u8> = pattern
+        .chars()
+        .map(|c| match c {
+            'R' => RED,
+            'G' => GREEN,
+            _ => BLUE,
+        })
+        .collect();
+    Cfa::new(width, height, &colours).expect("a pattern this module can carry")
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    /// The pattern `rawler/data/cameras/fuji/x-h2.toml` carries, which is the phase the X-H2 and the
-    /// GFX 100 write.
-    pub(crate) const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";
-
-    pub(crate) fn parse(pattern: &str, width: usize, height: usize) -> Cfa {
-        let colours: Vec<u8> = pattern
-            .chars()
-            .map(|c| match c {
-                'R' => RED,
-                'G' => GREEN,
-                _ => BLUE,
-            })
-            .collect();
-        Cfa::new(width, height, &colours).expect("a pattern this module can carry")
-    }
 
     #[test]
     fn a_bayer_quad_is_recognised_in_every_phase() {

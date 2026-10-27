@@ -34,7 +34,7 @@ fn main() {
     let folder = std::path::Path::new(weights);
     let manifest = std::fs::read_to_string(folder.join("weights.json")).expect("weights.json");
     let bytes = std::fs::read(folder.join("weights.bin")).expect("weights.bin");
-    let rggb = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let rggb = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     // One at a time: each holds its tile's tensors, and every arm's at once exceeds a 10GB card.
     let arms = || {
         Arm::ALL.iter().filter_map(|&arm| {

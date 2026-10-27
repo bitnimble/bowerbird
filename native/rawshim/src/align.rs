@@ -3,9 +3,9 @@
 //! Each block sees every Bayer filter once, so odd-photosite shifts remain comparable. The same
 //! sensor-anchored tiles measure whole-site tripod offsets and fractional handheld offsets.
 
-use crate::condition::Mosaic;
 use gpu::dispatch::Whole;
 use gpu::{Buffer, Gpu};
+use mosaic::condition::Mosaic;
 use units::px::{Sensor, Span};
 
 pub const TILE: Span<Sensor> = Span::exact(64);
@@ -78,7 +78,7 @@ impl Exposure {
         ceilings: [f32::INFINITY; 4],
     };
 
-    pub fn of(cfa: &crate::cfa::Cfa, ceiling: [f32; 3], gain: f32) -> Exposure {
+    pub fn of(cfa: &mosaic::cfa::Cfa, ceiling: [f32; 3], gain: f32) -> Exposure {
         let at = |row, column| ceiling[usize::from(cfa.colour_at(row, column)).min(2)];
         Exposure {
             gain,

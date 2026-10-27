@@ -127,7 +127,7 @@ impl Shake {
 pub struct Burst {
     pub width: usize,
     pub height: usize,
-    pub cfa: crate::cfa::Cfa,
+    pub cfa: mosaic::cfa::Cfa,
     pub shakes: Vec<Shake>,
     pub subject: Option<Subject>,
     pub focus: Option<Focus>,
@@ -342,14 +342,14 @@ mod tests {
         let burst = Burst {
             width: WIDTH,
             height: HEIGHT,
-            cfa: crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
+            cfa: mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
             shakes: vec![Shake::default(), case.shake],
             subject: None,
             focus: None,
         };
         let scene = Scene::new(7);
         let upload = |frame, exposure| {
-            crate::condition::Mosaic::upload(
+            mosaic::condition::Mosaic::upload(
                 gpu,
                 &burst.photograph(&scene, frame, exposure, case.noise),
                 WIDTH,
@@ -622,7 +622,7 @@ mod tests {
                 }
             })
             .collect();
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let burst = Burst {
             width: WIDTH,
             height: HEIGHT,
@@ -634,7 +634,7 @@ mod tests {
         let scene = Scene::new(7);
         let mosaics: Vec<_> = (0..frames)
             .map(|frame| {
-                crate::condition::Mosaic::upload(
+                mosaic::condition::Mosaic::upload(
                     gpu,
                     &burst.photograph(&scene, frame, light(frame), noise),
                     WIDTH,
@@ -672,7 +672,7 @@ mod tests {
             Some(_) => crate::merge::Weights::FOCUS,
             None => crate::merge::Weights::MOMENT,
         };
-        let rcd = crate::demosaic::device(gpu).expect("RCD on the device");
+        let rcd = mosaic::demosaic::device(gpu).expect("RCD on the device");
         let merge = Merge::new(gpu, rcd, frame(0), pyramid.sites(), grid, frames, weights)
             .expect("a merge of a Bayer burst");
         for index in 1..frames {
@@ -693,7 +693,7 @@ mod tests {
             merge.add(gpu, frame(index), &field).expect("a frame added");
         }
         let merged = read(gpu, &merge.settle(gpu), grid.width * grid.height * 3);
-        let rcd = pollster::block_on(crate::demosaic::demosaic_plane(
+        let rcd = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &mosaics[0],
@@ -834,7 +834,7 @@ mod tests {
             return;
         };
         let quad = [0, 1, 1, 2];
-        let cfa = crate::cfa::Cfa::bayer(quad).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer(quad).unwrap();
         let burst = Burst {
             width: WIDTH,
             height: HEIGHT,
@@ -846,7 +846,7 @@ mod tests {
         let scene = Scene::new(7);
         let mosaics: Vec<_> = (0..2)
             .map(|frame| {
-                crate::condition::Mosaic::upload(
+                mosaic::condition::Mosaic::upload(
                     gpu,
                     &burst.photograph(&scene, frame, 1.0, None),
                     WIDTH,
@@ -873,7 +873,7 @@ mod tests {
             scale: 2,
         };
         let pyramid = align::Pyramid::of(gpu, &mosaics[0], Exposure::UNCLIPPED);
-        let rcd = crate::demosaic::device(gpu).expect("RCD on the device");
+        let rcd = mosaic::demosaic::device(gpu).expect("RCD on the device");
         let merge = Merge::new(
             gpu,
             rcd,
@@ -898,7 +898,7 @@ mod tests {
         merge.add(gpu, frame(1), &field).expect("a frame added");
         let settled = merge.settle(gpu);
         let merged = read(gpu, &settled, grid.width * grid.height * 3);
-        let prior = pollster::block_on(crate::demosaic::demosaic_plane(
+        let prior = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &mosaics[0],

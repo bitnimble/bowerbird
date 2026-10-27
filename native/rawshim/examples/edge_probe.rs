@@ -7,7 +7,7 @@
 //! Writes the noisy input, the denoised output, and the residual against the clean scene
 //! (amplified) as PGMs, plus a per-slot residual so a CFA-slot imbalance shows as such.
 
-use rawshim::condition::Mosaic;
+use mosaic::condition::Mosaic;
 use rawshim::galosh::{Amounts, denoise};
 
 const WIDTH: usize = 1024;
@@ -77,7 +77,7 @@ fn main() {
         gpu,
         galosh,
         &uploaded,
-        &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+        &mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
         rawshim::galosh::UNGAINED,
         Amounts::from_sliders(luminance, colour),
     ));

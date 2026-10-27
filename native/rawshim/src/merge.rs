@@ -5,11 +5,11 @@
 //! reference's photosites or a finer one, the same arithmetic either way.
 
 use crate::align::{Exposure, Field};
-use crate::condition::Mosaic;
 use crate::galosh::NoiseModel;
 use gpu::compute::Kernel;
 use gpu::dispatch::Whole;
 use gpu::{Buffer, Gpu, Recording};
+use mosaic::condition::Mosaic;
 use units::px::{At, Sensor};
 
 #[repr(C)]
@@ -131,7 +131,7 @@ pub struct Grid {
 /// One frame as the merge reads it.
 pub struct Frame<'a> {
     pub mosaic: &'a Mosaic,
-    pub cfa: &'a crate::cfa::Cfa,
+    pub cfa: &'a mosaic::cfa::Cfa,
     pub origin: At<Sensor>,
     pub exposure: Exposure,
     pub noise: NoiseModel,
@@ -370,7 +370,7 @@ fn record(
     );
 }
 
-fn colours_of(cfa: &crate::cfa::Cfa) -> [u32; 4] {
+fn colours_of(cfa: &mosaic::cfa::Cfa) -> [u32; 4] {
     [
         u32::from(cfa.colour_at(0, 0)),
         u32::from(cfa.colour_at(0, 1)),
@@ -384,7 +384,7 @@ impl Merge {
     /// reference's alignment pyramid's site luma.
     pub fn new(
         gpu: &'static Gpu,
-        rcd: &crate::demosaic::Rcd,
+        rcd: &mosaic::demosaic::Rcd,
         reference: Frame,
         luma: &Buffer,
         grid: Grid,
@@ -394,7 +394,7 @@ impl Merge {
         if !reference.cfa.is_bayer() {
             return None;
         }
-        let prior = crate::demosaic::demosaic_resident(gpu, rcd, reference.mosaic, reference.cfa)?;
+        let prior = mosaic::demosaic::demosaic_resident(gpu, rcd, reference.mosaic, reference.cfa)?;
         let (width, height) = (reference.mosaic.width, reference.mosaic.height);
         let (half_width, half_height) = (width / 2, height / 2);
         let values = grid.width * grid.height * 3;

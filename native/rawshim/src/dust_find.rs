@@ -276,7 +276,7 @@ pub struct Search {
 pub async fn sweep(
     gpu: &gpu::Gpu,
     kernels: &Find,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     shape: &Shape,
 ) -> Option<Search> {
     let count = shape.samples();

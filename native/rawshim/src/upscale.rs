@@ -507,7 +507,7 @@ impl Upscaler {
     pub fn photo(
         &self,
         gains: [f32; 3],
-        cfa: &crate::cfa::Cfa,
+        cfa: &mosaic::cfa::Cfa,
         noise: crate::galosh::NoiseModel,
         (luminance, colour): (f64, f64),
     ) -> Result<Photo, String> {
@@ -1117,7 +1117,7 @@ pub fn answer_bytes(width: usize, height: usize) -> u64 {
 
 /// Which of a 2x2's positions holds each of the network's planes: red, the green on red's row, the
 /// green on blue's, blue. `None` for a pattern that is not Bayer.
-fn positions(cfa: &crate::cfa::Cfa) -> Option<[u32; 4]> {
+fn positions(cfa: &mosaic::cfa::Cfa) -> Option<[u32; 4]> {
     if !cfa.is_bayer() {
         return None;
     }
@@ -1517,7 +1517,7 @@ fn coop_kernels(_gpu: &gpu::Gpu, _fragment: usize, _blocks: &[u16]) -> Option<Co
 #[cfg(test)]
 mod tests {
     use super::{Arm, Placement, Upscaler};
-    use crate::condition::Mosaic;
+    use mosaic::condition::Mosaic;
 
     /// 100 is the network's light alone, 75 adds a quarter of the photo's grain, 0 is the input,
     /// and the noise left in rises with every step down.
@@ -1563,7 +1563,7 @@ mod tests {
         };
         let (width, height) = (256, 128);
         let gains = [0.5, 1.0, 0.7];
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
         let noise = crate::galosh::NoiseModel {
             alpha: 4.121e-4,
             sigma_sq: 3.494e-6,
@@ -1636,7 +1636,7 @@ mod tests {
         };
         let (width, height) = (520, 392);
         let gains = [0.5, 1.0, 0.7];
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut noise = || {
             seed ^= seed << 13;

@@ -14,9 +14,9 @@
 //!
 //!   BOWERBIRD_WRITE_FIXTURES=1 bun run test:native <name>
 
-use crate::condition::Mosaic;
 use colour::resident::Resident;
 use colour::tone::Anchored;
+use mosaic::condition::Mosaic;
 use units::light::{DisplayNits, Light, Pq, SceneNits};
 use units::px::{Pinned, Rect, Size, Span};
 
@@ -133,7 +133,7 @@ impl Snapshot {
     pub fn mosaic<S>(
         gpu: &'static gpu::Gpu,
         mosaic: &Mosaic,
-        cfa: &crate::cfa::Cfa,
+        cfa: &mosaic::cfa::Cfa,
         anchoring: Anchoring,
         crops: &[Rect<S>],
     ) -> Snapshot {
@@ -800,7 +800,7 @@ mod tests {
         };
         let values: Vec<f32> = (0..width * height).map(|i| (i % 7) as f32 / 7.0).collect();
         let mosaic = Mosaic::upload(gpu, &values, width, height);
-        let rggb = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+        let rggb = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
         let painted = Snapshot::mosaic(
             gpu,
             &mosaic,

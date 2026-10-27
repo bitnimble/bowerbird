@@ -101,8 +101,6 @@ pub mod base;
 pub mod burst;
 #[cfg(test)]
 mod burst_scene;
-/// Which colour each photosite carries, as a period rather than as a 2x2.
-pub mod cfa;
 /// A set of photographs into a recipe: what overlaps what, and where each one points.
 pub mod composite_align;
 /// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
@@ -127,8 +125,6 @@ pub mod composite_tile;
 /// What a composition is: the sources a composite is made of, where each one points, and the
 /// surface they are projected onto. A panorama is one recipe over it; an assembly is another.
 pub mod composition;
-/// The sensor's samples into the mosaic, with the samples crossing to the GPU rather than it.
-pub mod condition;
 #[cfg(feature = "renditions")]
 pub mod debug;
 /// Which decoder a photograph gets, which is the one place the two front ends differ.
@@ -136,7 +132,8 @@ pub mod decode;
 pub mod decode_rawler;
 /// The photographs that arrive already rendered: PNG, JPEG, HEIC and AVIF.
 pub mod decode_rendered;
-pub mod demosaic;
+#[cfg(all(test, feature = "renditions"))]
+mod demosaic_tests;
 pub mod dereflect;
 mod dng_rendering;
 /// Sensor particles found on the mosaic, and their shadows divided back out of it.
@@ -170,7 +167,6 @@ pub mod header;
 pub mod heif_view;
 /// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
 pub mod hevc;
-pub mod highlight;
 pub mod image;
 pub mod job;
 pub mod jpeg;
@@ -186,8 +182,6 @@ pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
 pub mod linearise;
-/// Demosaicing by luma-chroma demultiplexing, for the patterns RCD cannot pair into 2x2 sites.
-pub mod lslcd;
 pub mod merge;
 pub mod open;
 pub mod open_stage;
@@ -239,7 +233,6 @@ pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
-/// What a uniform block is, according to the shader that reads it.
 #[cfg(test)]
 mod wgsl_layout;
 

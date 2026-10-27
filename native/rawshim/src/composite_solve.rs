@@ -990,7 +990,7 @@ fn fit(
                 damped[i * free + i] *= 1.0 + lambda;
                 damped[i * free + i] += lambda * 1e-9;
             }
-            let Some(step) = crate::fit::gaussian(&damped, &rhs, free) else {
+            let Some(step) = linalg::solve(&damped, &rhs, free) else {
                 lambda *= 10.0;
                 continue;
             };

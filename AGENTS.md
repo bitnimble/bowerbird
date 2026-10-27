@@ -141,7 +141,7 @@ Run getters in each worktree to create symlinks. `XDG_CACHE_HOME` moves cache;
 `BOWERBIRD_SLANGC` still selects an external compiler.
 
 - `static const` folds into use sites; tests pinning shader constants read `.slang`.
-- Names are mangled: `Params_std140_0`, `FROM_FRAME_0`. `wgsl_layout.rs` matches block prefixes;
+- Names are mangled: `Params_std140_0`, `FROM_FRAME_0`. `shaders::layout` matches block prefixes;
   draw constants use `[vk::constant_id(0)]` IDs.
 - **A place or count in a plane is a `px` `Wide`, and `wide * 3` its first value or sample count**
   (`wide_at<S>(x, y, width)`, `wide<S>(n)`). Adreno truncates `x` to 24 bits in a multiply by a

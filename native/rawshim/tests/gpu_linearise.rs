@@ -90,7 +90,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
         let colour: [f64; 3] = std::array::from_fn(|channel| {
             f64::from(table[usize::from(codes[pixel * 3 + channel]) * 3 + channel]) * white
         });
-        let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].max(0.0);
+        let want = colour::space::in_gamut(colour)[at % 3].max(0.0);
         assert!(
             (f64::from(*sample) - want).abs() <= 1.0 + stored_within(want),
             "sample {at}: code {} became {sample}, and the host says {want}",

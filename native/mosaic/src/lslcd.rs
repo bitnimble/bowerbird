@@ -197,7 +197,7 @@ fn solve_design() -> Option<Vec<f64>> {
         rhs[TAPS + row] = *value;
     }
 
-    let mut solved = crate::fit::gaussian(&matrix, &rhs, n)?;
+    let mut solved = linalg::solve(&matrix, &rhs, n)?;
     solved.truncate(TAPS);
     Some(solved)
 }
@@ -410,7 +410,7 @@ pub fn record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfa::tests::{XTRANS, parse};
+    use crate::cfa::{XTRANS, parse};
 
     fn amplitude(taps: &[f32; TAPS], omega: f64) -> f64 {
         basis_at(omega)

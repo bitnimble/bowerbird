@@ -2,7 +2,7 @@
 //!
 //! **The transfer is the reason, not the arithmetic.** Conditioning a sample is a subtract, a
 //! divide and a multiply, which no device does meaningfully faster than a threaded CPU - the
-//! kernel does not even do that much, since `decode_rawler::curve` tabulates the whole domain and
+//! kernel does not even do that much, since `rawshim::decode_rawler::curve` tabulates the whole domain and
 //! this looks the answer up. What changes is what crosses to the GPU: the mosaic every later stage
 //! reads is `f32` and 241MB at 61MP, and the samples it is made from are `u16` and 120MB.
 //!
@@ -301,7 +301,7 @@ impl Mosaic {
 /// Levels a sensor can report, which is one run of the conditioning table.
 pub const RUN: usize = 1 << 16;
 
-/// The conditioning as the kernel reads it (`decode_rawler::curve`).
+/// The conditioning as the kernel reads it (`rawshim::decode_rawler::curve`).
 ///
 /// **Keyed by slot rather than by position, and the two are only the same on a Bayer sensor.** What
 /// the arithmetic varies by is the pair (black level, white balance gain); a sensor has far fewer of
@@ -363,7 +363,6 @@ pub struct Shading<'a> {
     pub image: (usize, usize),
 }
 
-#[cfg(test)]
 impl Shading<'_> {
     pub const NONE: Shading<'static> = Shading {
         maps: &[],
@@ -372,7 +371,7 @@ impl Shading<'_> {
     };
 }
 
-/// The mosaic, from the samples and `decode_rawler::curve`'s answer for every level.
+/// The mosaic, from the samples and `rawshim::decode_rawler::curve`'s answer for every level.
 ///
 /// None where the frame is empty, the samples are short of it, or the curve is not the whole
 /// domain - the caller's cue for the CPU, which answers those in microseconds.

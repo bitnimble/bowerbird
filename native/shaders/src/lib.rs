@@ -7,6 +7,8 @@
 
 #![deny(unsafe_code)]
 
+#[cfg(feature = "layout")]
+pub mod layout;
 pub mod overrides;
 
 /// One compiled WGSL file.

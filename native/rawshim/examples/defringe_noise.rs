@@ -53,7 +53,7 @@ fn main() {
         eprintln!("no adapter");
         std::process::exit(2);
     };
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         eprintln!("no demosaic pipelines");
         std::process::exit(2);
     };
@@ -366,9 +366,9 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
 /// gone. A synthetic pattern cannot stand in, for the reason the second arm needs a real one.
 fn greyed(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
 ) -> Option<Vec<f32>> {
@@ -391,7 +391,7 @@ struct Read {
     plane: Vec<f32>,
     width: usize,
     height: usize,
-    cfa: rawshim::cfa::Cfa,
+    cfa: mosaic::cfa::Cfa,
     /// The photograph's own noise, as the decode fits it. What says whether the sigmas this probe
     /// sweeps are anywhere near what a real frame hands the stage.
     native: Option<rawshim::galosh::NoiseFit>,
@@ -446,7 +446,7 @@ fn read_mosaic(path: &str) -> Option<Read> {
         .first()
         .map_or(0.0, |level| level.n as f32 / level.d as f32);
     let range = (white - black).max(1.0);
-    let cfa = rawshim::cfa::Cfa::from_rawler(&image.camera.cfa)?;
+    let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa)?;
     Some(Read {
         plane: values
             .iter()
@@ -465,14 +465,14 @@ fn read_mosaic(path: &str) -> Option<Read> {
 
 fn reconstruct(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
 ) -> Option<Vec<f32>> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    pollster::block_on(rawshim::demosaic::demosaic_plane(
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
+    pollster::block_on(mosaic::demosaic::demosaic_plane(
         gpu,
         rcd,
         &uploaded,
@@ -493,15 +493,15 @@ fn reconstruct(
 /// applied per pixel, so it both rescales each channel's variance and remixes the pairs.
 fn reconstruct_matrixed(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
     matrix: [[f32; 3]; 3],
 ) -> Option<Vec<f32>> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    let at = rawshim::demosaic::Placement {
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let at = mosaic::demosaic::Placement {
         stride: units::px::Span::exact(width),
         crop: units::px::Rect::exact(0, 0, width, height),
         dest: units::px::At::ORIGIN,
@@ -509,22 +509,22 @@ fn reconstruct_matrixed(
         orientation: 0,
         reduce: 1,
     };
-    let into = rawshim::demosaic::frame_buffer(gpu, width * height);
-    let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, width * height);
+    let (_held, shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
     let ceiling = [1.0; 3];
-    let field = rawshim::highlight::measure(gpu, &uploaded, cfa, ceiling)?;
-    pollster::block_on(rawshim::demosaic::demosaic_into(
+    let field = mosaic::highlight::measure(gpu, &uploaded, cfa, ceiling)?;
+    pollster::block_on(mosaic::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
         cfa,
         &at,
-        rawshim::demosaic::Colour { matrix, ceiling },
+        mosaic::demosaic::Colour { matrix, ceiling },
         field.seen(),
         &into,
         &shape,
     ))?;
-    let samples = pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))?;
+    let samples = pollster::block_on(mosaic::demosaic::read_frame(gpu, &into, width * height))?;
     Some(
         samples
             .iter()

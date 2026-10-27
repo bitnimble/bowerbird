@@ -43,11 +43,11 @@ fn main() {
             (level + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.05).clamp(0.0, 1.0)
         })
         .collect();
-    let upload = |values: &[f32]| rawshim::condition::Mosaic::upload(gpu, values, width, height);
-    let read = |frame: &rawshim::condition::Mosaic| {
+    let upload = |values: &[f32]| mosaic::condition::Mosaic::upload(gpu, values, width, height);
+    let read = |frame: &mosaic::condition::Mosaic| {
         pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
     };
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
     let gains = rawshim::galosh::UNGAINED;
     let fit = pollster::block_on(rawshim::galosh::fit(
         gpu,

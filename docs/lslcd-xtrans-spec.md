@@ -1,6 +1,6 @@
 # Luma-chroma demultiplexing for X-Trans, functional specification
 
-The normative document for `slang/lslcd.slang` and `native/rawshim/src/lslcd.rs`. Where a comment in
+The normative document for `slang/lslcd.slang` and `native/mosaic/src/lslcd.rs`. Where a comment in
 either disagrees with this file, the code is wrong.
 
 **Section 2 is independently derived.** Dubois's framework decomposes periodic CFA data into
@@ -164,7 +164,7 @@ without an unavailable photo set. Eight-bit sRGB statistics may not suit linear 
 Substituting measured statistics changes only `design`.
 
 Minimising `J` subject to §3.2 is one linear system in `M+1` coefficients and four multipliers,
-solved by `fit::gaussian`. `R_ij = ∫ φ_i φ_j`, `p_i = ∫ φ_i D`, `φ₀ = 1`, `φ_i = 2cos(iω)`,
+solved by `linalg::solve`. `R_ij = ∫ φ_i φ_j`, `p_i = ∫ φ_i D`, `φ₀ = 1`, `φ_i = 2cos(iω)`,
 evaluated by uniform quadrature; the KKT system is
 
     [ 2R  Cᵀ ] [ h ]   [ 2p ]

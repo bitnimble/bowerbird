@@ -596,9 +596,9 @@ async fn stacked(
 }
 
 /// A pyramid's own-size luma, as the plane `align` reads.
-fn luma_of(pyramid: &Pyramid) -> crate::condition::Mosaic {
+fn luma_of(pyramid: &Pyramid) -> mosaic::condition::Mosaic {
     let top = pyramid.top();
-    crate::condition::Mosaic {
+    mosaic::condition::Mosaic {
         buffer: top.buffer.clone(),
         width: top.width,
         height: top.height,
@@ -1286,7 +1286,7 @@ pub(crate) mod tests {
         let burst = |shakes: Vec<Shake>| Burst {
             width: 768,
             height: 512,
-            cfa: crate::cfa::Cfa::new(1, 1, &[1]).expect("one colour"),
+            cfa: mosaic::cfa::Cfa::new(1, 1, &[1]).expect("one colour"),
             shakes,
             subject: None,
             focus: None,

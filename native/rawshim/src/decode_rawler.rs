@@ -246,7 +246,7 @@ pub(crate) async fn decode_tile_source(
         Region::Linear(frame) => return Some(frame),
     };
     let gpu = gpu::device()?;
-    let rcd = crate::demosaic::device(gpu)?;
+    let rcd = mosaic::demosaic::device(gpu)?;
     let built = region.built(gpu, rcd).await?;
     Some(region.frame(built))
 }
@@ -331,7 +331,7 @@ pub(crate) async fn decode_merged_tile(
         return None;
     };
     let gpu = gpu::device()?;
-    let rcd = crate::demosaic::device(gpu)?;
+    let rcd = mosaic::demosaic::device(gpu)?;
     reference.noise = given.or(reference.noise);
     if taken == crate::burst::Taken::Placed {
         reference.halving = false;
@@ -480,7 +480,7 @@ pub(crate) async fn decode_merged_tile(
     // The colour pass finds a highlight blown on the merge's wells, against the brightest light any
     // frame could read, so it reconstructs only where every frame saturated.
     let mosaic = merge.remosaic(gpu, &merged);
-    let colour = crate::demosaic::Colour {
+    let colour = mosaic::demosaic::Colour {
         ceiling: reference.colour.ceiling.map(|ceiling| ceiling * reach),
         ..reference.colour
     };
@@ -580,8 +580,8 @@ enum Demosaiced {
 /// One window's region of the sensor, conditioned, cleaned and denoised: everything a decode does
 /// before the demosaic.
 struct RegionMosaic {
-    mosaic: crate::condition::Mosaic,
-    highlight: Option<crate::highlight::Field>,
+    mosaic: mosaic::condition::Mosaic,
+    highlight: Option<mosaic::highlight::Field>,
     /// Where `mosaic` starts inside the wider region `highlight` was measured over.
     highlight_at: units::px::At<units::px::Sensor>,
     /// The sensor's readable area the region is cut from.
@@ -590,8 +590,8 @@ struct RegionMosaic {
     detail: crate::galosh::Detail,
     origin: units::px::At<units::px::Sensor>,
     photograph_origin: units::px::At<units::px::Sensor>,
-    cfa: crate::cfa::Cfa,
-    colour: crate::demosaic::Colour,
+    cfa: mosaic::cfa::Cfa,
+    colour: mosaic::demosaic::Colour,
     /// The window inside the region, which is where the margin grown around it ends.
     crop: (usize, usize, usize, usize),
     upright: rawler::decoders::Orientation,
@@ -602,7 +602,7 @@ struct RegionMosaic {
 }
 
 impl RegionMosaic {
-    fn seen(&self) -> Option<crate::highlight::Seen<'_>> {
+    fn seen(&self) -> Option<mosaic::highlight::Seen<'_>> {
         Some(
             self.highlight
                 .as_ref()?
@@ -614,7 +614,7 @@ impl RegionMosaic {
     async fn built(
         &self,
         gpu: &'static gpu::Gpu,
-        rcd: &'static crate::demosaic::Rcd,
+        rcd: &'static mosaic::demosaic::Rcd,
     ) -> Option<colour::resident::Resident> {
         demosaic_at(
             gpu,
@@ -748,8 +748,8 @@ async fn region_mosaic(
     let (field_left, field_top, field_w, field_h) = match demosaiced {
         Demosaiced::ByTheReference => (left, top, span_w, span_h),
         Demosaiced::Here => {
-            let field_reach = crate::highlight::reach(&cfa);
-            let grid = crate::highlight::grid(&cfa);
+            let field_reach = mosaic::highlight::reach(&cfa);
+            let grid = mosaic::highlight::grid(&cfa);
             let (field_left, field_top) = (
                 left.saturating_sub(field_reach) / grid * grid,
                 top.saturating_sub(field_reach) / grid * grid,
@@ -811,7 +811,7 @@ async fn region_mosaic(
     )?;
     let highlight = match demosaiced {
         Demosaiced::ByTheReference => None,
-        Demosaiced::Here => Some(crate::highlight::measure(
+        Demosaiced::Here => Some(mosaic::highlight::measure(
             gpu?,
             &field_mosaic,
             &cfa,
@@ -1057,9 +1057,9 @@ fn blocking<T>(work: impl std::future::Future<Output = T>) -> T {
 struct Sensor {
     width: usize,
     height: usize,
-    cfa: crate::cfa::Cfa,
+    cfa: mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
+    colour: mosaic::demosaic::Colour,
     upright: rawler::decoders::Orientation,
     as_shot: Option<colour::white_balance::Illuminant>,
     /// What the lens was stopped down to, which decides how large and how deep a particle's shadow
@@ -1103,11 +1103,11 @@ impl Held {
 /// editor keeps one and takes [`Held::frame`], which filters a copy so the original survives the
 /// next slider move.
 pub struct Held {
-    mosaic: crate::condition::Mosaic,
+    mosaic: mosaic::condition::Mosaic,
     sensor: Sensor,
     /// Measured off the mosaic as it was conditioned, before any dust or denoise, so the frame and
     /// every window cut from it reconstruct their highlights from the same light.
-    highlight: crate::highlight::Field,
+    highlight: mosaic::highlight::Field,
 }
 
 /// The decode as far as the mosaic, from bytes a caller is already holding.
@@ -1493,7 +1493,7 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
 }
 
 /// The lens shading in a mosaic DNG's OpcodeList2: a gain map per CFA position.
-fn gain_maps(decoder: &dyn rawler::decoders::Decoder) -> Vec<crate::condition::GainMap> {
+fn gain_maps(decoder: &dyn rawler::decoders::Decoder) -> Vec<mosaic::condition::GainMap> {
     let Some(bytes) = opcode_list(decoder) else {
         return Vec::new();
     };
@@ -1520,7 +1520,7 @@ fn gain_maps(decoder: &dyn rawler::decoders::Decoder) -> Vec<crate::condition::G
 }
 
 /// One GainMap's gains for a mosaic's single plane, or None where it covers no plane 0.
-fn gain_map(body: Body<'_>) -> Result<Option<crate::condition::GainMap>, String> {
+fn gain_map(body: Body<'_>) -> Result<Option<mosaic::condition::GainMap>, String> {
     let [
         top,
         left,
@@ -1555,7 +1555,7 @@ fn gain_map(body: Body<'_>) -> Result<Option<crate::condition::GainMap>, String>
     let gains = (0..down as usize * across as usize)
         .map(|point| body.single(76 + point * map_planes as usize * 4))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Some(crate::condition::GainMap {
+    Ok(Some(mosaic::condition::GainMap {
         area: [top?, left?, bottom?, right?],
         pitch: [row_pitch, column_pitch],
         points: [down, across],
@@ -1569,16 +1569,16 @@ fn gain_map(body: Body<'_>) -> Result<Option<crate::condition::GainMap>, String>
 ///
 /// The maps describe the active area, as DNG's raw processing stages do.
 fn shading<'a>(
-    maps: &'a [crate::condition::GainMap],
+    maps: &'a [mosaic::condition::GainMap],
     image: &rawler::RawImage,
     at: (usize, usize),
-) -> crate::condition::Shading<'a> {
+) -> mosaic::condition::Shading<'a> {
     let (left, top, width, height) = image
         .active_area
         .map_or((0, 0, image.width, image.height), |area| {
             (area.p.x, area.p.y, area.d.w, area.d.h)
         });
-    crate::condition::Shading {
+    mosaic::condition::Shading {
         maps,
         origin: (at.0 as i32 - left as i32, at.1 as i32 - top as i32),
         image: (width.max(1), height.max(1)),
@@ -1755,7 +1755,7 @@ async fn hold(
 
     let (aperture, diagonal_mm) = optics_of(decoder, source, params);
     let colour = colour_of(&image)?;
-    let highlight = crate::highlight::measure(gpu?, &mosaic, &cfa, colour.ceiling)?;
+    let highlight = mosaic::highlight::measure(gpu?, &mosaic, &cfa, colour.ceiling)?;
 
     Some(Held {
         mosaic,
@@ -1894,12 +1894,12 @@ impl Held {
 
     /// The conditioned mosaic where it sits on the device, for a probe that wants to watch the
     /// denoise at the mosaic rather than through the demosaic.
-    pub fn device_mosaic(&self) -> &crate::condition::Mosaic {
+    pub fn device_mosaic(&self) -> &mosaic::condition::Mosaic {
         &self.mosaic
     }
 
     /// The sensor's 2x2 CFA, row-major, as the demosaic takes it.
-    pub fn cfa(&self) -> crate::cfa::Cfa {
+    pub fn cfa(&self) -> mosaic::cfa::Cfa {
         self.sensor.cfa
     }
 
@@ -2007,7 +2007,7 @@ impl Held {
         let (noise, noise_left) =
             denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
 
-        let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
+        let (gpu, rcd) = gpu.and_then(|gpu| mosaic::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
         let seen = self
             .highlight
             .seen_from(units::px::At::exact(left, top))
@@ -2115,7 +2115,7 @@ impl Held {
         // caller reads its dimensions. The loupe's route cannot say the same - `view::Scale` sizes
         // the window a caller asked for - so that one still takes the demosaic on a 6x6 pattern.
         let detail = detail.on_bayer(cfa.is_bayer());
-        let by = reduction(&cfa).unwrap_or(1);
+        let by = cfa.reduction().unwrap_or(1);
         let would_serve =
             at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
         let reduced = match by > 1 && (would_serve || force_half) {
@@ -2252,7 +2252,7 @@ impl Held {
         // The turn is part of the write the demosaic's tiles make, so what a tile lands is already
         // where it belongs in the upright frame. Only a reduction read straight off the mosaic,
         // which skips the demosaic, still turns the frame afterwards.
-        let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
+        let (gpu, rcd) = gpu.and_then(|gpu| mosaic::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
         let (frame_w, frame_h) = (mosaic.width, mosaic.height);
         let built = demosaic_at(
             gpu,
@@ -2328,11 +2328,11 @@ fn spans_of(total: usize, tile: usize) -> impl Iterator<Item = (usize, usize)> {
 /// so the choice reaches only as far as the filtering itself. `gains` are the conditioning's own.
 async fn denoise_over(
     gpu: Option<&'static gpu::Gpu>,
-    mosaic: &mut crate::condition::Mosaic,
+    mosaic: &mut mosaic::condition::Mosaic,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
 ) -> (Option<crate::galosh::NoiseFit>, f32) {
     let mut noise = None;
@@ -2435,7 +2435,7 @@ fn declined_galosh(
     noise: &Option<crate::galosh::NoiseFit>,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
 ) {
     let wanted = matches!(fit, crate::galosh::Fit::Only) || detail.could_do_anything();
     if !wanted || noise.is_some() {
@@ -2460,8 +2460,8 @@ fn declined_galosh(
 async fn denoise_in_tiles(
     gpu: &'static gpu::Gpu,
     kernels: &'static crate::galosh::Galosh,
-    mosaic: &mut crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     amounts: crate::galosh::Amounts,
     fit: crate::galosh::NoiseFit,
@@ -2505,21 +2505,21 @@ fn reduced_span(of: usize, by: usize) -> usize {
 #[allow(clippy::too_many_arguments)]
 async fn reduced_into(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
-    mosaic: &crate::condition::Mosaic,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
     crop: (usize, usize, usize, usize),
     stride: usize,
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
 ) -> Option<colour::resident::Resident> {
     let (crop_left, crop_top, crop_w, crop_h) = crop;
-    let reduce = reduction(cfa)? as u32;
+    let reduce = cfa.reduction()? as u32;
     // Once for the region, not once per tile: `demosaic::shape_group` says what that measured.
-    let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, cfa, mosaic, 0);
+    let (_shape, shape_group) = mosaic::demosaic::shape_group(gpu, rcd, cfa, mosaic, 0);
     let placed =
-        |dest: (usize, usize), inner: (usize, usize, usize, usize)| crate::demosaic::Placement {
+        |dest: (usize, usize), inner: (usize, usize, usize, usize)| mosaic::demosaic::Placement {
             stride: units::px::Span::exact(stride),
             crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
             dest: units::px::At::exact(dest.0, dest.1),
@@ -2535,7 +2535,7 @@ async fn reduced_into(
                 (tx0, ty0),
                 (crop_left + tx0, crop_top + ty0, tx1 - tx0, ty1 - ty0),
             );
-            crate::demosaic::reduce_into(
+            mosaic::demosaic::reduce_into(
                 gpu,
                 rcd,
                 mosaic,
@@ -2551,21 +2551,6 @@ async fn reduced_into(
     Some(frame)
 }
 
-/// Photosites a side in the smallest block of this pattern that holds every colour, which is the
-/// factor a frame skipping the demosaic reduces by.
-///
-/// **2 and 3 rather than one number, because the two patterns differ in exactly this.** A Bayer 2x2
-/// carries a red, a blue and two greens; no 2x2 of a 6x6 carries all three, and X-Trans's smallest
-/// window that does is the 3x3 - which every one of them is
-/// (`every_three_by_three_window_holds_every_colour`). None for a pattern with no such block, which
-/// takes the demosaic at every size.
-pub fn reduction(cfa: &crate::cfa::Cfa) -> Option<usize> {
-    if cfa.is_bayer() {
-        return Some(2);
-    }
-    cfa.is_xtrans().then_some(3)
-}
-
 /// The demosaic and the colour transform, tile by tile, straight into the cropped frame.
 ///
 /// Tiled over the *crop* rather than the sensor, since that is the frame being built; the region
@@ -2573,12 +2558,12 @@ pub fn reduction(cfa: &crate::cfa::Cfa) -> Option<usize> {
 /// RCD holds thirteen planes at once - 3.1GB at 61MP - which is the allocation this removes.
 async fn demosaic_in_tiles(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
 ) -> Option<colour::resident::Resident> {
     demosaic_settled_in_tiles(
@@ -2601,14 +2586,14 @@ async fn demosaic_in_tiles(
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_detailed(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
-    mosaic: &crate::condition::Mosaic,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
     origin: (usize, usize),
     frame: (usize, usize),
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
@@ -2662,14 +2647,14 @@ fn upscales(detail: crate::galosh::Detail, noise: Option<crate::galosh::NoiseFit
 /// A whole conditioned mosaic demosaiced as [`Held::into_frame`] demosaics a decode reduced `by`,
 /// highlights reconstructed from the mosaic's own field at the shipped colouring.
 pub async fn demosaic_as_decoded(
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
-    colour: crate::demosaic::Colour,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
+    colour: mosaic::demosaic::Colour,
     by: usize,
 ) -> Option<colour::resident::Resident> {
     let gpu = gpu::device()?;
-    let rcd = crate::demosaic::device(gpu)?;
-    let field = crate::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
+    let rcd = mosaic::demosaic::device(gpu)?;
+    let field = mosaic::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
     let detail = crate::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
     let (width, height) = (mosaic.width, mosaic.height);
     demosaic_at(
@@ -2695,14 +2680,14 @@ pub async fn demosaic_as_decoded(
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_at(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
-    mosaic: &crate::condition::Mosaic,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
     origin: (usize, usize),
     frame: (usize, usize),
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
@@ -2766,7 +2751,7 @@ const UPSCALE_TILE: usize = RENDER_TILE / 2;
 fn detailed_halo(
     gpu: Option<&'static gpu::Gpu>,
     detail: crate::galosh::Detail,
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     halo: usize,
 ) -> usize {
     match detail.on_bayer(cfa.is_bayer()).denoiser {
@@ -2790,21 +2775,21 @@ fn detailed_halo(
 #[allow(clippy::too_many_arguments)]
 async fn upscaled_in_tiles(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
+    rcd: &'static mosaic::demosaic::Rcd,
     upscaler: &'static crate::upscale::Upscaler,
     photo: &crate::upscale::Photo,
-    mosaic: &crate::condition::Mosaic,
+    mosaic: &mosaic::condition::Mosaic,
     origin: (usize, usize),
     frame: (usize, usize),
-    cfa: &crate::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
 ) -> Option<colour::resident::Resident> {
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
-        crate::demosaic::Placement {
+        mosaic::demosaic::Placement {
             stride: units::px::Span::exact(stride),
             crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
             dest: units::px::At::exact(dest.0, dest.1),
@@ -2843,7 +2828,7 @@ async fn upscaled_in_tiles(
                     reach_right - reach_left,
                     reach_bottom - reach_top,
                 );
-                let upscaled = crate::condition::Mosaic::plane(gpu, width * 2, height * 2);
+                let upscaled = mosaic::condition::Mosaic::plane(gpu, width * 2, height * 2);
                 upscaler
                     .upscale(
                         gpu,
@@ -2867,9 +2852,14 @@ async fn upscaled_in_tiles(
                 drop(window);
                 let native = mosaic.window(gpu, left, top, width, height);
                 let (_native_shape, native_group) =
-                    crate::demosaic::shape_group(gpu, rcd, cfa, &native, crate::demosaic::MARGIN);
-                let (_upscaled_shape, upscaled_group) =
-                    crate::demosaic::shape_group(gpu, rcd, cfa, &upscaled, crate::demosaic::MARGIN);
+                    mosaic::demosaic::shape_group(gpu, rcd, cfa, &native, mosaic::demosaic::MARGIN);
+                let (_upscaled_shape, upscaled_group) = mosaic::demosaic::shape_group(
+                    gpu,
+                    rcd,
+                    cfa,
+                    &upscaled,
+                    mosaic::demosaic::MARGIN,
+                );
                 let inner = (
                     sx0 - left,
                     sy0 - top,
@@ -2877,7 +2867,7 @@ async fn upscaled_in_tiles(
                     (sy1 - sy0).min(height - (sy0 - top)),
                 );
                 let at = placed((tx0, ty0), inner, width);
-                crate::demosaic::demosaic_halved_into(
+                mosaic::demosaic::demosaic_halved_into(
                     gpu,
                     rcd,
                     &upscaled,
@@ -2911,12 +2901,12 @@ type Settle<'a> =
 #[allow(clippy::too_many_arguments)]
 async fn demosaic_settled_in_tiles(
     gpu: &'static gpu::Gpu,
-    rcd: &'static crate::demosaic::Rcd,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     crop: (usize, usize, usize, usize),
-    colour: crate::demosaic::Colour,
-    seen: crate::highlight::Seen<'_>,
+    colour: mosaic::demosaic::Colour,
+    seen: mosaic::highlight::Seen<'_>,
     orientation: u32,
     settle: &Settle<'_>,
 ) -> Option<colour::resident::Resident> {
@@ -2924,7 +2914,7 @@ async fn demosaic_settled_in_tiles(
     let (crop_left, crop_top, crop_w, crop_h) = crop;
 
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
-        crate::demosaic::Placement {
+        mosaic::demosaic::Placement {
             stride: units::px::Span::exact(stride),
             crop: units::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
             dest: units::px::At::exact(dest.0, dest.1),
@@ -2980,8 +2970,8 @@ async fn demosaic_settled_in_tiles(
             // mosaic, so the group binds a different buffer every time and there is nothing to
             // hoist. The seven dispatches that follow hide the allocation.
             let (_shape, shape_group) =
-                crate::demosaic::shape_group(gpu, rcd, cfa, &window, crate::demosaic::MARGIN);
-            crate::demosaic::demosaic_settled_into(
+                mosaic::demosaic::shape_group(gpu, rcd, cfa, &window, mosaic::demosaic::MARGIN);
+            mosaic::demosaic::demosaic_settled_into(
                 gpu,
                 rcd,
                 &window,
@@ -3000,7 +2990,7 @@ async fn demosaic_settled_in_tiles(
 }
 
 /// How far past a tile the pipeline reads, in sensor pixels.
-const RCD_MARGIN: usize = crate::demosaic::MARGIN as usize;
+const RCD_MARGIN: usize = mosaic::demosaic::MARGIN as usize;
 
 /// An extent cut back to whole CFA sites.
 ///
@@ -3033,14 +3023,14 @@ fn upright_of(
 
 /// The sensor's pattern, as its own period rather than as a 2x2.
 ///
-/// None for a pattern `crate::cfa` cannot carry - an RGBW or CMYG sensor - and None for a body whose
+/// None for a pattern `mosaic::cfa` cannot carry - an RGBW or CMYG sensor - and None for a body whose
 /// samples the pattern does not describe, which is the whole of [`staggered`] below. A decode that
 /// stops here reads nothing, rather than rendering a picture in the wrong colours.
-fn cfa_of(image: &rawler::RawImage) -> Option<crate::cfa::Cfa> {
+fn cfa_of(image: &rawler::RawImage) -> Option<mosaic::cfa::Cfa> {
     if staggered(&image.camera) {
         return None;
     }
-    crate::cfa::Cfa::from_rawler(&image.camera.cfa)
+    mosaic::cfa::Cfa::from_rawler(&image.camera.cfa)
 }
 
 /// Fujifilm's SuperCCD and EXR bodies, whose photosites sit on a 45-degree lattice.
@@ -3086,9 +3076,9 @@ fn condition(
     width: usize,
     height: usize,
     image: &rawler::RawImage,
-    cfa: &crate::cfa::Cfa,
-    shading: &crate::condition::Shading<'_>,
-) -> Option<crate::condition::Mosaic> {
+    cfa: &mosaic::cfa::Cfa,
+    shading: &mosaic::condition::Shading<'_>,
+) -> Option<mosaic::condition::Mosaic> {
     let levels = Levels {
         black: per_position_black(image, cfa),
         white: saturation_of(image),
@@ -3096,9 +3086,9 @@ fn condition(
     };
     let gpu = gpu?;
     let curve = curve(cfa, &levels);
-    crate::condition::normalise(
+    mosaic::condition::normalise(
         gpu,
-        crate::condition::device(gpu),
+        mosaic::condition::device(gpu),
         samples,
         width,
         height,
@@ -3134,7 +3124,7 @@ struct Coefficients {
 }
 
 impl Coefficients {
-    fn at(position: usize, cfa: &crate::cfa::Cfa, levels: &Levels) -> Self {
+    fn at(position: usize, cfa: &mosaic::cfa::Cfa, levels: &Levels) -> Self {
         let floor = levels.black.get(position).copied().unwrap_or(0.0);
         Self {
             floor,
@@ -3184,7 +3174,7 @@ fn conditioned(sample: u16, at: Coefficients) -> f32 {
 /// has far fewer of those than positions: X-Trans reports a single black level repeated 36 times,
 /// so its 36 positions collapse onto three runs, one per colour. Bayer's four are untouched where
 /// its greens differ and collapse where they do not.
-fn curve(cfa: &crate::cfa::Cfa, levels: &Levels) -> crate::condition::Curve {
+fn curve(cfa: &mosaic::cfa::Cfa, levels: &Levels) -> mosaic::condition::Curve {
     let mut distinct: Vec<Coefficients> = Vec::new();
     let mut slot_of = Vec::with_capacity(cfa.slots());
     for position in 0..cfa.slots() {
@@ -3203,7 +3193,7 @@ fn curve(cfa: &crate::cfa::Cfa, levels: &Levels) -> crate::condition::Curve {
         .iter()
         .flat_map(|&at| (0..=u16::MAX).map(move |sample| conditioned(sample, at)))
         .collect();
-    crate::condition::Curve {
+    mosaic::condition::Curve {
         values,
         slot_of,
         period: cfa.period(),
@@ -3220,7 +3210,7 @@ fn curve(cfa: &crate::cfa::Cfa, levels: &Levels) -> crate::condition::Curve {
 /// A file reporting one level for the whole sensor - which is what the X-Trans fixture does, 36
 /// copies of the same number - spreads it over every position, and [`curve`] then collapses them
 /// back to one run per colour.
-fn per_position_black(image: &rawler::RawImage, cfa: &crate::cfa::Cfa) -> Vec<f32> {
+fn per_position_black(image: &rawler::RawImage, cfa: &mosaic::cfa::Cfa) -> Vec<f32> {
     let levels = &image.blacklevel.levels;
     (0..cfa.slots())
         .map(|position| match levels.len() >= cfa.slots() {
@@ -3333,8 +3323,8 @@ pub fn channel_ceilings(image: &rawler::RawImage) -> [f32; 3] {
 /// Both halves of what the demosaic's colour pass needs, read off the file together.
 ///
 /// None where the camera matrix is singular, which is a file that cannot be rendered at all.
-fn colour_of(image: &rawler::RawImage) -> Option<crate::demosaic::Colour> {
-    Some(crate::demosaic::Colour {
+fn colour_of(image: &rawler::RawImage) -> Option<mosaic::demosaic::Colour> {
+    Some(mosaic::demosaic::Colour {
         matrix: camera_to_rec2020(image)?,
         ceiling: channel_ceilings(image),
     })
@@ -3633,7 +3623,7 @@ mod tests {
             .collect();
         assert_eq!(
             maps,
-            vec![Some(crate::condition::GainMap {
+            vec![Some(mosaic::condition::GainMap {
                 area: [1, 0, 20, 30],
                 pitch: [2, 4],
                 points: [2, 3],
@@ -3746,7 +3736,7 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let levels = super::Levels {
             black: vec![0.0; 4],
             white: 1000.0,
@@ -3754,7 +3744,7 @@ mod tests {
         };
         let curve = super::curve(&cfa, &levels);
         let maps = [
-            crate::condition::GainMap {
+            mosaic::condition::GainMap {
                 area: [0, 0, 40, 60],
                 pitch: [1, 1],
                 points: [3, 4],
@@ -3762,7 +3752,7 @@ mod tests {
                 origin: [0.1, 0.05],
                 gains: (0..12).map(|at| 1.0 + 0.25 * at as f32).collect(),
             },
-            crate::condition::GainMap {
+            mosaic::condition::GainMap {
                 area: [1, 1, 40, 60],
                 pitch: [2, 4],
                 points: [1, 1],
@@ -3772,7 +3762,7 @@ mod tests {
             },
         ];
         let (image_w, image_h) = (60i32, 40i32);
-        let gain_at = |map: &crate::condition::GainMap, row: i32, col: i32| -> f32 {
+        let gain_at = |map: &mosaic::condition::GainMap, row: i32, col: i32| -> f32 {
             let [top, left, bottom, right] = map.area.map(|edge| edge as i32);
             let [row_pitch, column_pitch] = map.pitch.map(|pitch| pitch as i32);
             if row < top || row >= bottom || col < left || col >= right {
@@ -3810,15 +3800,15 @@ mod tests {
                     }
                 })
                 .collect();
-            let shading = crate::condition::Shading {
+            let shading = mosaic::condition::Shading {
                 maps: &maps,
                 origin: (left, top),
                 image: (image_w as usize, image_h as usize),
             };
             let mine = pollster::block_on(
-                crate::condition::normalise(
+                mosaic::condition::normalise(
                     gpu,
-                    crate::condition::device(gpu),
+                    mosaic::condition::device(gpu),
                     &samples,
                     width,
                     height,
@@ -4028,7 +4018,7 @@ mod tests {
     fn every_photosite_loses_its_own_black_level() {
         // The four positions of an RGGB site, so the two greens are colour 1 and the ones that
         // collapsed onto each other.
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let levels = super::Levels {
             black: vec![500.0, 528.0, 512.0, 516.0],
             white: 16383.0,
@@ -4152,7 +4142,7 @@ mod tests {
     #[test]
     fn a_photosite_at_saturation_conditions_to_its_own_ceiling() {
         let quad = [0u32, 1, 1, 2];
-        let cfa = crate::cfa::Cfa::bayer(quad).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer(quad).unwrap();
         // An R8's, as the file states them and as `white_balance_gains` scales them.
         let levels = super::Levels {
             black: vec![512.0; 4],
@@ -4219,11 +4209,11 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let kernels = crate::condition::device(gpu);
+        let kernels = mosaic::condition::device(gpu);
 
         // RGGB, so the two greens are one colour on two positions with two black levels, which is
         // the distinction the tables exist to hold.
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let levels = super::Levels {
             black: vec![500.0, 528.0, 512.0, 516.0],
             white: 16383.0,
@@ -4257,14 +4247,14 @@ mod tests {
                 })
                 .collect();
             let mine = pollster::block_on(
-                crate::condition::normalise(
+                mosaic::condition::normalise(
                     gpu,
                     kernels,
                     &samples,
                     width,
                     height,
                     &curve,
-                    &crate::condition::Shading::NONE,
+                    &mosaic::condition::Shading::NONE,
                 )
                 .expect("the kernel runs")
                 .read(gpu),

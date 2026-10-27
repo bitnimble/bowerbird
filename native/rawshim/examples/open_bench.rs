@@ -203,7 +203,7 @@ fn mosaic_stages(width: usize, height: usize) {
     );
 
     let mosaic = synthesise(width, height);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
 
     // Uploaded once and reused, which is what the chain does now: the stages hand each other a
     // device buffer, so a timing that included the upload would be timing something no decode does.
@@ -353,12 +353,12 @@ fn mosaic_stages(width: usize, height: usize) {
         drop(whole);
     }
 
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         return;
     };
     let mut whole: Vec<f32> = Vec::new();
     repeat("rcd whole frame", || {
-        whole = block(rawshim::demosaic::demosaic_plane(
+        whole = block(mosaic::demosaic::demosaic_plane(
             gpu, rcd, &uploaded, &cfa, floats,
         ))
         .expect("the whole frame demosaics");
@@ -378,11 +378,11 @@ fn upload(
     values: &[f32],
     width: usize,
     height: usize,
-) -> rawshim::condition::Mosaic {
-    rawshim::condition::Mosaic::upload(gpu, values, width, height)
+) -> mosaic::condition::Mosaic {
+    mosaic::condition::Mosaic::upload(gpu, values, width, height)
 }
 
-fn read(gpu: &gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
+fn read(gpu: &gpu::Gpu, mosaic: &mosaic::condition::Mosaic) -> Vec<f32> {
     block(mosaic.read(gpu)).expect("the mosaic reads back")
 }
 
@@ -402,8 +402,8 @@ fn read(gpu: &gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
 fn kernel_by_kernel(
     gpu: &'static gpu::Gpu,
     kernels: &'static rawshim::galosh::Galosh,
-    mosaic: &rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     amounts: Amounts,
     fit: Option<rawshim::galosh::NoiseFit>,
     last: usize,
@@ -481,11 +481,11 @@ fn floats(bytes: &[u8]) -> Vec<f32> {
 /// should: anything above zero is a reach that does not compose the way §10 says it does.
 fn tiled(
     gpu: &'static gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
-    mosaic: &rawshim::condition::Mosaic,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
     width: usize,
     height: usize,
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     side: usize,
     whole: &[f32],
 ) {
@@ -498,10 +498,10 @@ fn tiled(
             width,
             height,
             side,
-            rawshim::demosaic::MARGIN as usize,
+            mosaic::demosaic::MARGIN as usize,
             |region| {
                 let window = cut(region);
-                block(rawshim::demosaic::demosaic_plane(
+                block(mosaic::demosaic::demosaic_plane(
                     gpu,
                     rcd,
                     &window,
@@ -520,10 +520,10 @@ fn tiled(
         width,
         height,
         side,
-        rawshim::demosaic::MARGIN as usize,
+        mosaic::demosaic::MARGIN as usize,
         |region| {
             let window = cut(region);
-            let out = block(rawshim::demosaic::demosaic_plane(
+            let out = block(mosaic::demosaic::demosaic_plane(
                 gpu, rcd, &window, cfa, floats,
             ))
             .expect("the tile demosaics");

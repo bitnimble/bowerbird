@@ -1,0 +1,20 @@
+[package]
+name = "mosaic"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }
+gpu = { path = "../gpu" }
+linalg = { path = "../linalg" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+pollster = "0.4"
+rayon = "1.10"
+
+[dev-dependencies]
+colour = { path = "../colour" }
+shaders = { path = "../shaders", features = ["layout"] }

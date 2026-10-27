@@ -1,6 +1,6 @@
 //! A finished picture's code values into the frame the pipeline reads, on the device.
 //!
-//! **The rendered half of [`crate::condition`] and [`crate::demosaic`] at once.** A RAW is
+//! **The rendered half of [`mosaic::condition`] and [`mosaic::demosaic`] at once.** A RAW is
 //! conditioned into a mosaic and then demosaiced into a Rec.2020 `u16` frame; a JPEG, a PNG, a HEIC
 //! or an AVIF has no mosaic, so the same journey is one pass - undo the transfer, apply the gain
 //! map, convert the primaries, crop, halve and turn upright. `linearise.slang` is that pass, and
@@ -18,7 +18,7 @@ pub struct Linearise {
     pipeline: wgpu::ComputePipeline,
 }
 
-/// Infallible for [`crate::condition::device`]'s reason: the kernel asks for nothing beyond storage
+/// Infallible for [`mosaic::condition::device`]'s reason: the kernel asks for nothing beyond storage
 /// buffers, so a shader that would not build is a panic rather than a `None` anybody could handle.
 pub fn device(gpu: &'static gpu::Gpu) -> &'static Linearise {
     static BUILT: gpu::Cache<Linearise> = gpu::Cache::new();
@@ -937,7 +937,7 @@ mod tests {
 
         // `prelude::in_gamut`: mixed towards a grey of its own luma, which is the one quantity the
         // pull leaves alone.
-        let pulled = crate::hdr_fit::in_gamut([raw[0], raw[1], raw[2]]);
+        let pulled = colour::space::in_gamut([raw[0], raw[1], raw[2]]);
         for channel in 0..3 {
             let want = pulled[channel].clamp(0.0, 1.0) * 65535.0;
             let got = f64::from(samples[channel]);

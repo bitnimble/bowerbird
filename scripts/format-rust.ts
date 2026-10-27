@@ -7,6 +7,8 @@ const manifests = [
   'native/rawshim_cdylib/Cargo.toml',
   'native/colour/Cargo.toml',
   'native/gpu/Cargo.toml',
+  'native/linalg/Cargo.toml',
+  'native/mosaic/Cargo.toml',
   'native/shaders/Cargo.toml',
   'native/trace/Cargo.toml',
   'native/units/Cargo.toml',

@@ -970,7 +970,7 @@ pub fn pointwise(packed: usize) -> Vec<Pointwise> {
 ///
 /// The pack is a 2x2 of red, both greens and blue, which is what a Bayer CFA is and what PMRID was
 /// trained on. An X-Trans frame has no such site.
-pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
+pub fn filters(cfa: &mosaic::cfa::Cfa) -> bool {
     cfa.is_bayer()
 }
 
@@ -987,8 +987,8 @@ pub fn filters(cfa: &crate::cfa::Cfa) -> bool {
 pub fn denoise(
     gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
-    mosaic: &mut crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     detail: crate::galosh::Detail,
     fit: crate::galosh::NoiseFit,
@@ -1002,8 +1002,8 @@ pub fn denoise(
 fn denoise_through(
     gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
-    mosaic: &mut crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     detail: crate::galosh::Detail,
     fit: crate::galosh::NoiseFit,
@@ -1038,15 +1038,15 @@ fn denoise_through(
 pub async fn lift(
     gpu: &'static gpu::Gpu,
     pmrid: &Pmrid,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     fit: crate::galosh::NoiseFit,
 ) -> Option<f64> {
     let window = window(gpu, pmrid, mosaic.width, mosaic.height);
     let (pw, ph) = (window.0 / 2, window.1 / 2);
     let mut held = Session::take(gpu, pmrid, pw, ph);
-    let unwritten = crate::condition::Mosaic::upload(gpu, &[0.0], 1, 1);
+    let unwritten = mosaic::condition::Mosaic::upload(gpu, &[0.0], 1, 1);
     held.bind(gpu, pmrid, mosaic, &unwritten);
     let edges = plan(
         pmrid,
@@ -1086,8 +1086,8 @@ pub async fn lift(
 fn plan(
     pmrid: &Pmrid,
     held: &Session,
-    mosaic: &crate::condition::Mosaic,
-    cfa: &crate::cfa::Cfa,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     fit: crate::galosh::NoiseFit,
     (luma, colour): (f64, f64),
@@ -1543,8 +1543,8 @@ impl Session {
         &mut self,
         gpu: &'static gpu::Gpu,
         pmrid: &Pmrid,
-        mosaic: &crate::condition::Mosaic,
-        filtered: &crate::condition::Mosaic,
+        mosaic: &mosaic::condition::Mosaic,
+        filtered: &mosaic::condition::Mosaic,
     ) {
         self.groups = self
             ._uniforms
@@ -2035,14 +2035,14 @@ mod tests {
                 (seed >> 40) as f32 / 16777216.0 - 0.5
             };
             let frame: Vec<f32> = (0..width * height).map(|_| 0.3 + 0.04 * noise()).collect();
-            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+            let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
             let fit = crate::galosh::NoiseFit {
                 alpha: 4.121e-4,
                 sigma_sq: 3.494e-6,
                 unified_sigma: 0.003,
                 dark_ref: [0.0; 4],
             };
-            let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+            let mut mosaic = mosaic::condition::Mosaic::upload(gpu, &frame, width, height);
             let detail = crate::galosh::Detail::at(100.0, 100.0);
             let gains = [1.0, 1.0, 1.0];
             super::denoise_through(gpu, network, &mut mosaic, &cfa, gains, detail, fit, through);
@@ -2097,7 +2097,7 @@ mod tests {
         let network = super::device(gpu).expect("the network built");
         let (width, height) = (256, 256);
         let gains = [0.5, 1.0, 0.7];
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut noise = || {
             seed ^= seed << 13;
@@ -2117,7 +2117,7 @@ mod tests {
             unified_sigma: 0.003,
             dark_ref: [0.0; 4],
         };
-        let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+        let mut mosaic = mosaic::condition::Mosaic::upload(gpu, &frame, width, height);
         let detail = crate::galosh::Detail::at(100.0, 0.0).using(crate::galosh::Denoiser::Pmrid);
         super::denoise(gpu, network, &mut mosaic, &cfa, gains, detail, fit);
         let denoised = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
@@ -2158,14 +2158,14 @@ mod tests {
                     0.3 + 0.04 * ((seed >> 40) as f32 / 16777216.0 - 0.5)
                 })
                 .collect();
-            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+            let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
             let fit = crate::galosh::NoiseFit {
                 alpha: 4.121e-4,
                 sigma_sq: 3.494e-6,
                 unified_sigma: 0.003,
                 dark_ref: [0.0; 4],
             };
-            let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+            let mut mosaic = mosaic::condition::Mosaic::upload(gpu, &frame, width, height);
             let detail = crate::galosh::Detail::at(100.0, 100.0);
             super::denoise(
                 gpu,
@@ -2406,7 +2406,7 @@ mod tests {
                 (level + 0.03 * noise()).clamp(0.0, 1.0)
             })
             .collect();
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
         let fit = crate::galosh::NoiseFit {
             alpha: 4.121e-4,
             sigma_sq: 3.494e-6,
@@ -2415,7 +2415,7 @@ mod tests {
         };
         let detail = crate::galosh::Detail::at(100.0, 100.0);
         let filtered = |kernels: &super::Pmrid| {
-            let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+            let mut mosaic = mosaic::condition::Mosaic::upload(gpu, &frame, width, height);
             super::denoise(
                 gpu,
                 kernels,

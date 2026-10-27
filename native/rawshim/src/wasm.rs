@@ -2619,7 +2619,7 @@ impl UpscaleTrial {
         let gains: [f32; 3] = gains
             .try_into()
             .map_err(|_| JsValue::from_str("rawshim: gains are R, G and B"))?;
-        let rggb = crate::cfa::Cfa::bayer([0, 1, 1, 2]).ok_or("rawshim: RGGB")?;
+        let rggb = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).ok_or("rawshim: RGGB")?;
         let photo = upscaler
             .photo(
                 gains,

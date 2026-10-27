@@ -146,10 +146,10 @@ fn main() {
 
     // The same windows through the demosaic, lifted, so what a render would show of them is
     // watchable side by side. The window's origin is even, so its CFA is the frame's.
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
+        pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,

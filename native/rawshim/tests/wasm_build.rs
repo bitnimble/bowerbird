@@ -230,7 +230,7 @@ fn the_page_imports_the_entry_points_this_declares() {
 #[test]
 fn the_demosaic_reconstructs_the_field_it_interpolates_under() {
     let (w, h) = (96usize, 96usize);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
     let truth = |r: usize, c: usize, channel: usize| -> f32 {
         let (x, y) = (c as f32 / w as f32, r as f32 / h as f32);
         let base = 0.3 + 0.3 * x + 0.2 * y;
@@ -245,7 +245,7 @@ fn the_demosaic_reconstructs_the_field_it_interpolates_under() {
         .collect();
 
     // Away from the border, which RCD's margin fills by a cheaper rule.
-    let margin = rawshim::demosaic::MARGIN as usize;
+    let margin = mosaic::demosaic::MARGIN as usize;
     let interior =
         || (margin..h - margin).flat_map(move |r| (margin..w - margin).map(move |c| (r, c)));
 
@@ -253,12 +253,12 @@ fn the_demosaic_reconstructs_the_field_it_interpolates_under() {
         eprintln!("no adapter: the demosaic was not checked against the field it reconstructs");
         return;
     };
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         eprintln!("no RCD pipelines: the demosaic was not checked");
         return;
     };
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, &mosaic, w, h);
-    let gpu_rgb = pollster::block_on(rawshim::demosaic::demosaic_plane(
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
+    let gpu_rgb = pollster::block_on(mosaic::demosaic::demosaic_plane(
         gpu,
         rcd,
         &uploaded,
