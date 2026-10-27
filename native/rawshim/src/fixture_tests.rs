@@ -195,8 +195,7 @@ fn falloff(source: &units::rgb::Rgb, corner: f64) -> units::rgb::Rgb {
             let i = (y * width + x) * 3;
             for c in 0..3 {
                 let lit = to_linear(source.data[i + c]) * g;
-                data[i + c] =
-                    (crate::hdr_fit::srgb_oetf(lit.clamp(0.0, 1.0)) * 255.0).round() as u8;
+                data[i + c] = (colour::space::srgb_oetf(lit.clamp(0.0, 1.0)) * 255.0).round() as u8;
             }
         }
     }
@@ -219,7 +218,7 @@ fn long_edge(frame: &crate::frame::Frame) -> usize {
 fn tile_job(
     path: &str,
     tile: Option<[usize; 4]>,
-    levels: Option<crate::tone::Levels>,
+    levels: Option<colour::tone::Levels>,
 ) -> crate::job::Job {
     crate::job::Job {
         raw_file_path: path.to_string(),
@@ -286,7 +285,7 @@ fn rendition(
     units::light::Light<units::light::DisplayNits>,
 ) {
     let base = crate::job::Base::build(job, decode).expect("the frame");
-    let scene = crate::tone::SceneGrade::new(
+    let scene = crate::grade::SceneGrade::new(
         base.matched.as_ref().and_then(|m| m.colour.as_ref()),
         base.levels,
         job.grade.reference_white_nits,
@@ -437,7 +436,7 @@ mod decode_geometry {
         assert_eq!(frame.height, header.height as usize);
 
         let host = pollster::block_on(frame.to_host()).expect("the frame reads back");
-        let samples = crate::resident::levels_of(host.samples16().expect("sixteen-bit samples"));
+        let samples = colour::resident::levels_of(host.samples16().expect("sixteen-bit samples"));
         let mut sums = [0f64; 3];
         let mut highs = [0f32; 3];
         let mut lows = [f32::MAX; 3];
@@ -517,7 +516,7 @@ mod decode_geometry {
             let data = frame.samples16().expect("a 16-bit decode");
             let lit = |x: usize, y: usize| {
                 let i = (y * frame.width + x) * 3;
-                crate::resident::levels_of(&data[i..i + 3])
+                colour::resident::levels_of(&data[i..i + 3])
                     .iter()
                     .sum::<f32>()
                     > 24.0
@@ -702,7 +701,7 @@ mod decode_geometry {
             let samples = frame.samples16().expect("16-bit");
             let (x0, y0, side) = (2150usize, 1006, 32);
             let at = |x: usize, y: usize| {
-                f64::from(crate::resident::level_of_bits(
+                f64::from(colour::resident::level_of_bits(
                     samples[(y * frame.width + x) * 3 + 1],
                 ))
             };
@@ -762,7 +761,7 @@ mod decode_geometry {
 
         let (x0, y0, side) = (2030usize, 980usize, 64usize);
         let blue = |x: usize, y: usize| {
-            f64::from(crate::resident::level_of_bits(
+            f64::from(colour::resident::level_of_bits(
                 samples[(y * frame.width + x) * 3 + 2],
             ))
         };
@@ -863,7 +862,7 @@ mod decode_geometry {
             for (at, &bits) in samples.iter().enumerate().skip(1).step_by(3) {
                 let pixel = at / 3;
                 let slot = (pixel / width) % 6 * 6 + (pixel % width) % 6;
-                let value = f64::from(crate::resident::level_of_bits(bits));
+                let value = f64::from(colour::resident::level_of_bits(bits));
                 sums[slot] += value;
                 counts[slot] += 1.0;
                 total += value;
@@ -1143,7 +1142,7 @@ mod decode_geometry {
                     highlight_recovery: request.highlight_recovery,
                     dust: request.dust,
                     adjust: crate::grade::Adjust::none(),
-                    levels: Some(crate::tone::Levels {
+                    levels: Some(colour::tone::Levels {
                         white: whole.header.white,
                         peak: whole.header.peak,
                         floor: whole.header.floor,
@@ -1948,7 +1947,7 @@ mod loupe_tile {
             }),
         ];
         for (what, edit) in edits {
-            let built = |tile: Option<[usize; 4]>, levels: Option<crate::tone::Levels>| {
+            let built = |tile: Option<[usize; 4]>, levels: Option<colour::tone::Levels>| {
                 let mut job = tile_job(path, tile, levels);
                 job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
                 job.photo_analysis = Some(kept.clone());
@@ -1981,7 +1980,7 @@ mod loupe_tile {
                 if place == "highlight" && what == "as metered" {
                     let frame_max = *reference.iter().max().expect("a frame");
                     let nits = |code| {
-                        crate::tone::pq_inv::<units::light::DisplayNits>(
+                        colour::tone::pq_inv::<units::light::DisplayNits>(
                             units::light::Light::measured(f64::from(code) / 65535.0),
                         )
                     };
@@ -2115,7 +2114,7 @@ mod loupe_tile {
         };
         let pixel_geometry = job.pixel_geometry();
         let graded = |base: &crate::job::Base, cut: &crate::hdr::Cut| {
-            let scene = crate::tone::SceneGrade::new(
+            let scene = crate::grade::SceneGrade::new(
                 base.matched.as_ref().and_then(|m| m.colour.as_ref()),
                 base.levels,
                 job.grade.reference_white_nits,
@@ -2432,7 +2431,7 @@ mod loupe_tile {
                 .from_raw,
             ..Default::default()
         });
-        let built = |levels: Option<crate::tone::Levels>| {
+        let built = |levels: Option<colour::tone::Levels>| {
             let mut job = tile_job(
                 path,
                 Some([DARK.left, DARK.top, DARK.width, DARK.height]),
@@ -2474,35 +2473,35 @@ mod loupe_tile {
         let level = units::light::Light::measured;
         let floor = Some(level(141.0));
         for levels in [
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(0.0),
                 peak: level(13783.0),
                 floor,
             },
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(f64::NAN),
                 peak: level(13783.0),
                 floor,
             },
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(f64::INFINITY),
                 floor,
             },
             // A peak below white would roll the highlights the wrong way.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(100.0),
                 floor,
             },
             // No floor at all, which is a client that cannot say where the low pair go.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(13783.0),
                 floor: None,
             },
             // A floor above the white it is a fraction of describes no photograph either.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(13783.0),
                 floor: Some(level(9000.0)),
@@ -2598,7 +2597,7 @@ mod a_halved_frame_is_the_same_picture {
     use super::*;
 
     fn frame_mean(frame: &crate::frame::Frame) -> f64 {
-        let levels = crate::resident::levels_of(frame.samples16().expect("16-bit"));
+        let levels = colour::resident::levels_of(frame.samples16().expect("16-bit"));
         levels.iter().map(|&level| f64::from(level)).sum::<f64>() / levels.len() as f64
     }
 
@@ -3495,7 +3494,7 @@ mod hdr_grade {
             .anchored();
         crate::hdr::code_base(&mut samples, levels, REFERENCE);
         let base = crate::base::device(gpu).expect("the base pipelines");
-        let resident = crate::resident::Resident::upload(gpu, &samples, width, height);
+        let resident = colour::resident::Resident::upload(gpu, &samples, width, height);
         let gathered = crate::base::warp_lens(
             gpu,
             base,
@@ -3509,7 +3508,7 @@ mod hdr_grade {
 
         let at = |data: &[u16], x: usize, y: usize| {
             let code = f64::from(data[(y * width + x) * 3 + 1]) / 65535.0;
-            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(code))
+            colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(code))
         };
         let (corner_x, corner_y) = (width - 1, height - 1);
         // The corner sits at r = 1, so it takes the whole of the coefficient.
@@ -3783,7 +3782,7 @@ mod hdr_grade {
         let pq_mean = graded
             .iter()
             .map(|s| {
-                crate::tone::pq(CEILING * units::light::Gain::of_ratio(f64::from(*s) / full)).raw()
+                colour::tone::pq(CEILING * units::light::Gain::of_ratio(f64::from(*s) / full)).raw()
             })
             .sum::<f64>()
             / graded.len() as f64;
@@ -3854,7 +3853,7 @@ mod hdr_grade {
                 height: decoded.height,
                 as_shot: decoded.as_shot,
             };
-            let scene = crate::tone::SceneGrade::new(
+            let scene = crate::grade::SceneGrade::new(
                 m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
@@ -3873,7 +3872,7 @@ mod hdr_grade {
 
             // Cut at 1600 and taken down, against cut at 800 outright.
             let resident = || {
-                crate::resident::Resident::upload(gpu, source.samples, source.width, source.height)
+                colour::resident::Resident::upload(gpu, source.samples, source.width, source.height)
             };
             let unsharpened = |size| {
                 crate::hdr::Cut::from_base(
@@ -3963,7 +3962,7 @@ mod hdr_grade {
                 .check(&name, tolerance);
                 continue;
             }
-            let resident = crate::resident::Resident::upload(gpu, &graded, width, height);
+            let resident = colour::resident::Resident::upload(gpu, &graded, width, height);
             Snapshot::whole(Frame::Coded(&resident), units::px::Span::exact(960))
                 .check(&name, tolerance);
             // The nose and whiskers on the floor, with the fur above white at their edge.
@@ -4011,7 +4010,7 @@ mod pictures {
         job
     }
 
-    fn rendered(job: &crate::job::Job, decode: u32) -> crate::resident::Resident {
+    fn rendered(job: &crate::job::Job, decode: u32) -> colour::resident::Resident {
         rendered_through(job, decode, Lensing::Without)
     }
 
@@ -4019,9 +4018,9 @@ mod pictures {
         job: &crate::job::Job,
         decode: u32,
         lensing: Lensing,
-    ) -> crate::resident::Resident {
+    ) -> colour::resident::Resident {
         let (samples, width, height, _) = rendition(job, decode, lensing);
-        crate::resident::Resident::upload(adapter(), &samples, width, height)
+        colour::resident::Resident::upload(adapter(), &samples, width, height)
     }
 
     fn square(x: usize, y: usize, side: usize) -> Rect<Output> {
@@ -4190,7 +4189,7 @@ mod pictures {
                 after * 10 <= before * 11,
                 "default sharpening raised {name}'s p99 high-frequency magnitude from {before} to {after}",
             );
-            let resident = crate::resident::Resident::upload(adapter(), &sharpened, width, height);
+            let resident = colour::resident::Resident::upload(adapter(), &sharpened, width, height);
             Snapshot::crops(Frame::Coded(&resident), &[square(crop.0, crop.1, crop.2)])
                 .check(name, NEUTRAL);
         }
@@ -4429,7 +4428,7 @@ mod pictures {
                 ..Grade::new(
                     header.width,
                     header.height,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: header.white,
                         peak: header.peak,
                         floor: header.floor,
@@ -4735,7 +4734,7 @@ mod tone_domain {
     }
 
     fn scene_luma(levels: &[f32], i: usize) -> f64 {
-        let [r, g, b] = crate::hdr_fit::LUMA;
+        let [r, g, b] = colour::space::LUMA;
         r * f64::from(levels[i]) + g * f64::from(levels[i + 1]) + b * f64::from(levels[i + 2])
     }
 
@@ -4779,7 +4778,7 @@ mod tone_domain {
 
         let mut total = vec![0.0f64; BANDS];
         let mut count = vec![0u64; BANDS];
-        let scene_levels = crate::resident::levels_of(&samples);
+        let scene_levels = colour::resident::levels_of(&samples);
         for i in (0..flat.len()).step_by(3) {
             let scene = scene_luma(&scene_levels, i) / levels.white.raw();
             let was = f64::from(flat[i]);
@@ -4809,8 +4808,8 @@ mod tone_domain {
         gpu: &'static gpu::Gpu,
         samples: &[u16],
         frame: &crate::frame::Frame,
-        colour: Option<&crate::hdr_fit::HdrColour>,
-        levels: crate::tone::Levels,
+        colour: Option<&colour::matched::HdrColour>,
+        levels: colour::tone::Levels,
         adjust: crate::grade::Adjust,
     ) -> Vec<u16> {
         let mut coded = samples.to_vec();
@@ -5016,7 +5015,7 @@ mod tone_domain {
             },
         );
 
-        let scene_levels = crate::resident::levels_of(&samples);
+        let scene_levels = colour::resident::levels_of(&samples);
         let luma = |i: usize| scene_luma(&scene_levels, i) / levels.white.raw();
         let step = crate::grade::detail_step(width.max(height)) as usize;
         let tiles = width.div_ceil(step);

@@ -64,7 +64,7 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
     assert!(!header.matched);
     assert_eq!(
         header.as_shot,
-        Some(rawshim::white_balance::RENDERED_WHITE)
+        Some(colour::white_balance::RENDERED_WHITE)
     );
     assert!(
         !header.mosaic,
@@ -116,7 +116,7 @@ fn grey_jpeg(width: usize, height: usize) -> Vec<u8> {
 
 fn graded(
     opened: &rawshim::edit::Prepared,
-    as_shot: Option<rawshim::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     temperature: Option<f64>,
     tint: Option<f64>,
 ) -> Vec<u16> {
@@ -132,7 +132,7 @@ fn graded(
         ..rawshim::grade::Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,

@@ -13,7 +13,7 @@
 //! a removal's thumbnail and what a removal reopened is searched over, and both are the editor's.
 
 use crate::repair::Repair;
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use units::px::{At, Drawn, Extent, Point, Rect, Size, Stored};
 

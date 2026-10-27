@@ -105,7 +105,7 @@ fn every_stage_hands_its_working_planes_back() {
         None => eprintln!("SKIPPED: this adapter would not build the base pipelines."),
         Some(base) => {
             gives_it_back(gpu, "defringe", || {
-                let resident = rawshim::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
+                let resident = colour::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
                 pollster::block_on(rawshim::base::correct(
                     gpu,
                     base,
@@ -141,7 +141,7 @@ fn every_stage_hands_its_working_planes_back() {
     // it holds is the blur, the chroma smoothing, the lattice, the curves and - once anything
     // encodes - a frame each of counts and readback.
     let level = units::light::Light::measured;
-    let levels = rawshim::tone::Levels {
+    let levels = colour::tone::Levels {
         white: level(4095.0),
         peak: level(4095.0),
         floor: None,
@@ -168,13 +168,13 @@ fn every_stage_hands_its_working_planes_back() {
     let mut drag = || {
         for _ in 0..20 {
             tick += 1.0;
-            dragged.adjust.colour_nodes = vec![rawshim::lattice::ColourNode {
+            dragged.adjust.colour_nodes = vec![colour::lattice::ColourNode {
                 hue: 200.0 + tick,
                 chroma: 8.0,
                 lightness: None,
                 target_hue: 120.0,
                 target_chroma: 30.0,
-                target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+                target_lightness: colour::lattice::ANY_LIGHTNESS_AT,
                 hue_reach: 30.0,
                 chroma_reach: 6.0,
                 lightness_reach: 0.0,

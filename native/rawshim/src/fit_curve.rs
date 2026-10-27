@@ -106,7 +106,7 @@ pub(crate) async fn binned(
     ceiling: f64,
     inverse: Option<&[[f64; 3]; 3]>,
 ) -> Option<Binned> {
-    let bins = crate::hdr_fit::BINS;
+    let bins = colour::matched::BINS;
     let level_bins = crate::hdr_fit::LEVEL_BINS;
     assert!(bins <= LANES * OWNED && level_bins <= LANES);
     let mut recording = gpu.record();
@@ -276,7 +276,9 @@ mod tests {
     /// serial walk of every usable (pixel, channel) gives it, with the matrix undone and without.
     #[test]
     fn the_bins_hold_what_a_serial_walk_does() {
-        use crate::hdr_fit::{BINS, HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS, srgb_oetf};
+        use crate::hdr_fit::{HUE_SHIFT, LEVEL_BALANCE_LIMIT, LEVEL_BINS};
+        use colour::matched::BINS;
+        use colour::space::srgb_oetf;
         let Some(gpu) = gpu::device() else {
             return;
         };

@@ -743,7 +743,7 @@ impl Gain {
 }
 
 fn to_srgb8(linear: f64) -> u8 {
-    (crate::hdr_fit::srgb_oetf(linear.clamp(0.0, 1.0)) * 255.0).round() as u8
+    (colour::space::srgb_oetf(linear.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
 /// The gain the pairs ask for, given a luma curve fitted under the current one.

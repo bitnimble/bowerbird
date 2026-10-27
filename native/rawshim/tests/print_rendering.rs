@@ -1,7 +1,7 @@
+use colour::matched::HdrColour;
+use colour::transfer::Primaries;
 use rawshim::grade::{Canvas, Grade, Intent, Output};
-use rawshim::hdr_fit::HdrColour;
 use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::transfer::Primaries;
 use units::light::{DisplayNits, Gain, Light, SceneNits};
 use units::px::Size;
 
@@ -738,7 +738,7 @@ fn drawn_as(
         ..Grade::new(
             size,
             size,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(10000.0),
                 peak: Light::measured(10000.0 * over_white),
                 floor: None,
@@ -748,13 +748,13 @@ fn drawn_as(
         )
     };
     let coded = |colour: [f64; 3]| {
-        rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+        colour::space::srgb_to_rec2020().map(|row| {
             let value = row
                 .into_iter()
                 .zip(colour)
                 .map(|(weight, value)| weight * value)
                 .sum::<f64>();
-            (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+            (colour::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
                 as u16
         })
     };

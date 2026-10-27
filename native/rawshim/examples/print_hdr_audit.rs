@@ -54,7 +54,7 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,

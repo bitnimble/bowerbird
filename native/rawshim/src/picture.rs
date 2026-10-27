@@ -148,7 +148,7 @@ pub fn prepared(
             .resident()
             .ok_or("the prepared picture is not on the GPU")?;
         let gpu = source.gpu();
-        let cropped = crate::resident::Resident::empty(gpu, width, height);
+        let cropped = colour::resident::Resident::empty(gpu, width, height);
         let mut recording = gpu.record();
         // Crop after filtering so window boundaries keep the whole picture's neighbours.
         crate::retouched_frame::copy(

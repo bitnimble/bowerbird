@@ -94,8 +94,8 @@ fn main() {
     // The tile against the same rectangle of the whole frame. Both have been through the same
     // orientation, so a tile that landed where it was asked for reads the same samples.
     let (a, b) = (
-        rawshim::resident::levels_of(a),
-        rawshim::resident::levels_of(b),
+        colour::resident::levels_of(a),
+        colour::resident::levels_of(b),
     );
     let mut worst = 0f32;
     let mut total = 0f64;

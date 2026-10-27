@@ -108,7 +108,7 @@ pub struct PreparedHeader {
     pub white: units::light::Light<units::light::Level>,
     pub peak: units::light::Light<units::light::Level>,
     /// Absent where the picture was prepared without a histogram walk behind it, and then a loupe
-    /// tile handing these back is refused and measures its own ([`crate::tone::Levels::usable`]).
+    /// tile handing these back is refused and measures its own ([`colour::tone::Levels::usable`]).
     pub floor: Option<units::light::Light<units::light::Level>>,
     pub grade: hdr::Grade,
     pub strengths: Strengths,
@@ -130,7 +130,7 @@ pub struct PreparedHeader {
     ///
     /// For the *panel*, which shows the reader where the sliders start. The grade reads it out
     /// of `tick` below rather than from here, so no arithmetic depends on this field.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// The two Detail positions this frame was actually filtered at, 0 to 100.
     ///
     /// **What the panel shows where the document has left a slider unset.** The ramp that turns a
@@ -144,7 +144,7 @@ pub struct PreparedHeader {
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
     /// The white balance the camera match sets (`HdrColour::illuminant`).
-    pub camera_balance: Option<crate::white_balance::Illuminant>,
+    pub camera_balance: Option<colour::white_balance::Illuminant>,
     /// The mosaic's noise, handed back on every loupe tile and every band of a re-prepare - so a
     /// crop is denoised at the strength its own export would use rather than at whatever its few
     /// hundred thousand photosites happen to imply.
@@ -614,9 +614,9 @@ pub struct Opened {
     pub frame: crate::retouched_frame::RetouchedFrame,
     pub header: PreparedHeader,
     /// What the frame was coded against, which the tick's uniform anchors to.
-    pub levels: crate::tone::Levels,
+    pub levels: colour::tone::Levels,
     pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// What the open took out, kept by a host that opens this photograph again.
     pub removal: Option<crate::dereflect::Removal>,
 }
@@ -643,19 +643,19 @@ impl Opened {
 /// [`PreparedHeader`]'s `camera_curve`, `camera_exposure`, `camera_saturation` and
 /// `camera_balance`.
 pub(crate) fn camera_defaults(
-    colour: Option<&crate::hdr_fit::HdrColour>,
+    colour: Option<&colour::matched::HdrColour>,
 ) -> (
     Option<crate::grade::ToneCurve>,
     Option<units::light::Stops>,
     Option<f64>,
-    Option<crate::white_balance::Illuminant>,
+    Option<colour::white_balance::Illuminant>,
 ) {
     (
         colour.map(|c| crate::grade::ToneCurve::PchipCbrt3 {
             points: c.curve.clone(),
         }),
         colour.map(|c| c.exposure),
-        colour.map(crate::hdr_fit::HdrColour::saturation_slider),
+        colour.map(colour::matched::HdrColour::saturation_slider),
         colour.and_then(|c| c.illuminant),
     )
 }
@@ -664,13 +664,13 @@ pub(crate) fn camera_defaults(
 struct Framed {
     width: usize,
     height: usize,
-    levels: crate::tone::Levels,
+    levels: colour::tone::Levels,
 }
 
 async fn payload(
     prepared: Framed,
     matched: Option<&crate::hdr_fit::HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     request: &EditRequest,
     // What the frame was actually filtered at, which the request only half decides.
     strengths: Strengths,

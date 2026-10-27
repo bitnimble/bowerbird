@@ -174,7 +174,7 @@ static LAST: std::sync::Mutex<Option<([f32; 16], Option<Illuminant>)>> =
 /// The temperature, the tint, and whether there is an illuminant at all.
 const SOLVED: u64 = 3;
 
-pub(crate) struct Solver {
+pub struct Solver {
     layout: wgpu::BindGroupLayout,
     as_shot: wgpu::ComputePipeline,
     illuminant_for: wgpu::ComputePipeline,
@@ -182,7 +182,7 @@ pub(crate) struct Solver {
 
 /// Infallible, as `condition::device` is: these kernels ask for nothing beyond two storage
 /// buffers, and a shader that would not build is a panic through `on_uncaptured_error`.
-pub(crate) fn device(gpu: &'static gpu::Gpu) -> &'static Solver {
+pub fn device(gpu: &'static gpu::Gpu) -> &'static Solver {
     static BUILT: gpu::Cache<Solver> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -404,14 +404,14 @@ mod tests {
                 .fold(0.0f64, f64::max)
         };
 
-        let xyz_to_cone = crate::hdr_fit::in_the_shader("XYZ_TO_CONE");
+        let xyz_to_cone = crate::space::in_the_shader("XYZ_TO_CONE");
         assert!(
             worst(&xyz_to_cone, &BRADFORD) < 5e-7,
             "XYZ_TO_CONE is not Bradford: {xyz_to_cone:?}",
         );
 
-        let want = crate::hdr_fit::multiply(&BRADFORD, &crate::hdr_fit::REC2020_TO_XYZ);
-        let found = crate::hdr_fit::in_the_shader("R2020_TO_CONE");
+        let want = crate::space::multiply(&BRADFORD, &crate::space::REC2020_TO_XYZ);
+        let found = crate::space::in_the_shader("R2020_TO_CONE");
         // The literals are rounded to six places, so they cannot agree closer than half of one -
         // and they do agree to about 3.5e-7, so anything looser than this would pass a matrix
         // with a digit wrong in its last place.
@@ -432,8 +432,8 @@ mod tests {
                 .join("\n"),
         );
 
-        let back = crate::hdr_fit::in_the_shader("CONE_TO_R2020");
-        let identity = crate::hdr_fit::multiply(&back, &found);
+        let back = crate::space::in_the_shader("CONE_TO_R2020");
+        let identity = crate::space::multiply(&back, &found);
         let want_identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         // The shader's own comment budgets a millionth for the round trip; hold it to that.
         assert!(

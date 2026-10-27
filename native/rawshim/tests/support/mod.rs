@@ -2,10 +2,10 @@
 //! "the noise it sits in" mean the same thing in every test that says them.
 #![allow(dead_code)]
 
+use colour::lattice::{ChromaMap, Kernel, generator_of};
+use colour::resident::Resident;
+use colour::tone;
 use gpu::{self, Gpu};
-use rawshim::lattice::{ChromaMap, Kernel, generator_of};
-use rawshim::resident::Resident;
-use rawshim::tone;
 use units::light::{Light, SceneNits};
 
 /// What a synthetic frame has in it. Every frame is the same textured ground so that "agrees" and

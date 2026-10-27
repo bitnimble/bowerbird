@@ -2,7 +2,7 @@
 
 use crate::composite_tile::{CompositeRequest, From, Layer, SourceFile};
 use crate::composition::Composition;
-use crate::resident::Resident;
+use colour::resident::Resident;
 
 /// The long edge every plane is measured at.
 pub const ANALYSIS_LONG: usize = 3000;
@@ -217,9 +217,9 @@ mod tests {
         .expect("the demosaic runs");
         let demosaiced = pollster::block_on(crate::demosaic::read_frame(gpu, &frame, SIDE * SIDE))
             .expect("the frame reads back");
-        let resident = crate::resident::Resident::upload(gpu, &demosaiced, SIDE, SIDE);
+        let resident = colour::resident::Resident::upload(gpu, &demosaiced, SIDE, SIDE);
 
-        let weights = crate::hdr_fit::LUMA;
+        let weights = colour::space::LUMA;
         let squares: f64 = weights.iter().map(|w| w * w).sum();
         let mut measured = Vec::new();
         for out in [
@@ -238,9 +238,9 @@ mod tests {
             for y in skip..out - skip {
                 for x in skip..out - skip {
                     let sample = |c: usize| {
-                        f64::from(crate::resident::level_of_bits(
+                        f64::from(colour::resident::level_of_bits(
                             samples[(y * out + x) * 3 + c],
-                        )) / f64::from(crate::resident::FULL_SCALE)
+                        )) / f64::from(colour::resident::FULL_SCALE)
                     };
                     let (r, g, b) = (sample(0), sample(1), sample(2));
                     let luma = weights[0] * r + weights[1] * g + weights[2] * b;

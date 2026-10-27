@@ -7,7 +7,7 @@
 //! there.
 
 use crate::parallel::*;
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 
 /// The three floats `fit_scan` writes, which is all of the histogram that crosses to the host.
@@ -17,7 +17,7 @@ const LEVEL_BYTES: u64 = 12;
 pub struct Prepared {
     pub plane: crate::hdr_fit::Source,
     pub rendered: Rendered,
-    pub levels: crate::tone::Levels,
+    pub levels: colour::tone::Levels,
 }
 
 /// The plane as the geometry search and the lateral aberration read it: sRGB in 0..1, one float a
@@ -119,14 +119,14 @@ pub async fn levels(
     gpu: &'static gpu::Gpu,
     frame: &Resident,
     quantile: f64,
-) -> Option<crate::tone::Levels> {
+) -> Option<colour::tone::Levels> {
     Some(run(gpu, frame, None, quantile).await?.levels)
 }
 
 struct Taken {
     plane: Option<crate::hdr_fit::Source>,
     rendered: Option<Rendered>,
-    levels: crate::tone::Levels,
+    levels: colour::tone::Levels,
 }
 
 async fn run(
@@ -150,7 +150,7 @@ async fn run(
         None => (1, 1),
     };
     let pixels = width * height;
-    let counted = pixels.min(crate::tone::QUANTILE_SAMPLES);
+    let counted = pixels.min(colour::tone::QUANTILE_SAMPLES);
 
     let plane_bytes = (wide * tall * 3 * 4) as u64;
     let plane = recording.buffer(&wgpu::BufferDescriptor {
@@ -169,7 +169,7 @@ async fn run(
     });
     let histogram = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit histogram"),
-        size: (crate::tone::LEVEL_BINS * 4) as u64,
+        size: (colour::tone::LEVEL_BINS * 4) as u64,
         // Zeroed by the driver, which the counting relies on: every bin is added into rather
         // than written.
         usage: wgpu::BufferUsages::STORAGE,
@@ -191,7 +191,7 @@ async fn run(
     };
     let levels_out = staging("fit levels out", LEVEL_BYTES);
 
-    let (floor_mark, white_mark, peak_mark) = crate::tone::marks(counted, quantile);
+    let (floor_mark, white_mark, peak_mark) = colour::tone::marks(counted, quantile);
     let mut block = [
         width as i32,
         height as i32,
@@ -205,12 +205,12 @@ async fn run(
     ]
     .iter()
     .flat_map(|v| v.to_ne_bytes())
-    .chain((crate::tone::WHITE_FLOOR_UNDER_PEAK.raw() as f32).to_ne_bytes())
+    .chain((colour::tone::WHITE_FLOOR_UNDER_PEAK.raw() as f32).to_ne_bytes())
     .collect::<Vec<u8>>();
     // The matrix starts on a 16-byte boundary and each row occupies one, which is what `float4[3]`
     // is in std140 and why the rows are written with a pad word rather than nine floats running on.
     block.resize(48, 0);
-    let to_srgb = crate::hdr_fit::rec2020_to_srgb();
+    let to_srgb = colour::space::rec2020_to_srgb();
     for row in &to_srgb {
         block.extend(row.iter().flat_map(|v| (*v as f32).to_ne_bytes()));
         block.extend(0f32.to_ne_bytes());
@@ -292,7 +292,7 @@ async fn run(
         };
         // The one place a level enters the host now that `fit_scan` takes the quantile: what the
         // shader wrote, read back and named.
-        crate::tone::Levels {
+        colour::tone::Levels {
             white: units::light::Light::measured(at(0)),
             peak: units::light::Light::measured(at(4)),
             floor: Some(units::light::Light::measured(at(8))),
@@ -409,6 +409,91 @@ pub async fn read_render(gpu: &'static gpu::Gpu, render: &Rendered) -> Option<un
 
 #[cfg(test)]
 mod tests {
+    use colour::tone::{Levels, WHITE_FLOOR_UNDER_PEAK};
+    use units::light::{Level, Light};
+
+    /// A frame of one pixel per level asked for, grey, one row tall. `fit_levels` samples a fixed
+    /// count and this is shorter than that count, so every pixel is read exactly once and the
+    /// histogram it counts is these levels themselves.
+    fn frame(levels: impl IntoIterator<Item = usize>) -> Vec<u16> {
+        levels
+            .into_iter()
+            .flat_map(|level| [colour::resident::bits_of_level(level as f32); 3])
+            .collect()
+    }
+
+    fn stored(level: f32) -> Light<Level> {
+        Light::measured(f64::from(colour::resident::level_of_bits(
+            colour::resident::bits_of_level(level),
+        )))
+    }
+
+    fn scanned(gpu: &'static gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
+        let resident = colour::resident::Resident::upload(gpu, samples, samples.len() / 3, 1);
+        pollster::block_on(super::levels(gpu, &resident, quantile))
+            .expect("the device read the levels off the frame")
+    }
+
+    #[test]
+    fn the_peak_is_read_above_diffuse_white() {
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let out = scanned(gpu, &frame((0..3000).map(|i| i * 20)), 0.9);
+        assert!(
+            out.peak > out.white,
+            "the peak must sit above diffuse white"
+        );
+        assert!(out.white > Light::ZERO);
+    }
+
+    /// A night frame: nine pixels in ten near black, the rest lit. The quantile lands on the
+    /// dark ground and the anchor is held to three stops under the lights instead.
+    #[test]
+    fn diffuse_white_is_read_no_lower_than_three_stops_under_the_peak() {
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let night = frame((0..10_000).map(|i| if i % 10 == 0 { 40_000 } else { 400 }));
+        let out = scanned(gpu, &night, 0.9);
+        let lit = stored(40_000.0);
+        assert_eq!(out.peak, lit);
+        assert_eq!(out.white, lit / WHITE_FLOOR_UNDER_PEAK);
+
+        // Where the quantile already sits within reach of the peak the floor does nothing.
+        let out = scanned(gpu, &frame((0..10_000).map(|i| i * 4)), 0.9);
+        assert!(out.white > out.peak / WHITE_FLOOR_UNDER_PEAK);
+        let apart = (out.white - Light::measured(36_000.0)).raw();
+        assert!(
+            apart.abs() < 100.0,
+            "the quantile itself, got {:?}",
+            out.white
+        );
+    }
+
+    #[test]
+    fn a_reconstructed_sun_past_full_scale_leaves_diffuse_white_alone() {
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let sun = 8 * usize::from(u16::MAX);
+        let out = scanned(
+            gpu,
+            &frame((0..10_000).map(|i| if i % 100 == 0 { sun } else { 20_000 })),
+            0.9,
+        );
+        assert_eq!(out.peak, stored(sun as f32));
+        assert_eq!(out.white, stored(20_000.0));
+
+        // A sun so large the quantile lands on it: white holds at what the sensor recorded.
+        let out = scanned(
+            gpu,
+            &frame((0..10_000).map(|i| if i % 5 == 0 { sun } else { 20_000 })),
+            0.9,
+        );
+        assert_eq!(out.peak, stored(sun as f32));
+        assert_eq!(out.white, stored(f32::from(u16::MAX)));
+    }
     /// `fit_render` against the arithmetic it took over, on the plane and the white the same round
     /// trip produced.
     ///
@@ -429,7 +514,7 @@ mod tests {
         // and the clamp above white are all exercised rather than one flat level.
         let (width, height) = (64usize, 48usize);
         let mut samples = vec![0u16; width * height * 3];
-        let stored = |level: usize| crate::resident::bits_of_level((level % 60000) as f32);
+        let stored = |level: usize| colour::resident::bits_of_level((level % 60000) as f32);
         for y in 0..height {
             for x in 0..width {
                 let i = (y * width + x) * 3;
@@ -438,7 +523,7 @@ mod tests {
                 samples[i + 2] = stored(x * y * 13);
             }
         }
-        let resident = crate::resident::Resident::upload(gpu, &samples, width, height);
+        let resident = colour::resident::Resident::upload(gpu, &samples, width, height);
         let prepared = pollster::block_on(super::prepared(gpu, &resident, width, 0.9))
             .expect("the device prepared the frame");
 

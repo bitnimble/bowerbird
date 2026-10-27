@@ -27,8 +27,8 @@ fn main() {
         (plain.width, plain.height),
         (denoised.width, denoised.height)
     );
-    let before = rawshim::resident::levels_of(plain.samples16().expect("16-bit"));
-    let after = rawshim::resident::levels_of(denoised.samples16().expect("16-bit"));
+    let before = colour::resident::levels_of(plain.samples16().expect("16-bit"));
+    let after = colour::resident::levels_of(denoised.samples16().expect("16-bit"));
     let apart = || before.iter().zip(&after).map(|(a, b)| (a - b).abs());
 
     let moved = apart().filter(|&d| d > 0.0).count();

@@ -15,8 +15,8 @@
 //!   BOWERBIRD_WRITE_FIXTURES=1 bun run test:native <name>
 
 use crate::condition::Mosaic;
-use crate::resident::Resident;
-use crate::tone::Anchored;
+use colour::resident::Resident;
+use colour::tone::Anchored;
 use units::light::{DisplayNits, Light, Pq, SceneNits};
 use units::px::{Pinned, Rect, Size, Span};
 
@@ -145,7 +145,7 @@ impl Snapshot {
                 .round()
                 .clamp(0.0, f32::from(u16::MAX));
             let mut pixel = [0u16; 3];
-            pixel[usize::from(cfa.colour_at(y, x))] = crate::resident::bits_of_level(level);
+            pixel[usize::from(cfa.colour_at(y, x))] = colour::resident::bits_of_level(level);
             pixel
         });
         let coded = code_scene(gpu, cut, anchoring);
@@ -169,7 +169,7 @@ impl Snapshot {
             .map(|level| {
                 let share = f64::from(level) / f64::from(u16::MAX);
                 let nits = Light::<DisplayNits>::measured(peak.raw() * share);
-                (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
+                (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
             })
             .collect();
         let samples: Vec<u16> = samples.iter().map(|&v| coded[usize::from(v)]).collect();
@@ -435,7 +435,7 @@ pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> 
             .collect();
         levels.sort_unstable();
         let brightest = levels[levels.len() * 99 / 100];
-        let own = crate::tone::pq_inv::<DisplayNits>(Light::measured(
+        let own = colour::tone::pq_inv::<DisplayNits>(Light::measured(
             f64::from(brightest) / f64::from(u16::MAX),
         ));
         if own.raw() > 0.0 && own.raw() < DISPLAY_WHITE.raw() / 8.0 {
@@ -495,17 +495,17 @@ fn view(snapshot: &Snapshot, white: Light<DisplayNits>) -> Vec<u8> {
     let share: Vec<f64> = (0..=u16::MAX)
         .map(|code| {
             let signal = Light::<Pq>::measured(f64::from(code) / f64::from(u16::MAX));
-            crate::tone::pq_inv::<DisplayNits>(signal) / white
+            colour::tone::pq_inv::<DisplayNits>(signal) / white
         })
         .map(|gain| gain.raw())
         .collect();
-    let matrix = crate::hdr_fit::rec2020_to_srgb();
+    let matrix = colour::space::rec2020_to_srgb();
     let mut out = Vec::with_capacity(snapshot.samples.len());
     for pixel in snapshot.samples.chunks_exact(3) {
         let rgb = [0, 1, 2].map(|c| share[usize::from(pixel[c])]);
         for row in matrix {
             let linear = (row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]).clamp(0.0, 1.0);
-            out.push((crate::hdr_fit::srgb_oetf(linear) * 255.0).round() as u8);
+            out.push((colour::space::srgb_oetf(linear) * 255.0).round() as u8);
         }
     }
     out
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn the_side_by_side_is_before_after_difference_over_two_exposures() {
         let nits = Light::<units::light::SceneNits>::exactly(500.0);
-        let code = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16;
+        let code = (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16;
         let (width, height, pixels) = drawn(&side_by_side_png(
             Some(&flat(32, 16, 0)),
             &flat(32, 16, code),
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_of_shadows_is_drawn_again_at_its_own_level() {
-        let dim = (crate::tone::pq(Light::<DisplayNits>::measured(2.0)).raw() * 65535.0) as u16;
+        let dim = (colour::tone::pq(Light::<DisplayNits>::measured(2.0)).raw() * 65535.0) as u16;
         let (_, height, pixels) = drawn(&side_by_side_png(None, &flat(32, 16, dim)));
         let zoom = (VIEW_LONG / 32).min(VIEW_MAX_ZOOM);
         assert_eq!(height, 3 * 16 * zoom + 2 * BAND_GAP);
@@ -750,7 +750,7 @@ mod tests {
         let peak = Light::<DisplayNits>::exactly(1000.0);
         let snapshot = Snapshot::signal(&[0, u16::MAX, 13107], Size::<Pinned>::exact(1, 1), peak);
         let code = |nits: f64| {
-            let pq = crate::tone::pq(Light::<DisplayNits>::measured(nits)).raw();
+            let pq = colour::tone::pq(Light::<DisplayNits>::measured(nits)).raw();
             (pq * f64::from(u16::MAX)).round() as u16
         };
         assert_eq!(snapshot.coding, Coding::Pq);
@@ -789,7 +789,7 @@ mod tests {
             "a crop is 1:1"
         );
 
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(20000.0),
             peak: Light::measured(60000.0),
             floor: Some(Light::measured(0.0)),

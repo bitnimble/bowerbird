@@ -6,9 +6,9 @@
 //! right. The formats a fixture is actually needed for - a camera's HEIC, with its grid of tiles
 //! and its gain map - are `hevc.rs`'s own tests and the suite behind `--features fixtures`.
 
+use colour::transfer::Curve;
 use rawler::decoders::Orientation;
 use rawshim::decode_rendered;
-use rawshim::transfer::Curve;
 
 /// A PNG of `width x height`, eight bits, with whatever the caller sets on the encoder.
 fn encode_png(

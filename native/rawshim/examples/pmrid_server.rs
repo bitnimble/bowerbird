@@ -152,7 +152,7 @@ enum Shown {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct Measured {
     matrix: [[f32; 3]; 3],
-    levels: rawshim::tone::Levels,
+    levels: colour::tone::Levels,
     /// Gaussian sigma in the sensor's pixels.
     capture_blur: Option<f32>,
     sensor_long: usize,
@@ -595,7 +595,7 @@ fn sharpened(
         };
         let (width, height) = (out_width, out_height);
         for &(defringe, amount) in &variants {
-            let resident = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
+            let resident = colour::resident::Resident::upload(gpu, &demosaiced, width, height);
             let (prepared, _) = pollster::block_on(rawshim::base::prepare(
                 gpu,
                 base,
@@ -619,7 +619,7 @@ fn sharpened(
             let coded = rawshim::hdr::Cut::from_base(prepared, None, size, amount, sigma, noise)
                 .into_samples();
             light.extend(coded[..width * height * 3].iter().map(|&code| {
-                let nits = rawshim::tone::pq_inv::<units::light::SceneNits>(Light::measured(
+                let nits = colour::tone::pq_inv::<units::light::SceneNits>(Light::measured(
                     f64::from(code) / f64::from(u16::MAX),
                 ));
                 (nits.raw() / white.raw()) as f32

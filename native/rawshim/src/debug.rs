@@ -46,7 +46,7 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
                     .step_by(3)
                     .for_each(|v| visit(u32::from(*v))),
                 Pixels::Sixteen(data) => data.iter().skip(c).step_by(3).for_each(|&bits| {
-                    visit(crate::resident::level_of_bits(bits).round().max(0.0) as u32)
+                    visit(colour::resident::level_of_bits(bits).round().max(0.0) as u32)
                 }),
                 Pixels::Resident(_) => panic!("{ON_THE_DEVICE}"),
             }
@@ -586,7 +586,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             // not the same shape: the preview is distortion-cropped, so at an 800px long
             // edge it comes out a pixel narrower than the render and a shared index
             // would slide a pixel per row.
-            let linear = |v: [f64; 3]| [0, 1, 2].map(|c| crate::hdr_fit::srgb_eotf(v[c] as u8));
+            let linear = |v: [f64; 3]| [0, 1, 2].map(|c| colour::space::srgb_eotf(v[c] as u8));
             let counted = 4000usize;
             let mut targets = Vec::with_capacity(counted);
             let mut ours: Vec<Vec<([f64; 3], f64)>> =

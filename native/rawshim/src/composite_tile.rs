@@ -6,7 +6,7 @@
 //! grid, and drops that region before the next source is decoded.
 
 use crate::composition::{Composition, Projection, SourceSpec};
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use units::px::{Drawn, Rect, Size};
 
@@ -683,7 +683,7 @@ pub struct CompositeRequest<'a> {
     /// strip of sky and a strip of headland would be coded against different whites and the seam
     /// between them is a band across the finished picture. Absent only where the caller has no way
     /// to know, and then the reference's own strip measures for all of them.
-    pub levels: Option<crate::tone::Anchored>,
+    pub levels: Option<colour::tone::Anchored>,
     pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub strengths: crate::image::Strengths,
     pub detail: crate::galosh::Detail,
@@ -751,8 +751,8 @@ const FOOTPRINT_STEP: usize = 8;
 fn whole_anchor(
     spec: &Composition,
     request: &CompositeRequest<'_>,
-) -> Option<crate::tone::Anchored> {
-    let measured: Vec<crate::tone::Levels> = spec
+) -> Option<colour::tone::Anchored> {
+    let measured: Vec<colour::tone::Levels> = spec
         .sources
         .iter()
         .zip(request.sources)
@@ -761,7 +761,7 @@ fn whole_anchor(
                 .analysis
                 .and_then(|a| a.from_render.levels)
                 .and_then(|m| m.levels_at(request.white_quantile))?;
-            Some(crate::tone::Levels {
+            Some(colour::tone::Levels {
                 white: units::light::Light::measured(levels.white.raw() * source.gain),
                 peak: units::light::Light::measured(levels.peak.raw() * source.gain),
                 floor: levels
@@ -803,7 +803,7 @@ const ANCHOR_AMONG: f64 = 0.9;
 const PEAK_AMONG: f64 = 1.0;
 
 /// Those quantiles of the sources' whites and peaks, or None where none of them measured anything.
-pub(crate) fn combined(measured: &[crate::tone::Levels]) -> Option<crate::tone::Anchored> {
+pub(crate) fn combined(measured: &[colour::tone::Levels]) -> Option<colour::tone::Anchored> {
     if measured.is_empty() {
         return None;
     }
@@ -823,7 +823,7 @@ pub(crate) fn combined(measured: &[crate::tone::Levels]) -> Option<crate::tone::
         .unwrap_or(PEAK_AMONG);
     let peak = peaks[((peaks.len() - 1) as f64 * peak_share.clamp(0.0, 1.0)).round() as usize];
     Some(
-        crate::tone::Levels {
+        colour::tone::Levels {
             white: units::light::Light::measured(white),
             // A peak below the white it is anchored on is not a roll-off, it is a clip.
             peak: units::light::Light::measured(peak.max(white)),
@@ -913,7 +913,7 @@ async fn prepared_with(
     }
     let (left, top, width, height) = request.window.raw();
 
-    let mut levels: Option<crate::tone::Anchored> =
+    let mut levels: Option<colour::tone::Anchored> =
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut as_shot = None;
     let mut defocus = (0.0, 0.0);
@@ -993,12 +993,12 @@ struct Taken {
     layer: Layer,
     /// What GALOSH fitted off this source's own mosaic, for a stage measuring what the decode was.
     noise: Option<crate::galosh::NoiseFit>,
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     /// The levels this source was *coded* against, which is [`levels`] divided by its own gain.
     ///
     /// [`levels`]: Taken::levels
-    coded: crate::tone::Anchored,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    coded: colour::tone::Anchored,
+    as_shot: Option<colour::white_balance::Illuminant>,
     wb_gains: [f32; 3],
     defocus: (f32, f32),
 }
@@ -1011,7 +1011,7 @@ async fn taken(
     spec: &Composition,
     request: &CompositeRequest<'_>,
     i: usize,
-    anchor: Option<crate::tone::Anchored>,
+    anchor: Option<colour::tone::Anchored>,
     merging: Option<Merging<'_>>,
     lap: &mut impl FnMut(&str),
 ) -> Result<Option<Taken>, String> {
@@ -1126,7 +1126,7 @@ async fn taken(
     let resident = match frame.pixels {
         crate::frame::Pixels::Resident(resident) => resident,
         crate::frame::Pixels::Sixteen(samples) => {
-            crate::resident::Resident::upload(gpu, &samples, drawn.0, drawn.1)
+            colour::resident::Resident::upload(gpu, &samples, drawn.0, drawn.1)
         }
         crate::frame::Pixels::Eight(_) => {
             return Err("a composite needs a 16-bit scene-linear decode".into());
@@ -1228,8 +1228,8 @@ async fn taken(
 /// **The gain lands here, in the coding.** Dividing the white a source is coded against by its gain
 /// is a multiplication of its light, which is what an exposure match is - and it costs nothing,
 /// where a multiply per sample downstream would be a pass over the window.
-pub(crate) fn coded_as(anchored: crate::tone::Anchored, gain: f64) -> crate::tone::Anchored {
-    crate::tone::Levels {
+pub(crate) fn coded_as(anchored: colour::tone::Anchored, gain: f64) -> colour::tone::Anchored {
+    colour::tone::Levels {
         white: units::light::Light::measured(anchored.white.raw() / gain),
         peak: units::light::Light::measured(anchored.peak.raw() / gain),
         floor: anchored
@@ -1253,14 +1253,14 @@ pub async fn layers_of(
     spec: &Composition,
     request: &CompositeRequest<'_>,
     mut take: impl FnMut(usize, Layer, Arrived) -> Result<(), String>,
-) -> Result<Option<crate::tone::Anchored>, String> {
+) -> Result<Option<colour::tone::Anchored>, String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
     if spec.sources.len() != request.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
     }
-    let mut levels: Option<crate::tone::Anchored> =
+    let mut levels: Option<colour::tone::Anchored> =
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut lap = trace::clock::laps("    pano source ");
     for i in order_of(spec) {
@@ -1289,8 +1289,8 @@ pub struct Arrived {
     pub noise: Option<crate::galosh::NoiseFit>,
     /// The levels this source was *coded* against, which is the composite's own divided by this
     /// source's gain.
-    pub coded: crate::tone::Anchored,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub coded: colour::tone::Anchored,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     pub wb_gains: [f32; 3],
     pub defocus: (f32, f32),
 }
@@ -1398,7 +1398,7 @@ pub(crate) async fn camera_picture(
         height,
         // What a camera writes its preview in, and what the JPEG path read off the absent profile:
         // eight bits of sRGB.
-        coding: crate::transfer::Coding::srgb(8),
+        coding: colour::transfer::Coding::srgb(8),
         // Already turned, which is the whole of what `upright` means above.
         turn: rawler::decoders::Orientation::Normal,
         gain: None,
@@ -1432,7 +1432,7 @@ pub(crate) fn camera_peak(path: &str) -> Result<units::light::Light<units::light
             .ok_or_else(|| format!("{path} states no brightest level"));
     }
     // A camera's preview: eight bits of sRGB, and no gain map.
-    Ok(units::light::Light::measured(crate::transfer::FULL_SCALE))
+    Ok(units::light::Light::measured(colour::transfer::FULL_SCALE))
 }
 
 /// Whether any source of this panorama reaches this window at all.
@@ -1714,8 +1714,8 @@ mod tests {
         gpu::device().expect("an adapter for the panorama gather")
     }
 
-    fn levels(white: f64, peak: f64) -> crate::tone::Levels {
-        crate::tone::Levels {
+    fn levels(white: f64, peak: f64) -> colour::tone::Levels {
+        colour::tone::Levels {
             white: units::light::Light::measured(white),
             peak: units::light::Light::measured(peak),
             floor: Some(units::light::Light::measured(white / 32.0)),
@@ -1929,7 +1929,7 @@ mod tests {
         .expect("the alpha reads back");
 
         let light = |code: u16| {
-            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
+            colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
                 f64::from(code) / f64::from(u16::MAX),
             ))
             .raw()
@@ -1961,7 +1961,7 @@ mod tests {
     /// A frame every sample of which is the same code, which is what makes a blend's answer
     /// readable: whatever comes back is the mix and not the picture.
     fn flat_frame(gpu: &'static gpu::Gpu, nits: f64) -> Resident {
-        let signal = crate::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
+        let signal = colour::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
             nits,
         ));
         let code = (signal.raw() * f64::from(u16::MAX)).round() as u16;
@@ -1990,7 +1990,7 @@ mod tests {
     async fn read_row(gpu: &'static gpu::Gpu, frame: &Resident, across: usize) -> Vec<u16> {
         let staging = copied(gpu, frame.buffer(), (across * 3).div_ceil(2));
         gpu::read_back(gpu, &staging, |mapped| {
-            let samples = crate::resident::samples_of(mapped);
+            let samples = colour::resident::samples_of(mapped);
             (0..across).map(|x| samples[x * 3 + 1]).collect()
         })
         .await

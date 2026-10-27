@@ -15,7 +15,7 @@ mod support;
 
 use rawshim::grade::Output;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::resident::level_of_bits;
+use colour::resident::level_of_bits;
 
 const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =
     support::GRADE.reference_white_nits;
@@ -48,7 +48,7 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
     // rather than a stage, so what it wants is the numbers.
     let nits = |code: u16| {
         let signal = units::light::Light::measured(f64::from(code) / f64::from(u16::MAX));
-        rawshim::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
+        colour::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
     };
     let reference = REFERENCE_NITS.raw();
     let peak = graded
@@ -56,7 +56,7 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
         .map(|c| nits(*c))
         .fold(0.0f64, f64::max)
         .max(reference);
-    let to_srgb = rawshim::hdr_fit::rec2020_to_srgb();
+    let to_srgb = colour::space::rec2020_to_srgb();
     let transfer = |v: f64| match v <= 0.0031308 {
         true => v * 12.92,
         false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
@@ -191,7 +191,7 @@ fn main() {
         let nits = [0, 1, 2].map(|c| {
             let signal =
                 units::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));
-            rawshim::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
+            colour::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
         });
         println!(
             "{x:>4},{y:<4} {:>8.3} {:>8.3} {:>8.3} {:>6.3}   {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>6.3}",

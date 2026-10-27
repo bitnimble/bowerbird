@@ -19,14 +19,14 @@ const COARSE_LONG: usize = 512;
 pub struct Lowpass {
     /// Slot-major, `Drawing::sources_used()`'s order: each source's crop, area-averaged to the
     /// split's own grid. A few kilobytes a source.
-    pub bands: Vec<crate::resident::Resident>,
+    pub bands: Vec<colour::resident::Resident>,
     /// The grid's own size, and where it sits on the canvas in canvas pixels.
     pub size: (usize, usize),
     pub crop: Rect<units::px::Composite>,
     /// The white every window of this render is coded against, measured over the whole crop while
     /// the bands were being built. A strip left to measure its own is a band across the finished
     /// picture, which is `crate::composite_tile::CompositeRequest::levels`' own warning.
-    pub levels: crate::tone::Anchored,
+    pub levels: colour::tone::Anchored,
 }
 
 /// The lowpass for every source the recipe uses, built once for a whole render.
@@ -71,7 +71,7 @@ pub async fn lowpass(
         )
     };
 
-    let mut bands: Vec<Option<crate::resident::Resident>> = (0..slots).map(|_| None).collect();
+    let mut bands: Vec<Option<colour::resident::Resident>> = (0..slots).map(|_| None).collect();
 
     let coarse_request = crate::composite_tile::CompositeRequest {
         window: Rect::exact(
@@ -124,7 +124,7 @@ pub async fn prepared(
     recipe: &crate::assembly::Drawing,
     hold: &Lowpass,
     request: &crate::composite_tile::CompositeRequest<'_>,
-) -> Result<(crate::resident::Resident, crate::tile::Prepared), String> {
+) -> Result<(colour::resident::Resident, crate::tile::Prepared), String> {
     let refused = || crate::base::without_a_device("the assembly's render");
     let gpu = gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;

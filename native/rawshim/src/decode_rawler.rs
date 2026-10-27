@@ -598,7 +598,7 @@ struct RegionMosaic {
     halving: bool,
     noise: Option<crate::galosh::NoiseFit>,
     noise_left: f32,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 }
 
 impl RegionMosaic {
@@ -615,7 +615,7 @@ impl RegionMosaic {
         &self,
         gpu: &'static gpu::Gpu,
         rcd: &'static crate::demosaic::Rcd,
-    ) -> Option<crate::resident::Resident> {
+    ) -> Option<colour::resident::Resident> {
         demosaic_at(
             gpu,
             rcd,
@@ -641,7 +641,7 @@ impl RegionMosaic {
         }
     }
 
-    fn frame(&self, built: crate::resident::Resident) -> Frame {
+    fn frame(&self, built: colour::resident::Resident) -> Frame {
         Frame {
             width: built.width,
             height: built.height,
@@ -1061,7 +1061,7 @@ struct Sensor {
     crop: (usize, usize, usize, usize),
     colour: crate::demosaic::Colour,
     upright: rawler::decoders::Orientation,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     /// What the lens was stopped down to, which decides how large and how deep a particle's shadow
     /// is (`crate::dust`). Zero where the file recorded none, and then nothing is looked for.
     aperture: f32,
@@ -1201,9 +1201,9 @@ async fn linear(
         .map_or(units::px::Rect::exact(0, 0, width, height), |area| {
             units::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
         });
-    let coding = crate::transfer::Coding {
+    let coding = colour::transfer::Coding {
         matrix,
-        curve: crate::transfer::Curve::Linear,
+        curve: colour::transfer::Curve::Linear,
         depth: 16,
     };
     let as_shot = as_shot_of(gpu, &image).await;
@@ -2513,7 +2513,7 @@ async fn reduced_into(
     seen: crate::highlight::Seen<'_>,
     orientation: u32,
     cfa: &crate::cfa::Cfa,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let reduce = reduction(cfa)? as u32;
     // Once for the region, not once per tile: `demosaic::shape_group` says what that measured.
@@ -2528,7 +2528,7 @@ async fn reduced_into(
             reduce,
         };
     let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1)).out();
-    let frame = crate::resident::Resident::empty(gpu, out_w, out_h);
+    let frame = colour::resident::Resident::empty(gpu, out_w, out_h);
     for (ty0, ty1) in spans(crop_h) {
         for (tx0, tx1) in spans(crop_w) {
             let at = placed(
@@ -2580,7 +2580,7 @@ async fn demosaic_in_tiles(
     colour: crate::demosaic::Colour,
     seen: crate::highlight::Seen<'_>,
     orientation: u32,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     demosaic_settled_in_tiles(
         gpu,
         rcd,
@@ -2612,7 +2612,7 @@ async fn demosaic_detailed(
     orientation: u32,
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     if upscales(detail, noise) {
         let upscaler = crate::upscale::device(gpu);
         let photo = match (upscaler, noise) {
@@ -2666,7 +2666,7 @@ pub async fn demosaic_as_decoded(
     cfa: &crate::cfa::Cfa,
     colour: crate::demosaic::Colour,
     by: usize,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let gpu = gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
     let field = crate::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
@@ -2707,7 +2707,7 @@ async fn demosaic_at(
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
     by: usize,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let detailed = |crop| {
         demosaic_detailed(
             gpu,
@@ -2801,7 +2801,7 @@ async fn upscaled_in_tiles(
     colour: crate::demosaic::Colour,
     seen: crate::highlight::Seen<'_>,
     orientation: u32,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
         crate::demosaic::Placement {
@@ -2814,7 +2814,7 @@ async fn upscaled_in_tiles(
         }
     };
     let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1), 1).out();
-    let built = crate::resident::Resident::empty(gpu, out_w, out_h);
+    let built = colour::resident::Resident::empty(gpu, out_w, out_h);
     let margin = upscaler.margin();
     let (whole_w, whole_h) = (mosaic.width & !1, mosaic.height & !1);
     let tiles = async {
@@ -2919,7 +2919,7 @@ async fn demosaic_settled_in_tiles(
     seen: crate::highlight::Seen<'_>,
     orientation: u32,
     settle: &Settle<'_>,
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let (width, height) = (mosaic.width, mosaic.height);
     let (crop_left, crop_top, crop_w, crop_h) = crop;
 
@@ -2936,7 +2936,7 @@ async fn demosaic_settled_in_tiles(
         }
     };
     let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1), 1).out();
-    let frame = crate::resident::Resident::empty(gpu, out_w, out_h);
+    let frame = colour::resident::Resident::empty(gpu, out_w, out_h);
 
     for (ty0, ty1) in spans(crop_h) {
         for (tx0, tx1) in spans(crop_w) {
@@ -3422,7 +3422,7 @@ fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
     for (row, slot) in cam_from_srgb.iter_mut().enumerate() {
         for (col, cell) in slot.iter_mut().enumerate() {
             for k in 0..3 {
-                *cell += f64::from(xyz_to_cam[row][k]) * crate::hdr_fit::SRGB_TO_XYZ[k][col];
+                *cell += f64::from(xyz_to_cam[row][k]) * colour::space::SRGB_TO_XYZ[k][col];
             }
         }
         let sum: f64 = slot.iter().sum();
@@ -3435,10 +3435,10 @@ fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
 
     // Singular means the file described something impossible, and declining leaves the caller
     // without a frame rather than with one in invented colours.
-    let srgb_from_cam = crate::hdr_fit::invert3(&cam_from_srgb)?;
+    let srgb_from_cam = colour::space::invert3(&cam_from_srgb)?;
 
     let rec2020_from_cam =
-        crate::hdr_fit::multiply(&crate::hdr_fit::srgb_to_rec2020(), &srgb_from_cam);
+        colour::space::multiply(&colour::space::srgb_to_rec2020(), &srgb_from_cam);
 
     let mut out = [[0f32; 3]; 3];
     for (row, slot) in out.iter_mut().enumerate() {
@@ -3457,10 +3457,10 @@ fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
 async fn as_shot_of(
     gpu: &'static gpu::Gpu,
     image: &rawler::RawImage,
-) -> Option<crate::white_balance::Illuminant> {
+) -> Option<colour::white_balance::Illuminant> {
     let wb = image.wb_coeffs;
     let cam_mul = [wb[0], wb[1], wb[2], wb[3]];
-    crate::white_balance::as_shot(gpu, &cam_mul, &xyz_to_cam_of(image)?).await
+    colour::white_balance::as_shot(gpu, &cam_mul, &xyz_to_cam_of(image)?).await
 }
 
 #[cfg(test)]
@@ -4001,11 +4001,11 @@ mod tests {
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             panic!("not on the device")
         };
-        let samples = crate::resident::levels_of(
+        let samples = colour::resident::levels_of(
             &pollster::block_on(resident.into_host()).expect("the frame reads back"),
         );
 
-        let white = crate::transfer::FULL_SCALE;
+        let white = colour::transfer::FULL_SCALE;
         for (at, sample) in samples.iter().enumerate() {
             let want = [0.25, 1.0, 4.0, 0.0][at / 3] * white;
             assert!(

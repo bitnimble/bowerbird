@@ -80,7 +80,7 @@ struct Stages<'a> {
     shadows: f64,
     texture: f64,
     clarity: f64,
-    nodes: &'a [rawshim::lattice::ColourNode],
+    nodes: &'a [colour::lattice::ColourNode],
     /// The colour wheel's dots under this rectangle, as fractions of the frame.
     probe: Option<[f64; 4]>,
     /// The fitted curves' slope, expanded about their own middle. A regression whose predictor
@@ -317,7 +317,7 @@ fn graded(
             }
             colour
         });
-    let scene = rawshim::tone::SceneGrade::new(
+    let scene = rawshim::grade::SceneGrade::new(
         colour.as_ref(),
         levels,
         options.grade.reference_white_nits,
@@ -386,12 +386,12 @@ fn graded(
                 let signal =
                     units::light::Light::measured(f64::from(coded[at + c]) / f64::from(u16::MAX));
                 let nits: units::light::Light<units::light::DisplayNits> =
-                    rawshim::tone::pq_inv(signal);
+                    colour::tone::pq_inv(signal);
                 units::light::Light::measured(
                     nits.raw() / options.grade.reference_white_nits.raw(),
                 )
             });
-            let shown = rawshim::lattice::opponent_of(shown);
+            let shown = colour::lattice::opponent_of(shown);
             let (hue, chroma) = hue_chroma(shown);
             line += &format!(
                 " | shown lightness {:.1} hue {hue:.0} chroma {chroma:.1}",
@@ -640,7 +640,7 @@ fn main() {
                 });
             }
             "--nodes" => {
-                let nodes: Vec<rawshim::lattice::ColourNode> =
+                let nodes: Vec<colour::lattice::ColourNode> =
                     serde_json::from_str(&args.next().expect("a JSON array of colour nodes"))
                         .expect("colour nodes as the document holds them");
                 stages.nodes = Box::leak(nodes.into_boxed_slice());

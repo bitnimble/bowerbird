@@ -42,13 +42,13 @@ fn main() {
     );
     // What the fitted model does to a perfectly neutral input, at every level. Anything
     // other than zero here is the model tinting a grey, which is the cast by definition.
-    let no_map = rawshim::hdr_fit::HdrColour {
+    let no_map = colour::matched::HdrColour {
         chroma: None,
         ..colour.clone()
     };
     let levels = [0.02f32, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9];
     let greys: Vec<[f32; 4]> = levels.iter().map(|l| [*l, *l, *l, 0.0]).collect();
-    let through = |colour: &rawshim::hdr_fit::HdrColour| {
+    let through = |colour: &colour::matched::HdrColour| {
         pollster::block_on(rawshim::hdr_fit::evaluated(
             gpu,
             colour,

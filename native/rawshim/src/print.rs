@@ -518,7 +518,7 @@ mod tests {
     fn luminance(sample: [f32; 8]) -> f64 {
         sample
             .into_iter()
-            .zip(crate::hdr_fit::LUMA)
+            .zip(colour::space::LUMA)
             .map(|(value, weight)| f64::from(value) * weight)
             .sum()
     }
@@ -1067,7 +1067,7 @@ mod tests {
         let gpu = gpu::device().expect("print requires Vulkan");
         let base = crate::base::device(gpu).expect("the source pyramid");
         let (width, height) = (96, 64);
-        let code = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(80.0)).raw()
+        let code = (colour::tone::pq(Light::<units::light::SceneNits>::exactly(80.0)).raw()
             * 65535.0)
             .round() as u16;
         let frame = vec![code; width * height * 3];
@@ -1080,7 +1080,7 @@ mod tests {
             ..Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(10000.0),
                     peak: Light::measured(60000.0),
                     floor: None,
@@ -1178,10 +1178,10 @@ mod tests {
         );
 
         let size = 512;
-        let white = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(203.0)).raw()
+        let white = (colour::tone::pq(Light::<units::light::SceneNits>::exactly(203.0)).raw()
             * 65535.0)
             .round() as u16;
-        let middle = (crate::tone::pq(Light::<units::light::SceneNits>::exactly(101.5)).raw()
+        let middle = (colour::tone::pq(Light::<units::light::SceneNits>::exactly(101.5)).raw()
             * 65535.0)
             .round() as u16;
         let checker: Vec<u16> = (0..size * size)

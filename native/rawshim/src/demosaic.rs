@@ -1056,7 +1056,7 @@ fn record_rcd(
 #[cfg(test)]
 mod tests {
     use crate::highlight::Colouring;
-    use crate::resident::stored_within;
+    use colour::resident::stored_within;
 
     /// The patch the host counts workgroups in, against the one the shader folds its lanes into.
     ///
@@ -1278,7 +1278,7 @@ mod tests {
             &group,
         ))
         .expect("the demosaic runs");
-        let out = crate::resident::levels_of(
+        let out = colour::resident::levels_of(
             &pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))
                 .expect("the frame reads back"),
         );
@@ -1488,7 +1488,7 @@ mod tests {
         // and green's weight is the largest of the three, so the triple's own luma subtracts the
         // out-of-gamut channel from the in-gamut ones. `prelude.slang` carries the measurement.
         let luma = |v: [f64; 3]| {
-            let weights = crate::hdr_fit::LUMA;
+            let weights = colour::space::LUMA;
             (0..3).map(|c| weights[c] * v[c].max(0.0)).sum::<f64>()
         };
         let want: [f64; 3] = crate::hdr_fit::in_gamut(m).map(|v| v * 65535.0);
@@ -1690,7 +1690,7 @@ mod tests {
 
         fn pixel(&self, x: usize, y: usize) -> [f64; 3] {
             let at = (y * self.width + x) * 3;
-            [0, 1, 2].map(|c| f64::from(crate::resident::level_of_bits(self.rgb[at + c])))
+            [0, 1, 2].map(|c| f64::from(colour::resident::level_of_bits(self.rgb[at + c])))
         }
 
         fn census(&self) -> Census {
@@ -1720,7 +1720,7 @@ mod tests {
             let levels = crate::hdr::levels_of(gpu, &self.rgb, self.width, self.height, 0.995)
                 .expect("the window has levels");
             let resident =
-                crate::resident::Resident::upload(gpu, &self.rgb, self.width, self.height);
+                colour::resident::Resident::upload(gpu, &self.rgb, self.width, self.height);
             crate::snapshot::Snapshot::crops(
                 crate::snapshot::Frame::Scene(
                     &resident,
@@ -1850,7 +1850,7 @@ mod tests {
 
     fn middle_of(samples: &[u16], width: usize, height: usize) -> [f32; 3] {
         let middle = ((height / 2) * width + width / 2) * 3;
-        std::array::from_fn(|c| crate::resident::level_of_bits(samples[middle + c]))
+        std::array::from_fn(|c| colour::resident::level_of_bits(samples[middle + c]))
     }
 
     /// A disc blown in every channel borrows a vivid surround's colour and comes back white under a

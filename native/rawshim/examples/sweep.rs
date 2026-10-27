@@ -258,7 +258,7 @@ fn against_camera(
     // both bodies' grain and sharpening, which no colour fit reproduces, and on a frame of dark
     // rock that texture outweighs the colour.
     let (mut ours_linear, mut camera_linear) = (Vec::new(), Vec::new());
-    let linear = |v: [f64; 3]| [0, 1, 2].map(|c| rawshim::hdr_fit::srgb_eotf(v[c] as u8));
+    let linear = |v: [f64; 3]| [0, 1, 2].map(|c| colour::space::srgb_eotf(v[c] as u8));
     let cell_mean = |data: &[u8], wide: usize, x: [usize; 2], y: [usize; 2]| -> [f64; 3] {
         let mut sum = [0.0f64; 3];
         for row in y[0]..y[1] {

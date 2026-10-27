@@ -73,7 +73,7 @@ fn chromaticity(drawn: &[f32], white: &[f32], at: usize) -> [f32; 2] {
 }
 
 fn in_rec2020(drawn: &[f32], at: usize) -> [f64; 3] {
-    let matrix = rawshim::transfer::Primaries::DISPLAY_P3.to_rec2020();
+    let matrix = colour::transfer::Primaries::DISPLAY_P3.to_rec2020();
     matrix.map(|row| {
         row.into_iter()
             .enumerate()
@@ -417,7 +417,7 @@ fn grade() -> Grade<'static> {
         ..Grade::new(
             64,
             64,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(10000.0),
                 peak: Light::measured(10000.0),
                 floor: None,
@@ -429,13 +429,13 @@ fn grade() -> Grade<'static> {
 }
 
 fn coded(rgb: [f64; 3]) -> [u16; 3] {
-    rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+    colour::space::srgb_to_rec2020().map(|row| {
         let value = row
             .into_iter()
             .zip(rgb)
             .map(|(weight, value)| weight * value)
             .sum::<f64>();
-        (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+        (colour::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
             as u16
     })
 }

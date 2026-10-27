@@ -103,7 +103,7 @@ pub struct HeldRaw {
     /// them. A band is handed these rather than measuring its own: a quantile of one strip
     /// describes that strip, so bands measuring themselves are graded against a white that walks
     /// down the frame. `Cell` because a page is one thread and `prepare` takes `&self`.
-    levels: std::cell::Cell<Option<crate::tone::Levels>>,
+    levels: std::cell::Cell<Option<colour::tone::Levels>>,
     /// What this photograph's own open measured, where the page had nothing to hand it.
     ///
     /// Held for the reason the levels are: a band takes its lens off the request, so without this
@@ -185,7 +185,7 @@ pub struct KeptStage(crate::grade::Stage);
 /// diffuse white - and roll its highlights off a knee the stage underneath put somewhere else,
 /// which is the one thing a magnifier held against the picture may not do.
 struct Tiled {
-    _frame: crate::resident::Resident,
+    _frame: colour::resident::Resident,
     uploaded: crate::grade::Uploaded<'static>,
     window: crate::tile::Prepared,
 }
@@ -208,7 +208,7 @@ struct Patch {
     /// Where it sits in its level and how big it is. The last column and row are short.
     at: (usize, usize),
     size: (usize, usize),
-    rgb: crate::resident::Resident,
+    rgb: colour::resident::Resident,
     /// When it was last wanted, so the oldest are the ones that go.
     used: u64,
 }
@@ -232,9 +232,9 @@ struct Drawing {
     pyramid: crate::base::Pyramid,
     /// Held so the peak `quantile` wrote survives every tick that reads it.
     _peak: crate::grade::ScenePeak,
-    levels: crate::tone::Levels,
+    levels: colour::tone::Levels,
     matched: Option<crate::hdr_fit::HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     width: usize,
     height: usize,
     /// Where this buffer sits in the picture, where it is a rectangle of a larger one.
@@ -597,7 +597,7 @@ fn repair_of(json: &str) -> Result<crate::repair::Repair, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("rawshim: this repair is malformed: {e}")))
 }
 
-fn colour_node_of(json: Option<String>) -> Result<Option<crate::lattice::ColourNode>, JsValue> {
+fn colour_node_of(json: Option<String>) -> Result<Option<colour::lattice::ColourNode>, JsValue> {
     json.map(|node| serde_json::from_str(&node))
         .transpose()
         .map_err(|e| JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}")))
@@ -1020,7 +1020,7 @@ impl HeldRaw {
                 .await
                 .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
         // Kept for the bands, which must not measure their own.
-        self.levels.set(Some(crate::tone::Levels {
+        self.levels.set(Some(colour::tone::Levels {
             white: opened.header.white,
             peak: opened.header.peak,
             floor: opened.header.floor,
@@ -1553,7 +1553,7 @@ impl HeldRaw {
             )));
         }
 
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: header.white,
             peak: header.peak,
             floor: header.floor,
@@ -1638,7 +1638,7 @@ impl HeldRaw {
             last_at.1 + last_size.1 - first.1,
         );
 
-        let frame = crate::resident::Resident::empty(gpu, whole.0, whole.1);
+        let frame = colour::resident::Resident::empty(gpu, whole.0, whole.1);
         let now = self.tick.get() + 1;
         self.tick.set(now);
         {
@@ -1657,7 +1657,7 @@ impl HeldRaw {
                         continue;
                     }
                     patch.used = now;
-                    for (from, to, bytes) in crate::resident::runs(
+                    for (from, to, bytes) in colour::resident::runs(
                         whole.0,
                         patch.at.0 - first.0,
                         patch.at.1 - first.1,
@@ -1742,7 +1742,7 @@ impl HeldRaw {
         let placed = header.window;
         let level = placed.map_or((header.width, header.height), |it| it.canvas);
         let origin = placed.map_or((0, 0), |it| it.origin);
-        let whole = crate::resident::Resident::upload(gpu, samples, header.width, header.height);
+        let whole = colour::resident::Resident::upload(gpu, samples, header.width, header.height);
 
         let ((left, top), (right, bottom)) =
             tiles_over(origin, (header.width, header.height), level);
@@ -1762,9 +1762,9 @@ impl HeldRaw {
                 if !asked.is_empty() && !asked.iter().any(|(want, _)| *want == at) {
                     continue;
                 }
-                let rgb = crate::resident::Resident::empty(gpu, size.0, size.1);
+                let rgb = colour::resident::Resident::empty(gpu, size.0, size.1);
                 let mut recording = gpu.record();
-                for (to, from, bytes) in crate::resident::runs(
+                for (to, from, bytes) in colour::resident::runs(
                     header.width,
                     at.0 - origin.0,
                     at.1 - origin.1,
@@ -1839,7 +1839,7 @@ impl HeldRaw {
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let video = video
             .map(|name| {
-                crate::sdr_match::SdrMatch::named(&name).ok_or_else(|| {
+                colour::sdr_match::SdrMatch::named(&name).ok_or_else(|| {
                     JsValue::from_str(&format!("rawshim: no SDR match is named {name}"))
                 })
             })
@@ -2014,7 +2014,7 @@ impl HeldRaw {
             &crate::retouched_frame::RetouchedFrame,
             units::px::Rect<units::px::Drawn>,
         ) -> Result<
-            (crate::resident::Resident, units::px::At<units::px::Drawn>),
+            (colour::resident::Resident, units::px::At<units::px::Drawn>),
             String,
         >,
     ) -> Result<(), JsValue> {

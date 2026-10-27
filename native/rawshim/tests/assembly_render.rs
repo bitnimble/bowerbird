@@ -15,7 +15,7 @@ use rawshim::galosh::Detail;
 use rawshim::image::Strengths;
 use units::light::{Gain, Light, SceneNits};
 use units::px::{Composite, Rect, Share, Span};
-use rawshim::tone;
+use colour::tone;
 use support::{Rig, floats_of, rig, u32s_of, upload_f32};
 
 /// A drawing over `sources` identical frames of `size`, with one square tile in the middle picking
@@ -503,7 +503,7 @@ fn fit_and_residual(row: &[(f32, f32)], wavelength: f32) -> (f32, f32) {
 /// A row of `(canvas x, light)` off one source's own layer, decoded at native resolution: the
 /// scale the fine wavelength is actually resolvable at, which the final grid is not.
 fn native_row(spec: &Composition, paths: &[String], size: (usize, usize)) -> Vec<(f32, f32)> {
-    let mut layer: Option<rawshim::resident::Resident> = None;
+    let mut layer: Option<colour::resident::Resident> = None;
     pollster::block_on(layers_of(
         spec,
         &asking(spec, paths, whole(size)),
@@ -933,7 +933,7 @@ fn layer_light(
     size: (usize, usize),
     source: usize,
 ) -> Vec<f32> {
-    let mut held: Option<rawshim::resident::Resident> = None;
+    let mut held: Option<colour::resident::Resident> = None;
     pollster::block_on(layers_of(
         spec,
         &asking(spec, paths, whole(size)),
@@ -1543,7 +1543,7 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
         from_raw: rawshim::photo_analysis::FromRaw {
             matched: Some(rawshim::hdr_fit::HdrMatch {
                 lens: rawshim::fit::Lens::none(),
-                colour: Some(rawshim::hdr_fit::HdrColour::identity()),
+                colour: Some(colour::matched::HdrColour::identity()),
             }),
             ..Default::default()
         },

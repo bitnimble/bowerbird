@@ -1,5 +1,5 @@
+use colour::matched::HdrColour;
 use rawshim::grade::{Grade, ToneCurve};
-use rawshim::hdr_fit::HdrColour;
 use units::light::{CurveCode, Gain, Light, Stops, same_curve};
 
 fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> {
@@ -97,7 +97,7 @@ fn probe_grade(count: usize) -> Grade<'static> {
     Grade::new(
         count,
         1,
-        rawshim::tone::Levels {
+        colour::tone::Levels {
             white: Light::measured(1.0),
             peak: Light::measured(8.0),
             floor: Some(Light::measured(0.01)),

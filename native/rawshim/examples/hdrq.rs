@@ -73,7 +73,7 @@ fn sdr_to_pq(code: u16, full: f64) -> f64 {
         false => ((v + 0.055) / 1.055).powf(2.4),
     };
     // An SDR file's 1.0 is diffuse white, which is where its codes land on the absolute curve.
-    rawshim::tone::pq(Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear)).raw()
+    colour::tone::pq(Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear)).raw()
 }
 
 /// The blacks a comparison is run at, in nits, below which it treats the picture as one level.
@@ -92,7 +92,7 @@ const BLACK_NITS: [f64; 5] = [0.1, 0.5, 1.0, 2.0, 5.0];
 const TARGET_SDR: i32 = 10;
 
 fn rmse_in_pq(a: &[u16], b: &[u16], full: f64, sdr: bool, black: f64) -> f64 {
-    let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(black)).raw();
+    let floor = colour::tone::pq(Light::<DisplayNits>::measured(black)).raw();
     let signal = |c: u16| {
         match sdr {
             true => sdr_to_pq(c, full),

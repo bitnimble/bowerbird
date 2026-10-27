@@ -15,7 +15,7 @@
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, CameraMatch, HdrMatch};
 use crate::image;
-use crate::tone;
+use colour::tone;
 use serde::{Deserialize, Serialize};
 
 /// The long edge the camera match decodes its preview to, which is all of it (`jpeg::decode`
@@ -72,7 +72,7 @@ pub struct Source<'a> {
     pub samples: &'a [u16],
     pub width: usize,
     pub height: usize,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
 }
 
 /// Fits the camera's colour for the HDR grade, for a lens the caller already holds.
@@ -86,10 +86,10 @@ pub struct Source<'a> {
 pub async fn fit_match(
     gpu: &'static gpu::Gpu,
     raw_path: &str,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
     lens: crate::fit::Lens,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let preview = match_preview(raw_path)?;
     fit_match_from(gpu, frame, quantile, &preview, lens, as_shot).await
@@ -97,18 +97,18 @@ pub async fn fit_match(
 
 pub async fn fit_match_from(
     gpu: &'static gpu::Gpu,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
     preview: &units::rgb::Rgb,
     lens: crate::fit::Lens,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
     let (width, height) = frame.size();
     if width < tw || height < th {
         return None;
     }
-    let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
+    let quantile = colour::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
     let matched = hdr_fit::fit(
         gpu,
@@ -160,11 +160,11 @@ pub async fn fit_match_from(
 pub async fn fit_all(
     gpu: &'static gpu::Gpu,
     raw_path: &str,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
     geometry: crate::fit::Geometry,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
@@ -194,13 +194,13 @@ pub async fn fit_all(
 /// `fit_all` off a preview the caller decoded, with the levels the match was fitted against.
 pub async fn fit_all_from_preview(
     gpu: &'static gpu::Gpu,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
     geometry: crate::fit::Geometry,
     preview: &units::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
@@ -210,7 +210,7 @@ pub async fn fit_all_from_preview(
     // The body's own anchor where its rendering carries one, and the caller's quantile where it
     // does not. Here rather than at the callers because this is the one place holding both the
     // frame and the picture the body made of it, and both arms of `open::measure` reach it.
-    let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
+    let quantile = colour::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
     if trace::clock::watched() {
         eprintln!("  match anchor at quantile {quantile:.5}");
     }
@@ -263,7 +263,7 @@ pub struct Prepared {
 fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Option<Vec<u16>> {
     let gpu = gpu::device()?;
     let base = crate::base::device(gpu)?;
-    let frame = crate::resident::Resident::upload(gpu, samples, source.0, source.1);
+    let frame = colour::resident::Resident::upload(gpu, samples, source.0, source.1);
     let smaller = crate::base::resize(gpu, base, &frame, out);
     frame.reclaim();
     pollster::block_on(smaller?.into_host())
@@ -304,7 +304,7 @@ pub fn levels_of(
     height: usize,
     quantile: f64,
 ) -> Option<tone::Levels> {
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
     let levels = pollster::block_on(crate::fit_source::levels(gpu, &frame, quantile));
     frame.reclaim();
     levels
@@ -426,9 +426,9 @@ fn neutral_scene<'a>(
     levels: tone::Anchored,
     options: &EncodeOptions,
     matched: Option<&'a HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> tone::SceneGrade<'a> {
-    tone::SceneGrade::new(
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> crate::grade::SceneGrade<'a> {
+    crate::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
@@ -475,7 +475,7 @@ fn cut_for(
 ) -> Cut {
     code_base(&mut samples, levels, options.grade.reference_white_nits);
     let size = hdr_args::target_size(width as u32, height as u32, options);
-    let frame = crate::resident::Resident::upload(gpu, &samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, &samples, width, height);
     drop(samples);
     Cut::from_base(
         frame,
@@ -517,7 +517,7 @@ pub struct Cut {
 /// reads them there, so a host `Vec` between the two is 366MB down and 366MB back up at 61MP
 /// for nothing. A window from `tile::prepared` arrives over the bus already and stays host.
 enum CutFrame {
-    Device(crate::resident::Resident),
+    Device(colour::resident::Resident),
     Host(Vec<u16>),
 }
 
@@ -570,9 +570,9 @@ impl Cut {
     /// its samples, so the alternative is a lifetime on every rendition.
     ///
     /// No levels travel with it: the base carries the perceptual anchor the sharpen works in,
-    /// and the grade reads the levels off `tone::SceneGrade` rather than off the frame.
+    /// and the grade reads the levels off `crate::grade::SceneGrade` rather than off the frame.
     pub fn from_base(
-        frame: crate::resident::Resident,
+        frame: colour::resident::Resident,
         lens: Option<&crate::fit::Lens>,
         size: hdr_args::Size,
         sharpen: f64,
@@ -628,7 +628,7 @@ impl Cut {
 
     /// A window that never crossed it: `tile::prepared_on_device`'s own buffer, already resized,
     /// warped and sharpened, and read from where it lies by the grade.
-    pub fn device(frame: crate::resident::Resident, width: usize, height: usize) -> Cut {
+    pub fn device(frame: colour::resident::Resident, width: usize, height: usize) -> Cut {
         Cut {
             frame: CutFrame::Device(frame),
             width,
@@ -637,7 +637,7 @@ impl Cut {
     }
 
     /// The resident frame, where the cut is still on the device.
-    pub(crate) fn resident(&self) -> Option<&crate::resident::Resident> {
+    pub(crate) fn resident(&self) -> Option<&colour::resident::Resident> {
         match &self.frame {
             CutFrame::Device(frame) => Some(frame),
             CutFrame::Host(_) => None,
@@ -797,7 +797,7 @@ pub fn encode_still(
     height: usize,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Result<(), String> {
     let gpu = gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let levels = levels_of(gpu, &samples, width, height, options.grade.white_quantile)

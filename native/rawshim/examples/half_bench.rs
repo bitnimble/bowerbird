@@ -20,7 +20,7 @@ fn main() {
         let mean = |frame: &rawshim::frame::Frame| -> f64 {
             frame.samples16().map_or(0.0, |s| {
                 s.iter()
-                    .map(|&bits| f64::from(rawshim::resident::level_of_bits(bits)))
+                    .map(|&bits| f64::from(colour::resident::level_of_bits(bits)))
                     .sum::<f64>()
                     / s.len() as f64
             })

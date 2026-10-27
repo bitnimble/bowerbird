@@ -1889,7 +1889,7 @@ mod tests {
     fn fitted(frame: &[u8], width: usize, height: usize) -> Option<(f32, f32)> {
         let gpu = gpu::device()?;
         let base = crate::base::device(gpu)?;
-        let wide = crate::resident::samples_of_levels(frame.iter().map(|&b| f32::from(b) * 257.0));
+        let wide = colour::resident::samples_of_levels(frame.iter().map(|&b| f32::from(b) * 257.0));
         pollster::block_on(crate::base::measure_defocus(
             gpu, base, &wide, width, height, None, None,
         ))

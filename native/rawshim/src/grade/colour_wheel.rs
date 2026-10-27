@@ -111,7 +111,7 @@ pub struct Backdrop {
     pub side: u32,
     pub reference: units::light::Light<units::light::SceneNits>,
     /// Darkens what this node does not reach, by as much as it does not.
-    pub selected: Option<crate::lattice::ColourNode>,
+    pub selected: Option<colour::lattice::ColourNode>,
 }
 
 const UNREACHED_SHADE: f64 = 0.8;
@@ -120,13 +120,13 @@ const UNREACHED_SHADE: f64 = 0.8;
 const OUTPUT_RADIUS: f64 = 0.04;
 
 pub fn wheel_chroma() -> f64 {
-    crate::lattice::LutAxes::of_nodes().chroma_top.powi(2)
+    colour::lattice::LutAxes::of_nodes().chroma_top.powi(2)
 }
 
 /// Per whole degree of hue, the chroma Display P3 shows out to at `lightness`, with no component
 /// negative or past `headroom` times diffuse white.
 pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
-    let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
+    let to_p3 = colour::transfer::Primaries::DISPLAY_P3.from_rec2020();
     let top = wheel_chroma();
     let shown = |chroma: f64, hue: f64| {
         let (sin, cos) = hue.to_radians().sin_cos();
@@ -161,16 +161,16 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
 pub fn swatch(lightness: f64, hue: f64, chroma: f64) -> [f64; 3] {
     let (sin, cos) = hue.to_radians().sin_cos();
     let p3 = p3_of(
-        &crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
+        &colour::transfer::Primaries::DISPLAY_P3.from_rec2020(),
         [lightness, chroma * cos, chroma * sin],
     )
     .map(|v| v.max(0.0));
     let brightest = p3.into_iter().fold(f64::MIN_POSITIVE, f64::max);
-    p3.map(|v| crate::hdr_fit::srgb_oetf(v / brightest))
+    p3.map(|v| colour::space::srgb_oetf(v / brightest))
 }
 
 fn p3_of(to_p3: &[[f64; 3]; 3], opponent: [f64; 3]) -> [f64; 3] {
-    let rendered = crate::lattice::rendered_of(opponent).map(units::light::Light::raw);
+    let rendered = colour::lattice::rendered_of(opponent).map(units::light::Light::raw);
     std::array::from_fn(|r| {
         to_p3[r]
             .iter()
@@ -191,13 +191,13 @@ impl super::Grader {
         let kernel = backdrop
             .selected
             .as_ref()
-            .map(|node| node.kernel(&crate::lattice::LutAxes::of_nodes()));
+            .map(|node| node.kernel(&colour::lattice::LutAxes::of_nodes()));
         let words: Vec<u8> = [
             backdrop.lightness,
             wheel_chroma(),
             f64::from(backdrop.side),
             backdrop.reference.raw(),
-            super::CANVAS_WHITE_NITS,
+            colour::sdr_match::CANVAS_WHITE_NITS,
             kernel.as_ref().map_or(0.0, |_| UNREACHED_SHADE),
             0.0,
             0.0,
@@ -215,7 +215,7 @@ impl super::Grader {
                 OUTPUT_RADIUS,
             ]
         }))
-        .chain(crate::lattice::NODE_FEATHER)
+        .chain(colour::lattice::NODE_FEATHER)
         .flat_map(|v| (v as f32).to_le_bytes())
         .collect();
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -466,7 +466,7 @@ mod tests {
 
     const SIDE: u32 = 32;
 
-    fn backdrop(selected: Option<crate::lattice::ColourNode>) -> Backdrop {
+    fn backdrop(selected: Option<colour::lattice::ColourNode>) -> Backdrop {
         Backdrop {
             lightness: 70.0,
             side: SIDE,
@@ -558,7 +558,7 @@ mod tests {
 
     /// The canvas's coded P3 for a colour at `lightness` and opponent pair `out`.
     fn coded_at(lightness: f64, out: [f64; 2]) -> [f64; 3] {
-        let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
+        let to_p3 = colour::transfer::Primaries::DISPLAY_P3.from_rec2020();
         p3_of(&to_p3, [lightness, out[0], out[1]]).map(|p3| {
             // `prelude.slang`'s `srgb_oetf_signed`, which carries past one.
             let v = p3.abs();
@@ -588,7 +588,7 @@ mod tests {
         };
         let (x, y) = (24, 9);
         let [a, b] = out_at(x, y);
-        let node = crate::lattice::ColourNode {
+        let node = colour::lattice::ColourNode {
             hue: b.atan2(a).to_degrees().rem_euclid(360.0),
             chroma: a.hypot(b),
             lightness: None,
@@ -631,7 +631,7 @@ mod tests {
             return;
         };
         let ([a, b], [ta, tb]) = (out_at(24, 9), out_at(8, 8));
-        let node = crate::lattice::ColourNode {
+        let node = colour::lattice::ColourNode {
             hue: b.atan2(a).to_degrees().rem_euclid(360.0),
             chroma: a.hypot(b),
             lightness: None,
@@ -663,7 +663,7 @@ mod tests {
         // Mirrored across the axis, so one sits on the other's hue edge at its own chroma.
         let ([a, b], edge) = (out_at(24, 12), (24, 19));
         let hue = b.atan2(a).to_degrees();
-        let node = crate::lattice::ColourNode {
+        let node = colour::lattice::ColourNode {
             hue,
             chroma: a.hypot(b),
             lightness: None,

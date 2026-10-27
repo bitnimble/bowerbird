@@ -10,10 +10,10 @@
 //!
 //! Skipped loudly where no adapter answers, for `gpu_dust.rs`'s reason.
 
+use colour::resident::stored_within;
+use colour::transfer::{Coding, Curve, Primaries};
 use rawler::decoders::Orientation;
 use rawshim::linearise::{GainMap, Picture, Reconstruction};
-use rawshim::resident::stored_within;
-use rawshim::transfer::{Coding, Curve, Primaries};
 use rawshim::view::Scale;
 use units::light::{Light, SceneNits};
 use units::px::{At, Photograph, Rect, Size};
@@ -28,7 +28,7 @@ fn linearised(
     let frame = picture.window(gpu, rawshim::linearise::device(gpu), window, scale)?;
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
-    Some((rawshim::resident::levels_of(&samples), width, height))
+    Some((colour::resident::levels_of(&samples), width, height))
 }
 
 fn whole(picture: &Picture) -> Option<(Vec<f32>, usize, usize)> {
@@ -84,7 +84,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     assert_eq!((out_w, out_h), (width, height));
 
     let table = coding.table();
-    let white = rawshim::transfer::FULL_SCALE;
+    let white = colour::transfer::FULL_SCALE;
     for (at, sample) in samples.iter().enumerate() {
         let pixel = at / 3;
         let colour: [f64; 3] = std::array::from_fn(|channel| {
@@ -110,7 +110,7 @@ fn a_pq_picture_keeps_its_headroom() {
     // Reference white, then something far above it.
     let coded = |nits: f64| {
         let light: Light<SceneNits> = Light::exactly(nits);
-        (rawshim::tone::pq(light).raw() * 1023.0).round() as u16
+        (colour::tone::pq(light).raw() * 1023.0).round() as u16
     };
     let white_code = coded(203.0);
     let bright_code = coded(1000.0);
@@ -122,7 +122,7 @@ fn a_pq_picture_keeps_its_headroom() {
         Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    let white = rawshim::transfer::FULL_SCALE;
+    let white = colour::transfer::FULL_SCALE;
     assert!(
         (f64::from(samples[0]) - white).abs() < 0.0075 * white,
         "white landed at {}",
@@ -146,7 +146,7 @@ fn a_pq_picture_carries_its_whole_range() {
     let codes = vec![1023u16; 3];
     let picture = Picture::upload(gpu, codes, 1, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
-    let ratio = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
+    let ratio = f64::from(samples[0]) / colour::transfer::FULL_SCALE;
     assert!(
         (ratio - 10_000.0 / 203.0).abs() < 0.01 * ratio,
         "10000 nits came back at {ratio}x white"
@@ -154,7 +154,7 @@ fn a_pq_picture_carries_its_whole_range() {
     assert_eq!(
         picture
             .peak_level()
-            .map(|peak| peak.raw() / rawshim::transfer::FULL_SCALE),
+            .map(|peak| peak.raw() / colour::transfer::FULL_SCALE),
         Some(Curve::Pq.light(1.0).raw()),
         "and the picture states it as its peak"
     );
@@ -385,7 +385,7 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
     .unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    let base = 128.0 / 255.0 * rawshim::transfer::FULL_SCALE;
+    let base = 128.0 / 255.0 * colour::transfer::FULL_SCALE;
     assert!(
         (f64::from(samples[0]) - base).abs() < 0.015 * base,
         "the unlifted pixel is {}",
@@ -496,7 +496,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
         (apple / iso - 2.5 / 2.0).abs() < 0.01,
         "Apple {apple} against ISO {iso}"
     );
-    let base = 64.0 / 255.0 * rawshim::transfer::FULL_SCALE;
+    let base = 64.0 / 255.0 * colour::transfer::FULL_SCALE;
     assert!(
         (apple / base - 2.5).abs() < 0.02,
         "Apple's half recovery came back at {}x",
@@ -552,7 +552,7 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
     let log_gain =
         f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(1.0 / f64::from(gamma));
     // In units of diffuse white.
-    let got = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
+    let got = f64::from(samples[0]) / colour::transfer::FULL_SCALE;
     let base = f64::from(base_code) / 65535.0;
     let want = (base + f64::from(offset_base)) * log_gain.exp2() - f64::from(offset_alternate);
     assert!(

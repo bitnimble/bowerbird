@@ -623,7 +623,7 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
         return -1;
     };
     let written = crate::guard("bb_write_ten_bit_copy", Err("panicked".to_string()), || {
-        let matching = crate::sdr_match::SdrMatch::named(matching)
+        let matching = colour::sdr_match::SdrMatch::named(matching)
             .ok_or_else(|| format!("no SDR match is named {matching}"))?;
         let bytes = std::fs::read(source).map_err(|e| format!("could not read {source}: {e}"))?;
         let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed, matching)?;

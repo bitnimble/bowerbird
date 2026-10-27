@@ -79,7 +79,7 @@ fn warps_of(recipe: &Drawing) -> Vec<TileWarp> {
                     (a * cx + b * cy + tx - cx) as f32,
                     (c * cx + d * cy + ty - cy) as f32,
                 ],
-                gain: crate::tone::gain_in_y(recipe.gain[tile]) as f32,
+                gain: colour::tone::gain_in_y(recipe.gain[tile]) as f32,
                 pad: 0.0,
             }
         })

@@ -175,7 +175,7 @@ fn fill(column: &mut [f32], lowest: usize) {
 fn split(colour: [f64; 3]) -> (f64, [f64; 3]) {
     let luma = colour
         .iter()
-        .zip(crate::hdr_fit::LUMA)
+        .zip(colour::space::LUMA)
         .map(|(value, weight)| value * weight)
         .sum::<f64>();
     (luma, colour.map(|value| value - luma))

@@ -11,7 +11,7 @@ use rawshim::assembly_tiles::{
     tolerance_for, trace,
 };
 use rawshim::composition::{self, Composition, LensSpec};
-use rawshim::resident::Resident;
+use colour::resident::Resident;
 use support::{
     Patch, Rig, at, centre, code_of_light, codes_of, floats_of, ground, noise, rig, sigma_at,
     synthetic, synthetic_gained, u32s_of, upload_f32, upload_u32,

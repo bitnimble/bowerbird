@@ -1028,9 +1028,9 @@ pub(crate) mod tests {
             let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
             analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
                 lens,
-                colour: Some(crate::hdr_fit::HdrColour {
+                colour: Some(colour::matched::HdrColour {
                     stated: true,
-                    ..crate::hdr_fit::HdrColour::identity()
+                    ..colour::matched::HdrColour::identity()
                 }),
             });
             let stored = crate::photo_analysis::encode(&analysis);
@@ -1145,7 +1145,7 @@ pub(crate) mod tests {
         across: usize,
         down: usize,
         from: crate::composite_tile::From,
-    ) -> (crate::resident::Resident, crate::tile::Prepared) {
+    ) -> (colour::resident::Resident, crate::tile::Prepared) {
         let files: Vec<crate::composite_tile::SourceFile<'_>> = paths
             .iter()
             .map(|path| crate::composite_tile::SourceFile {

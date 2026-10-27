@@ -150,7 +150,7 @@ fn each_environments_lamp_is_the_light_it_takes_out_of_its_map() {
         let tint = [lamp[4], lamp[5], lamp[6]];
         let luma = tint
             .iter()
-            .zip(crate::hdr_fit::LUMA)
+            .zip(colour::space::LUMA)
             .map(|(value, weight)| f64::from(*value) * weight)
             .sum::<f64>();
         for (channel, drawn) in tint.iter().zip(&calibration[2..5]) {

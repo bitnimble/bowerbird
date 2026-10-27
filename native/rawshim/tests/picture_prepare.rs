@@ -138,7 +138,7 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
             ..rawshim::grade::Grade::new(
                 header.width,
                 header.height,
-                rawshim::tone::Levels {
+                colour::tone::Levels {
                     white: header.white,
                     peak: header.peak,
                     floor: header.floor,

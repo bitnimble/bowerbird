@@ -83,7 +83,7 @@ fn ssim(a: &[f64], b: &[f64], width: usize, height: usize) -> f64 {
 
 /// RMS error in 10-bit PQ steps, with everything below half a nit taken as one level (`hdrq`).
 fn rmse_in_pq(a: &[u16], b: &[u16]) -> f64 {
-    let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(0.5)).raw();
+    let floor = colour::tone::pq(Light::<DisplayNits>::measured(0.5)).raw();
     let signal = |c: u16| (f64::from(c) / 65535.0).max(floor);
     let sum: f64 = a
         .iter()
@@ -186,7 +186,7 @@ fn sky() {
             let tint = [0.80, 0.92, 1.0];
             for (c, gain) in tint.iter().enumerate() {
                 let code =
-                    rawshim::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain))
+                    colour::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain))
                         .raw();
                 pq[(y * w + x) * 3 + c] = (code * 65535.0).round() as u16;
             }

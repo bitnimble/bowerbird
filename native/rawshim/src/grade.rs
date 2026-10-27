@@ -13,8 +13,12 @@
 // there rather than unwanted.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
+use colour::matched::HdrColour;
+use colour::sdr_match::CANVAS_WHITE_NITS;
+use colour::tone::{Anchored, Levels};
 use gpu::{Buffer, Gpu, Recording, Texture, dispatch, read_back};
-use crate::hdr_fit::{self, HdrColour};
+use units::light::{Light, SceneNits, Stops};
+use crate::hdr_fit;
 
 pub mod colour_wheel;
 mod print_environment;
@@ -271,7 +275,7 @@ impl ScenePeak {
 /// frame to read a tenth of it.
 pub fn sampled_rows(width: usize, height: usize) -> (u32, u32) {
     let pixels = width * height;
-    let stride = (((pixels as f64) / (crate::tone::QUANTILE_SAMPLES as f64)).round() as u32).max(1);
+    let stride = (((pixels as f64) / (colour::tone::QUANTILE_SAMPLES as f64)).round() as u32).max(1);
     (stride, (height as u32).div_ceil(stride))
 }
 
@@ -970,7 +974,7 @@ impl Grader {
     pub async fn pq420(
         &self,
         drawn: &Texture,
-        matching: crate::sdr_match::SdrMatch,
+        matching: colour::sdr_match::SdrMatch,
     ) -> Option<Vec<u8>> {
         let [white, reads_sdr_as_power] = matching.words();
         let layout = Pq420Layout::of(drawn.width(), drawn.height());
@@ -1113,10 +1117,81 @@ const DRAW_BINDINGS: [(u32, Binding); 17] = [
 /// values the fragment shader writes are display nits over an SDR white and go past one.
 const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Browsers' SDR white on an extended-range canvas and in a PQ still (`docs/raw-edit-gpu.md` §7.1);
-/// never `reference_nits`, which a library may move.
-pub(crate) const CANVAS_WHITE_NITS: f64 = 203.0;
+/// Everything the grade settles for one photo, before any rendition's size or display.
+pub struct SceneGrade<'a> {
+    levels: Levels,
+    reference: Light<SceneNits>,
+    exposure: Option<Stops>,
+    /// The reader's own sliders. Settled on the photo like the levels and the colour, and
+    /// for the same reason: two sizes of one photograph must not be adjusted differently.
+    adjust: crate::grade::Adjust,
+    /// The illuminant the decode balanced against, which the pair in `adjust` moves away from.
+    /// Settled on the photo like everything else here: two sizes of it must not be balanced
+    /// against two different baselines.
+    as_shot: Option<colour::white_balance::Illuminant>,
+    /// The camera match, whatever `adjust`'s profile asks of it (`crate::grade::Grade::colour`).
+    colour: Option<&'a HdrColour>,
+}
 
+impl<'a> SceneGrade<'a> {
+    /// No frame and no GPU. The matched arm's peak is measured off the frame that is already
+    /// uploaded, by the shader, in `crate::grade::Uploaded::measure_peak` - so what is left here is
+    /// what the uniform carries.
+    ///
+    /// Infallible, and [`Anchored`] is what makes that true rather than assumed: a white of zero
+    /// cannot reach here, because every caller has to floor it before coding the frame with it.
+    pub fn new(
+        colour: Option<&'a HdrColour>,
+        levels: Anchored,
+        reference: Light<SceneNits>,
+        exposure: Option<Stops>,
+        adjust: crate::grade::Adjust,
+        as_shot: Option<colour::white_balance::Illuminant>,
+    ) -> Self {
+        assert!(
+            exposure.is_none_or(|stops| stops.raw().is_finite()),
+            "an exposure is a number of stops: {exposure:?}"
+        );
+        SceneGrade {
+            levels: *levels,
+            reference,
+            exposure,
+            colour,
+            adjust,
+            as_shot,
+        }
+    }
+
+    /// This scene as the shader's uniform wants it.
+    ///
+    /// Assembled here so the fields stay private and so the one place that knows what a
+    /// scene *is* is the one place that describes it to the GPU.
+    ///
+    /// No scene peak: the matched arm's is measured on the GPU off the uploaded frame, and
+    /// the neutral arm's is `source_level / white` scaled by the reference, which the shader
+    /// does for itself from the two fields below.
+    pub fn gpu_grade(
+        &'a self,
+        width: usize,
+        height: usize,
+        output: crate::grade::Output,
+    ) -> crate::grade::Grade<'a> {
+        crate::grade::Grade {
+            colour: self.colour,
+            exposure: self.exposure,
+            adjust: self.adjust.clone(),
+            as_shot: self.as_shot,
+            output,
+            ..crate::grade::Grade::new(
+                width,
+                height,
+                self.levels,
+                self.reference,
+                output.mastered(self.reference),
+            )
+        }
+    }
+}
 /// The gamut and the tone mapping every canvas the editor draws on is configured with.
 ///
 /// **One constant because there is more than one canvas**: the stage and the loupe, and a
@@ -1147,7 +1222,7 @@ pub struct Stage {
     width: u32,
     height: u32,
     /// Held for a video rather than a canvas, read back by [`Grader::pq420`] coded to this match.
-    video: Option<crate::sdr_match::SdrMatch>,
+    video: Option<colour::sdr_match::SdrMatch>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1191,7 +1266,7 @@ impl Stage {
         gpu: &Gpu,
         width: u32,
         height: u32,
-        video: Option<crate::sdr_match::SdrMatch>,
+        video: Option<colour::sdr_match::SdrMatch>,
     ) -> Stage {
         let mut held = Stage {
             target: StageTarget::Held(None),
@@ -1254,7 +1329,7 @@ impl Stage {
 
     /// What the last draw wrote, where this stage is held rather than a canvas, and the match a
     /// video is coded to where it is held for one.
-    pub fn drawn(&self) -> Option<(Texture, Option<crate::sdr_match::SdrMatch>)> {
+    pub fn drawn(&self) -> Option<(Texture, Option<colour::sdr_match::SdrMatch>)> {
         match &self.target {
             StageTarget::Held(texture) => texture.clone().map(|texture| (texture, self.video)),
             StageTarget::Surface(..) => None,
@@ -1584,7 +1659,7 @@ pub struct Grade<'a> {
     /// The illuminant the camera balanced this frame for, which is the baseline the reader's
     /// temperature and tint move away from. None where the file recorded no usable
     /// multipliers, in which case there is nothing to move relative to and the pair is ignored.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// Which transfer to write. The grade is the same either way; an SDR target differs by
     /// having its `peak_nits` at diffuse white ([`Output::mastered`]) and by ending here.
     pub output: Output,
@@ -1625,7 +1700,7 @@ pub struct Grade<'a> {
 /// One colour edit's reach shown on the stage: what it does not reach, taken towards black.
 #[derive(Clone, Debug)]
 pub struct ReachMask {
-    pub node: crate::lattice::ColourNode,
+    pub node: colour::lattice::ColourNode,
     /// 0 draws the picture as it is, 1 draws what the edit does not reach black.
     pub strength: f64,
 }
@@ -1693,7 +1768,7 @@ impl<'a> Grade<'a> {
     pub fn new(
         width: usize,
         height: usize,
-        levels: crate::tone::Levels,
+        levels: colour::tone::Levels,
         reference_nits: units::light::Light<units::light::SceneNits>,
         peak_nits: units::light::Light<units::light::DisplayNits>,
     ) -> Grade<'a> {
@@ -1865,14 +1940,9 @@ pub struct Adjust {
     /// document still awaiting the match, which has no numbers to state yet.
     pub camera_balance: bool,
     pub colour_profile: ColourProfile,
-    pub colour_nodes: Vec<crate::lattice::ColourNode>,
+    pub colour_nodes: Vec<colour::lattice::ColourNode>,
 }
 
-/// A chroma gain on the Saturation slider's scale, where 0 leaves chroma alone and -100 is grey, in
-/// the whole steps the document stores.
-pub fn saturation_slider(gain: units::light::Gain) -> f64 {
-    ((gain.raw() - 1.0) * 100.0).round()
-}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -2056,16 +2126,16 @@ impl Illuminant {
 }
 
 struct NodeVolumes {
-    nodes: Vec<crate::lattice::ColourNode>,
+    nodes: Vec<colour::lattice::ColourNode>,
     pair: (Texture, wgpu::TextureView),
     luma: (Texture, wgpu::TextureView),
 }
 
 impl NodeVolumes {
-    fn of(grader: &Grader, nodes: &[crate::lattice::ColourNode]) -> NodeVolumes {
+    fn of(grader: &Grader, nodes: &[colour::lattice::ColourNode]) -> NodeVolumes {
         let (pair, luma) = match nodes.is_empty() {
             true => grader.identity_volumes(),
-            false => crate::lattice::ChromaMap::of_nodes(nodes).baked(grader.gpu),
+            false => colour::lattice::ChromaMap::of_nodes(nodes).baked(grader.gpu),
         };
         NodeVolumes {
             nodes: nodes.to_vec(),
@@ -2083,7 +2153,7 @@ pub struct Uploaded<'a> {
     printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
     print_surface: std::cell::RefCell<print_surface::Cached>,
     peak_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>, Vec<crate::lattice::ColourNode>)>>,
+    peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>, Vec<colour::lattice::ColourNode>)>>,
     width: usize,
     height: usize,
     /// For the editor this is the `Resident`'s own frame, shared rather than copied.
@@ -2291,7 +2361,7 @@ impl Grader {
     /// whose grades are built and dropped one at a time.
     pub fn upload_resident<'a>(
         &'a self,
-        frame: &crate::resident::Resident,
+        frame: &colour::resident::Resident,
         grade: &Grade<'_>,
         peak: &ScenePeak,
     ) -> Uploaded<'a> {
@@ -2473,7 +2543,7 @@ impl Grader {
 
     fn identity_volumes(&self) -> (Texture, Texture) {
         self.identity_lattice
-            .get_or_init(|| crate::lattice::ChromaMap::identity().baked(self.gpu))
+            .get_or_init(|| colour::lattice::ChromaMap::identity().baked(self.gpu))
             .clone()
     }
 
@@ -3380,7 +3450,7 @@ impl Uploaded<'_> {
     /// [`Self::encode`], awaited, which is the only spelling a browser can take.
     pub async fn coded(&self, grade: &Grade<'_>) -> Option<Vec<u16>> {
         self.encoded_as(grade, |mapped, samples| {
-            crate::resident::samples_of(mapped)[..samples].to_vec()
+            colour::resident::samples_of(mapped)[..samples].to_vec()
         })
         .await
     }
@@ -3393,7 +3463,7 @@ impl Uploaded<'_> {
     /// once the narrower one is complete. On a 16384-wide canvas that is 446MB beside 223MB. Taken
     /// off the mapping in the shape it is wanted, the sixteen-bit copy is never made.
     ///
-    /// Little-endian, as [`crate::resident::samples_of`] says of the same bytes: the low byte of
+    /// Little-endian, as [`colour::resident::samples_of`] says of the same bytes: the low byte of
     /// each count stands first.
     pub fn encode_bytes(&self, grade: &Grade<'_>) -> Vec<u8> {
         pollster::block_on(self.coded_bytes(grade)).expect("the readback mapped")
@@ -4320,7 +4390,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, colour.anchor);
     f(
         &mut w,
-        crate::tone::floor_share(grade.floor, grade.white).raw(),
+        colour::tone::floor_share(grade.floor, grade.white).raw(),
     );
     f(&mut w, grade.print_blur.raw());
     for points in [reader, camera] {
@@ -4351,7 +4421,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let matched_illuminant = grade.colour.and_then(|c| c.illuminant);
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.temperature));
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.tint));
-    let nodes = crate::lattice::LutAxes::of_nodes().shape();
+    let nodes = colour::lattice::LutAxes::of_nodes().shape();
     w.push(nodes.hue_count as u32);
     w.push(nodes.chroma_count as u32);
     w.push(nodes.level_count as u32);
@@ -4362,9 +4432,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, nodes.neighbourhood_scale);
     let mask = grade.reach_mask.as_ref();
     f(&mut w, mask.map_or(0.0, |m| m.strength.clamp(0.0, 1.0)));
-    let kernel = mask.map(|m| m.node.kernel(&crate::lattice::LutAxes::of_nodes()));
+    let kernel = mask.map(|m| m.node.kernel(&colour::lattice::LutAxes::of_nodes()));
     for axes in kernel.map_or([[0.0; 4]; 3], |k| {
-        [k.centre, k.reach, crate::lattice::NODE_FEATHER]
+        [k.centre, k.reach, colour::lattice::NODE_FEATHER]
     }) {
         for value in axes {
             f(&mut w, value);
@@ -4441,7 +4511,7 @@ mod tests {
         let grade = super::Grade::new(
             2,
             2,
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(1.0),
                 peak: Light::measured(1.0),
                 floor: None,
@@ -4518,12 +4588,12 @@ mod tests {
     fn a_thumbnail_is_packed_as_the_srgb_it_was_proofed_to() {
         let gpu = gpu::device().expect("a Vulkan adapter");
         let p3_of_srgb_red = {
-            let to_rec2020 = crate::hdr_fit::srgb_to_rec2020();
-            let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
+            let to_rec2020 = colour::space::srgb_to_rec2020();
+            let to_p3 = colour::transfer::Primaries::DISPLAY_P3.from_rec2020();
             let rec2020: [f64; 3] = std::array::from_fn(|row| to_rec2020[row][0]);
             let linear: [f64; 3] =
                 std::array::from_fn(|row| (0..3).map(|col| to_p3[row][col] * rec2020[col]).sum());
-            linear.map(|v| crate::hdr_fit::srgb_oetf(v) as f32)
+            linear.map(|v| colour::space::srgb_oetf(v) as f32)
         };
         let drawn: [[f32; 3]; 4] = [
             [0.0, 0.0, 0.0],
@@ -4563,7 +4633,7 @@ mod tests {
             .collect();
         let texture = drawn_texture(gpu, width, height, &drawn);
         // Not the still's match, so a coding that ignored the one it was given would fail.
-        let matching = crate::sdr_match::SdrMatch::MacVideo;
+        let matching = colour::sdr_match::SdrMatch::MacVideo;
         let answer =
             pollster::block_on(crate::grade::device(gpu).pq420(&texture, matching)).expect("the readback mapped");
 
@@ -4580,7 +4650,7 @@ mod tests {
         assert_eq!(samples.len(), layout.words as usize * 2);
 
         // An independent statement of the coding: the canvas undone, ST 2084, BT.2020's weights.
-        let to_rec2020 = crate::transfer::Primaries::DISPLAY_P3.to_rec2020();
+        let to_rec2020 = colour::transfer::Primaries::DISPLAY_P3.to_rec2020();
         let eotf = |v: f64| {
             let level = v.abs();
             let linear = match level <= 0.04045 {
@@ -4597,11 +4667,11 @@ mod tests {
                 let whites: f64 = (0..3)
                     .map(|col| f64::from(to_rec2020[row][col]) * canvas[col])
                     .sum();
-                let still = Light::<DisplayNits>::exactly(whites * super::CANVAS_WHITE_NITS);
+                let still = Light::<DisplayNits>::exactly(whites * colour::sdr_match::CANVAS_WHITE_NITS);
                 let nits = matching.of_still(still).raw();
-                crate::tone::pq(Light::<DisplayNits>::exactly(nits.max(0.0))).raw()
+                colour::tone::pq(Light::<DisplayNits>::exactly(nits.max(0.0))).raw()
             });
-            let [kr, kg, kb] = crate::hdr_fit::LUMA;
+            let [kr, kg, kb] = colour::space::LUMA;
             let luma = kr * pq[0] + kg * pq[1] + kb * pq[2];
             [
                 64.0 + 876.0 * luma,
@@ -4718,7 +4788,7 @@ mod tests {
         let frame: Vec<u16> = (0..width * height * 3)
             .map(|i| (20_000 + (i * 7919) % 30_000) as u16)
             .collect();
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(40_000.0),
             peak: Light::measured(60_000.0),
             floor: None,
@@ -5088,11 +5158,11 @@ mod tests {
             + 1;
         assert_eq!(before_curve % 4, 0, "curve array needs 16-byte alignment");
         let expected = words.div_ceil(4) * 4 * 4;
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let grade = super::Grade::new(
             1,
             1,
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(1.0),
                 peak: Light::measured(1.0),
                 floor: None,
@@ -5105,7 +5175,7 @@ mod tests {
 
     #[test]
     fn invalid_tone_curves_are_refused() {
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         for points in [
             vec![[0.0, 0.0]],
             vec![[0.0, 0.0]; 17],
@@ -5122,7 +5192,7 @@ mod tests {
                 ..super::Grade::new(
                     1,
                     1,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: Light::measured(1.0),
                         peak: Light::measured(1.0),
                         floor: None,
@@ -5150,7 +5220,7 @@ mod tests {
                 ..super::Grade::new(
                     16,
                     16,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: Light::measured(20000.0),
                         peak: Light::measured(20000.0),
                         floor: None,
@@ -5230,7 +5300,7 @@ mod tests {
             }
         }
 
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
             size: units::px::Size::measured(width, height),
@@ -5245,7 +5315,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -5342,14 +5412,14 @@ mod tests {
         };
         let side = 64usize;
         let frame: Vec<u16> = [9000u16, 12000, 15000].repeat(side * side);
-        let colour = crate::hdr_fit::HdrColour::identity();
-        let node = |chroma: f64, chroma_reach: f64, hue_reach: f64| crate::lattice::ColourNode {
+        let colour = colour::matched::HdrColour::identity();
+        let node = |chroma: f64, chroma_reach: f64, hue_reach: f64| colour::lattice::ColourNode {
             hue: 0.0,
             chroma,
             lightness: None,
             target_hue: 0.0,
             target_chroma: chroma,
-            target_lightness: crate::lattice::ANY_LIGHTNESS_AT,
+            target_lightness: colour::lattice::ANY_LIGHTNESS_AT,
             hue_reach,
             chroma_reach,
             lightness_reach: 0.0,
@@ -5373,7 +5443,7 @@ mod tests {
                 ..super::Grade::new(
                     side,
                     side,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: Light::measured(1.0),
                         peak: Light::measured(1.0),
                         floor: None,
@@ -5389,7 +5459,7 @@ mod tests {
             let middle = (side / 2 * side + side / 2) * 4;
             [drawn[middle], drawn[middle + 1], drawn[middle + 2]]
         };
-        let masked = |node: &crate::lattice::ColourNode, strength: f64| {
+        let masked = |node: &colour::lattice::ColourNode, strength: f64| {
             drawn_with(Some(super::ReachMask {
                 node: node.clone(),
                 strength,
@@ -5454,7 +5524,7 @@ mod tests {
             }
         }
 
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let grade = |canvas: super::Canvas| super::Grade {
             colour: Some(&colour),
             exposure: Some(Stops::measured(0.5)),
@@ -5463,7 +5533,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -5572,15 +5642,15 @@ mod tests {
     fn the_kept_candidates_answer_as_the_whole_sample_does() {
         let Some(gpu) = gpu::device() else { return };
 
-        let mut colour = crate::hdr_fit::HdrColour {
+        let mut colour = colour::matched::HdrColour {
             curve: vec![[0.0, 0.0], [0.5, 0.43], [1.0, 0.83]],
-            ..crate::hdr_fit::HdrColour::identity()
+            ..colour::matched::HdrColour::identity()
         };
         for (channel, curve) in colour.curves.iter_mut().enumerate() {
             let shoulder = 0.5 + channel as f64 * 0.08;
             let bins = curve.len();
             for (at, value) in curve.iter_mut().enumerate() {
-                let x = (at as f64 / (bins - 1) as f64) * crate::hdr_fit::TRUST_CEILING;
+                let x = (at as f64 / (bins - 1) as f64) * colour::matched::TRUST_CEILING;
                 *value = x / (1.0 + x * shoulder) * (1.0 + shoulder);
             }
         }
@@ -5608,7 +5678,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -5718,13 +5788,13 @@ mod tests {
 
         let (width, height) = (32usize, 32usize);
         let frame: Vec<u16> = vec![24000; width * height * 3];
-        let mut colour = crate::hdr_fit::HdrColour::identity();
-        let axes = crate::lattice::ChromaMap::identity().axes();
+        let mut colour = colour::matched::HdrColour::identity();
+        let axes = colour::lattice::ChromaMap::identity().axes();
         // The generator's sixth term is the tint the blue-yellow axis takes from lightness: what
         // takes a neutral towards blue in proportion to its level, the one way a kernel can tint a
         // grey at all.
-        colour.chroma = Some(crate::lattice::ChromaMap::with_kernels(vec![
-            crate::lattice::Kernel {
+        colour.chroma = Some(colour::lattice::ChromaMap::with_kernels(vec![
+            colour::lattice::Kernel {
                 centre: [0.0, 0.0, axes.level_top, 0.0],
                 reach: [0.0, 0.0, (axes.level_top - axes.level_low) / 8.0, 0.0],
                 generator: [0.0, 0.0, 0.0, 0.0, 0.0, 0.4, 0.0],
@@ -5738,7 +5808,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -5790,17 +5860,17 @@ mod tests {
         let frame: Vec<u16> = (0..width * height * 3)
             .map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16)
             .collect();
-        let fitted = crate::hdr_fit::HdrColour {
+        let fitted = colour::matched::HdrColour {
             saturation: 1.2,
-            chroma: Some(crate::lattice::ChromaMap::from_saturation(1.2)),
-            ..crate::hdr_fit::HdrColour::identity()
+            chroma: Some(colour::lattice::ChromaMap::from_saturation(1.2)),
+            ..colour::matched::HdrColour::identity()
         };
-        let told = crate::hdr_fit::HdrColour {
+        let told = colour::matched::HdrColour {
             exposure: Stops::measured(0.7),
             curve: vec![[0.0, 0.0], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
             ..fitted.clone()
         };
-        let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>,
+        let graded_as = |colour: Option<&colour::matched::HdrColour>,
                          exposure: Option<Stops>,
                          adjust: super::Adjust| {
             let grade = super::Grade {
@@ -5811,7 +5881,7 @@ mod tests {
                 ..super::Grade::new(
                     width,
                     height,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: Light::measured(20000.0),
                         peak: Light::measured(65535.0),
                         floor: Some(Light::measured(40.0)),
@@ -5825,7 +5895,7 @@ mod tests {
             let peak = crate::grade::device(gpu).scene_peak();
             crate::grade::device(gpu).upload(&frame, &grade, &peak).encode(&grade)
         };
-        let graded = |colour: &crate::hdr_fit::HdrColour,
+        let graded = |colour: &colour::matched::HdrColour,
                       exposure: Option<Stops>,
                       tone_curve: Option<super::ToneCurve>| {
             graded_as(
@@ -5889,7 +5959,7 @@ mod tests {
             "the camera's sliders did nothing"
         );
 
-        let one_stop = crate::hdr_fit::HdrColour {
+        let one_stop = colour::matched::HdrColour {
             exposure: Stops::measured(1.0),
             ..fitted.clone()
         };
@@ -5923,7 +5993,7 @@ mod tests {
         let frame: Vec<u16> = (0..width * height * 3)
             .map(|i| ((i * 37) % 30000) as u16)
             .collect();
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
             size: units::px::Size::measured(width, height),
@@ -5934,7 +6004,7 @@ mod tests {
             adjust,
             // Without one there is no illuminant to move away from and the shader is right to
             // leave the frame alone, which would make this test pass on a broken balance.
-            as_shot: Some(crate::white_balance::Illuminant {
+            as_shot: Some(colour::white_balance::Illuminant {
                 temperature: 5500.0,
                 tint: 0.0,
             }),
@@ -5943,7 +6013,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -6000,7 +6070,7 @@ mod tests {
         let mut frame: Vec<u16> = (0..width * height * 3)
             .map(|i| {
                 let (x, y) = ((i / 3) % width, (i / 3) / width);
-                crate::resident::bits_of_level(match (x / 8 + y / 8) % 2 == 0 {
+                colour::resident::bits_of_level(match (x / 8 + y / 8) % 2 == 0 {
                     true => 26000.0,
                     false => 1200.0,
                 })
@@ -6010,7 +6080,7 @@ mod tests {
         // to counts a lift can be read off rather than to zero.
         let levels = crate::hdr::levels_of(gpu, &frame, width, height, 0.995).expect("levels");
         crate::hdr::code_base(&mut frame, levels.anchored(), Light::exactly(203.0));
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
             size: units::px::Size::measured(width, height),
@@ -6170,7 +6240,7 @@ mod tests {
                 // a grey frame would agree between the two hosts however wrong both were.
                 let (x, y) = ((i / 3) % width, (i / 3) / width);
                 let channel = i % 3;
-                crate::resident::bits_of_level(
+                colour::resident::bits_of_level(
                     6000.0 + 4000.0 * ((x + y * 2 + channel * 7) % 11) as f32,
                 )
             })
@@ -6178,13 +6248,13 @@ mod tests {
         let levels = crate::hdr::levels_of(gpu, &frame, width, height, 0.995).expect("levels");
         crate::hdr::code_base(&mut frame, levels.anchored(), Light::exactly(203.0));
 
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let grade = |adjust| super::Grade {
             colour: Some(&colour),
             adjust,
             // Without one the balance has no illuminant to move away from and every temperature
             // below is the identity, which would make this pass on a host that ignores the pair.
-            as_shot: Some(crate::white_balance::Illuminant {
+            as_shot: Some(colour::white_balance::Illuminant {
                 temperature: 5500.0,
                 tint: 12.0,
             }),
@@ -6248,12 +6318,12 @@ mod tests {
                 (6000.0 + 4000.0 * ((x + y * 2 + (i % 3) * 7) % 11) as f64) as u16
             })
             .collect();
-        let mut colour = crate::hdr_fit::HdrColour::identity();
+        let mut colour = colour::matched::HdrColour::identity();
         for (channel, curve) in colour.curves.iter_mut().enumerate() {
             let shoulder = 0.5 + channel as f64 * 0.08;
             let bins = curve.len();
             for (at, value) in curve.iter_mut().enumerate() {
-                let x = (at as f64 / (bins - 1) as f64) * crate::hdr_fit::TRUST_CEILING;
+                let x = (at as f64 / (bins - 1) as f64) * colour::matched::TRUST_CEILING;
                 *value = x / (1.0 + x * shoulder) * (1.0 + shoulder);
             }
         }
@@ -6269,7 +6339,7 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(1.0),
                     peak: Light::measured(1.0),
                     floor: None,
@@ -6365,7 +6435,7 @@ mod tests {
             mapped_at_creation: false,
         });
 
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let mut worst_temperature = 0.0f64;
         let mut worst_tint = 0.0f64;
         // The document's whole range, and the tint's, including the ends where the locus table
@@ -6374,7 +6444,7 @@ mod tests {
             2000.0, 2700.0, 3200.0, 5000.0, 5500.0, 6500.0, 10000.0, 20000.0, 50000.0,
         ] {
             for tint in [-150.0, -50.0, 0.0, 25.0, 150.0] {
-                let asked = crate::white_balance::Illuminant { temperature, tint };
+                let asked = colour::white_balance::Illuminant { temperature, tint };
                 let grade = super::Grade {
                     adjust: super::Adjust {
                         temperature: Some(temperature),
@@ -6385,7 +6455,7 @@ mod tests {
                     ..super::Grade::new(
                         1,
                         1,
-                        crate::tone::Levels {
+                        colour::tone::Levels {
                             white: Light::measured(1.0),
                             peak: Light::measured(1.0),
                             floor: None,
@@ -6442,7 +6512,7 @@ mod tests {
                 // rather than the identity with the values as multipliers, because a tint far off
                 // the locus puts `Z` negative and a negative multiplier is a decline.
                 let (big_x, big_z) = (x / y, (1.0 - x - y) / y);
-                let back = pollster::block_on(crate::white_balance::as_shot(
+                let back = pollster::block_on(colour::white_balance::as_shot(
                     gpu,
                     &[1.0, 1.0, 1.0, 0.0],
                     &[
@@ -6526,7 +6596,7 @@ mod tests {
             cache: None,
         });
 
-        let colour = crate::hdr_fit::HdrColour::identity();
+        let colour = colour::matched::HdrColour::identity();
         let full = (263usize, 171usize);
         // A real correction, off `keystone.ts` for a pair of leaning uprights: asymmetric in
         // both the projective terms, so a transposed row or a swapped pair shows up.
@@ -6600,7 +6670,7 @@ mod tests {
                 ..super::Grade::new(
                     full.0 - origin.0,
                     full.1 - origin.1,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: Light::measured(1.0),
                         peak: Light::measured(1.0),
                         floor: None,
@@ -6691,50 +6761,6 @@ mod tests {
         assert!(
             worst < 0.01,
             "the draw is {worst:.5} pixels from the gather at worst"
-        );
-    }
-
-    /// The gamut rotations in `primaries.slang` against the matrices this crate derives.
-    ///
-    /// This is the pattern the rest of the shared numbers use: written out there, pinned here, so
-    /// the two cannot drift without a test saying so.
-    ///
-    /// `R2020_TO_P3` is the one both hosts read - the editor's draw and the viewer's stage - which
-    /// is exactly why a wrong digit in it would agree with itself everywhere and show up nowhere.
-    #[test]
-    fn the_primaries_match_the_host() {
-        pinned("R2020_TO_SRGB", crate::hdr_fit::rec2020_to_srgb());
-        pinned("SRGB_TO_R2020", crate::hdr_fit::srgb_to_rec2020());
-        pinned(
-            "R2020_TO_P3",
-            crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
-        );
-        pinned(
-            "P3_TO_R2020",
-            crate::transfer::Primaries::DISPLAY_P3
-                .to_rec2020()
-                .map(|row| row.map(f64::from)),
-        );
-    }
-
-    fn pinned(name: &str, want: [[f64; 3]; 3]) {
-        let found = crate::hdr_fit::in_the_shader(name);
-        let rows: Vec<String> = (0..3)
-            .map(|row| {
-                let v: Vec<String> = (0..3)
-                    .map(|col| format!("{:>10.6}", want[row][col]))
-                    .collect();
-                format!("    {},", v.join(", "))
-            })
-            .collect();
-        let worst = (0..9)
-            .map(|i| (found[i / 3][i % 3] - want[i / 3][i % 3]).abs())
-            .fold(0.0f64, f64::max);
-        assert!(
-            worst < 5e-6,
-            "{name} is {worst:.6} out of step with the host's. It should read:\n\
-             public static const float3x3 {name} = float3x3(\n{}\n);",
-            rows.join("\n").trim_end_matches(','),
         );
     }
 }

@@ -220,7 +220,7 @@ public struct Edit {
     /// 61MP sensor's own size are the same colour footprint, and a fixed four would be the same
     /// footprint only at one output size.
     public uint chroma_shrink;
-    /// `hdr_fit::HdrColour::anchor`: where `curves_at` reads a highlight's colour.
+    /// `colour::matched::HdrColour::anchor`: where `curves_at` reads a highlight's colour.
     public float tone_anchor;
 
     /// The picture's own darkest end, as a fraction of diffuse white - `tone::Levels::floor`

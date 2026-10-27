@@ -7,7 +7,7 @@ module prelude;
 
 import light;
 
-/// `hdr_fit::LUMA` and `tone::LUMA`, which are BT.2020's weights for a Rec.2020 frame.
+/// `colour::space::LUMA`, BT.2020's weights for a Rec.2020 frame.
 ///
 /// Not `image::LUMA`. That one is BT.709 and belongs to the denoise, which is measuring
 /// where detail is rather than what a colour weighs, and never meets this. Taking it here
@@ -63,7 +63,7 @@ public Light<D> luma_of<D : ILinear>(Colour<D> colour)
     return measured<D>(dot(LUMA, colour.v));
 }
 
-/// The sRGB transfer, IEC 61966-2-1, on a value already in range. `hdr_fit::srgb_oetf`.
+/// The sRGB transfer, IEC 61966-2-1, on a value already in range. `colour::space::srgb_oetf`.
 ///
 /// **Four stages code against the camera's own JPEG and they have to agree exactly.** The
 /// geometry search compares a render to the preview through it, the colour fit's objective
@@ -82,7 +82,7 @@ public float3 srgb_oetf_signed(float3 value)
     return sign(value) * float3(srgb_oetf(abs(value.r)), srgb_oetf(abs(value.g)), srgb_oetf(abs(value.b)));
 }
 
-/// The same curve back, for the stages that read a level the camera wrote. `hdr_fit::srgb_eotf`.
+/// The same curve back, for the stages that read a level the camera wrote. `colour::space::srgb_eotf`.
 public float srgb_eotf(float level)
 {
     return level <= 0.04045 ? level / 12.92 : pow((level + 0.055) / 1.055, 2.4);

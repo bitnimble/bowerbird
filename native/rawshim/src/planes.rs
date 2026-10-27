@@ -80,7 +80,7 @@ pub fn codes(
     gpu: &'static gpu::Gpu,
     samples: &[u8],
     layout: &Layout,
-) -> Result<crate::resident::Resident, String> {
+) -> Result<colour::resident::Resident, String> {
     check(samples.len(), layout)?;
     let uploaded = gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("planes"),
@@ -96,7 +96,7 @@ pub fn codes(
         gpu.queue.write_buffer(&uploaded, whole as u64, &tail);
     }
 
-    let out = crate::resident::Resident::empty(gpu, layout.width, layout.height);
+    let out = colour::resident::Resident::empty(gpu, layout.width, layout.height);
     let kernel = kernel(gpu);
     let mut recording = gpu.record();
     recording.holding(out.buffer());

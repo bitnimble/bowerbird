@@ -389,12 +389,12 @@ fn light_of_code(gpu: &gpu::Gpu) -> gpu::Buffer {
 
 fn light_of_code_table() -> Vec<f32> {
     let signal = |of: u16| units::light::Light::measured(f64::from(of) / f64::from(u16::MAX));
-    let ceiling = crate::tone::pq_inv::<units::light::SceneNits>(signal(u16::MAX));
+    let ceiling = colour::tone::pq_inv::<units::light::SceneNits>(signal(u16::MAX));
     (0..=u16::MAX)
         .map(|code| {
             // A ratio, which is what the header means by normalised: both ends are the scene's
             // nits, so whatever the frame's anchor was divides out and this is the curve alone.
-            let light = crate::tone::pq_inv::<units::light::SceneNits>(signal(code)) / ceiling;
+            let light = colour::tone::pq_inv::<units::light::SceneNits>(signal(code)) / ceiling;
             light.raw() as f32
         })
         .collect()
@@ -415,7 +415,7 @@ fn light_of_level_table() -> Vec<f32> {
         // Past the largest finite half are infinity, NaNs and the negatives, which no writer
         // stores; saturated, so the search's table stays ascending.
         .map(|bits| match bits <= largest {
-            true => crate::resident::level_of_bits(bits) / crate::resident::FULL_SCALE,
+            true => colour::resident::level_of_bits(bits) / colour::resident::FULL_SCALE,
             false => f32::MAX,
         })
         .collect()
@@ -554,9 +554,9 @@ impl<'de> serde::Deserialize<'de> for Defringe {
 pub async fn prepare(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: crate::resident::Resident,
+    frame: colour::resident::Resident,
     gather: Gather,
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
     strengths: crate::image::Strengths,
     sharpen_sigma: crate::image::SharpenSigma,
@@ -565,7 +565,7 @@ pub async fn prepare(
     defocus: Defringe,
     noise: Option<crate::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
-) -> Option<(crate::resident::Resident, (f32, f32))> {
+) -> Option<(colour::resident::Resident, (f32, f32))> {
     let (source, out) = (gather.source, gather.out);
     let (sw, sh) = source.raw();
     let samples = frame.samples();
@@ -642,7 +642,7 @@ pub async fn prepare(
         return Some((frame, defocus));
     }
     let (ow, oh) = out.raw();
-    let warped = crate::resident::Resident::empty(gpu, ow, oh);
+    let warped = colour::resident::Resident::empty(gpu, ow, oh);
     recording.holding(warped.buffer());
     let jacobian = warp_lens_into(
         gpu,
@@ -746,9 +746,9 @@ fn reduction(recording: &mut gpu::Recording<'_>, block: &Reduction) -> gpu::Buff
 pub fn resize(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     out: (usize, usize),
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let source = frame.size();
     if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
         return None;
@@ -771,12 +771,12 @@ pub fn resize(
 pub fn resize_window(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    region: &crate::resident::Resident,
+    region: &colour::resident::Resident,
     region_at: units::px::At<units::px::Decoded>,
     whole: units::px::Size<units::px::Decoded>,
     out: units::px::Rect<units::px::Drawn>,
     whole_out: units::px::Size<units::px::Drawn>,
-) -> crate::resident::Resident {
+) -> colour::resident::Resident {
     let block = Reduction {
         source: region.size(),
         out: out.size.raw(),
@@ -835,9 +835,9 @@ fn resize_scale(source: (usize, usize), out: (usize, usize)) -> (f64, f64) {
 pub fn resize_scene(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     out: (usize, usize),
-) -> Option<crate::resident::Resident> {
+) -> Option<colour::resident::Resident> {
     let source = frame.size();
     if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
         return None;
@@ -855,15 +855,15 @@ pub fn resize_scene(
 fn resized_through(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     block: &Reduction,
     pipeline: &wgpu::ComputePipeline,
     light_of_sample: &gpu::Buffer,
-) -> crate::resident::Resident {
+) -> colour::resident::Resident {
     let out = block.out;
     let pixels = out.0 * out.1;
 
-    let smaller = crate::resident::Resident::empty(gpu, out.0, out.1);
+    let smaller = colour::resident::Resident::empty(gpu, out.0, out.1);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     recording.holding(smaller.buffer());
@@ -922,7 +922,7 @@ pub fn pyramid(
     if samples.len() < sw * sh * 3 {
         return None;
     }
-    let frame = crate::resident::Resident::upload(gpu, samples, sw, sh);
+    let frame = colour::resident::Resident::upload(gpu, samples, sw, sh);
     let built = pyramid_of(gpu, base, &frame, source);
     frame.reclaim();
     built
@@ -935,7 +935,7 @@ pub fn pyramid(
 pub fn pyramid_of(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     source: (usize, usize),
 ) -> Option<Pyramid> {
     let (sw, sh) = source;
@@ -1168,13 +1168,13 @@ fn padded_row(width: usize) -> usize {
 /// already spending half a second on.
 ///
 /// Written into the frame it is given, which stays on the device: the fit reads a host copy
-/// ([`crate::resident::Resident::host`]) and `prepare` then runs over this same buffer.
+/// ([`colour::resident::Resident::host`]) and `prepare` then runs over this same buffer.
 ///
 /// Returns the pair it used, for `prepare` and for the analysis file.
 pub async fn correct(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     strengths: crate::image::Strengths,
     defocus: Option<(f32, f32)>,
     noise: Option<crate::galosh::NoiseFit>,
@@ -1229,7 +1229,7 @@ pub async fn defringe(
     if !defringes(samples.len(), width, height, defocus) {
         return Some(());
     }
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     defringe_into(
@@ -1286,7 +1286,7 @@ fn defringe_into(
     // `vec3f` is padded to four words, and the `full` after it lands in the hole rather than past
     // it - which is the same layout the shader declares and not a coincidence worth relying on
     // silently.
-    params.extend_from_slice(&crate::resident::FULL_SCALE.to_le_bytes());
+    params.extend_from_slice(&colour::resident::FULL_SCALE.to_le_bytes());
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("defringe params"),
         contents: &params,
@@ -1510,7 +1510,7 @@ pub async fn sharpen_base(
     if !sharpens(samples.len(), width, height, amount) {
         return Some(());
     }
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     sharpen_into(
@@ -1532,7 +1532,7 @@ pub async fn sharpen_base(
     Some(())
 }
 
-/// Scene-linear levels to normalised PQ, through [`coding_curve`]'s table of [`crate::tone::pq`].
+/// Scene-linear levels to normalised PQ, through [`coding_curve`]'s table of [`colour::tone::pq`].
 ///
 /// Takes and returns the frame rather than leaving it on the GPU, which [`prepare`] is the version
 /// that does not: this spelling is what lets the coding be held against ST 2084 on its own.
@@ -1540,7 +1540,7 @@ pub async fn encode_base(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> Option<()> {
     if samples.is_empty() {
@@ -1550,7 +1550,7 @@ pub async fn encode_base(
     // dispatched over words, so nothing here reads a stride. Rounded up rather than down, so a
     // caller with a sample count that is not three's multiple - the coding's own pin, which walks
     // every level and one over - still gets a buffer its samples fit in.
-    let frame = crate::resident::Resident::upload(gpu, samples, samples.len().div_ceil(3), 1);
+    let frame = colour::resident::Resident::upload(gpu, samples, samples.len().div_ceil(3), 1);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     encode_base_into(
@@ -1577,13 +1577,13 @@ pub async fn encode_base(
 /// real frame. Neither answer is wrong, but only one of them can be the coding, and the accurate one
 /// costs nothing at this size.
 pub(crate) fn coding_curve(
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> Vec<u8> {
     let scale = reference_white_nits.raw() / levels.white.raw();
     let mut out = Vec::with_capacity((u16::MAX as usize + 1) * 2);
     for bits in 0..=u16::MAX {
-        let level = crate::resident::level_of_bits(bits);
+        let level = colour::resident::level_of_bits(bits);
         let level = if level.is_nan() {
             0.0
         } else {
@@ -1591,7 +1591,7 @@ pub(crate) fn coding_curve(
         };
         let nits =
             units::light::Light::<units::light::SceneNits>::measured(f64::from(level) * scale);
-        let coded = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round();
+        let coded = (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round();
         out.extend_from_slice(&(coded as u16).to_le_bytes());
     }
     out
@@ -1606,11 +1606,11 @@ pub(crate) fn coding_curve(
 /// reference white of 203 nits. `pq_inv` undoes `coding_curve`'s `pq` exactly, so this is the
 /// coding's own `scale` and no curve at all.
 pub fn full_scale_light(
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> f32 {
     let ceiling =
-        crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(1.0)).raw();
+        colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(1.0)).raw();
     let scale = reference_white_nits.raw() / levels.white.raw();
     (f64::from(u16::MAX) * scale / ceiling) as f32
 }
@@ -1618,7 +1618,7 @@ pub fn full_scale_light(
 /// The mosaic noise fit in the coded RGB frame capture sharpening reads, scaled to the share of
 /// its variance the denoise left (`galosh::Detail::noise_left`).
 pub fn sharpen_noise(
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
     noise: Option<crate::galosh::NoiseFit>,
     noise_left: f32,
@@ -1644,7 +1644,7 @@ pub fn sharpen_noise(
         f64::from(model.sigma_sq) * full * full * f64::from(gain).powi(2)
             / fitted_read.max(f64::MIN_POSITIVE)
     });
-    match crate::hdr_fit::invert3(&matrix) {
+    match colour::space::invert3(&matrix) {
         Some(inverse) => {
             for camera in 0..3 {
                 shot_per_light[camera] *= inverse[camera].iter().map(|v| v.abs()).sum::<f64>();
@@ -1707,7 +1707,7 @@ pub fn luma_noise_in_light(
     wb_gains: [f32; 3],
 ) -> [f64; 2] {
     let full = f64::from(full_scale_light).max(f64::MIN_POSITIVE);
-    let (shot, read) = noise_through_balance(crate::hdr_fit::LUMA, wb_gains);
+    let (shot, read) = noise_through_balance(colour::space::LUMA, wb_gains);
     let (fitted_shot, fitted_read) = noise_already_balanced(wb_gains);
     [
         f64::from(noise.alpha) * full * shot / fitted_shot,
@@ -1723,7 +1723,7 @@ fn encode_base_into(
     recording: &mut gpu::Recording<'_>,
     frame: &gpu::Buffer,
     count: usize,
-    levels: crate::tone::Anchored,
+    levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) {
     let words = count.div_ceil(2);
@@ -1800,7 +1800,7 @@ pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
             let gain = crate::fit::Gain::at(a, b, radius as u8);
             match (gain - 1.0).abs() < 1e-5 {
                 true => 1.0,
-                false => crate::tone::gain_in_y(units::light::Gain::of_ratio(gain)) as f32,
+                false => colour::tone::gain_in_y(units::light::Gain::of_ratio(gain)) as f32,
             }
         })
         .collect()
@@ -1926,15 +1926,15 @@ impl Gather {
 pub fn warp_lens(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     gather: Gather,
     lens: &crate::fit::Lens,
-) -> Option<(crate::resident::Resident, gpu::Buffer)> {
+) -> Option<(colour::resident::Resident, gpu::Buffer)> {
     if !warps(frame.samples(), gather.source.raw(), gather.out.raw(), lens) {
         return None;
     }
     let (out_w, out_h) = gather.out.raw();
-    let warped = crate::resident::Resident::empty(gpu, out_w, out_h);
+    let warped = colour::resident::Resident::empty(gpu, out_w, out_h);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     recording.holding(warped.buffer());
@@ -1958,13 +1958,13 @@ pub fn warp_lens(
 pub fn gather_and_sharpen(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
-    frame: crate::resident::Resident,
+    frame: colour::resident::Resident,
     gather: Gather,
     lens: Option<&crate::fit::Lens>,
     sharpen: f64,
     sharpen_sigma: crate::image::SharpenSigma,
     sharpen_noise: crate::image::SharpenNoise,
-) -> crate::resident::Resident {
+) -> colour::resident::Resident {
     let correcting = lens.is_some_and(|lens| !lens.is_identity());
     let warped = lens
         .filter(|_| correcting)
@@ -2151,7 +2151,7 @@ pub async fn measure_defocus(
     if samples.len() < width * height * 3 {
         return None;
     }
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
     let measured =
         measure_defocus_into(gpu, base, frame.buffer(), width, height, noise, matrix).await;
     frame.reclaim();
@@ -2455,7 +2455,7 @@ pub async fn chroma_leak_of(
     width: usize,
     height: usize,
 ) -> Option<f64> {
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
     let leak = chroma_leak(gpu, base, frame.buffer(), width, height).await;
     frame.reclaim();
     leak
@@ -2755,7 +2755,7 @@ async fn read_all<const N: usize>(
 
 #[cfg(test)]
 mod tests {
-    use crate::resident::Resident;
+    use colour::resident::Resident;
     use units::light::{Light, SceneNits};
 
     /// The reference every test here codes against, which is BT.2408's.
@@ -2792,7 +2792,7 @@ mod tests {
     ) -> Option<Vec<u16>> {
         let gpu = gpu::device()?;
         let base = super::device(gpu)?;
-        let frame = crate::resident::Resident::upload(gpu, samples, width, height);
+        let frame = colour::resident::Resident::upload(gpu, samples, width, height);
         let mut recording = gpu.record();
         recording.holding(frame.buffer());
         super::sharpen_into(
@@ -2879,7 +2879,7 @@ mod tests {
         let (w, h) = (64usize, 1024usize);
         let (low, high) = (40.0f32 * 257.0, 200.0f32 * 257.0);
         // A scene-linear frame, which is what the estimator reads.
-        let frame = crate::resident::samples_of_levels(
+        let frame = colour::resident::samples_of_levels(
             blurred_edge(w, h, low, high).into_iter().map(f32::from),
         );
 
@@ -2904,7 +2904,7 @@ mod tests {
         let Some(base) = super::device(gpu) else {
             return;
         };
-        let resident = crate::resident::Resident::upload(gpu, &frame, w, h);
+        let resident = colour::resident::Resident::upload(gpu, &frame, w, h);
         let measured = pollster::block_on(super::measure_edge_spread(
             gpu,
             base,
@@ -3043,7 +3043,7 @@ mod tests {
         let light = [0.01f64, 0.001, 0.000_001];
         let sigma = 0.000_001;
         let code = |value: f64| {
-            (crate::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
+            (colour::tone::pq(units::light::Light::<units::light::SceneNits>::measured(
                 value.max(0.0) * 10_000.0,
             ))
             .raw()
@@ -3212,14 +3212,14 @@ mod tests {
         let code = |nits: f64| {
             let nits: units::light::Light<units::light::DisplayNits> =
                 units::light::Light::exactly(nits);
-            (crate::tone::pq(nits).raw() * 65535.0).round() as u16
+            (colour::tone::pq(nits).raw() * 65535.0).round() as u16
         };
         let mut samples: Vec<u16> = (0..w * h)
             .flat_map(|_| [code(20.0), code(100.0), code(50.0)])
             .collect();
         let hot = (h - 1) * w + w - 1;
         samples[hot * 3..hot * 3 + 3].copy_from_slice(&[code(4000.0), code(10.0), code(10.0)]);
-        let frame = crate::resident::Resident::upload(gpu, &samples, w, h);
+        let frame = colour::resident::Resident::upload(gpu, &samples, w, h);
         let tally = pollster::block_on(super::content_light(gpu, base, frame.buffer(), w, h))
             .expect("the readback");
         frame.reclaim();
@@ -3393,13 +3393,13 @@ mod tests {
         let taps = crate::image::gaussian(0.7, crate::image::DECONVOLVE_RADIUS);
         let soft = blur(&plane, w, h, &taps);
         let samples =
-            crate::resident::samples_of_levels(soft.iter().flat_map(|value| [value.trunc(); 3]));
+            colour::resident::samples_of_levels(soft.iter().flat_map(|value| [value.trunc(); 3]));
 
         let sigma = crate::image::SharpenSigma {
             composed: 0.6,
             terms: Some((0.6, 0.0)),
         };
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(30000.0),
             peak: Light::measured(60000.0),
             floor: None,
@@ -3524,7 +3524,7 @@ mod tests {
 
     #[test]
     fn the_sharpen_gates_on_the_noise_the_denoise_left() {
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(30000.0),
             peak: Light::measured(60000.0),
             floor: None,
@@ -3711,7 +3711,7 @@ mod tests {
         // Every sample a frame can hold, and odd, so the tail that shares its word with nothing is
         // exercised rather than assumed.
         let samples: Vec<u16> = (0..=u16::MAX).chain(std::iter::once(0)).collect();
-        let anchored = crate::tone::Levels {
+        let anchored = colour::tone::Levels {
             white: Light::measured(8133.0),
             peak: Light::measured(13783.0),
             floor: None,
@@ -3722,14 +3722,14 @@ mod tests {
         let theirs: Vec<u16> = samples
             .iter()
             .map(|&bits| {
-                let level = crate::resident::level_of_bits(bits);
+                let level = colour::resident::level_of_bits(bits);
                 let level = if level.is_nan() {
                     0.0
                 } else {
                     level.clamp(0.0, f32::MAX)
                 };
                 let nits = Light::<SceneNits>::measured(f64::from(level) * scale);
-                (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
+                (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
             })
             .collect();
 
@@ -3763,21 +3763,21 @@ mod tests {
     /// noise floor off by that factor (`assembly_levels`).
     #[test]
     fn a_full_scale_sample_codes_to_the_light_it_is_named_at() {
-        let ceiling = crate::tone::pq_inv::<SceneNits>(Light::measured(1.0)).raw();
+        let ceiling = colour::tone::pq_inv::<SceneNits>(Light::measured(1.0)).raw();
         // Every one of them anchors full scale below PQ's ceiling, which is where the curve is a
         // curve rather than a clamp: a white under ~1330 codes 65535 to more than 10000 nits.
         for white in [2000.0, 8133.0, 32767.0, 65535.0] {
-            let anchored = crate::tone::Levels {
+            let anchored = colour::tone::Levels {
                 white: Light::measured(white),
                 peak: Light::measured(white),
                 floor: None,
             }
             .anchored();
             let coded = super::coding_curve(anchored, REFERENCE);
-            let full = usize::from(crate::resident::bits_of_level(f32::from(u16::MAX))) * 2;
+            let full = usize::from(colour::resident::bits_of_level(f32::from(u16::MAX))) * 2;
             let code = u16::from_le_bytes([coded[full], coded[full + 1]]);
             let signal = Light::measured(f64::from(code) / f64::from(u16::MAX));
-            let read = crate::tone::pq_inv::<SceneNits>(signal).raw() / ceiling;
+            let read = colour::tone::pq_inv::<SceneNits>(signal).raw() / ceiling;
             let mine = f64::from(super::full_scale_light(anchored, REFERENCE));
             assert!(
                 (read - mine).abs() < 5e-4 * read,
@@ -3857,7 +3857,7 @@ mod tests {
     /// Away from black, because dividing by the local luma is what lets a pixel at two counts
     /// report a ratio of one.
     fn fringe(frame: &[u16], width: usize, height: usize) -> (f64, f64) {
-        let frame = crate::resident::levels_of(frame);
+        let frame = colour::resident::levels_of(frame);
         let luma_at = |x: usize, y: usize| -> f64 {
             let at = (y * width + x) * 3;
             0.2126 * f64::from(frame[at])
@@ -3923,7 +3923,7 @@ mod tests {
         for at in 0..width * height {
             for (channel, plane) in [&red, &green, &blue].iter().enumerate() {
                 let value = plane[at] + noise() * amplitude;
-                out[at * 3 + channel] = crate::resident::bits_of_level(value.max(0.0) as f32);
+                out[at * 3 + channel] = colour::resident::bits_of_level(value.max(0.0) as f32);
             }
         }
         out
@@ -4018,7 +4018,7 @@ mod tests {
         // **In light, which is where the kernel accumulates.** The ramp is a ramp in *codes*, so its
         // area average in light is not its area average in codes; reading the expectation off the
         // codes would be asserting the bug this domain exists to remove.
-        let decoded = |signal: f64| crate::tone::pq_inv::<SceneNits>(Light::measured(signal));
+        let decoded = |signal: f64| colour::tone::pq_inv::<SceneNits>(Light::measured(signal));
         let full = decoded(1.0);
         let light = |code: f64| (decoded(code / 65535.0) / full).raw();
         let mut worst = 0.0f64;
@@ -4032,7 +4032,7 @@ mod tests {
             }
             // Back to a code the same way the shader does, by the curve rather than by a table.
             let want =
-                crate::tone::pq(full * units::light::Gain::of_ratio(acc / total)).raw() * 65535.0;
+                colour::tone::pq(full * units::light::Gain::of_ratio(acc / total)).raw() * 65535.0;
             worst = worst.max((f64::from(out[x * 3]) - want).abs());
         }
         // Of 65535, against the 625 the truncated footprint managed on the same ramp. What is left
@@ -4227,13 +4227,13 @@ mod tests {
             }
         }
 
-        let linear = crate::resident::samples_of_levels(src.iter().map(|&v| f32::from(v)));
+        let linear = colour::resident::samples_of_levels(src.iter().map(|&v| f32::from(v)));
         let scene = resized_scene(gpu, base, &linear, (w, h), (2, 2)).expect("a scene downscale");
         let mean = (u32::from(dark) + u32::from(light)) / 2;
-        for (at, sample) in crate::resident::levels_of(&scene).iter().enumerate() {
+        for (at, sample) in colour::resident::levels_of(&scene).iter().enumerate() {
             assert!(
                 (sample - mean as f32).abs()
-                    <= 1.0 + crate::resident::stored_within(f64::from(mean)) as f32,
+                    <= 1.0 + colour::resident::stored_within(f64::from(mean)) as f32,
                 "sample {at} came back {sample}, not the mean {mean}",
             );
         }
@@ -4311,14 +4311,14 @@ mod tests {
                         for sy in 2 * y..last_y {
                             for sx in 2 * x..last_x {
                                 let code = coarser[((sy * size.0) + sx) * 3 + channel];
-                                acc += crate::tone::pq_inv::<units::light::SceneNits>(
+                                acc += colour::tone::pq_inv::<units::light::SceneNits>(
                                     units::light::Light::measured(f64::from(code) / 65535.0),
                                 )
                                 .raw();
                                 taps += 1.0;
                             }
                         }
-                        mine[((y * half.0) + x) * 3 + channel] = (crate::tone::pq(
+                        mine[((y * half.0) + x) * 3 + channel] = (colour::tone::pq(
                             units::light::Light::<units::light::SceneNits>::measured(acc / taps),
                         )
                         .raw()
@@ -4495,7 +4495,7 @@ mod tests {
 
         let (width, height) = (192usize, 128usize);
         let plane = |x: f64, y: f64| 8_000.0 + 200.0 * x + 100.0 * y;
-        let frame = crate::resident::samples_of_levels(
+        let frame = colour::resident::samples_of_levels(
             (0..width * height)
                 .flat_map(|at| [plane((at % width) as f64, (at / width) as f64) as f32; 3]),
         );
@@ -4514,7 +4514,7 @@ mod tests {
             keystone: None,
         };
 
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(50_000.0),
             peak: Light::measured(58_900.0),
             floor: None,
@@ -4577,7 +4577,7 @@ mod tests {
                     let sx = full_w / 2.0 - 0.5 + sx * half;
                     let sy = full_h / 2.0 - 0.5 + sy * half;
                     fused[(y * out.0 + x) * 3 + c] =
-                        crate::resident::bits_of_level(plane(sx, sy) as f32);
+                        colour::resident::bits_of_level(plane(sx, sy) as f32);
                 }
             }
         }
@@ -4640,8 +4640,8 @@ mod tests {
 
         let (width, height) = (257usize, 181);
         let frame =
-            crate::resident::samples_of_levels(edged(width, height).into_iter().map(f32::from));
-        let levels = crate::tone::Levels {
+            colour::resident::samples_of_levels(edged(width, height).into_iter().map(f32::from));
+        let levels = colour::tone::Levels {
             white: Light::measured(8133.0),
             peak: Light::measured(13783.0),
             floor: None,
@@ -4820,7 +4820,7 @@ mod tests {
             for channel in 0..3 {
                 let value =
                     smooth[at] + softness[channel] * curvature[at] + sigmas[channel] * normal();
-                out.push(crate::resident::bits_of_level(
+                out.push(colour::resident::bits_of_level(
                     (value * 65535.0).clamp(0.0, 65535.0).trunc(),
                 ));
             }
@@ -4908,7 +4908,7 @@ mod tests {
 
         let (width, height) = (211usize, 149);
         let samples = defocused(width, height);
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(30000.0),
             peak: Light::measured(60000.0),
             floor: None,

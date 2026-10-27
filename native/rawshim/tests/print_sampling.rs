@@ -10,9 +10,8 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
     let base = rawshim::base::device(gpu).expect("the source pyramid");
     let size = 1024;
     let canvas = 384;
-    let code = |nits| {
-        (rawshim::tone::pq(Light::<SceneNits>::exactly(nits)).raw() * 65535.0).round() as u16
-    };
+    let code =
+        |nits| (colour::tone::pq(Light::<SceneNits>::exactly(nits)).raw() * 65535.0).round() as u16;
     let white = code(203.0);
     let grey = code(101.5);
     let grade = Grade {
@@ -24,7 +23,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
         ..Grade::new(
             size,
             size,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(10000.0),
                 peak: Light::measured(60000.0),
                 floor: None,

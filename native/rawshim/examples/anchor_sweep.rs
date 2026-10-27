@@ -81,7 +81,7 @@ fn main() {
         };
 
         let fitted = |body: bool| {
-            rawshim::tone::use_body_anchor(body);
+            colour::tone::use_body_anchor(body);
             rawshim::fit_hdr_measured(
                 &resident,
                 path,
@@ -100,7 +100,7 @@ fn main() {
             })
         };
         let (configured, body) = (fitted(false), fitted(true));
-        rawshim::tone::use_body_anchor(false);
+        colour::tone::use_body_anchor(false);
 
         let (Some((delta_q, white_q, toe_q, over, ceiling)), Some((delta_b, white_b, ..))) =
             (configured, body)

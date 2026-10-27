@@ -19,7 +19,7 @@ impl Comparison {
         let base = crate::base::device(gpu).expect("source pyramid");
         let (width, height) = (384, 256);
         let code =
-            (crate::tone::pq(Light::<SceneNits>::exactly(203.0)).raw() * 65535.0).round() as u16;
+            (colour::tone::pq(Light::<SceneNits>::exactly(203.0)).raw() * 65535.0).round() as u16;
         let frame = vec![code; width * height * 3];
         let grade = Grade {
             canvas: Some(Canvas {
@@ -30,7 +30,7 @@ impl Comparison {
             ..Grade::new(
                 width,
                 height,
-                crate::tone::Levels {
+                colour::tone::Levels {
                     white: Light::measured(10000.0),
                     peak: Light::measured(10000.0),
                     floor: None,
@@ -41,7 +41,7 @@ impl Comparison {
         };
         let pyramid =
             crate::base::pyramid(gpu, base, &frame, (width, height)).expect("source pyramid");
-        let resident = crate::resident::Resident::upload(gpu, &frame, width, height);
+        let resident = colour::resident::Resident::upload(gpu, &frame, width, height);
         let uploaded = crate::grade::device(gpu).upload_resident(
             &resident,
             &grade,
@@ -92,7 +92,7 @@ impl Comparison {
 
     fn pattern(&self) {
         let bands = [0.2, 0.4, 0.7, 1.0].map(|value| {
-            (crate::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+            (colour::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
                 as u16
         });
         let pattern: Vec<u8> = (0..self.grade.width * self.grade.height)
@@ -365,7 +365,7 @@ fn framed_lighting_cache_keeps_glass_and_mat_reflections() {
 #[test]
 fn print_peak_cache_observes_other_uploads_sharing_the_measurement() {
     let comparison = Comparison::new();
-    let colour = crate::hdr_fit::HdrColour::identity();
+    let colour = colour::matched::HdrColour::identity();
     let grade = Grade {
         colour: Some(&colour),
         ..comparison.grade
@@ -374,7 +374,7 @@ fn print_peak_cache_observes_other_uploads_sharing_the_measurement() {
         exposure: Some(Stops::measured(1.0)),
         ..grade.clone()
     };
-    let code = (crate::tone::pq(Light::<SceneNits>::exactly(80.0)).raw() * 65535.0).round() as u16;
+    let code = (colour::tone::pq(Light::<SceneNits>::exactly(80.0)).raw() * 65535.0).round() as u16;
     let frame = vec![code; grade.width * grade.height * 3];
     let peak = crate::grade::device(comparison.gpu).scene_peak();
     let first = crate::grade::device(comparison.gpu).upload(&frame, &grade, &peak);

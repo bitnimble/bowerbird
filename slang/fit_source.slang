@@ -31,7 +31,7 @@ struct Params {
     /// `tone::WHITE_FLOOR_UNDER_PEAK`.
     float white_floor_under_peak;
     /// Rec.2020 to sRGB primaries, a row to a `float4` so that std140 leaves nothing between them.
-    /// Passed rather than written out here: `hdr_fit::rec2020_to_srgb` derives it, and a literal
+    /// Passed rather than written out here: `colour::space::rec2020_to_srgb` derives it, and a literal
     /// would be a second copy to hold against that one.
     float4 to_srgb[3];
 };

@@ -20,13 +20,13 @@ mod support;
 use rawshim::composite_tile::{CompositeRequest, From, SourceFile};
 use rawshim::composition::{Composition, LensSpec};
 use rawshim::hdr::{self, Prepared};
-use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
+use colour::matched::{HdrColour, TRUST_CEILING};
 use rawshim::image::Strengths;
 use units::light::{Light, Stops};
 use units::px::Size;
-use rawshim::resident::Resident;
+use colour::resident::Resident;
 use rawshim::snapshot::{Snapshot, Tolerance};
-use rawshim::tone;
+use colour::tone;
 
 const WIDTH: usize = 96;
 const HEIGHT: usize = 64;
@@ -79,7 +79,7 @@ fn scene() -> Vec<u16> {
 
 /// A scene-linear sample at `level`, held under full scale as a sensor's would be.
 fn stored(level: f64) -> u16 {
-    rawshim::resident::bits_of_level(level.clamp(0.0, 65535.0) as f32)
+    colour::resident::bits_of_level(level.clamp(0.0, 65535.0) as f32)
 }
 
 fn levels(
@@ -171,7 +171,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         exposure: Stops::measured(0.625),
         curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
         saturation: 1.25,
-        illuminant: Some(rawshim::white_balance::Illuminant {
+        illuminant: Some(colour::white_balance::Illuminant {
             temperature: 5320.0,
             tint: -4.0,
         }),
@@ -183,7 +183,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 colour: Some(&colour),
                 exposure,
                 adjust,
-                as_shot: Some(rawshim::white_balance::Illuminant {
+                as_shot: Some(colour::white_balance::Illuminant {
                     temperature: 5500.0,
                     tint: 12.0,
                 }),
@@ -952,7 +952,7 @@ fn coded_grade<'a>(
         // The tint is off zero on purpose: a camera's neutral is never exactly on the
         // Planckian locus, and a baseline that was would let a host standing a missing
         // tint up as zero pass by coincidence.
-        as_shot: Some(rawshim::white_balance::Illuminant {
+        as_shot: Some(colour::white_balance::Illuminant {
             temperature: 5500.0,
             tint: 12.0,
         }),
@@ -1602,15 +1602,15 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
         return;
     };
     let frame = blue_beside_red();
-    let [_, a, b] = rawshim::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
+    let [_, a, b] = colour::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
     let greyed = rawshim::grade::Adjust {
-        colour_nodes: vec![rawshim::lattice::ColourNode {
+        colour_nodes: vec![colour::lattice::ColourNode {
             hue: b.atan2(a).to_degrees(),
             chroma: a.hypot(b),
             lightness: None,
             target_hue: b.atan2(a).to_degrees(),
             target_chroma: 0.0,
-            target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+            target_lightness: colour::lattice::ANY_LIGHTNESS_AT,
             hue_reach: 45.0,
             chroma_reach: 40.0,
             lightness_reach: 0.0,
@@ -1654,19 +1654,19 @@ fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
     };
     let frame = blue_beside_red();
     let hue_of = |c: [f64; 3]| {
-        let [_, a, b] = rawshim::lattice::opponent_of(c.map(Light::measured));
+        let [_, a, b] = colour::lattice::opponent_of(c.map(Light::measured));
         (b.atan2(a).to_degrees().rem_euclid(360.0), a.hypot(b))
     };
     let (hue, chroma) = hue_of(RED.map(|v| v / 20000.0));
     const TURNED_TO: f64 = 140.0;
     let turned = rawshim::grade::Adjust {
-        colour_nodes: vec![rawshim::lattice::ColourNode {
+        colour_nodes: vec![colour::lattice::ColourNode {
             hue,
             chroma,
             lightness: None,
             target_hue: TURNED_TO,
             target_chroma: chroma,
-            target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+            target_lightness: colour::lattice::ANY_LIGHTNESS_AT,
             hue_reach: 40.0,
             chroma_reach: 20.0,
             lightness_reach: 0.0,
@@ -1707,7 +1707,7 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
         return;
     };
     let frame = blue_beside_red();
-    let [_, a, b] = rawshim::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
+    let [_, a, b] = colour::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
     let blue_hue = b.atan2(a).to_degrees();
     let identity = HdrColour::identity();
     let places = [[55.0, 6.0, -3.0, 0.0], [80.0, -2.0, 9.0, 0.0]];
@@ -1755,7 +1755,7 @@ fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
             f64::from(dot[1]).hypot(f64::from(dot[2])),
         );
         let greyed = rawshim::grade::Adjust {
-            colour_nodes: vec![rawshim::lattice::ColourNode {
+            colour_nodes: vec![colour::lattice::ColourNode {
                 hue,
                 chroma,
                 lightness: Some(f64::from(dot[0])),

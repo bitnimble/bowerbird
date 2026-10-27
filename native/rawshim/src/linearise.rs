@@ -156,7 +156,7 @@ impl Reconstruction {
 ///
 /// **Held rather than linearised once**, because a window of it is this pass over a rectangle and
 /// the editor asks for many. The codes are `u16` whatever the file's depth is, packed two to a word
-/// exactly as [`crate::resident::Resident`] packs samples - which is what lets `Resident::upload`
+/// exactly as [`colour::resident::Resident`] packs samples - which is what lets `Resident::upload`
 /// be the one uploader. A floating-point DNG's are the exception, an `f32` a sample.
 ///
 /// ponytail: an 8-bit picture holds two bytes a sample here where one would do. Pack four to a word
@@ -176,7 +176,7 @@ pub struct Picture {
     strip_bytes: usize,
     /// What the file says the picture's top-left is, in `rawler`'s numbering.
     pub upright: rawler::decoders::Orientation,
-    pub coding: crate::transfer::Coding,
+    pub coding: colour::transfer::Coding,
 }
 
 /// A picture's samples, where the kernel reads them from.
@@ -191,7 +191,7 @@ struct Samples {
 /// On the device where the whole raster fits a binding comfortably; on the host otherwise, and
 /// uploaded a band's rows at a time.
 enum Raster {
-    Codes(crate::resident::Resident),
+    Codes(colour::resident::Resident),
     Float(gpu::Buffer),
     HostCodes(Vec<u16>),
     HostFloat(Vec<f32>),
@@ -204,7 +204,7 @@ const STRIP_BYTES: usize = 256 << 20;
 impl Samples {
     fn codes(gpu: &'static gpu::Gpu, codes: Vec<u16>, width: usize, height: usize) -> Samples {
         let raster = match Samples::bound_whole(gpu, codes.len() * 2) {
-            true => Raster::Codes(crate::resident::Resident::upload(
+            true => Raster::Codes(colour::resident::Resident::upload(
                 gpu, &codes, width, height,
             )),
             false => Raster::HostCodes(codes),
@@ -261,7 +261,7 @@ impl Samples {
             Raster::Float(buffer) => (buffer.clone(), whole),
             Raster::HostCodes(codes) => {
                 let rows = Samples::rows_of(codes, self.width, rect);
-                let strip = crate::resident::Resident::upload(gpu, &rows, rect.width, rect.height);
+                let strip = colour::resident::Resident::upload(gpu, &rows, rect.width, rect.height);
                 (strip.buffer().clone(), rect)
             }
             Raster::HostFloat(samples) => (
@@ -306,7 +306,7 @@ impl Picture {
         codes: Vec<u16>,
         width: usize,
         height: usize,
-        coding: crate::transfer::Coding,
+        coding: colour::transfer::Coding,
         upright: rawler::decoders::Orientation,
         gain: Option<GainMap>,
     ) -> Option<Picture> {
@@ -329,8 +329,8 @@ impl Picture {
     /// The same, for codes already on the device.
     pub fn on_device(
         gpu: &'static gpu::Gpu,
-        codes: crate::resident::Resident,
-        coding: crate::transfer::Coding,
+        codes: colour::resident::Resident,
+        coding: colour::transfer::Coding,
         upright: rawler::decoders::Orientation,
         gain: Option<GainMap>,
     ) -> Picture {
@@ -353,7 +353,7 @@ impl Picture {
         width: usize,
         height: usize,
         crop: Rect<Photograph>,
-        coding: crate::transfer::Coding,
+        coding: colour::transfer::Coding,
         table: &[f32],
         upright: rawler::decoders::Orientation,
     ) -> Picture {
@@ -369,7 +369,7 @@ impl Picture {
         width: usize,
         height: usize,
         crop: Rect<Photograph>,
-        coding: crate::transfer::Coding,
+        coding: colour::transfer::Coding,
         affine: Affine,
         upright: rawler::decoders::Orientation,
     ) -> Picture {
@@ -381,7 +381,7 @@ impl Picture {
         gpu: &'static gpu::Gpu,
         samples: Samples,
         crop: Rect<Photograph>,
-        coding: crate::transfer::Coding,
+        coding: colour::transfer::Coding,
         table: &[f32],
         upright: rawler::decoders::Orientation,
         gain: Option<GainMap>,
@@ -416,7 +416,7 @@ impl Picture {
         let base = self.coding.curve.light(1.0).raw();
         let top = self.terms.as_ref().map_or(base, |map| map.brightest(base));
         Some(units::light::Light::measured(
-            crate::transfer::FULL_SCALE * top.max(1.0),
+            colour::transfer::FULL_SCALE * top.max(1.0),
         ))
     }
 
@@ -439,7 +439,7 @@ impl Picture {
         kernels: &Linearise,
         window: Rect<Photograph>,
         scale: crate::view::Scale,
-    ) -> Option<crate::resident::Resident> {
+    ) -> Option<colour::resident::Resident> {
         let step = match scale {
             crate::view::Scale::Full => 1usize,
             crate::view::Scale::Half => 2usize,
@@ -479,7 +479,7 @@ impl Picture {
             false => (out_w, out_h),
         };
 
-        let out = crate::resident::Resident::empty(gpu, out_w, out_h);
+        let out = colour::resident::Resident::empty(gpu, out_w, out_h);
         let band = self.band_rows(gpu, out_w, out_h, step);
         for top in (0..out_h).step_by(band) {
             let rows = band.min(out_h - top);
@@ -704,7 +704,7 @@ fn packed_storage(gpu: &gpu::Gpu, samples: &[u16]) -> gpu::Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transfer::{Coding, Curve, Primaries};
+    use colour::transfer::{Coding, Curve, Primaries};
     use units::px::At;
 
     /// A source whose primaries reach outside Rec.2020, which is what an ICC profile or a `cHRM`
@@ -754,7 +754,7 @@ mod tests {
         let frame = picture
             .window(gpu, device(gpu), window, crate::view::Scale::Full)
             .expect("the pass runs");
-        let samples = crate::resident::levels_of(
+        let samples = colour::resident::levels_of(
             &pollster::block_on(frame.into_host()).expect("the frame reads back"),
         );
 
@@ -763,7 +763,7 @@ mod tests {
             let (pixel, channel) = (4 + at / 3, at % 3);
             let want = (0.1 * pixel as f64 + 0.01 * channel as f64) * 65535.0;
             assert!(
-                (f64::from(*sample) - want).abs() <= 2.0 + crate::resident::stored_within(want),
+                (f64::from(*sample) - want).abs() <= 2.0 + colour::resident::stored_within(want),
                 "pixel {pixel} channel {channel}: {sample} against {want}"
             );
         }
@@ -804,7 +804,7 @@ mod tests {
             let frame = picture
                 .window(gpu, device(gpu), window, scale)
                 .expect("the pass runs");
-            let samples = crate::resident::levels_of(
+            let samples = colour::resident::levels_of(
                 &pollster::block_on(frame.into_host()).expect("the frame reads back"),
             );
             samples
@@ -920,7 +920,7 @@ mod tests {
         let frame = picture
             .window(gpu, device(gpu), window, crate::view::Scale::Full)
             .expect("the pass runs");
-        let samples = crate::resident::levels_of(
+        let samples = colour::resident::levels_of(
             &pollster::block_on(frame.into_host()).expect("the frame reads back"),
         );
 
@@ -942,7 +942,7 @@ mod tests {
             let want = pulled[channel].clamp(0.0, 1.0) * 65535.0;
             let got = f64::from(samples[channel]);
             assert!(
-                (got - want).abs() <= 2.0 + crate::resident::stored_within(want),
+                (got - want).abs() <= 2.0 + colour::resident::stored_within(want),
                 "channel {channel}: {got} against {want}"
             );
         }

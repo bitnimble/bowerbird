@@ -81,7 +81,7 @@ impl<'a> Open<'a> {
             edit(&mut samples);
             let gpu = gpu::device()?;
             // Back on the device, since the measure below defringes the frame it is given in place.
-            frame.pixels = rawshim::frame::Pixels::Resident(rawshim::resident::Resident::upload(
+            frame.pixels = rawshim::frame::Pixels::Resident(colour::resident::Resident::upload(
                 gpu,
                 &samples,
                 frame.width,
@@ -151,7 +151,7 @@ pub fn graded_under(
     let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let mut cutting = cut(opened, options, matched.map(|m| &m.lens));
-    let scene = rawshim::tone::SceneGrade::new(
+    let scene = rawshim::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         opened.measured.levels.anchored(),
         options.grade.reference_white_nits,
@@ -220,7 +220,7 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         units::px::Span::<units::px::Sensor>::exact(sensor_long),
         units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
-    let resident = rawshim::resident::Resident::upload(
+    let resident = colour::resident::Resident::upload(
         gpu,
         frame.samples16().expect("16-bit"),
         frame.width,

@@ -498,7 +498,7 @@ mod tests {
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let lit: Vec<[f64; 3]> = [[0u8, 0, 0], [13, 64, 200], [128, 128, 128], [255, 255, 255]]
             .into_iter()
-            .map(|codes| codes.map(crate::hdr_fit::srgb_eotf))
+            .map(|codes| codes.map(colour::space::srgb_eotf))
             .collect();
         let below: Vec<([f64; 3], f64)> = lit.iter().map(|v| (*v, 0.0)).collect();
         let scoring = Scoring::new(
@@ -528,7 +528,7 @@ mod tests {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let light = |codes: [u8; 3]| codes.map(crate::hdr_fit::srgb_eotf);
+        let light = |codes: [u8; 3]| codes.map(colour::space::srgb_eotf);
         // Lab hues 37 and 73: a saturated red chroma past its lightness, and a lit orange wall under
         // it; and near 23, a dark red chroma three times past its lightness.
         let (grey, red, wall) = (
@@ -591,7 +591,7 @@ mod tests {
             return;
         };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let light = |codes: [u8; 3]| codes.map(crate::hdr_fit::srgb_eotf);
+        let light = |codes: [u8; 3]| codes.map(colour::space::srgb_eotf);
         let share = |target: [u8; 3], ours: [u8; 3]| -> f64 {
             let below = below_buffer(gpu, &[(light(ours), 0.0)]);
             let scoring = Scoring::new(gpu, below, &[light(target)], &[1.0], &IDENTITY, 2, 1);
@@ -730,7 +730,7 @@ mod tests {
         // Green a fifth of full scale below zero on a red, which a luma-preserving pull to the
         // hull would take 0.2 / (0.0696 + 0.2) of the chroma to mend; and one inside the gamut,
         // on the JPEG's own levels so its deltaE against itself is nothing.
-        let inside = [128u8, 100, 80].map(crate::hdr_fit::srgb_eotf);
+        let inside = [128u8, 100, 80].map(colour::space::srgb_eotf);
         let below = vec![([1.0, -0.2, 0.0], 0.0), (inside, 0.0)];
         let target = [[1.0, 0.0, 0.0], inside];
         let balance = [-2.0, 1.0];

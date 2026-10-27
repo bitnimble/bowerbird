@@ -58,7 +58,7 @@ pub struct TileRequest {
     pub adjust: crate::grade::Adjust,
     /// The photograph's own diffuse white and scene peak, measured at the open.
     #[serde(default)]
-    pub levels: Option<crate::tone::Levels>,
+    pub levels: Option<colour::tone::Levels>,
     /// The photograph's mosaic noise, measured at the open.
     #[serde(default)]
     pub noise_fit: Option<crate::galosh::NoiseFit>,
@@ -131,16 +131,16 @@ impl TileRequest {
 
 /// The window a tile was built in, ready for the grade.
 pub struct Prepared {
-    /// Normalised PQ Rec.2020 ([`crate::tone::encode_base`]), the window and its margin.
+    /// Normalised PQ Rec.2020 ([`colour::tone::encode_base`]), the window and its margin.
     pub samples: Vec<u16>,
     pub width: usize,
     pub height: usize,
     /// `[left, top, width, height]` of the rectangle actually asked for, inside that window.
     pub keep: [usize; 4],
     /// The levels the samples above were coded against, which the grade anchors to.
-    pub levels: crate::tone::Anchored,
+    pub levels: colour::tone::Anchored,
     pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// The camera's own multipliers, which a composite files as its balance
     /// (`photo_analysis::FromRaw::balance`).
     ///
@@ -170,8 +170,8 @@ impl Prepared {
         &self,
         exposure: Option<units::light::Stops>,
         adjust: crate::grade::Adjust,
-    ) -> crate::tone::SceneGrade<'_> {
-        crate::tone::SceneGrade::new(
+    ) -> crate::grade::SceneGrade<'_> {
+        crate::grade::SceneGrade::new(
             self.matched.as_ref().and_then(|m| m.colour.as_ref()),
             self.levels,
             self.reference_nits,
@@ -184,7 +184,7 @@ impl Prepared {
     /// That scene over this window, which differs from a whole frame's in one word.
     pub fn grade<'a>(
         &self,
-        scene: &'a crate::tone::SceneGrade<'a>,
+        scene: &'a crate::grade::SceneGrade<'a>,
         peak_nits: units::light::Light<units::light::DisplayNits>,
         output: crate::grade::Output,
     ) -> crate::grade::Grade<'a> {
@@ -357,7 +357,7 @@ pub async fn prepared_on_device(
     let resident = match frame.pixels {
         crate::frame::Pixels::Resident(resident) => resident,
         crate::frame::Pixels::Sixteen(samples) => {
-            crate::resident::Resident::upload(gpu, &samples, width, height)
+            colour::resident::Resident::upload(gpu, &samples, width, height)
         }
         crate::frame::Pixels::Eight(_) => {
             return Err("a tile needs a 16-bit scene-linear decode".to_string());
@@ -372,7 +372,7 @@ pub async fn prepared_on_device(
     // which lifts the crop to reference white.
     let known = request
         .levels
-        .filter(crate::tone::Levels::usable)
+        .filter(colour::tone::Levels::usable)
         .or_else(|| {
             stored
                 .from_render
@@ -1059,7 +1059,7 @@ mod tests {
             &crate::photo_analysis::PhotoAnalysis {
                 from_raw: crate::photo_analysis::FromRaw {
                     matched: Some(crate::hdr_fit::HdrMatch {
-                        colour: Some(crate::hdr_fit::HdrColour::identity()),
+                        colour: Some(colour::matched::HdrColour::identity()),
                         lens: crate::fit::Lens::none(),
                     }),
                     ..Default::default()

@@ -18,14 +18,14 @@
 /// A `Cow` in all but name: `Resident` is not `Clone` - a frame is hundreds of megabytes and an
 /// implicit copy of one is not a thing to offer - so the two arms are spelt out.
 pub enum OnDevice<'a> {
-    Held(&'a crate::resident::Resident),
-    Uploaded(crate::resident::Resident),
+    Held(&'a colour::resident::Resident),
+    Uploaded(colour::resident::Resident),
 }
 
 impl std::ops::Deref for OnDevice<'_> {
-    type Target = crate::resident::Resident;
+    type Target = colour::resident::Resident;
 
-    fn deref(&self) -> &crate::resident::Resident {
+    fn deref(&self) -> &colour::resident::Resident {
         match self {
             OnDevice::Held(frame) => frame,
             OnDevice::Uploaded(frame) => frame,
@@ -45,7 +45,7 @@ pub enum Pixels {
     /// frame back here only to upload it again for the coding is 366MB each way at 61MP for nothing.
     /// [`Frame::to_host`] is the transfer, and it belongs at the one place a host stage reads - the
     /// camera match, which wants linear samples, and the sharpen.
-    Resident(crate::resident::Resident),
+    Resident(colour::resident::Resident),
 }
 
 impl Pixels {
@@ -88,7 +88,7 @@ pub struct Frame {
     /// Read here rather than recomputed downstream because the samples that come out
     /// carry no trace of what was divided out of them. None where the file recorded
     /// nothing usable, which is the same case `camera_multipliers` declines.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// The sensor's noise, as the denoise fitted it off this frame's mosaic.
     ///
     /// None where the decode had no adapter or a filter array that does not tile into 2x2
@@ -197,7 +197,7 @@ impl Frame {
     }
 
     /// The frame on the device, for a stage about to run a shader over it.
-    pub fn resident(&self) -> Option<&crate::resident::Resident> {
+    pub fn resident(&self) -> Option<&colour::resident::Resident> {
         match &self.pixels {
             Pixels::Resident(frame) => Some(frame),
             Pixels::Eight(_) | Pixels::Sixteen(_) => None,
@@ -212,7 +212,7 @@ impl Frame {
     pub fn on_device(&self, gpu: &'static gpu::Gpu) -> Option<OnDevice<'_>> {
         match &self.pixels {
             Pixels::Resident(frame) => Some(OnDevice::Held(frame)),
-            _ => Some(OnDevice::Uploaded(crate::resident::Resident::upload(
+            _ => Some(OnDevice::Uploaded(colour::resident::Resident::upload(
                 gpu,
                 self.samples16()?,
                 self.width,

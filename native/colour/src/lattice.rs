@@ -712,12 +712,12 @@ fn square_root(a: M3) -> Option<M3> {
     }
 }
 
-pub(crate) fn bake_kernel(gpu: &'static Gpu) -> &'static BakeKernel {
+pub fn bake_kernel(gpu: &'static Gpu) -> &'static BakeKernel {
     static BUILT: gpu::Cache<BakeKernel> = gpu::Cache::new();
     BUILT.get(gpu, || BakeKernel::new(gpu.describing()))
 }
 
-pub(crate) struct BakeKernel {
+pub struct BakeKernel {
     interpolate_layout: wgpu::BindGroupLayout,
     interpolate: wgpu::ComputePipeline,
     sum_layout: wgpu::BindGroupLayout,
@@ -1402,7 +1402,7 @@ mod tests {
             true => 0.0,
             false => (d / level).clamp(-1.0, 1.0 / weight - 1.0),
         };
-        let luma = crate::hdr_fit::LUMA;
+        let luma = crate::space::LUMA;
         let mut worst: (f64, usize) = (0.0, 0);
         for (texel, got) in texels.iter().enumerate() {
             let colour = raw_rendered_of(opponent_at(place_of(map.axes, texel)));

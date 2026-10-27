@@ -329,7 +329,7 @@ fn write_dng(to: &str, mosaic: &[u16], size: (usize, usize), preview: Option<&[[
 
 /// sRGB's transfer over the scene's own light, diffuse white at 1.0.
 fn srgb8(v: f32) -> u8 {
-    (rawshim::hdr_fit::srgb_oetf(f64::from(v)) * 255.0).round() as u8
+    (colour::space::srgb_oetf(f64::from(v)) * 255.0).round() as u8
 }
 
 /// A camera that is a straight window onto the scene: linear sRGB primaries, no black pedestal, no

@@ -149,7 +149,7 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,
@@ -268,7 +268,7 @@ fn main() -> Result<(), String> {
         for (view, scene) in views {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             let brightest = samples.iter().copied().max().unwrap_or(0);
-            let nits = rawshim::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
+            let nits = colour::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
                 f64::from(brightest) / 65535.0,
             ))
             .raw();
@@ -355,7 +355,7 @@ fn sheet_levels(
     canvas: (usize, usize),
 ) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let nits = |code: u16| {
-        rawshim::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
+        colour::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
             f64::from(code) / 65535.0,
         ))
         .raw()

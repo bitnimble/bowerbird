@@ -112,7 +112,7 @@ fn main() {
             "  ours {} camera {} (ceiling {:.0}, camera clip {:.0})",
             at(&ours, 0, 0),
             at(&theirs, dx, dy),
-            rawshim::hdr_fit::TRUST_CEILING * 255.0,
+            colour::matched::TRUST_CEILING * 255.0,
             0.94 * 255.0,
         );
         let tile = tile(&ours, &theirs, *x, *y, dx, dy);

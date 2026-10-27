@@ -528,7 +528,7 @@ fn reconstruct_matrixed(
     Some(
         samples
             .iter()
-            .map(|&bits| rawshim::resident::level_of_bits(bits) / 65535.0)
+            .map(|&bits| colour::resident::level_of_bits(bits) / 65535.0)
             .collect(),
     )
 }
@@ -574,7 +574,7 @@ fn fit(
 ) -> Option<(f32, f32)> {
     let samples: Vec<u16> = plane
         .iter()
-        .map(|&v| rawshim::resident::bits_of_level(v.max(0.0) * 65535.0))
+        .map(|&v| colour::resident::bits_of_level(v.max(0.0) * 65535.0))
         .collect();
     pollster::block_on(rawshim::base::measure_defocus(
         gpu,

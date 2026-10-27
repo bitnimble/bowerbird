@@ -18,9 +18,10 @@
 
 use crate::fit::Lens;
 use crate::galosh::NoiseFit;
-use crate::hdr_fit::{HdrColour, HdrMatch};
-use crate::lattice::ChromaMap;
-use crate::tone::Levels;
+use crate::hdr_fit::HdrMatch;
+use colour::lattice::ChromaMap;
+use colour::matched::HdrColour;
+use colour::tone::Levels;
 use half::f16;
 
 /// Bumped when a section's own layout changes, so an older blob is ignored rather than misread.
@@ -52,7 +53,7 @@ const SECTION_MAX: usize = 1 << 22;
 
 /// A stored lattice longer than this many kernel words is corrupt: a fit emits a few thousand
 /// kernels at most, which is the coarse grid's and the fine grid's nodes together.
-pub(crate) const MAX_KERNEL_WORDS: usize = crate::lattice::KERNEL_WORDS * 16384;
+pub(crate) const MAX_KERNEL_WORDS: usize = colour::lattice::KERNEL_WORDS * 16384;
 
 #[derive(Clone, Default)]
 pub struct PhotoAnalysis {
@@ -105,7 +106,7 @@ pub struct FromRaw {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Balance {
     pub wb_gains: [f32; 3],
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
 }
 
 /// What only a rendered frame can say, and the settings it said it under.
@@ -480,7 +481,7 @@ fn take_balance(at: &mut Reader<'_>) -> Option<Balance> {
             // The illuminant alone is refused where the gains are kept: the panel opens without a
             // baseline, which is what a file with no multipliers gets anyway.
             ((1000.0..=50_000.0).contains(&temperature) && tint.is_finite())
-                .then_some(crate::white_balance::Illuminant { temperature, tint })
+                .then_some(colour::white_balance::Illuminant { temperature, tint })
         }
     };
     Some(Balance { wb_gains, as_shot })
@@ -566,7 +567,7 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
         Some(map) => {
             out.push(1);
             let words = map.words();
-            let (head, kernels) = words.split_at(crate::lattice::HEAD_WORDS);
+            let (head, kernels) = words.split_at(colour::lattice::HEAD_WORDS);
             put_u32(out, kernels.len() as u32);
             put_f32s(out, head);
             for value in kernels {
@@ -642,7 +643,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     }
     let illuminant = match at.u8()? {
         0 => None,
-        _ => Some(crate::white_balance::Illuminant {
+        _ => Some(colour::white_balance::Illuminant {
             temperature: at.f32()?,
             tint: at.f32()?,
         }),
@@ -650,13 +651,13 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     let stated = at.u8()? == 1;
 
     let (chroma, neighbourhood) = match at.u8()? {
-        0 => (None, crate::hdr_fit::NeighbourhoodThumb::none()),
+        0 => (None, colour::matched::NeighbourhoodThumb::none()),
         _ => {
             let count = at.u32()? as usize;
             if count > MAX_KERNEL_WORDS {
                 return None;
             }
-            let mut words = at.f32s(crate::lattice::HEAD_WORDS)?;
+            let mut words = at.f32s(colour::lattice::HEAD_WORDS)?;
             for _ in 0..count {
                 words.push(f64::from(f16::from_le_bytes([at.u8()?, at.u8()?])));
             }
@@ -677,7 +678,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
             }
             (
                 Some(map),
-                crate::hdr_fit::NeighbourhoodThumb {
+                colour::matched::NeighbourhoodThumb {
                     width,
                     height,
                     data,
@@ -695,7 +696,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         return Some(None);
     }
     Some(Some(HdrColour {
-        anchor: crate::hdr_fit::chroma_anchor(&curves[1], ceiling),
+        anchor: colour::matched::chroma_anchor(&curves[1], ceiling),
         curves,
         ceiling,
         matrix,
@@ -988,7 +989,7 @@ pub(crate) mod tests {
         let kernels = (0..1900)
             .map(|k| {
                 let v = f64::from(k % 97) * 0.0071;
-                crate::lattice::Kernel {
+                colour::lattice::Kernel {
                     centre: [v, 0.1 + v, 0.05 + v, 0.3],
                     reach: [0.083, 0.04, 0.021, 0.5],
                     generator: [0.01 + v, -v, v, 0.02, 0.003, -0.004, 0.011],
@@ -1009,7 +1010,7 @@ pub(crate) mod tests {
                 // A raised domain, so the round trip is tested on the field's whole range
                 // rather than on the default the decoder could have invented.
                 ceiling: 1.25,
-                anchor: crate::hdr_fit::chroma_anchor(&curve(0.02), 1.25),
+                anchor: colour::matched::chroma_anchor(&curve(0.02), 1.25),
                 matrix: [
                     [1.02, -0.01, 0.003],
                     [-0.02, 1.03, -0.011],
@@ -1021,7 +1022,7 @@ pub(crate) mod tests {
                 curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
                     .map(|point| point.map(|value| f64::from(value as f32)))
                     .to_vec(),
-                illuminant: Some(crate::white_balance::Illuminant {
+                illuminant: Some(colour::white_balance::Illuminant {
                     temperature: 5320.0,
                     tint: -4.0,
                 }),
@@ -1030,7 +1031,7 @@ pub(crate) mod tests {
                 chroma: Some(
                     ChromaMap::new(
                         kernels,
-                        crate::lattice::LutAxes {
+                        colour::lattice::LutAxes {
                             chroma_top: 4.3,
                             level_low: 0.0,
                             level_top: 138.0,
@@ -1039,7 +1040,7 @@ pub(crate) mod tests {
                     )
                     .stored(),
                 ),
-                neighbourhood: crate::hdr_fit::NeighbourhoodThumb {
+                neighbourhood: colour::matched::NeighbourhoodThumb {
                     width: 8,
                     height: 5,
                     data: (0..40)
@@ -1120,7 +1121,7 @@ pub(crate) mod tests {
                 capture_sigma: Some(0.62),
                 balance: Some(Balance {
                     wb_gains: [2.14, 1.0, 1.63],
-                    as_shot: Some(crate::white_balance::Illuminant {
+                    as_shot: Some(colour::white_balance::Illuminant {
                         temperature: 5240.0,
                         tint: -3.5,
                     }),

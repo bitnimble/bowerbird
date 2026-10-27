@@ -469,15 +469,15 @@ pub fn ten_bit_copy(
     bytes: &[u8],
     quantizer: i32,
     speed: i32,
-    matching: crate::sdr_match::SdrMatch,
+    matching: colour::sdr_match::SdrMatch,
 ) -> Result<Vec<u8>, String> {
     let (samples, width, height, tags) = decoded(bytes, 16)?;
     let (samples, light) = match matching {
-        crate::sdr_match::SdrMatch::Still => (samples, tags.light),
+        colour::sdr_match::SdrMatch::Still => (samples, tags.light),
         _ => {
             let gpu = gpu::device().ok_or("no Vulkan adapter to rematch the copy on")?;
             let rematched =
-                pollster::block_on(crate::pq_rematch::rematched(gpu, &samples, matching))
+                pollster::block_on(colour::pq_rematch::rematched(gpu, &samples, matching))
                     .ok_or("the rematched copy did not read back")?;
             let shown = |nits: u16| {
                 matching
@@ -1431,7 +1431,7 @@ mod tests {
         };
         let still = encode_still_rotated(picture.into(), width, height, &options, 90, None)
             .expect("encodes");
-        let copy = ten_bit_copy(&still, 0, 10, crate::sdr_match::SdrMatch::Still)
+        let copy = ten_bit_copy(&still, 0, 10, colour::sdr_match::SdrMatch::Still)
             .expect("the copy encodes");
 
         let decoder = Decoder::new().expect("a decoder");
@@ -1501,7 +1501,7 @@ mod tests {
         };
         let still = encode_still_rotated(picture.into(), width, height, &options, 0, None)
             .expect("encodes");
-        let matching = crate::sdr_match::SdrMatch::MacVideo;
+        let matching = colour::sdr_match::SdrMatch::MacVideo;
         let copy = ten_bit_copy(&still, 0, 10, matching).expect("the copy encodes");
 
         let (after, _, _, tags) = decoded(&copy, 16).expect("the copy decodes");
@@ -1511,7 +1511,7 @@ mod tests {
         );
 
         let nits = |code: u16| {
-            crate::tone::pq_inv::<units::light::DisplayNits>(units::light::Light::exactly(
+            colour::tone::pq_inv::<units::light::DisplayNits>(units::light::Light::exactly(
                 f64::from(code) / 65535.0,
             ))
         };
@@ -1519,7 +1519,7 @@ mod tests {
         let (mut under, mut over) = (0, 0);
         for (&was, &is) in before.iter().zip(&after).step_by(7) {
             let want = matching.of_still(nits(was)).raw();
-            match nits(was).raw() < crate::grade::CANVAS_WHITE_NITS {
+            match nits(was).raw() < colour::sdr_match::CANVAS_WHITE_NITS {
                 true => under += 1,
                 false => over += 1,
             }

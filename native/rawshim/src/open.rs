@@ -14,7 +14,7 @@
 //! what is measured, what is skipped because it was handed over - is the same code for both.
 
 use crate::hdr_fit::CameraMatch;
-use crate::resident::Resident;
+use colour::resident::Resident;
 
 /// Where a camera match comes from, and whether one is wanted.
 ///
@@ -57,7 +57,7 @@ pub struct Opening<'a> {
     pub matrix: Option<[[f32; 3]; 3]>,
     /// The illuminant the decode balanced against, which the camera match's own white balance is
     /// fitted relative to.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// `crate::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
     pub neutral_ceiling: f32,
 }
@@ -66,7 +66,7 @@ pub struct Opening<'a> {
 pub struct Measured {
     pub matched: Option<crate::hdr_fit::HdrMatch>,
     /// Unfloored, as the photograph's own: `anchored()` is what the coding takes.
-    pub levels: crate::tone::Levels,
+    pub levels: colour::tone::Levels,
     /// What the chain below is to do about longitudinal aberration, decided here so that both
     /// callers do the same thing with the same stored analysis.
     ///
@@ -244,7 +244,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
 /// A DNG's own rendering and lens correction, for one with no camera JPEG to match.
 async fn stated_match(
     fitting: &Fitting<'_>,
-    levels: &crate::tone::Levels,
+    levels: &colour::tone::Levels,
     neutral_ceiling: f32,
 ) -> Option<crate::hdr_fit::HdrMatch> {
     let source = match fitting {
@@ -281,8 +281,8 @@ async fn complete_colour(
     frame: &Resident,
     quantile: f64,
     matched: &crate::hdr_fit::HdrMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(crate::hdr_fit::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     let preview = match fitting {
         Fitting::None => return None,
@@ -311,8 +311,8 @@ async fn fit_from_preview(
     frame: &Resident,
     quantile: f64,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(crate::hdr_fit::HdrMatch, colour::tone::Levels)> {
     // A decode narrower than the preview cannot be paired against it: `fit_source::plane_size`
     // clamps its target to the frame's own width, so the two grids come out different sizes and
     // `pairs` asserts on it. Renditions never reach this because they decode at thousands of

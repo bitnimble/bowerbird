@@ -14,8 +14,8 @@
 mod support;
 
 use gpu::dispatch::Whole;
-use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
-use rawshim::lattice::LutAxes;
+use colour::matched::{HdrColour, TRUST_CEILING};
+use colour::lattice::LutAxes;
 
 /// A colour model with every stage off its identity, for a uniform shaped like a real match's.
 fn model() -> HdrColour {

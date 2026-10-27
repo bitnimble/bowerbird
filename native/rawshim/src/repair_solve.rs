@@ -19,7 +19,7 @@ use crate::patch_search::Patch;
 use crate::repair::{
     FEATHER_CELLS, MOST_GAIN, MOST_VERTICES, Params, Repair, bounds, cell, entry, offered_feather,
 };
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
 use units::light::{Gain, Stops};

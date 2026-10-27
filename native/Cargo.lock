@@ -272,6 +272,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "colour"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "gpu",
+ "half",
+ "pollster",
+ "serde",
+ "shaders",
+ "trace",
+ "units",
+ "wgpu",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1435,6 +1450,7 @@ dependencies = [
  "ash",
  "bindgen",
  "bytemuck",
+ "colour",
  "crc32fast",
  "fast_image_resize",
  "gpu",

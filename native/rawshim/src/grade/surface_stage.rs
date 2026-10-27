@@ -2,9 +2,9 @@
 //! so the shell puts a window behind the page and the photograph is drawn into it by the browser's
 //! own `stage.wgsl`, written as scRGB.
 
-use super::{CANVAS_FORMAT, CANVAS_WHITE_NITS, Gpu, Texture};
+use super::{CANVAS_FORMAT, Gpu, Texture};
 use crate::avif::Coded;
-use crate::hdr_fit;
+use colour::sdr_match::CANVAS_WHITE_NITS;
 use units::light::{DisplayNits, Gain, Light};
 use units::px::{At, Canvas, Extent, Output, Place, Rect, Size, Span};
 
@@ -32,7 +32,7 @@ impl Picture {
     /// One neutral light, `nits` everywhere and brightest, for the calibration's patch.
     pub fn flat(gpu: &Gpu, nits: f64) -> Option<Picture> {
         const SIDE: usize = 2;
-        let signal = crate::tone::pq(Light::<DisplayNits>::exactly(nits)).raw();
+        let signal = colour::tone::pq(Light::<DisplayNits>::exactly(nits)).raw();
         let luma = (64.0 + 876.0 * signal).round() as u16;
         let plane = |sample: u16| sample.to_le_bytes().repeat(SIDE * SIDE);
         let planes = [plane(luma), plane(512), plane(512)];
@@ -165,7 +165,7 @@ pub fn draw(
         contents: bytemuck::cast_slice(&colour),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let [red, green, blue] = INK.map(|coded| hdr_fit::srgb_eotf(coded) * display.white.raw());
+    let [red, green, blue] = INK.map(|coded| colour::space::srgb_eotf(coded) * display.white.raw());
     let views = picture.planes.each_ref().map(Texture::view);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("stage"),
@@ -425,7 +425,7 @@ mod tests {
             row.repeat(SIDE)
         };
         let luma = |&(nits, _, _): &(f32, u16, u16)| {
-            let signal = crate::tone::pq(Light::<DisplayNits>::exactly(f64::from(nits))).raw();
+            let signal = colour::tone::pq(Light::<DisplayNits>::exactly(f64::from(nits))).raw();
             (64.0 + 876.0 * signal).round() as u16
         };
         let planes = [
@@ -629,7 +629,7 @@ mod tests {
                 "{at:?} drew {inside}, not {expected}"
             );
         }
-        let ink = INK.map(|coded| hdr_fit::srgb_eotf(coded) as f32 * 6.0);
+        let ink = INK.map(|coded| colour::space::srgb_eotf(coded) as f32 * 6.0);
         for at in [(0, 0), (3, 0), (2, 1), (7, 1), (4, 4), (8, 4)] {
             let around = drawn_at(gpu, &picture, display, window, fit, at);
             for channel in 0..3 {

@@ -21,7 +21,7 @@ There were six for a while, and a page at `/hdr-check` to look at them on: the s
 
 What it does _not_ do is put the colour back, and the distinction matters before anyone reads a render as fixed. Pulling to the edge lands the lowest channel exactly on zero, so the mirror's blue is still zero and the paint still sits on a flat wall; nothing downstream can lift it either, since `curve(0)` is 0 and the camera's blue there sits on the crushed bound where the fit's pairs gate it out. Reaching the camera's B/R would need the edge itself to be soft - a compression along the chroma direction rather than a pull onto it - which is a look change on every saturated colour in every photograph rather than a repair.
 
-**`native/rawshim` owns grade, colour fit and encode** (`tone.rs`, `hdr_fit.rs`, `hdr_args.rs`, `hdr.rs`). The TypeScript route sent ~115MB at 24MP and ~366MB at 61MP across FFI to ffmpeg's stdin. One call now takes a path and job and writes the file; samples stay native.
+**Native code owns grade, colour fit and encode** (`native/colour`'s `tone.rs`, `native/rawshim`'s `hdr_fit.rs`, `hdr_args.rs`, `hdr.rs`). The TypeScript route sent ~115MB at 24MP and ~366MB at 61MP across FFI to ffmpeg's stdin. One call now takes a path and job and writes the file; samples stay native.
 
 **The port matches recorded output** (`test/fixtures/hdr_grade.pin.txt`), because grade failures can resemble valid pictures. Rust matched the TypeScript samples **bit-identically on all five cases**, every one of ~29.6M `u16` samples.
 
@@ -124,7 +124,7 @@ Firefox plays Profile 1 and 2 in software - `canPlayType` reports `"no"` for the
 
 ### 10.7.1 Grading scene-linear to display-referred
 
-The decode is scene-referred, and scene-referred data carries no exposure: the decode normalises by the sensor's saturation whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `native/rawshim/src/tone.rs` grades the samples before they reach the encoder, and the same eight frames come out within 2.5x with nothing clipping.
+The decode is scene-referred, and scene-referred data carries no exposure: the decode normalises by the sensor's saturation whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `native/colour/src/tone.rs` grades the samples before they reach the encoder, and the same eight frames come out within 2.5x with nothing clipping.
 
 Two ITU standards do the work, so no look had to be invented:
 

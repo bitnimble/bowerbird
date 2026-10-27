@@ -182,7 +182,6 @@ pub mod jpeg_gain_write;
 /// JPEG XL, the same.
 #[cfg(feature = "renditions")]
 pub mod jxl_write;
-pub mod lattice;
 pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
@@ -211,8 +210,6 @@ pub mod pmrid;
 /// PNG, which an export can ask for and nothing else writes.
 #[cfg(feature = "renditions")]
 pub mod png_write;
-#[cfg(feature = "renditions")]
-pub mod pq_rematch;
 pub mod print;
 pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
@@ -220,10 +217,8 @@ pub mod progress;
 pub mod raw_cache;
 pub mod repair;
 pub mod repair_solve;
-pub mod resident;
 pub mod retouched_frame;
 pub mod scrub;
-pub mod sdr_match;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
 #[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
 pub mod snapshot;
@@ -236,10 +231,6 @@ pub mod tca_device;
 pub mod tiff_write;
 pub mod tile;
 pub mod tile_grid;
-pub mod tone;
-/// What a delivered picture's code values mean: somebody else's transfer, in somebody else's
-/// primaries, undone into the light the pipeline grades.
-pub mod transfer;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
 #[cfg(all(feature = "renditions", target_os = "android"))]
 mod tv_stage;
@@ -251,7 +242,6 @@ pub mod wasm;
 /// What a uniform block is, according to the shader that reads it.
 #[cfg(test)]
 mod wgsl_layout;
-pub mod white_balance;
 
 /// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
 /// no C at all and so has no bindings to declare.
@@ -635,10 +625,10 @@ pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Fr
 /// halves run off this decode in a single pass over it.
 #[cfg(feature = "renditions")]
 pub fn fit_hdr_for(
-    frame: &resident::Resident,
+    frame: &colour::resident::Resident,
     raw_path: &str,
     quantile: f64,
-    as_shot: Option<white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<hdr_fit::HdrMatch> {
     fit_hdr_measured(
         frame,
@@ -654,12 +644,12 @@ pub fn fit_hdr_for(
 /// otherwise read off the frame a second time.
 #[cfg(feature = "renditions")]
 pub fn fit_hdr_measured(
-    frame: &resident::Resident,
+    frame: &colour::resident::Resident,
     raw_path: &str,
     quantile: f64,
     camera_match: hdr_fit::CameraMatch,
-    as_shot: Option<white_balance::Illuminant>,
-) -> Option<(hdr_fit::HdrMatch, tone::Levels)> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(hdr_fit::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
         let geometry = ffi::geometry_for(raw_path)?;

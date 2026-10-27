@@ -32,7 +32,7 @@ fn main() {
         .zip(pq.chunks_exact_mut(3))
     {
         let nits: Light<DisplayNits> = Light::exactly(LADDER_NITS[x / PATCH]);
-        let code = (rawshim::tone::pq(nits).raw() * 65535.0).round() as u16;
+        let code = (colour::tone::pq(nits).raw() * 65535.0).round() as u16;
         pixel.fill(code);
     }
     let files = [

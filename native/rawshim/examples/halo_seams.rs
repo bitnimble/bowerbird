@@ -90,9 +90,9 @@ fn main() {
             .expect("a 16-bit tile")
             .iter()
             .map(|&bits| {
-                let level = f64::from(rawshim::resident::level_of_bits(bits));
+                let level = f64::from(colour::resident::level_of_bits(bits));
                 let lit = (level / 65535.0 * scale).clamp(0.0, 1.0);
-                (rawshim::hdr_fit::srgb_oetf(lit) * 255.0).round() as u8
+                (colour::space::srgb_oetf(lit) * 255.0).round() as u8
             })
             .collect()
     };

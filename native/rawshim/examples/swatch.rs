@@ -7,7 +7,7 @@
 //! A cast is the one thing an eye judges worst and a number settles at once. The comparison has to
 //! happen in light: a ratio of sRGB codes is a ratio of two numbers on a curve that is steepest near
 //! black, so the same colour reads as a different cast depending only on how bright it is. Every
-//! sample here is decoded through `hdr_fit::srgb_eotf` first, and what is printed is the
+//! sample here is decoded through `colour::space::srgb_eotf` first, and what is printed is the
 //! chromaticity of the light - `r / (r+g+b)` and `b / (r+g+b)` - which is what "more yellow" means.
 //!
 //! The brightest tenth is reported separately because a cast on a cloud is a cast on the highlights,
@@ -40,9 +40,9 @@ fn main() {
         for x in left..right {
             let at = (y * wide + x) * 3;
             light.push([
-                rawshim::hdr_fit::srgb_eotf(picture.data[at]),
-                rawshim::hdr_fit::srgb_eotf(picture.data[at + 1]),
-                rawshim::hdr_fit::srgb_eotf(picture.data[at + 2]),
+                colour::space::srgb_eotf(picture.data[at]),
+                colour::space::srgb_eotf(picture.data[at + 1]),
+                colour::space::srgb_eotf(picture.data[at + 2]),
             ]);
         }
     }

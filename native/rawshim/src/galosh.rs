@@ -316,7 +316,7 @@ fn colour_basis(cfa: &crate::cfa::Cfa, side: usize) -> Vec<f32> {
         }
     }
     let inverse =
-        crate::hdr_fit::invert3(&flat).expect("a site holds every colour, so its colours separate");
+        colour::space::invert3(&flat).expect("a site holds every colour, so its colours separate");
     let (pw, ph) = cfa.period();
     let mut slots = [[0.0f64; 4]; 3];
     for y in 0..ph {

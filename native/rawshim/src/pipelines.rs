@@ -20,7 +20,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::repair::repairing(gpu);
     crate::retouched_frame::copying(gpu);
     crate::tca_device::kernels(gpu);
-    crate::white_balance::device(gpu);
+    colour::white_balance::device(gpu);
     crate::fit::resamplers(gpu);
     crate::fit_curve::kernels(gpu);
     crate::fit_lattice::kernels(gpu);
@@ -39,7 +39,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::hdr_fit::search_device(gpu);
     crate::hdr_fit::stats_device(gpu);
     crate::hdr_fit::warp_device(gpu);
-    crate::lattice::bake_kernel(gpu);
+    colour::lattice::bake_kernel(gpu);
     crate::grade::device(gpu).colour_wheel();
 }
 

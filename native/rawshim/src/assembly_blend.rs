@@ -6,7 +6,7 @@
 //! `CompositeRequest::mask` asks the gather for.
 
 use crate::composite_tile::Layer;
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
 use units::px::{Composite, Rect};

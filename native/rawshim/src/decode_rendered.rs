@@ -9,7 +9,7 @@
 //! **What a finished picture does not have**, and therefore what it does not run: a mosaic. So no
 //! GALOSH, no dust search, no demosaic, no camera matrix to fit, and no recorded as-shot
 //! illuminant: its white balance moves away from the white it was rendered to
-//! ([`crate::white_balance::RENDERED_WHITE`]). What it does run is everything below those: the
+//! ([`colour::white_balance::RENDERED_WHITE`]). What it does run is everything below those: the
 //! coding, the defringe, the lens gather, the sharpen, the grade, the crop and the roll-off -
 //! which is most of the pipeline and all of the editor.
 //!
@@ -25,7 +25,7 @@
 //!         see `decode` below for what an editor build does instead.
 
 use crate::linearise::GainMap;
-use crate::transfer::{Coding, Curve, Primaries};
+use colour::transfer::{Coding, Curve, Primaries};
 use rawler::decoders::Orientation;
 
 /// A picture read off a file: its code values, what they mean, and what came with them.
@@ -77,7 +77,7 @@ pub struct Held {
 
 /// What a picture demosaiced before it was written still says about the sensor behind it.
 pub struct Camera {
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// Where each channel saturates on the frame's scale, as `decode_rawler::channel_ceilings`
     /// states a RAW's.
     pub ceiling: [f32; 3],
@@ -220,7 +220,7 @@ impl Held {
             as_shot: self
                 .camera
                 .as_ref()
-                .map_or(Some(crate::white_balance::RENDERED_WHITE), |camera| {
+                .map_or(Some(colour::white_balance::RENDERED_WHITE), |camera| {
                     camera.as_shot
                 }),
             noise: None,
@@ -243,7 +243,7 @@ impl Held {
             // its scene, as a RAW's is.
             stated_white: match self.camera {
                 Some(_) => None,
-                None => Some(units::light::Light::measured(crate::transfer::FULL_SCALE)),
+                None => Some(units::light::Light::measured(colour::transfer::FULL_SCALE)),
             },
         })
     }

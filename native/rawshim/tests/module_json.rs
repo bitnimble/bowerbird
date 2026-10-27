@@ -87,7 +87,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(
         adjust.colour_nodes,
         vec![
-            rawshim::lattice::ColourNode {
+            colour::lattice::ColourNode {
                 hue: 41.5,
                 chroma: 12.25,
                 lightness: Some(55.0),
@@ -98,7 +98,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
                 chroma_reach: 8.0,
                 lightness_reach: 20.0,
             },
-            rawshim::lattice::ColourNode {
+            colour::lattice::ColourNode {
                 hue: 220.0,
                 chroma: 3.5,
                 lightness: None,

@@ -26,7 +26,7 @@ use crate::hdr_args::{self, Chroma, EncodeOptions};
 use crate::image::Strengths;
 #[cfg(feature = "renditions")]
 use crate::stacks;
-use crate::tone;
+use colour::tone;
 use serde::{Deserialize, Serialize};
 use units::light::{DisplayNits, Light, Stops};
 
@@ -351,11 +351,11 @@ pub struct CameraTone {
     pub saturation: f64,
     pub tone_curve: crate::grade::ToneCurve,
     /// None where the match leaves the white balance as shot.
-    pub balance: Option<crate::white_balance::Illuminant>,
+    pub balance: Option<colour::white_balance::Illuminant>,
 }
 
 impl CameraTone {
-    pub(crate) fn of(colour: Option<&crate::hdr_fit::HdrColour>) -> Option<CameraTone> {
+    pub(crate) fn of(colour: Option<&colour::matched::HdrColour>) -> Option<CameraTone> {
         let (curve, exposure, saturation, balance) = crate::edit::camera_defaults(colour);
         Some(CameraTone {
             exposure: exposure?,
@@ -581,7 +581,7 @@ fn save_avif(
 /// straight back. A window has already been resized, warped and sharpened by `tile::prepared`, so
 /// it arrives on the host and there is nothing left to run over it.
 pub(crate) enum Cutting {
-    OnDevice(crate::resident::Resident),
+    OnDevice(colour::resident::Resident),
     AlreadyCut(crate::hdr::Cut),
 }
 
@@ -627,7 +627,7 @@ pub(crate) struct Base {
     /// The illuminant the decode balanced against, which the stored temperature and tint move
     /// away from. Read off the processor and carried, because the decode is the only place it
     /// exists.
-    pub(crate) as_shot: Option<crate::white_balance::Illuminant>,
+    pub(crate) as_shot: Option<colour::white_balance::Illuminant>,
     /// The capture's blur sigma in sensor pixels, and the sensor's long edge those pixels
     /// belong to - the pair `image::deconvolve_split` carries to each target's scale.
     pub(crate) capture_sigma: Option<f32>,
@@ -1870,7 +1870,7 @@ pub(crate) async fn render(
     // The scene, settled once: the camera's colour, the levels every rendition grades against
     // - which are the ones `Base::build` coded the frame with - and the photographer's
     // exposure. The levels stay unexposed and the gain moves against them, which is what
-    // holds the colour still as it changes (`tone::SceneGrade`), and is why the exposure
+    // holds the colour still as it changes (`crate::grade::SceneGrade`), and is why the exposure
     // belongs here rather than folded into the anchor the base was coded with.
     //
     // Refused rather than clamped where it is not positive: a gain of zero or less is not a
@@ -1885,7 +1885,7 @@ pub(crate) async fn render(
             job.exposure
         ));
     }
-    let scene = tone::SceneGrade::new(
+    let scene = crate::grade::SceneGrade::new(
         matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         job.grade.reference_white_nits,
@@ -2417,7 +2417,7 @@ mod tests {
             tone_curve: crate::grade::ToneCurve::PchipCbrt3 {
                 points: vec![[0.0, 0.1], [0.5, 0.55], [1.0, 1.0]],
             },
-            balance: Some(crate::white_balance::Illuminant {
+            balance: Some(colour::white_balance::Illuminant {
                 temperature: 5320.0,
                 tint: -4.0,
             }),

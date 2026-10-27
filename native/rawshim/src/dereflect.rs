@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{Buffer, Gpu};
 use units::px::{At, Coordinate, Drawn, Extent, Looked, Point, Size, Stored};

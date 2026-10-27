@@ -1,7 +1,7 @@
 //! A DNG's own default rendering, as dng_sdk's `dng_render` draws it: the camera match's colour for
 //! a DNG with no embedded JPEG to fit one against.
 
-use crate::hdr_fit::{BINS, HdrColour, TRUST_CEILING};
+use colour::matched::{BINS, HdrColour, TRUST_CEILING};
 use rawler::tags::DngTag;
 use units::light::{Light, Stops};
 
@@ -80,10 +80,10 @@ impl Stated {
     pub async fn colour(
         &self,
         gpu: &'static gpu::Gpu,
-        levels: &crate::tone::Levels,
+        levels: &colour::tone::Levels,
         neutral_ceiling: f32,
     ) -> Option<HdrColour> {
-        let clip = Light::measured(f64::from(neutral_ceiling) * crate::transfer::FULL_SCALE);
+        let clip = Light::measured(f64::from(neutral_ceiling) * colour::transfer::FULL_SCALE);
         let share = (levels.white / clip).raw();
         if !(share.is_finite() && share > 0.0) {
             return None;
@@ -92,9 +92,9 @@ impl Stated {
             .map(|bin| self.response(bin as f64 / (BINS - 1) as f64 * TRUST_CEILING * share))
             .collect();
         let mut colour = HdrColour {
-            anchor: crate::hdr_fit::chroma_anchor(&response, TRUST_CEILING),
+            anchor: colour::matched::chroma_anchor(&response, TRUST_CEILING),
             curves: [response.clone(), response.clone(), response],
-            chroma: Some(crate::lattice::ChromaMap::identity().stored()),
+            chroma: Some(colour::lattice::ChromaMap::identity().stored()),
             stated: true,
             ..HdrColour::identity()
         };
@@ -264,8 +264,8 @@ mod tests {
             return;
         };
         let neutral_ceiling = 0.5;
-        let white = 0.25 * neutral_ceiling as f64 * crate::transfer::FULL_SCALE;
-        let levels = crate::tone::Levels {
+        let white = 0.25 * neutral_ceiling as f64 * colour::transfer::FULL_SCALE;
+        let levels = colour::tone::Levels {
             white: units::light::Light::measured(white),
             peak: units::light::Light::measured(white * 4.0),
             floor: Some(units::light::Light::measured(0.0)),

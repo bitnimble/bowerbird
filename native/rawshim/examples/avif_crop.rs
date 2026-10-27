@@ -75,12 +75,12 @@ fn main() {
         let pq: Vec<u8> = cut.iter().map(|v| (v >> 8) as u8).collect();
         let share = |v: &u16| {
             let signal = Light::<Pq>::measured(f64::from(*v) / f64::from(u16::MAX));
-            (rawshim::tone::pq_inv::<DisplayNits>(signal).raw() / DIFFUSE_WHITE_NITS).min(1.0)
+            (colour::tone::pq_inv::<DisplayNits>(signal).raw() / DIFFUSE_WHITE_NITS).min(1.0)
         };
         let linear: Vec<u8> = cut.iter().map(|v| (share(v) * 255.0) as u8).collect();
         let sdr: Vec<u8> = cut
             .iter()
-            .map(|v| (rawshim::hdr_fit::srgb_oetf(share(v)) * 255.0) as u8)
+            .map(|v| (colour::space::srgb_oetf(share(v)) * 255.0) as u8)
             .collect();
         for (name, data) in [("pq", pq), ("linear", linear), ("sdr", sdr)] {
             let image = magnify(

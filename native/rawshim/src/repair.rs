@@ -11,7 +11,7 @@
 //! leaves `base::prepare` sharpened (`tile::prepared_on_device`), and a whole rendition is
 //! sharpened per target (`hdr::Cut::from_base`).
 
-use crate::resident::Resident;
+use colour::resident::Resident;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
 use units::light::Gain;

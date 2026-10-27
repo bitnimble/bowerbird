@@ -16,14 +16,13 @@
 // quantile is the same heuristic dcraw's auto-bright uses, and is the knob worth
 // tuning if a library renders consistently dark or hot.
 
-use crate::hdr_fit::HdrColour;
-use units::light::{Gain, Level, Light, Nits, Pq, SceneNits, Stops};
+use units::light::{Gain, Level, Light, Nits, Pq};
 
 const MAX: usize = 65535;
 
 /// One bin per bit pattern a half-float sample can take, which is what `fit_source` sizes its
 /// buffer to.
-pub(crate) const LEVEL_BINS: usize = MAX + 1;
+pub const LEVEL_BINS: usize = MAX + 1;
 
 // SMPTE ST 2084.
 pub(crate) const M1: f64 = 2610.0 / 16384.0;
@@ -42,7 +41,7 @@ const PQ_MAX_NITS: f64 = 10000.0;
 ///
 /// PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates
 /// rather than being carried. That is BT.2408's own headroom above a 203-nit white, and the one
-/// clamp a scene-referred rendition takes (`crate::grade::Output::mastered`).
+/// clamp a scene-referred rendition takes (`rawshim::grade::Output::mastered`).
 ///
 /// **The domain is the caller's to name**, as it is in `prelude.slang`: the curve is absolute, so
 /// `base::coding_curve` codes the *scene's* nits with it and the roll-off compresses the
@@ -301,89 +300,13 @@ impl std::ops::Deref for Anchored {
 /// integer count `seen >= counted * quantile` is exactly `seen >= ceil(counted * quantile)`, and
 /// a mark carried across as an f32 could otherwise round to the far side of the count that
 /// crosses it here.
-pub(crate) fn marks(counted: usize, quantile: f64) -> (u32, u32, u32) {
+pub fn marks(counted: usize, quantile: f64) -> (u32, u32, u32) {
     let mark = |q: f64| (counted as f64 * q).ceil().max(1.0) as u32;
     (mark(FLOOR_QUANTILE), mark(quantile), mark(PEAK_QUANTILE))
 }
 
 /// The furthest below the scene's top end diffuse white may be read: three stops.
-pub(crate) const WHITE_FLOOR_UNDER_PEAK: Gain = Gain::of_ratio(8.0);
-
-/// Everything the grade settles for one photo, before any rendition's size or display.
-pub struct SceneGrade<'a> {
-    levels: Levels,
-    reference: Light<SceneNits>,
-    exposure: Option<Stops>,
-    /// The reader's own sliders. Settled on the photo like the levels and the colour, and
-    /// for the same reason: two sizes of one photograph must not be adjusted differently.
-    adjust: crate::grade::Adjust,
-    /// The illuminant the decode balanced against, which the pair in `adjust` moves away from.
-    /// Settled on the photo like everything else here: two sizes of it must not be balanced
-    /// against two different baselines.
-    as_shot: Option<crate::white_balance::Illuminant>,
-    /// The camera match, whatever `adjust`'s profile asks of it (`crate::grade::Grade::colour`).
-    colour: Option<&'a HdrColour>,
-}
-
-impl<'a> SceneGrade<'a> {
-    /// No frame and no GPU. The matched arm's peak is measured off the frame that is already
-    /// uploaded, by the shader, in `crate::grade::Uploaded::measure_peak` - so what is left here is
-    /// what the uniform carries.
-    ///
-    /// Infallible, and [`Anchored`] is what makes that true rather than assumed: a white of zero
-    /// cannot reach here, because every caller has to floor it before coding the frame with it.
-    pub fn new(
-        colour: Option<&'a HdrColour>,
-        levels: Anchored,
-        reference: Light<SceneNits>,
-        exposure: Option<Stops>,
-        adjust: crate::grade::Adjust,
-        as_shot: Option<crate::white_balance::Illuminant>,
-    ) -> Self {
-        assert!(
-            exposure.is_none_or(|stops| stops.raw().is_finite()),
-            "an exposure is a number of stops: {exposure:?}"
-        );
-        SceneGrade {
-            levels: *levels,
-            reference,
-            exposure,
-            colour,
-            adjust,
-            as_shot,
-        }
-    }
-
-    /// This scene as the shader's uniform wants it.
-    ///
-    /// Assembled here so the fields stay private and so the one place that knows what a
-    /// scene *is* is the one place that describes it to the GPU.
-    ///
-    /// No scene peak: the matched arm's is measured on the GPU off the uploaded frame, and
-    /// the neutral arm's is `source_level / white` scaled by the reference, which the shader
-    /// does for itself from the two fields below.
-    pub fn gpu_grade(
-        &'a self,
-        width: usize,
-        height: usize,
-        output: crate::grade::Output,
-    ) -> crate::grade::Grade<'a> {
-        crate::grade::Grade {
-            colour: self.colour,
-            exposure: self.exposure,
-            adjust: self.adjust.clone(),
-            as_shot: self.as_shot,
-            output,
-            ..crate::grade::Grade::new(
-                width,
-                height,
-                self.levels,
-                self.reference,
-                output.mastered(self.reference),
-            )
-        }
-    }
-}
+pub const WHITE_FLOOR_UNDER_PEAK: Gain = Gain::of_ratio(8.0);
 
 #[cfg(test)]
 mod tests {
@@ -424,89 +347,6 @@ mod tests {
     // The BT.2390 roll-off is `frame.slang`'s and is asserted where it runs: `gpu_fixture` pins
     // the rolled arm across a low peak (203, where the whole knee is in play) and a high one
     // (1000, where the source already fits and the curve returns early).
-
-    /// A frame of one pixel per level asked for, grey, one row tall. `fit_levels` samples a fixed
-    /// count and this is shorter than that count, so every pixel is read exactly once and the
-    /// histogram it counts is these levels themselves.
-    fn frame(levels: impl IntoIterator<Item = usize>) -> Vec<u16> {
-        levels
-            .into_iter()
-            .flat_map(|level| [crate::resident::bits_of_level(level as f32); 3])
-            .collect()
-    }
-
-    fn stored(level: f32) -> Light<Level> {
-        Light::measured(f64::from(crate::resident::level_of_bits(
-            crate::resident::bits_of_level(level),
-        )))
-    }
-
-    fn scanned(gpu: &'static gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
-        let resident = crate::resident::Resident::upload(gpu, samples, samples.len() / 3, 1);
-        pollster::block_on(crate::fit_source::levels(gpu, &resident, quantile))
-            .expect("the device read the levels off the frame")
-    }
-
-    #[test]
-    fn the_peak_is_read_above_diffuse_white() {
-        let Some(gpu) = gpu::device() else {
-            return;
-        };
-        let out = scanned(gpu, &frame((0..3000).map(|i| i * 20)), 0.9);
-        assert!(
-            out.peak > out.white,
-            "the peak must sit above diffuse white"
-        );
-        assert!(out.white > Light::ZERO);
-    }
-
-    /// A night frame: nine pixels in ten near black, the rest lit. The quantile lands on the
-    /// dark ground and the anchor is held to three stops under the lights instead.
-    #[test]
-    fn diffuse_white_is_read_no_lower_than_three_stops_under_the_peak() {
-        let Some(gpu) = gpu::device() else {
-            return;
-        };
-        let night = frame((0..10_000).map(|i| if i % 10 == 0 { 40_000 } else { 400 }));
-        let out = scanned(gpu, &night, 0.9);
-        let lit = stored(40_000.0);
-        assert_eq!(out.peak, lit);
-        assert_eq!(out.white, lit / WHITE_FLOOR_UNDER_PEAK);
-
-        // Where the quantile already sits within reach of the peak the floor does nothing.
-        let out = scanned(gpu, &frame((0..10_000).map(|i| i * 4)), 0.9);
-        assert!(out.white > out.peak / WHITE_FLOOR_UNDER_PEAK);
-        let apart = (out.white - Light::measured(36_000.0)).raw();
-        assert!(
-            apart.abs() < 100.0,
-            "the quantile itself, got {:?}",
-            out.white
-        );
-    }
-
-    #[test]
-    fn a_reconstructed_sun_past_full_scale_leaves_diffuse_white_alone() {
-        let Some(gpu) = gpu::device() else {
-            return;
-        };
-        let sun = 8 * usize::from(u16::MAX);
-        let out = scanned(
-            gpu,
-            &frame((0..10_000).map(|i| if i % 100 == 0 { sun } else { 20_000 })),
-            0.9,
-        );
-        assert_eq!(out.peak, stored(sun as f32));
-        assert_eq!(out.white, stored(20_000.0));
-
-        // A sun so large the quantile lands on it: white holds at what the sensor recorded.
-        let out = scanned(
-            gpu,
-            &frame((0..10_000).map(|i| if i % 5 == 0 { sun } else { 20_000 })),
-            0.9,
-        );
-        assert_eq!(out.peak, stored(sun as f32));
-        assert_eq!(out.white, stored(f32::from(u16::MAX)));
-    }
 
     /// The bin count is on both sides - the host sizes the buffer with it, the walk bounds itself
     /// with it - and the generated WGSL cannot be read for the shader's: a `static const` is folded

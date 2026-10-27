@@ -87,7 +87,7 @@ fn ranked(path: &str, samples: &[u16]) -> Option<Ranked> {
     let mut levels: Vec<f32> = samples
         .chunks_exact(3)
         .map(|rgb| {
-            rawshim::resident::level_of_bits(rgb[0].max(rgb[1]).max(rgb[2])) / f32::from(u16::MAX)
+            colour::resident::level_of_bits(rgb[0].max(rgb[1]).max(rgb[2])) / f32::from(u16::MAX)
         })
         .collect();
     levels.sort_by(f32::total_cmp);

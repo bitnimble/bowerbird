@@ -186,7 +186,7 @@ fn tile_runs(
     wide: usize,
     deep: usize,
 ) -> Vec<(u64, u64, u64)> {
-    crate::resident::runs(width, left, top, wide, deep)
+    colour::resident::runs(width, left, top, wide, deep)
 }
 
 /// The shape one source covers on the canvas, as its width over its height.
@@ -412,8 +412,8 @@ fn whole_levels(
     spec: &crate::composition::Composition,
     files: &[crate::composite_tile::SourceFile<'_>],
     from: crate::composite_tile::From,
-    stacked: Option<&crate::resident::Resident>,
-) -> Result<Option<crate::tone::Anchored>, String> {
+    stacked: Option<&colour::resident::Resident>,
+) -> Result<Option<colour::tone::Anchored>, String> {
     if files.len() != spec.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
     }
@@ -436,7 +436,7 @@ fn whole_levels(
         // that light onto the reference's scale - so its estimate of the shared white is its white
         // times its gain. Where the gains are right those estimates agree; what they disagree about
         // is content, and the mean over the set is the average the whole canvas has.
-        let scaled = |levels: crate::tone::Levels| crate::tone::Levels {
+        let scaled = |levels: colour::tone::Levels| colour::tone::Levels {
             white: units::light::Light::measured(levels.white.raw() * source.gain),
             peak: units::light::Light::measured(levels.peak.raw() * source.gain),
             floor: levels
@@ -512,13 +512,13 @@ fn whole_levels(
 /// source rolls off from its own headroom: what the files say rather than anything measured.
 fn camera_levels(
     files: &[crate::composite_tile::SourceFile<'_>],
-) -> Result<crate::tone::Anchored, String> {
-    let white = units::light::Light::measured(crate::transfer::FULL_SCALE);
+) -> Result<colour::tone::Anchored, String> {
+    let white = units::light::Light::measured(colour::transfer::FULL_SCALE);
     let mut peak = white;
     for file in files {
         peak = peak.max(crate::composite_tile::camera_peak(file.path)?);
     }
-    Ok(crate::tone::Levels {
+    Ok(colour::tone::Levels {
         white,
         peak,
         // Unmeasured, like the two above: nothing walked a histogram for this canvas, so the low
@@ -573,8 +573,8 @@ fn stacked_sources(
     files: &[crate::composite_tile::SourceFile<'_>],
     reference: usize,
 ) -> Option<(
-    crate::resident::Resident,
-    Option<crate::white_balance::Illuminant>,
+    colour::resident::Resident,
+    Option<colour::white_balance::Illuminant>,
     Vec<Option<crate::galosh::NoiseFit>>,
 )> {
     /// The long edge each source is reduced to before it joins the stack.
@@ -591,7 +591,7 @@ fn stacked_sources(
         colour: Some(0.0),
         ..job.detail().without_upscaler()
     };
-    let mut parts: Vec<crate::resident::Resident> = Vec::with_capacity(files.len());
+    let mut parts: Vec<colour::resident::Resident> = Vec::with_capacity(files.len());
     let mut as_shot = None;
     let mut fits = Vec::with_capacity(files.len());
     for (at, file) in files.iter().enumerate() {
@@ -636,7 +636,7 @@ fn stacked_sources(
         return None;
     }
     let tall: usize = parts.iter().map(|part| part.size().1).sum();
-    let stacked = crate::resident::Resident::empty(gpu, wide, tall);
+    let stacked = colour::resident::Resident::empty(gpu, wide, tall);
     let mut recording = gpu.record();
     let mut at = 0u64;
     for part in &parts {
@@ -675,8 +675,8 @@ fn stacked_sources(
 fn union_levels(
     gpu: &'static gpu::Gpu,
     job: &Job,
-    stacked: &crate::resident::Resident,
-) -> Option<crate::tone::Anchored> {
+    stacked: &colour::resident::Resident,
+) -> Option<colour::tone::Anchored> {
     let levels = pollster::block_on(crate::fit_source::levels(
         gpu,
         stacked,
@@ -706,8 +706,8 @@ fn union_match(
     gpu: &'static gpu::Gpu,
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
-    stacked: &crate::resident::Resident,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    stacked: &colour::resident::Resident,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<crate::hdr_fit::HdrMatch> {
     if job.camera_match != crate::hdr_fit::CameraMatch::LensAndColour {
         return None;
@@ -885,7 +885,7 @@ pub(crate) fn base(
     // rather than being left in a worker that has finished (`composite_tile::CameraPictures`).
     let _pictures = crate::composite_tile::CameraPictures::fresh();
     // Zeroed by the device, which is what a tile no photograph reaches is left as.
-    let whole = crate::resident::Resident::empty(gpu, width, height);
+    let whole = colour::resident::Resident::empty(gpu, width, height);
     let (across, down) = tile_of(spec, width, height, strip_bytes_per_pixel(wanted));
     // The levels below, then a tile at a time. Every tile costs about the same - the same pixels of
     // the same canvas, gathered from whichever sources reach them - so a count of them is the
@@ -1281,7 +1281,7 @@ pub fn level_shape(canvas: &[usize; 2], level: u32) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resident::BYTES_PER_PIXEL;
+    use colour::resident::BYTES_PER_PIXEL;
 
     fn recipe(canvas: [usize; 2]) -> crate::composition::Composition {
         crate::composition::Composition {
@@ -1381,8 +1381,8 @@ mod tests {
         }];
 
         let levels = camera_levels(&files).expect("a finished picture states its white");
-        assert_eq!(levels.white.raw(), crate::transfer::FULL_SCALE);
-        assert_eq!(levels.peak.raw(), crate::transfer::FULL_SCALE);
+        assert_eq!(levels.white.raw(), colour::transfer::FULL_SCALE);
+        assert_eq!(levels.peak.raw(), colour::transfer::FULL_SCALE);
 
         const ACROSS: usize = 64;
         let request = crate::composite_tile::CompositeRequest {
@@ -1450,8 +1450,8 @@ mod tests {
         // stands for, on the scale `encode_base` put them.
         let reference = 203.0;
         let level_of = |code: u16| {
-            crate::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
-                f64::from(code) / crate::transfer::FULL_SCALE,
+            colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
+                f64::from(code) / colour::transfer::FULL_SCALE,
             ))
             .raw()
                 * levels.white.raw()
@@ -1466,7 +1466,7 @@ mod tests {
         let (left, top, _, _) = request.window.raw();
         for y in 0..ACROSS {
             for c in 0..ACROSS * 3 {
-                theirs += f64::from(crate::resident::level_of_bits(
+                theirs += f64::from(colour::resident::level_of_bits(
                     source[((top + y) * wide + left) * 3 + c],
                 ));
             }
@@ -1943,7 +1943,7 @@ mod tests {
             .wb_gains;
         filed.from_raw.balance = Some(crate::photo_analysis::Balance {
             wb_gains: gains,
-            as_shot: Some(crate::white_balance::Illuminant {
+            as_shot: Some(colour::white_balance::Illuminant {
                 temperature: WARM,
                 tint: 1.5,
             }),
@@ -1981,7 +1981,7 @@ mod tests {
         // last pass filed where it does not. Only one end of a two-view pan is the reference's.
         assert_eq!(
             part.header.as_shot,
-            Some(crate::white_balance::RENDERED_WHITE)
+            Some(colour::white_balance::RENDERED_WHITE)
         );
         let strip = (across / 8) & !1;
         let at_end = |left: usize| {
@@ -1999,7 +1999,7 @@ mod tests {
         let ends = [at_end(0), at_end((across - strip) & !1)];
         assert!(
             ends.contains(&Some(WARM))
-                && ends.contains(&Some(crate::white_balance::RENDERED_WHITE.temperature)),
+                && ends.contains(&Some(colour::white_balance::RENDERED_WHITE.temperature)),
             "the two ends of the pan read {ends:?}",
         );
 
@@ -2083,9 +2083,9 @@ mod tests {
         }];
 
         // One white for both, so nothing below is the coding disagreeing.
-        let levels = crate::tone::Levels {
-            white: units::light::Light::measured(0.25 * crate::transfer::FULL_SCALE),
-            peak: units::light::Light::measured(crate::transfer::FULL_SCALE),
+        let levels = colour::tone::Levels {
+            white: units::light::Light::measured(0.25 * colour::transfer::FULL_SCALE),
+            peak: units::light::Light::measured(colour::transfer::FULL_SCALE),
             floor: None,
         }
         .anchored();
@@ -2127,7 +2127,7 @@ mod tests {
             crate::base::resize(gpu, base, &one_to_one, small).expect("the area filter");
         let ours = gathered(8.0, small.0, small.1);
 
-        let read = |frame: &crate::resident::Resident| {
+        let read = |frame: &colour::resident::Resident| {
             pollster::block_on(frame.host()).expect("the frame reads back")
         };
         let (mine, theirs) = (read(&ours), read(&reference));
@@ -2273,8 +2273,8 @@ mod tests {
             "a foreign analysis rode along"
         );
         // The white the pictures arrived with rather than a quantile of them.
-        assert_eq!(camera.levels.white.raw(), crate::transfer::FULL_SCALE);
-        assert_eq!(camera.levels.peak.raw(), crate::transfer::FULL_SCALE);
+        assert_eq!(camera.levels.white.raw(), colour::transfer::FULL_SCALE);
+        assert_eq!(camera.levels.peak.raw(), colour::transfer::FULL_SCALE);
 
         // The same job off the photographs takes all three, which is what makes the three
         // assertions above a decision rather than an absence.
@@ -2294,7 +2294,7 @@ mod tests {
         );
         assert_eq!(ours.capture_sigma, Some(1.25));
         assert!(
-            ours.levels.white.raw() < crate::transfer::FULL_SCALE,
+            ours.levels.white.raw() < colour::transfer::FULL_SCALE,
             "the sources' own white is measured, and came back {}",
             ours.levels.white.raw(),
         );
