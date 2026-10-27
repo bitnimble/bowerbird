@@ -34,6 +34,14 @@ commit messages since the previous release. Sort the changes a user would notice
 Only include changes a user would notice or care about. Leave out small fixes, developer-only
 changes, tests, CI, build and release tooling, refactors, dependency bumps, documentation, and
 behind-the-scenes improvements and fixes. Merge several commits about 1 feature into 1 item.
+
+Commits inside a <branch> tag were made together on 1 branch and merged at once; the merge
+commit comes first and often names the branch. A branch usually builds 1 change over many
+commits, where later commits fix, tune, or finish what earlier ones started. Write 1 item for
+that change, not 1 per commit, and leave out fixes to bugs the branch itself introduced, since
+users never saw them. A branch can also carry unrelated changes made along the
+way; give each of those its own item.
+
 Most releases have only a few items, and a list can be empty. Leaving an item out is better
 than padding a list.
 
@@ -125,12 +133,8 @@ export function changelog(from: string, to: string): string {
 }
 
 function write(from: string, to: string): string | null {
-  const commits = spawnSync(
-    'git',
-    ['log', '--no-merges', '--format=commit %h%n%B', `${from}..${to}`],
-    { cwd: ROOT, encoding: 'utf8' },
-  );
-  if (commits.status !== 0) return null;
+  const commits = commitsByBranch(from, to);
+  if (commits == null) return null;
   const env = { ...process.env };
   // The CLI prefers a key over the subscription and bills it.
   delete env.ANTHROPIC_API_KEY;
@@ -168,7 +172,7 @@ function write(from: string, to: string): string | null {
       '--max-turns',
       '3',
     ],
-    { cwd: ROOT, encoding: 'utf8', env, input: commits.stdout, timeout: 180_000 },
+    { cwd: ROOT, encoding: 'utf8', env, input: commits, timeout: 180_000 },
   );
   if (run.status !== 0) return null;
   try {
@@ -184,6 +188,33 @@ function write(from: string, to: string): string | null {
   } catch {
     return null;
   }
+}
+
+function commitsByBranch(from: string, to: string): string | null {
+  const mainline = git('log', '--first-parent', '--format=%x00%h %p%n%B', `${from}..${to}`);
+  if (mainline == null) return null;
+  const entries: string[] = [];
+  for (const record of mainline.split('\0').slice(1)) {
+    const newline = record.indexOf('\n');
+    const [hash, base, ...tips] = record.slice(0, newline).split(' ');
+    const message = record.slice(newline + 1).trim();
+    const branch =
+      tips.length === 0
+        ? ''
+        : git('log', '--no-merges', '--format=commit %h%n%B', ...tips, `^${base}`);
+    if (branch == null) return null;
+    entries.push(
+      branch.trim() === ''
+        ? `commit ${hash}\n${message}`
+        : `<branch>\nmerge ${hash}\n${message}\n\n${branch.trim()}\n</branch>`,
+    );
+  }
+  return entries.join('\n\n');
+}
+
+function git(...args: string[]): string | null {
+  const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+  return result.status === 0 ? result.stdout : null;
 }
 
 if (import.meta.main) {
