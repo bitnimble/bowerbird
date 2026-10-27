@@ -568,7 +568,7 @@ thread_local! {
 /// and each source's noise fit over its whole mosaic.
 fn stacked_sources(
     gpu: &'static gpu::Gpu,
-    base: &'static crate::base::Base,
+    base: &'static render::base::Base,
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
     reference: usize,
@@ -625,7 +625,7 @@ fn stacked_sources(
                 // Even, because a frame is two samples to a word and a stacked part has to start
                 // on one.
                 let out = (out.0 & !1, out.1 & !1);
-                crate::base::resize_scene(gpu, base, &resident, out)?
+                render::base::resize_scene(gpu, base, &resident, out)?
             }
         };
         parts.push(reduced);
@@ -835,7 +835,7 @@ pub(crate) fn base(
     if spec.sources.len() != sources.len() {
         return Err("the recipe and the files it names disagree".into());
     }
-    let refused = || crate::base::without_a_device("the composite's stages");
+    let refused = || render::base::without_a_device("the composite's stages");
     let gpu = gpu::device().ok_or_else(refused)?;
 
     let (canvas_w, canvas_h, scale) = sized(spec, size);
@@ -937,7 +937,7 @@ pub(crate) fn base(
     };
     let (stacked, stacked_as_shot, sampled_fits) = match from {
         crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
-            match crate::base::device(gpu)
+            match render::base::device(gpu)
                 .and_then(|base| stacked_sources(gpu, base, job, sampled, sampled_reference))
             {
                 Some((stacked, as_shot, fits)) => (Some(stacked), as_shot, fits),
@@ -1199,7 +1199,7 @@ pub(crate) fn base(
         // "the picture the reader's geometry is stated against and the presence sliders reach
         // across", and for a window of a ladder that is still the whole canvas.
         photograph: (canvas_w, canvas_h),
-        window: window.map(|_| crate::grade::Window {
+        window: window.map(|_| render::grade::Window {
             photograph: units::px::Size::exact(canvas_w, canvas_h),
             origin: units::px::At::exact(window_left, window_top),
         }),
@@ -1219,8 +1219,8 @@ pub(crate) fn base(
         // The reference's fit and tags rather than whichever source's decode reached this window,
         // so every window of the canvas sharpens as the rendition does.
         sharpen_noise: match from {
-            crate::composite_tile::From::Camera => crate::image::SharpenNoise::NONE,
-            crate::composite_tile::From::Original => crate::base::sharpen_noise(
+            crate::composite_tile::From::Camera => render::detail::SharpenNoise::NONE,
+            crate::composite_tile::From::Original => render::base::sharpen_noise(
                 crate::composite_tile::coded_as(anchored, spec.sources[spec.reference].gain),
                 job.grade.reference_white_nits,
                 noise,
@@ -1398,7 +1398,7 @@ mod tests {
             white_quantile: 0.9,
             levels: Some(levels),
             reference_white_nits: units::light::Light::exactly(203.0),
-            strengths: crate::image::Strengths {
+            strengths: render::detail::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
@@ -2071,7 +2071,7 @@ mod tests {
         let Some(gpu) = gpu::device() else {
             return;
         };
-        let base = crate::base::device(gpu).expect("the base pipelines");
+        let base = render::base::device(gpu).expect("the base pipelines");
         let paths = views("gather-reduction");
         let spec = crate::composition::Composition::of_one(
             [crate::composite_scene::WIDE, crate::composite_scene::TALL],
@@ -2100,7 +2100,7 @@ mod tests {
                 reference_white_nits: units::light::Light::exactly(203.0),
                 // Off, both of them: a sharpen or a defringe is a second difference between the
                 // two answers and neither is the filter under test.
-                strengths: crate::image::Strengths {
+                strengths: render::detail::Strengths {
                     sharpen: 0.0,
                     defringe: 0.0,
                 },
@@ -2124,7 +2124,7 @@ mod tests {
         let one_to_one = gathered(2.0, held, crate::composite_scene::TALL / 2);
         let small = (held / 4, crate::composite_scene::TALL / 8);
         let reference =
-            crate::base::resize(gpu, base, &one_to_one, small).expect("the area filter");
+            render::base::resize(gpu, base, &one_to_one, small).expect("the area filter");
         let ours = gathered(8.0, small.0, small.1);
 
         let read = |frame: &colour::resident::Resident| {

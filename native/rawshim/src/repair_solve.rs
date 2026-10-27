@@ -213,8 +213,8 @@ pub fn measure(
     let held = Rect::exact(left, top, frame.width, frame.height);
     let grid = Grid::over(whole, held, &on, donor.map(|donor| in_pixels(donor, whole)));
     let gpu = frame.gpu();
-    let base = crate::base::device(gpu)
-        .ok_or_else(|| crate::base::without_a_device("the repair's search"))?;
+    let base = render::base::device(gpu)
+        .ok_or_else(|| render::base::without_a_device("the repair's search"))?;
     let kernel = crate::repair::averaging(gpu);
     let bytes = (grid.cells.0 * grid.cells.1 * 3 * 4) as u64;
 

@@ -13,7 +13,7 @@
 
 mod support;
 
-use rawshim::grade::Output;
+use render::grade::Output;
 use formats::still::Chroma;
 use rawshim::hdr_args::EncodeOptions;
 use colour::resident::level_of_bits;

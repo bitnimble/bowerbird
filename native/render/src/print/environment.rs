@@ -31,7 +31,7 @@ pub struct Lighting {
 }
 
 /// Where on the source map the lamp is, and how the map turns to put the print where it hangs.
-pub(crate) struct Source {
+pub struct Source {
     /// The lamp's brightest texel, round from the middle of the map and up from its horizon.
     pub lamp_degrees: (f64, f64),
     pub lamp_radius_degrees: f64,
@@ -85,7 +85,7 @@ impl Environment {
         }
     }
 
-    pub(crate) fn source(self) -> Source {
+    pub fn source(self) -> Source {
         match self {
             Environment::Studio => Source {
                 lamp_degrees: (36.65, 70.58),
@@ -109,7 +109,7 @@ impl Environment {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
+    pub fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
         let path = std::path::Path::new(env!("BOWERBIRD_ENVIRONMENTS"))
             .join(format!("{}.hdr", self.name()));
         std::fs::read(&path)
@@ -123,7 +123,7 @@ impl Environment {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
+    pub fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
         HELD.with(|held| {
             held.borrow()
                 .iter()
@@ -158,7 +158,7 @@ pub fn held(environment: Environment) -> bool {
 
 /// A Radiance `.hdr`, its texels packed as the file stores them: red, green, blue and a shared
 /// exponent, a byte each, lowest first.
-pub(crate) struct Rgbe {
+pub struct Rgbe {
     pub width: u32,
     pub height: u32,
     pub texels: Vec<u32>,
@@ -166,7 +166,7 @@ pub(crate) struct Rgbe {
 
 const MOST_TEXELS: u64 = 8192 * 4096;
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<Rgbe, String> {
+pub fn decode(bytes: &[u8]) -> Result<Rgbe, String> {
     let mut at = 0;
     let mut line = || -> Result<&[u8], String> {
         let end = bytes[at..]

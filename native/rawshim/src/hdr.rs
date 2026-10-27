@@ -14,8 +14,8 @@
 
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, CameraMatch, HdrMatch};
-use crate::image;
 use colour::tone;
+use render::detail;
 use serde::{Deserialize, Serialize};
 
 /// The long edge the camera match decodes its preview to, which is all of it (`jpeg::decode`
@@ -262,38 +262,11 @@ pub struct Prepared {
 /// The downscale of a coded frame, on the device the pipeline requires anyway (DESIGN 2.1).
 fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Option<Vec<u16>> {
     let gpu = gpu::device()?;
-    let base = crate::base::device(gpu)?;
+    let base = render::base::device(gpu)?;
     let frame = colour::resident::Resident::upload(gpu, samples, source.0, source.1);
-    let smaller = crate::base::resize(gpu, base, &frame, out);
+    let smaller = render::base::resize(gpu, base, &frame, out);
     frame.reclaim();
     pollster::block_on(smaller?.into_host())
-}
-
-/// The coding, on the same device and for the same reason: `base.slang`'s `encode_base` is the only
-/// one there is.
-///
-/// Panics rather than returning, because a caller of this has nothing to do with the answer: these
-/// are the pins and the debug entry points, and a frame that reached here uncoded would be graded
-/// as though sensor levels were PQ.
-pub fn code_base(
-    samples: &mut [u16],
-    levels: tone::Anchored,
-    reference_white_nits: units::light::Light<units::light::SceneNits>,
-) {
-    let coded = gpu::device()
-        .and_then(crate::base::device)
-        .and_then(|base| {
-            let gpu = gpu::device()?;
-            pollster::block_on(crate::base::encode_base(
-                gpu,
-                base,
-                samples,
-                levels,
-                reference_white_nits,
-            ))
-        })
-        .is_some();
-    assert!(coded, "{}", crate::base::without_a_device("the coding"));
 }
 
 /// The frame's levels, for a caller holding samples on the host.
@@ -319,7 +292,7 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
-    graded_as(source, options, matched, crate::grade::Output::Rolled)
+    graded_as(source, options, matched, render::grade::Output::Rolled)
 }
 
 /// [`graded`] in whichever coding the caller wants out.
@@ -340,14 +313,14 @@ pub fn graded_as(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::grade::Output,
+    output: render::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
     graded_under(
         source,
         options,
         matched,
         output,
-        crate::grade::Intent::default(),
+        render::grade::Intent::default(),
     )
 }
 
@@ -356,8 +329,8 @@ pub fn graded_under(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::grade::Output,
-    intent: crate::grade::Intent,
+    output: render::grade::Output,
+    intent: render::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
     let gpu = gpu::device().expect(
         "no Vulkan adapter answered, not even a software one. The grade runs on the GPU so \
@@ -387,7 +360,7 @@ pub fn graded_under(
     let graded = encode_cut(
         gpu,
         &cut,
-        &crate::grade::Grade {
+        &render::grade::Grade {
             intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
         },
@@ -398,23 +371,23 @@ pub fn graded_under(
 
 /// One `encode` dispatch over the cut, wherever its frame is - resident where the render
 /// loop left it, host where a window arrived that way.
-pub fn encode_cut(gpu: &'static gpu::Gpu, cut: &Cut, grade: &crate::grade::Grade<'_>) -> Vec<u16> {
+pub fn encode_cut(gpu: &'static gpu::Gpu, cut: &Cut, grade: &render::grade::Grade<'_>) -> Vec<u16> {
     upload_cut(gpu, cut, grade).encode(grade)
 }
 
 pub fn upload_cut(
     gpu: &'static gpu::Gpu,
     cut: &Cut,
-    grade: &crate::grade::Grade<'_>,
-) -> crate::grade::Uploaded<'static> {
-    let peak = crate::grade::device(gpu).scene_peak();
+    grade: &render::grade::Grade<'_>,
+) -> render::grade::Uploaded<'static> {
+    let peak = render::grade::device(gpu).scene_peak();
     match cut.resident() {
-        Some(frame) => crate::grade::device(gpu).upload_resident(frame, grade, &peak),
+        Some(frame) => render::grade::device(gpu).upload_resident(frame, grade, &peak),
         None => {
             let samples = cut
                 .host_samples()
                 .expect("a cut holds one frame or the other");
-            crate::grade::device(gpu).upload(samples, grade, &peak)
+            render::grade::device(gpu).upload(samples, grade, &peak)
         }
     }
 }
@@ -427,16 +400,16 @@ fn neutral_scene<'a>(
     options: &EncodeOptions,
     matched: Option<&'a HdrMatch>,
     as_shot: Option<colour::white_balance::Illuminant>,
-) -> crate::grade::SceneGrade<'a> {
-    crate::grade::SceneGrade::new(
+) -> render::grade::SceneGrade<'a> {
+    render::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
         None,
-        crate::grade::Adjust {
+        render::grade::Adjust {
             // The match was fitted under its own illuminant, so it reads wrong under any other.
             camera_balance: true,
-            ..crate::grade::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         as_shot,
     )
@@ -473,7 +446,7 @@ fn cut_for(
     matched: Option<&HdrMatch>,
     levels: tone::Anchored,
 ) -> Cut {
-    code_base(&mut samples, levels, options.grade.reference_white_nits);
+    render::base::code_base(&mut samples, levels, options.grade.reference_white_nits);
     let size = hdr_args::target_size(width as u32, height as u32, options);
     let frame = colour::resident::Resident::upload(gpu, &samples, width, height);
     drop(samples);
@@ -482,8 +455,8 @@ fn cut_for(
         matched.map(|m| &m.lens),
         size,
         options.strengths.sharpen,
-        image::SharpenSigma::fixed(options.sharpen_sigma.unwrap_or(image::DECONVOLVE_SIGMA)),
-        image::SharpenNoise::NONE,
+        detail::SharpenSigma::fixed(options.sharpen_sigma.unwrap_or(detail::DECONVOLVE_SIGMA)),
+        detail::SharpenNoise::NONE,
     )
 }
 
@@ -530,19 +503,19 @@ impl Cut {
     /// its samples, so the alternative is a lifetime on every rendition.
     ///
     /// No levels travel with it: the base carries the perceptual anchor the sharpen works in,
-    /// and the grade reads the levels off `crate::grade::SceneGrade` rather than off the frame.
+    /// and the grade reads the levels off `render::grade::SceneGrade` rather than off the frame.
     pub fn from_base(
         frame: colour::resident::Resident,
         lens: Option<&geometry::lens::Lens>,
         size: formats::still::Size,
         sharpen: f64,
-        sharpen_sigma: image::SharpenSigma,
-        sharpen_noise: image::SharpenNoise,
+        sharpen_sigma: detail::SharpenSigma,
+        sharpen_noise: detail::SharpenNoise,
     ) -> Cut {
         let gpu = frame.gpu();
-        let base = crate::base::device(gpu).expect("the device the pipelines were built on");
+        let base = render::base::device(gpu).expect("the device the pipelines were built on");
         let asked = (size.width as usize, size.height as usize);
-        let frame = match crate::base::resize(gpu, base, &frame, asked) {
+        let frame = match render::base::resize(gpu, base, &frame, asked) {
             Some(smaller) => {
                 frame.reclaim();
                 smaller
@@ -556,11 +529,11 @@ impl Cut {
         // not cost a re-prepare. What that costs is a second resample of an already resampled
         // frame, measured at mean 0.38 counts of 65535 against one fused gather
         // (`the_pipeline_places_a_pixel_where_one_fused_gather_would`).
-        let cut = crate::base::gather_and_sharpen(
+        let cut = render::base::gather_and_sharpen(
             gpu,
             base,
             frame,
-            crate::base::Gather::frame(units::px::Size::exact(width, height)),
+            render::base::Gather::frame(units::px::Size::exact(width, height)),
             lens,
             sharpen,
             sharpen_sigma,
@@ -647,8 +620,8 @@ impl Cut {
             CutFrame::Device(frame) => {
                 let gpu = frame.gpu();
                 let base =
-                    crate::base::device(gpu).expect("the device the pipelines were built on");
-                match crate::base::resize(gpu, base, frame, (width, height)) {
+                    render::base::device(gpu).expect("the device the pipelines were built on");
+                match render::base::resize(gpu, base, frame, (width, height)) {
                     Some(smaller) => Cut {
                         frame: CutFrame::Device(smaller),
                         width,
@@ -771,7 +744,7 @@ pub fn encode_still(
     let frame = encode_cut(
         gpu,
         &cut,
-        &scene.gpu_grade(cut.width, cut.height, crate::grade::Output::Pq),
+        &scene.gpu_grade(cut.width, cut.height, render::grade::Output::Pq),
     );
     cut.release();
     encode_pq_frame(frame, cut.width, cut.height, options)

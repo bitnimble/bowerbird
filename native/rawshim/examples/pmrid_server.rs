@@ -411,8 +411,8 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         content_light: None,
     };
     let output = match request.output {
-        Coding::Pq => rawshim::grade::Output::Pq,
-        Coding::Srgb => rawshim::grade::Output::Srgb,
+        Coding::Pq => render::grade::Output::Pq,
+        Coding::Srgb => render::grade::Output::Srgb,
     };
     let unopened = || Failed::Unreadable(format!("{} did not open", request.grade));
     let matched = match taken {
@@ -535,7 +535,7 @@ fn sharpened(
         Some(given) => given,
         None => &measured(&request.sharpen)?,
     };
-    let base = rawshim::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
+    let base = render::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
     let rcd = mosaic::demosaic::device(gpu)
         .ok_or_else(|| Failed::Error("no demosaic kernels".into()))?;
     let matrix = measured.matrix;
@@ -546,8 +546,8 @@ fn sharpened(
     let scale = request.scale.unwrap_or(1);
     let sensor_long = measured.sensor_long * scale;
     let capture_blur = measured.capture_blur.map(|blur| blur * scale as f32);
-    let sigma = rawshim::image::deconvolve_split(capture_blur, sensor_long, sensor_long);
-    let noise = rawshim::base::sharpen_noise(
+    let sigma = render::detail::deconvolve_split(capture_blur, sensor_long, sensor_long);
+    let noise = render::base::sharpen_noise(
         levels,
         white,
         measured.noise,
@@ -561,10 +561,10 @@ fn sharpened(
         units::px::Span::<units::px::Drawn>::exact(sensor_long),
     );
     let defringe = measured.defringe.map_or(
-        rawshim::base::Defringe::Measure,
-        rawshim::base::Defringe::Take,
+        render::base::Defringe::Measure,
+        render::base::Defringe::Take,
     );
-    let plain = (rawshim::base::Defringe::Take((0.0, 0.0)), 0.0);
+    let plain = (render::base::Defringe::Take((0.0, 0.0)), 0.0);
     let shipped = (
         defringe,
         request.amount.unwrap_or(support::STRENGTHS.sharpen),
@@ -596,16 +596,16 @@ fn sharpened(
         let (width, height) = (out_width, out_height);
         for &(defringe, amount) in &variants {
             let resident = colour::resident::Resident::upload(gpu, &demosaiced, width, height);
-            let (prepared, _) = pollster::block_on(rawshim::base::prepare(
+            let (prepared, _) = pollster::block_on(render::base::prepare(
                 gpu,
                 base,
                 resident,
-                rawshim::base::Gather::frame(units::px::Size::exact(width, height)),
+                render::base::Gather::frame(units::px::Size::exact(width, height)),
                 levels,
                 white,
                 support::STRENGTHS.before_the_fit(),
-                rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-                rawshim::image::SharpenNoise::NONE,
+                render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+                render::detail::SharpenNoise::NONE,
                 &geometry::lens::Lens::none(),
                 defringe,
                 measured.noise,
@@ -648,8 +648,8 @@ fn measured(path: &str) -> Result<Measured, Failed> {
         reduced: frame.reduced,
         defringe: match opened.measured.defringe {
             // `Done` means the open's own frame; mosaics sharpened later are demosaiced afresh.
-            rawshim::base::Defringe::Done(pair) | rawshim::base::Defringe::Take(pair) => Some(pair),
-            rawshim::base::Defringe::Measure => None,
+            render::base::Defringe::Done(pair) | render::base::Defringe::Take(pair) => Some(pair),
+            render::base::Defringe::Measure => None,
         },
     })
 }

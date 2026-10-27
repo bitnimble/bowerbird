@@ -16,7 +16,7 @@ import edit;
 /// A point of the corrected picture, back where it came from in the frame.
 ///
 /// In and out as offsets from the frame's centre in pixels; the matrix is in fractions, so the
-/// frame's size goes on and comes back off around it. `image::keystoned` says this again in
+/// frame's size goes on and comes back off around it. `warp::keystoned` says this again in
 /// Rust, and the probe holds the two together over every pixel of a frame.
 ///
 /// Last in the chain here, which is first on the way the picture travels: the reader

@@ -12,7 +12,7 @@ use rawshim::composite_tile::{
 };
 use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
 use denoise::galosh::Detail;
-use rawshim::image::Strengths;
+use render::detail::Strengths;
 use units::light::{Gain, Light, SceneNits};
 use units::px::{Composite, Rect, Share, Span};
 use colour::tone;

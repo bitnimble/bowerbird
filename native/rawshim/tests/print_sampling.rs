@@ -1,13 +1,13 @@
 use geometry::warp::Geometry;
-use rawshim::grade::{Canvas, Grade};
-use rawshim::print::Scene;
+use render::grade::{Canvas, Grade};
+use render::print::Scene;
 use units::light::{Light, SceneNits};
 use units::px::Size;
 
 #[test]
 fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
     let gpu = gpu::device().expect("print requires Vulkan");
-    let base = rawshim::base::device(gpu).expect("the source pyramid");
+    let base = render::base::device(gpu).expect("the source pyramid");
     let size = 1024;
     let canvas = 384;
     let code =
@@ -61,7 +61,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
             geometry,
             ..grade.clone()
         };
-        let peak = rawshim::grade::device(gpu).scene_peak();
+        let peak = render::grade::device(gpu).scene_peak();
         let mut draws = Vec::new();
         for pattern in 0..3 {
             let frame: Vec<u16> = (0..size * size)
@@ -87,8 +87,8 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
                 })
                 .collect();
             let pyramid =
-                rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("a pyramid");
-            let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
+                render::base::pyramid(gpu, base, &frame, (size, size)).expect("a pyramid");
+            let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
             draws.push(uploaded.draw_print(&grade, &pyramid, &scene));
         }
         let scan: Vec<_> = (canvas / 2 - 32..canvas / 2 + 32)

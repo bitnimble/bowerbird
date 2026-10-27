@@ -1,8 +1,8 @@
 mod support;
 
-use rawshim::grade::{Canvas, Grade};
+use render::grade::{Canvas, Grade};
 use units::light::Light;
-use rawshim::print::{Paper, Presentation, Scene};
+use render::print::{Paper, Presentation, Scene};
 use units::px::Size;
 use std::time::{Duration, Instant};
 
@@ -47,14 +47,14 @@ fn main() -> Result<(), String> {
         support::STRENGTHS.sharpen,
     )?;
     let gpu = gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("source pyramid")?;
+    let base = render::base::device(gpu).ok_or("source pyramid")?;
     let header = &prepared.header;
     let analysis = header
         .photo_analysis
         .as_deref()
         .and_then(rawshim::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("source pyramid")?;
     let display = Scene {
         framed,
@@ -90,8 +90,8 @@ fn main() -> Result<(), String> {
             Light::exactly(1000.0),
         )
     };
-    let peak = rawshim::grade::device(gpu).scene_peak();
-    let uploaded = rawshim::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
     let target = gpu.own_texture(&wgpu::TextureDescriptor {
         label: Some("print motion timing"),

@@ -15,7 +15,7 @@ default = ["renditions"]
 # than the database, and the display transform is the client's GPU rather than an AVIF encoder.
 # That is what lets the desktop and mobile shells ship without a native library to resolve at
 # all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
-renditions = ["dep:lensdb", "formats/renditions"]
+renditions = ["dep:lensdb", "formats/renditions", "render/renditions"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -182,6 +182,7 @@ geometry = { path = "../geometry" }
 gpu = { path = "../gpu" }
 linalg = { path = "../linalg" }
 mosaic = { path = "../mosaic" }
+render = { path = "../render" }
 shaders = { path = "../shaders" }
 trace = { path = "../trace" }
 units = { path = "../units" }

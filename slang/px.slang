@@ -116,7 +116,7 @@ public struct Search : ISpace {}
 
 /// Taps of a kernel. A count of samples a stencil reads, not a distance across a picture: five of
 /// these is five taps whatever the sigma they are weighing, and the sigma is what carries the
-/// scale (`image::deconvolve_split` clamps it to what five are honest for).
+/// scale (`detail::deconvolve_split` clamps it to what five are honest for).
 public struct Tap : IAbsolute {}
 
 /// Multiples of a particle's own measured axis, which is what `dust.slang` reaches out in. The

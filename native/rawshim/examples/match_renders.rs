@@ -63,7 +63,7 @@ fn main() {
             skipped = true;
             continue;
         };
-        let (pq, width, height) = support::graded(&opened, &options, rawshim::grade::Output::Pq);
+        let (pq, width, height) = support::graded(&opened, &options, render::grade::Output::Pq);
         let resident = colour::resident::Resident::upload(gpu, &pq, width, height);
         let snapshot = Snapshot::whole(
             Frame::Coded(&resident),

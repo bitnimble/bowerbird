@@ -58,7 +58,7 @@ pub fn hold(bytes: &[u8]) -> Result<Held, String> {
 /// file. Re-encoding one to hand it to `hold` costs a full-size encode and a second decode.
 pub fn holding(read: Read) -> Result<Held, String> {
     let gpu = gpu::device()
-        .ok_or_else(|| crate::base::without_a_device("reading a finished picture"))?;
+        .ok_or_else(|| render::base::without_a_device("reading a finished picture"))?;
     let picture = crate::linearise::Picture::upload(
         gpu,
         read.codes,
@@ -85,7 +85,7 @@ pub fn hold_planes(
     layout: &formats::planes::Layout,
 ) -> Result<Held, String> {
     let gpu = gpu::device()
-        .ok_or_else(|| crate::base::without_a_device("reading a decoded rendition"))?;
+        .ok_or_else(|| render::base::without_a_device("reading a decoded rendition"))?;
     let primary = read_heif(avif)?.primary;
     let codes = formats::planes::codes(gpu, planes, layout)?;
     let turn = formats::orientation::of_heif(primary.turn);

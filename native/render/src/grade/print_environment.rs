@@ -125,7 +125,7 @@ fn build_words(
 impl super::Grader {
     /// The environment's map, turned to where the print hangs and with its lamp taken out, down to
     /// a texel.
-    pub(crate) fn print_environment(&self, environment: Environment) -> Result<Texture, String> {
+    pub fn print_environment(&self, environment: Environment) -> Result<Texture, String> {
         let map = environment::decode(&environment.bytes()?)?;
         let source = environment.source();
         let levels = 32 - map.width.max(map.height).leading_zeros();
@@ -227,12 +227,12 @@ impl super::Grader {
     }
 
     #[cfg(test)]
-    pub(crate) fn print_environment_sampler(&self) -> &wgpu::Sampler {
+    pub fn print_environment_sampler(&self) -> &wgpu::Sampler {
         &self.print_environment_pipelines().sampler
     }
 
     /// The map as the lamp calibration binds it.
-    pub(crate) fn print_environment_group(&self, map: &Texture) -> wgpu::BindGroup {
+    pub fn print_environment_group(&self, map: &Texture) -> wgpu::BindGroup {
         self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print environment map"),
             layout: &self.print_environment_pipelines().map_layout,

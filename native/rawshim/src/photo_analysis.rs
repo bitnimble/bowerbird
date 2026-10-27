@@ -81,8 +81,8 @@ pub struct FromRaw {
     /// photograph that was looked at and found clean, which is a different thing from `None`.
     pub dust: Option<Vec<denoise::dust::Spot>>,
     /// The blur a decode of this file carries, as a Gaussian sigma in sensor pixels, read off the
-    /// 10-90 distance of the frame's own sharpest edges (`crate::base::measure_edge_spread`). What
-    /// the sharpen's deconvolution is composed from (`crate::image::deconvolve_split`).
+    /// 10-90 distance of the frame's own sharpest edges (`render::base::measure_edge_spread`). What
+    /// the sharpen's deconvolution is composed from (`render::detail::deconvolve_split`).
     ///
     /// **The capture and the demosaic together**, which is what a deconvolution running after both
     /// actually meets - and a property of the file rather than of a setting, so it belongs here

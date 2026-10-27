@@ -57,7 +57,7 @@ fn main() {
         eprintln!("no demosaic pipelines");
         std::process::exit(2);
     };
-    let Some(base) = rawshim::base::device(gpu) else {
+    let Some(base) = render::base::device(gpu) else {
         eprintln!("no base pipelines");
         std::process::exit(2);
     };
@@ -565,7 +565,7 @@ fn as_fitted(
 
 fn fit(
     gpu: &'static gpu::Gpu,
-    base: &'static rawshim::base::Base,
+    base: &'static render::base::Base,
     plane: &[f32],
     width: usize,
     height: usize,
@@ -576,7 +576,7 @@ fn fit(
         .iter()
         .map(|&v| colour::resident::bits_of_level(v.max(0.0) * 65535.0))
         .collect();
-    pollster::block_on(rawshim::base::measure_defocus(
+    pollster::block_on(render::base::measure_defocus(
         gpu,
         base,
         &samples,

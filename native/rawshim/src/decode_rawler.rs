@@ -1176,7 +1176,8 @@ async fn linear(
     mut image: rawler::RawImage,
     upright: rawler::decoders::Orientation,
 ) -> Result<crate::decode_rendered::Held, String> {
-    let gpu = gpu::device().ok_or_else(|| crate::base::without_a_device("reading a linear DNG"))?;
+    let gpu =
+        gpu::device().ok_or_else(|| render::base::without_a_device("reading a linear DNG"))?;
     let (width, height) = (image.width, image.height);
     let values = width * height * 3;
     let stored = match &image.data {
@@ -2735,8 +2736,8 @@ async fn demosaic_at(
         .await;
     }
     let full = detailed((sites.0 * by, sites.1 * by, sites.2 * by, sites.3 * by)).await?;
-    let base = crate::base::device(gpu)?;
-    crate::base::resize_scene(gpu, base, &full, (full.width / by, full.height / by))
+    let base = render::base::device(gpu)?;
+    render::base::resize_scene(gpu, base, &full, (full.width / by, full.height / by))
 }
 
 /// How far past a tile the demosaic at twice the size and the halving after it read, in the photo's

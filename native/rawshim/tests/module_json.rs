@@ -16,10 +16,10 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct Sample {
-    region: rawshim::grade::Region,
-    adjust: rawshim::grade::Adjust,
+    region: render::grade::Region,
+    adjust: render::grade::Adjust,
     geometry: geometry::warp::Geometry,
-    print: rawshim::print::Scene,
+    print: render::print::Scene,
 }
 
 fn sample() -> Sample {
@@ -32,7 +32,7 @@ fn sample() -> Sample {
 #[test]
 fn an_unknown_tone_curve_kind_is_refused() {
     let curve = r#"{"kind":"linearSrgb","points":[[0,0],[1,1]]}"#;
-    assert!(serde_json::from_str::<rawshim::grade::ToneCurve>(curve).is_err());
+    assert!(serde_json::from_str::<render::grade::ToneCurve>(curve).is_err());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn invalid_curve_points_are_refused_at_the_json_boundary() {
     ] {
         let mut adjust = fixture["adjust"].clone();
         adjust["toneCurve"]["points"] = serde_json::to_value(points).unwrap();
-        assert!(serde_json::from_value::<rawshim::grade::Adjust>(adjust).is_err());
+        assert!(serde_json::from_value::<render::grade::Adjust>(adjust).is_err());
     }
 }
 
@@ -69,7 +69,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.blacks, 55.0);
     assert_eq!(
         adjust.tone_curve,
-        Some(rawshim::grade::ToneCurve::PchipCbrt3 {
+        Some(render::grade::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
         })
     );
@@ -83,7 +83,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.tint, None);
     // Off the default, which a dropped field would quietly read as.
     assert!(adjust.camera_balance);
-    assert_eq!(adjust.colour_profile, rawshim::grade::ColourProfile::None);
+    assert_eq!(adjust.colour_profile, render::grade::ColourProfile::None);
     assert_eq!(
         adjust.colour_nodes,
         vec![
@@ -131,21 +131,21 @@ fn a_tick_names_the_geometry_the_way_this_host_reads_it() {
 fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     let scene = sample().print;
     scene.validate().expect("a valid print scene");
-    assert!(matches!(scene.paper, rawshim::print::Paper::Satin));
+    assert!(matches!(scene.paper, render::print::Paper::Satin));
     assert_eq!(
         scene.rendering_intent,
-        rawshim::grade::Intent::RelativeColorimetric
+        render::grade::Intent::RelativeColorimetric
     );
     assert!(!scene.black_point_compensation);
-    assert!(matches!(scene.ink, rawshim::print::Ink::Pigment));
+    assert!(matches!(scene.ink, render::print::Ink::Pigment));
     assert_eq!(scene.print_resolution_ppi, 300.0);
     assert!((scene.ink_spread.raw() - 0.045).abs() < 1e-12);
     assert!(matches!(
         scene.presentation,
-        rawshim::print::Presentation::Scene
+        render::print::Presentation::Scene
     ));
     assert!(scene.framed);
-    assert_eq!(scene.environment, rawshim::print::Environment::Hotel);
+    assert_eq!(scene.environment, render::print::Environment::Hotel);
     assert_eq!(scene.yaw_degrees, -12.0);
     assert_eq!(scene.pitch_degrees, 8.0);
     assert_eq!(scene.key_lux.raw(), 30.0);
@@ -179,7 +179,7 @@ fn a_print_scene_naming_no_frame_or_environment_is_unframed_in_the_studio() {
     print.remove("framed");
     print.remove("environment");
     let scene =
-        rawshim::print::Scene::parse(&sample["print"].to_string()).expect("an unframed scene");
+        render::print::Scene::parse(&sample["print"].to_string()).expect("an unframed scene");
     assert!(!scene.framed);
-    assert_eq!(scene.environment, rawshim::print::Environment::Studio);
+    assert_eq!(scene.environment, render::print::Environment::Studio);
 }

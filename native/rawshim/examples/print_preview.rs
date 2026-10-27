@@ -1,8 +1,8 @@
 mod support;
 
-use rawshim::grade::{Canvas, Grade, Intent};
+use render::grade::{Canvas, Grade, Intent};
 use units::light::Light;
-use rawshim::print::{Environment, Paper, Presentation, Scene};
+use render::print::{Environment, Paper, Presentation, Scene};
 use units::px::Size;
 use rawshim::snapshot::Snapshot;
 
@@ -111,7 +111,7 @@ fn main() -> Result<(), String> {
         support::STRENGTHS.sharpen,
     )?;
     let gpu = gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
+    let base = render::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let display = Scene {
         framed: framed && surface,
@@ -132,7 +132,7 @@ fn main() -> Result<(), String> {
         .as_deref()
         .and_then(rawshim::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("the source pyramid")?;
     let grade = Grade {
         colour: analysis
@@ -162,14 +162,14 @@ fn main() -> Result<(), String> {
             },
         )
     };
-    let peak = rawshim::grade::device(gpu).scene_peak();
-    let uploaded = rawshim::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
     if let Some(path) = profile {
         let icc = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
         let started = std::time::Instant::now();
-        let adaptation = number("adaptation", rawshim::printer_gamut::PAPER_ADAPTATION)?;
-        let printer = rawshim::printer_gamut::PrinterGamut::adapted(&icc, adaptation)?;
+        let adaptation = number("adaptation", render::printer_gamut::PAPER_ADAPTATION)?;
+        let printer = render::printer_gamut::PrinterGamut::adapted(&icc, adaptation)?;
         println!(
             "{path}: gamut read in {:.1} ms",
             started.elapsed().as_secs_f64() * 1000.0

@@ -29,7 +29,7 @@ fn options() -> EncodeOptions {
         strengths: support::STRENGTHS,
         // Fixed: what this example varies is the glass, and a sigma measured off one frame and not
         // the other would put a second difference in the pair it is evidence for.
-        sharpen_sigma: Some(rawshim::image::DECONVOLVE_SIGMA),
+        sharpen_sigma: Some(render::detail::DECONVOLVE_SIGMA),
         max_edge: 100_000.0,
         content_light: None,
     }
@@ -44,7 +44,7 @@ fn rendered(path: &str, glass: denoise::dust::Wanted<'_>) -> (Vec<u8>, usize, us
     }
     .run()
     .expect("decode");
-    let (coded, width, height) = support::graded(&opened, &options(), rawshim::grade::Output::Srgb);
+    let (coded, width, height) = support::graded(&opened, &options(), render::grade::Output::Srgb);
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 

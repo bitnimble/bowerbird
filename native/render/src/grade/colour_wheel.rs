@@ -3,7 +3,7 @@ use super::{Binding, Buffer, Grade, Recording, Uploaded};
 /// Places, as ZCAM lightness and opponent pair, and a weight.
 pub type Place = [f32; 4];
 
-pub(crate) struct Pipelines {
+pub struct Pipelines {
     backdrop_layout: wgpu::BindGroupLayout,
     backdrop: wgpu::RenderPipeline,
     probe_layout: wgpu::BindGroupLayout,

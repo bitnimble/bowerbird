@@ -1,8 +1,8 @@
 mod support;
 
-use rawshim::grade::{Canvas, Grade, Output};
+use render::grade::{Canvas, Grade, Output};
 use units::light::Light;
-use rawshim::print::{Paper, Scene};
+use render::print::{Paper, Scene};
 use units::px::Size;
 
 fn main() -> Result<(), String> {
@@ -31,14 +31,14 @@ fn main() -> Result<(), String> {
         support::STRENGTHS.sharpen,
     )?;
     let gpu = gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
+    let base = render::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let analysis = header
         .photo_analysis
         .as_deref()
         .and_then(rawshim::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("the source pyramid")?;
     let grade = Grade {
         colour: analysis
@@ -63,8 +63,8 @@ fn main() -> Result<(), String> {
             Light::exactly(1000.0),
         )
     };
-    let peak = rawshim::grade::device(gpu).scene_peak();
-    let uploaded = rawshim::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     let texture = |format| {
         gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("print HDR audit"),

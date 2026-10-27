@@ -404,7 +404,7 @@ pub(crate) fn apply(
         return Ok(cuts);
     };
     let base =
-        crate::base::device(gpu).ok_or_else(|| crate::base::without_a_device("the repairs"))?;
+        render::base::device(gpu).ok_or_else(|| render::base::without_a_device("the repairs"))?;
 
     // **One copy of the rows every fill is read from, taken before any repair runs**, so a repair
     // reads the picture and never another repair's work. Whole words, which is what a copy moves.

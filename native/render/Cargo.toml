@@ -1,0 +1,39 @@
+[package]
+name = "render"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The encode's half of the formats, which `grade::Coded` hands frames to.
+renditions = ["formats/renditions"]
+
+[dependencies]
+colour = { path = "../colour" }
+denoise = { path = "../denoise" }
+formats = { path = "../formats" }
+geometry = { path = "../geometry" }
+gpu = { path = "../gpu" }
+mosaic = { path = "../mosaic" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+# The f16 the detail and neighbourhood textures are held in. Conversion only - no feature of it is
+# wanted.
+half = { version = "2.7.1", default-features = false }
+moxcms = "0.9.1"
+pollster = "0.4"
+rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[target.wasm32-unknown-unknown.dependencies]
+wasm-bindgen = "0.2.108"
+# The canvas the editor draws on, taken from the page as an `OffscreenCanvas` and turned into a
+# surface (`grade::Canvas`).
+web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
+
+[dev-dependencies]
+formats = { path = "../formats", features = ["testing"] }
+shaders = { path = "../shaders", features = ["layout"] }

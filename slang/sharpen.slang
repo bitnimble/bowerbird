@@ -10,7 +10,7 @@
 // Luma only: the blur being undone is achromatic, so the estimate is a luma plane and the
 // apply pass translates each pixel's chroma differences to the new luma unchanged. The host
 // drives one iteration as four dispatches (blur H, blur V + ratio, blur H, blur V + multiply)
-// over ping-pong planes; the iteration count is the host's `image::DECONVOLVE_ITERATIONS`.
+// over ping-pong planes; the iteration count is the host's `detail::DECONVOLVE_ITERATIONS`.
 import band;
 import lanes;
 import light;
@@ -22,7 +22,7 @@ struct Params {
     uint height;
     /// How much of the deconvolution to blend in, 1.0 being it exactly as computed.
     ///
-    /// The host has already taken the reader's slider through `image::SHARPEN_GAIN`, so this
+    /// The host has already taken the reader's slider through `detail::SHARPEN_GAIN`, so this
     /// arrives above 1 for the top half of that track and the blend is an extrapolation past the
     /// estimate rather than towards it, bounded by `limited`.
     float amount;
@@ -44,7 +44,7 @@ struct Params {
     float resample;
     /// Whether the warp handed over a Jacobian to vary the sigma by; off, `taps` rule alone.
     uint spatial;
-    /// `image::SHARPEN_OVERSHOOT`.
+    /// `detail::SHARPEN_OVERSHOOT`.
     float overshoot;
 };
 
@@ -68,7 +68,7 @@ static const float FLOOR = 1e-4;
 ///
 /// **Taps and not pixels**, which is the distinction the unit is carrying: this is how many
 /// samples the stencil reads, and what decides how much picture they span is the sigma, which
-/// `image::deconvolve_split` composes per scale and clamps to what five taps are honest for.
+/// `detail::deconvolve_split` composes per scale and clamps to what five taps are honest for.
 /// `image::DECONVOLVE_RADIUS`'s value; a test holds the two together.
 static const Span<Tap> RADIUS = { 2 };
 static const float SUPPORT_SIGMAS = 6.0;

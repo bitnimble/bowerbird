@@ -69,9 +69,9 @@ pub async fn analysis_planes(
     spec: &Composition,
     sources: &[SourceFile<'_>],
 ) -> Result<Vec<Plane>, String> {
-    let refused = || crate::base::without_a_device("the analysis planes");
+    let refused = || render::base::without_a_device("the analysis planes");
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
     let [w, h] = spec.canvas;
     let request = CompositeRequest {
         window: units::px::Rect::exact(0, 0, w, h),
@@ -82,7 +82,7 @@ pub async fn analysis_planes(
         white_quantile: 0.995,
         levels: None,
         reference_white_nits: units::light::Light::exactly(203.0),
-        strengths: crate::image::Strengths {
+        strengths: render::detail::Strengths {
             sharpen: 0.0,
             defringe: 0.0,
         },
@@ -103,7 +103,7 @@ pub async fn analysis_planes(
     crate::composite_tile::layers_of(spec, &request, |source, layer, arrived| {
         let Layer { rgb, weight } = layer;
         drop(weight);
-        let rgb = match crate::base::resize(gpu, base, &rgb, out) {
+        let rgb = match render::base::resize(gpu, base, &rgb, out) {
             Some(small) => {
                 rgb.reclaim();
                 small
@@ -117,7 +117,7 @@ pub async fn analysis_planes(
         planes.push(Plane {
             source,
             noise: arrived.noise.map(|f| f.model()).unwrap_or_default(),
-            full_scale_light: crate::base::full_scale_light(
+            full_scale_light: render::base::full_scale_light(
                 arrived.coded,
                 request.reference_white_nits,
             ),
@@ -162,7 +162,7 @@ mod tests {
         let Some(rcd) = mosaic::demosaic::device(gpu) else {
             return;
         };
-        let Some(base) = crate::base::device(gpu) else {
+        let Some(base) = render::base::device(gpu) else {
             return;
         };
 
@@ -228,7 +228,7 @@ mod tests {
             SIDE * 10 / 40,
             SIDE * 10 / 80,
         ] {
-            let small = crate::base::resize_scene(gpu, base, &resident, (out, out))
+            let small = render::base::resize_scene(gpu, base, &resident, (out, out))
                 .expect("the resize runs");
             let samples = pollster::block_on(small.host()).expect("the plane reads back");
             // Past RCD's own margin, which is border-filled rather than reconstructed.

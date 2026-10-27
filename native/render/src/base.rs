@@ -83,6 +83,33 @@ pub fn without_a_device(stages: &str) -> String {
     )
 }
 
+/// The coding, on the same device and for the same reason: `base.slang`'s `encode_base` is the only
+/// one there is.
+///
+/// Panics rather than returning, because a caller of this has nothing to do with the answer: these
+/// are the pins and the debug entry points, and a frame that reached here uncoded would be graded
+/// as though sensor levels were PQ.
+pub fn code_base(
+    samples: &mut [u16],
+    levels: colour::tone::Anchored,
+    reference_white_nits: units::light::Light<units::light::SceneNits>,
+) {
+    let coded = gpu::device()
+        .and_then(device)
+        .and_then(|base| {
+            let gpu = gpu::device()?;
+            pollster::block_on(encode_base(
+                gpu,
+                base,
+                samples,
+                levels,
+                reference_white_nits,
+            ))
+        })
+        .is_some();
+    assert!(coded, "{}", without_a_device("the coding"));
+}
+
 impl Base {
     fn new(gpu: &gpu::Gpu) -> Option<Base> {
         let device = gpu.describing();
@@ -558,9 +585,9 @@ pub async fn prepare(
     gather: Gather,
     levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
-    strengths: crate::image::Strengths,
-    sharpen_sigma: crate::image::SharpenSigma,
-    sharpen_noise: crate::image::SharpenNoise,
+    strengths: crate::detail::Strengths,
+    sharpen_sigma: crate::detail::SharpenSigma,
+    sharpen_noise: crate::detail::SharpenNoise,
     lens: &geometry::lens::Lens,
     defocus: Defringe,
     noise: Option<denoise::galosh::NoiseFit>,
@@ -1175,7 +1202,7 @@ pub async fn correct(
     gpu: &'static gpu::Gpu,
     base: &'static Base,
     frame: &colour::resident::Resident,
-    strengths: crate::image::Strengths,
+    strengths: crate::detail::Strengths,
     defocus: Option<(f32, f32)>,
     noise: Option<denoise::galosh::NoiseFit>,
     matrix: Option<[[f32; 3]; 3]>,
@@ -1325,7 +1352,7 @@ fn defringe_into(
 }
 
 /// A frame with no room for the deconvolution's stencil has nothing to sharpen.
-pub(crate) fn sharpens(samples: usize, width: usize, height: usize, amount: f64) -> bool {
+pub fn sharpens(samples: usize, width: usize, height: usize, amount: f64) -> bool {
     amount > 0.0 && width >= 3 && height >= 3 && samples >= width * height * 3
 }
 
@@ -1333,7 +1360,7 @@ pub(crate) fn sharpens(samples: usize, width: usize, height: usize, amount: f64)
 ///
 /// Four dispatches per iteration over ping-pong luma planes, then the neighbourhood range and the
 /// limit-and-blend write.
-pub(crate) fn sharpen_into(
+pub fn sharpen_into(
     gpu: &gpu::Gpu,
     base: &Base,
     recording: &mut gpu::Recording<'_>,
@@ -1341,8 +1368,8 @@ pub(crate) fn sharpen_into(
     width: usize,
     height: usize,
     amount: f64,
-    sigma: crate::image::SharpenSigma,
-    noise: crate::image::SharpenNoise,
+    sigma: crate::detail::SharpenSigma,
+    noise: crate::detail::SharpenNoise,
     jacobian: Option<&gpu::Buffer>,
 ) {
     let pixels = width * height;
@@ -1377,13 +1404,13 @@ pub(crate) fn sharpen_into(
         }
     };
 
-    let taps = crate::image::gaussian(sigma.composed, crate::image::DECONVOLVE_RADIUS);
+    let taps = crate::detail::gaussian(sigma.composed, crate::detail::DECONVOLVE_RADIUS);
     let (capture, resample) = terms.unwrap_or((0.0, 0.0));
     let mut params = Vec::with_capacity(64);
     params.extend_from_slice(&(width as u32).to_le_bytes());
     params.extend_from_slice(&(height as u32).to_le_bytes());
     params.extend_from_slice(
-        &((amount.clamp(0.0, 1.0) * crate::image::SHARPEN_GAIN) as f32).to_le_bytes(),
+        &((amount.clamp(0.0, 1.0) * crate::detail::SHARPEN_GAIN) as f32).to_le_bytes(),
     );
     params.extend_from_slice(&f32::from(u16::MAX).to_le_bytes());
     // `capture` and `resample` sit in the two `vec3f` tails, which is the shader's own layout
@@ -1398,7 +1425,7 @@ pub(crate) fn sharpen_into(
     }
     params.extend_from_slice(&resample.to_le_bytes());
     params.extend_from_slice(&u32::from(terms.is_some()).to_le_bytes());
-    params.extend_from_slice(&(crate::image::SHARPEN_OVERSHOOT as f32).to_le_bytes());
+    params.extend_from_slice(&(crate::detail::SHARPEN_OVERSHOOT as f32).to_le_bytes());
     // std140 rounds the block to a multiple of sixteen.
     params.resize(params.len().next_multiple_of(16), 0);
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -1463,7 +1490,7 @@ pub(crate) fn sharpen_into(
     };
 
     run(&base.sharpen_luma, pixels);
-    for _ in 0..crate::image::DECONVOLVE_ITERATIONS {
+    for _ in 0..crate::detail::DECONVOLVE_ITERATIONS {
         run(&base.sharpen_spread, pixels);
         run(&base.sharpen_ratio, pixels);
         run(&base.sharpen_gather, pixels);
@@ -1478,7 +1505,7 @@ const SHARPEN_NOISE_SHOT: usize = 9;
 const SHARPEN_NOISE_READ: usize = 12;
 const SHARPEN_NOISE_WORDS: usize = 15;
 
-fn sharpen_noise_bytes(noise: crate::image::SharpenNoise) -> Vec<u8> {
+fn sharpen_noise_bytes(noise: crate::detail::SharpenNoise) -> Vec<u8> {
     let mut words = [0.0f32; SHARPEN_NOISE_WORDS];
     for camera in 0..3 {
         words[SHARPEN_NOISE_SENSITIVITY + camera * 3..][..3]
@@ -1521,8 +1548,8 @@ pub async fn sharpen_base(
         width,
         height,
         amount,
-        crate::image::SharpenSigma::fixed(sigma),
-        crate::image::SharpenNoise::NONE,
+        crate::detail::SharpenSigma::fixed(sigma),
+        crate::detail::SharpenNoise::NONE,
         None,
     );
     recording.submit();
@@ -1576,7 +1603,7 @@ pub async fn encode_base(
 /// ST 2084 per sample in `f32` instead disagrees with this `f64` by a count on about a fifth of a
 /// real frame. Neither answer is wrong, but only one of them can be the coding, and the accurate one
 /// costs nothing at this size.
-pub(crate) fn coding_curve(
+pub fn coding_curve(
     levels: colour::tone::Anchored,
     reference_white_nits: units::light::Light<units::light::SceneNits>,
 ) -> Vec<u8> {
@@ -1625,9 +1652,9 @@ pub fn sharpen_noise(
     matrix: Option<[[f32; 3]; 3]>,
     wb_gains: [f32; 3],
     reduction: usize,
-) -> crate::image::SharpenNoise {
+) -> crate::detail::SharpenNoise {
     let Some(model) = noise.map(|fit| fit.model()) else {
-        return crate::image::SharpenNoise::NONE;
+        return crate::detail::SharpenNoise::NONE;
     };
     let identity = [[1.0f64, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let matrix = matrix.map_or(identity, |matrix| matrix.map(|row| row.map(f64::from)));
@@ -1657,7 +1684,7 @@ pub fn sharpen_noise(
             }
         }
     }
-    crate::image::SharpenNoise {
+    crate::detail::SharpenNoise {
         sensitivity,
         shot_per_light: shot_per_light.map(|value| value as f32 * noise_left),
         read_variance: read_variance.map(|value| value as f32 * noise_left),
@@ -1777,7 +1804,7 @@ fn encode_base_into(
 /// gather (`fit_warp.slang`) and the host's decode window (`geometry::warp::lens_footprint`) read the same
 /// table, and a shader that evaluated the spline exactly would disagree with both in a way that
 /// moves with the lens. So the quantisation is uploaded along with the values.
-pub(crate) fn ratio_tables(lens: &geometry::lens::Lens) -> Vec<f32> {
+pub fn ratio_tables(lens: &geometry::lens::Lens) -> Vec<f32> {
     geometry::lens::ratio_tables(
         lens.distortion.as_deref().unwrap_or_default(),
         lens.crop,
@@ -1793,7 +1820,7 @@ pub(crate) fn ratio_tables(lens: &geometry::lens::Lens) -> Vec<f32> {
 ///
 /// A flat table of ones rather than a flag, since the shader already refuses to round-trip a gain
 /// of exactly 1 - the one branch answers both.
-pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
+pub fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
     (0..256)
         .map(|radius| {
             let Some((a, b)) = falloff else { return 1.0 };
@@ -1806,7 +1833,7 @@ pub(crate) fn lift_table(falloff: Option<(f64, f64)>) -> Vec<f32> {
         .collect()
 }
 
-pub(crate) fn float_storage(
+pub fn float_storage(
     recording: &mut gpu::Recording<'_>,
     label: &str,
     values: &[f32],
@@ -1962,8 +1989,8 @@ pub fn gather_and_sharpen(
     gather: Gather,
     lens: Option<&geometry::lens::Lens>,
     sharpen: f64,
-    sharpen_sigma: crate::image::SharpenSigma,
-    sharpen_noise: crate::image::SharpenNoise,
+    sharpen_sigma: crate::detail::SharpenSigma,
+    sharpen_noise: crate::detail::SharpenNoise,
 ) -> colour::resident::Resident {
     let correcting = lens.is_some_and(|lens| !lens.is_identity());
     let warped = lens
@@ -2161,7 +2188,7 @@ pub async fn measure_defocus(
 /// The blur in the frame, off the 10-90 distance of its own sharpest edges.
 ///
 /// In linear light and after the demosaic, which is where that distance is 2.563 sigma and where
-/// the number means the blur the sharpen will actually meet. [`crate::image::EDGE_SPREAD_BINS`]
+/// the number means the blur the sharpen will actually meet. [`crate::detail::EDGE_SPREAD_BINS`]
 /// and the decile are on the host so that the shader stays a vote and nothing else.
 pub async fn measure_edge_spread(
     gpu: &gpu::Gpu,
@@ -2172,10 +2199,10 @@ pub async fn measure_edge_spread(
 ) -> Option<f32> {
     // The stencil reads two samples behind each start and nine ahead of it, so a frame narrower
     // than that has nothing to vote and the dispatch would be empty.
-    if width < crate::image::EDGE_SPREAD_RUN + 5 || height == 0 {
+    if width < crate::detail::EDGE_SPREAD_RUN + 5 || height == 0 {
         return None;
     }
-    let bytes = crate::image::EDGE_SPREAD_BINS * 4;
+    let bytes = crate::detail::EDGE_SPREAD_BINS * 4;
 
     let mut recording = gpu.record();
     recording.holding(frame);
@@ -2231,7 +2258,7 @@ pub async fn measure_edge_spread(
         },
     );
     let [mapped] = read_all(&mut recording, [(&histogram, bytes)]).await?;
-    crate::image::edge_spread_sigma(&mapped)
+    crate::detail::edge_spread_sigma(&mapped)
 }
 
 /// A predicted reconstruction error past this, in 16-bit PQ codes, is a pixel a 4:2:0 decode gets
@@ -2246,12 +2273,12 @@ pub async fn measure_edge_spread(
 /// percentile of ~2200 codes, given ~8600 by the shipped file; its headlight's red, 2365 given
 /// 6327. At this bar that frame's worst tile reads 0.24 and the next frame's 0.10, with the
 /// clean frames at nothing.
-pub(crate) const CHROMA_LEAK_CODES: f32 = 4096.0;
+pub const CHROMA_LEAK_CODES: f32 = 4096.0;
 
 /// Blocks whose mean luma is under this many 16-bit PQ codes are not counted: 0.15 of the curve
 /// is 1.7 nits, black on a display whose diffuse white is 203, and an error there is a
 /// dark-adapted eye's to see.
-pub(crate) const CHROMA_LEAK_DARK: f32 = 0.15 * 65535.0;
+pub const CHROMA_LEAK_DARK: f32 = 0.15 * 65535.0;
 
 /// The tile the leak is counted over, in 2x2 blocks: 64 pixels a side.
 const CHROMA_LEAK_TILE: usize = 32;
@@ -2482,12 +2509,12 @@ async fn measure_defocus_into(
     if width < 3 || height < 3 {
         return None;
     }
-    let bins = crate::image::DEFOCUS_BINS;
-    let rows = (height - 2).div_ceil(crate::image::DEFOCUS_STRIDE);
-    let across = (width - 2).div_ceil(crate::image::DEFOCUS_STRIDE);
+    let bins = crate::detail::DEFOCUS_BINS;
+    let rows = (height - 2).div_ceil(crate::detail::DEFOCUS_STRIDE);
+    let across = (width - 2).div_ceil(crate::detail::DEFOCUS_STRIDE);
     let segments = across.div_ceil(DEFOCUS_PER_SEGMENT);
     let partial_bytes = rows * segments * bins * 16;
-    let histogram_bytes = 3 * crate::image::NOISE_BINS * 4;
+    let histogram_bytes = 3 * crate::detail::NOISE_BINS * 4;
 
     let mut recording = gpu.record();
     recording.holding(frame);
@@ -2524,7 +2551,7 @@ async fn measure_defocus_into(
     }
     // `vec3f` is padded to four words and `noise_max` lands in the hole, as the defringe's `full`
     // does - the layout the shader declares, not a coincidence.
-    params.extend_from_slice(&crate::image::NOISE_MAX.to_le_bytes());
+    params.extend_from_slice(&crate::detail::NOISE_MAX.to_le_bytes());
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("defocus params"),
         contents: &params,
@@ -2589,17 +2616,17 @@ async fn measure_defocus_into(
         square[bin] += value(8);
         counted[bin] += value(12);
     }
-    if counted.iter().sum::<f64>() < crate::image::DEFOCUS_MIN_SAMPLES as f64 {
+    if counted.iter().sum::<f64>() < crate::detail::DEFOCUS_MIN_SAMPLES as f64 {
         return None;
     }
 
-    let ceiling = crate::image::noise_ceiling(noise);
+    let ceiling = crate::detail::noise_ceiling(noise);
     let sigmas: Vec<f64> = histograms
         .chunks_exact(4)
         .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
         .collect::<Vec<u32>>()
-        .chunks_exact(crate::image::NOISE_BINS)
-        .map(|histogram| f64::from(crate::image::sigma_from(histogram, ceiling)))
+        .chunks_exact(crate::detail::NOISE_BINS)
+        .map(|histogram| f64::from(crate::detail::sigma_from(histogram, ceiling)))
         .collect();
     // The full covariance, not `sum w_c^2.v_c`: that reduction needs independent channels, and a
     // demosaic building red and blue out of green is what makes it untrue. On a flat frame the
@@ -2610,12 +2637,12 @@ async fn measure_defocus_into(
         sigmas[1] * sigmas[1],
         sigmas[2] * sigmas[2],
     ];
-    let sigma = crate::image::noise_covariance(variance, matrix);
+    let sigma = crate::detail::noise_covariance(variance, matrix);
     let luma_variance: f64 = (0..3)
         .flat_map(|a| (0..3).map(move |b| (a, b)))
         .map(|(a, b)| weight[a] * weight[b] * sigma[a][b])
         .sum();
-    let bias = |channel: usize| crate::image::NOISE_RESPONSE_PER_VARIANCE[channel] * luma_variance;
+    let bias = |channel: usize| crate::detail::NOISE_RESPONSE_PER_VARIANCE[channel] * luma_variance;
 
     // **The split that tells this defect from a lateral one.** A channel displaced by `d` expands
     // as `G + d.grad G + (d^2/2).lap G`, and that second term is the very basis this fit regresses
@@ -2631,11 +2658,11 @@ async fn measure_defocus_into(
     // conservative direction.
     let mut samples: Vec<(f64, f64, f64, f64)> = Vec::new();
     for bin in 0..bins {
-        if counted[bin] < crate::image::DEFOCUS_MIN_PER_BIN as f64 {
+        if counted[bin] < crate::detail::DEFOCUS_MIN_PER_BIN as f64 {
             continue;
         }
-        let energy =
-            square[bin] - counted[bin] * crate::image::NOISE_CURVATURE_PER_VARIANCE * luma_variance;
+        let energy = square[bin]
+            - counted[bin] * crate::detail::NOISE_CURVATURE_PER_VARIANCE * luma_variance;
         // A bin whose curvature is all noise leaves nothing behind to divide by.
         if energy <= 0.0 {
             continue;
@@ -2651,7 +2678,7 @@ async fn measure_defocus_into(
             eprintln!("defocus: bin at {at:.2} red {red:+.4} blue {blue:+.4} energy {energy:.1}");
         }
     }
-    if samples.len() < crate::image::DEFOCUS_MIN_BINS {
+    if samples.len() < crate::detail::DEFOCUS_MIN_BINS {
         if trace {
             eprintln!(
                 "defocus: declined, {} bins resolved of {bins}",
@@ -2678,7 +2705,7 @@ async fn measure_defocus_into(
     };
     let red = constant_term(&|s| s.1) as f32;
     let blue = constant_term(&|s| s.2) as f32;
-    if red.abs() > crate::image::DEFOCUS_MAX || blue.abs() > crate::image::DEFOCUS_MAX {
+    if red.abs() > crate::detail::DEFOCUS_MAX || blue.abs() > crate::detail::DEFOCUS_MAX {
         if trace {
             eprintln!("defocus: declined, outside DEFOCUS_MAX");
         }
@@ -2695,7 +2722,7 @@ async fn measure_defocus_into(
     // fourteenth of it and indistinguishable from zero. One channel having nothing to say must not
     // silence the other, which is the same lesson `tca::measure` learned about discarding a good
     // channel.
-    let band = crate::image::DEFOCUS_NOISE;
+    let band = crate::detail::DEFOCUS_NOISE;
     if red.abs() > band && blue.abs() > band && red * blue < 0.0 {
         if trace {
             eprintln!("defocus: declined, the channels disagree in sign");
@@ -2788,7 +2815,7 @@ mod tests {
         height: usize,
         sigma: f32,
         amount: f64,
-        noise: crate::image::SharpenNoise,
+        noise: crate::detail::SharpenNoise,
     ) -> Option<Vec<u16>> {
         let gpu = gpu::device()?;
         let base = super::device(gpu)?;
@@ -2803,7 +2830,7 @@ mod tests {
             width,
             height,
             amount,
-            crate::image::SharpenSigma::fixed(sigma),
+            crate::detail::SharpenSigma::fixed(sigma),
             noise,
             None,
         );
@@ -2812,7 +2839,7 @@ mod tests {
         pollster::block_on(frame.into_host())
     }
 
-    /// Separable convolution by `taps` (centre outwards, as [`crate::image::gaussian`] builds
+    /// Separable convolution by `taps` (centre outwards, as [`crate::detail::gaussian`] builds
     /// them), edges clamped as `sharpen.slang`'s stencils clamp theirs.
     fn blur(plane: &[f32], width: usize, height: usize, taps: &[f32]) -> Vec<f32> {
         let along = |at: &dyn Fn(usize) -> f32, x: usize, len: usize| -> f32 {
@@ -2844,9 +2871,9 @@ mod tests {
         let plane: Vec<f32> = (0..width * height)
             .map(|i| if i % width < width / 2 { low } else { high })
             .collect();
-        let taps = crate::image::gaussian(
-            crate::image::DECONVOLVE_SIGMA,
-            crate::image::DECONVOLVE_RADIUS,
+        let taps = crate::detail::gaussian(
+            crate::detail::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_RADIUS,
         );
         let blurred = blur(&plane, width, height, &taps);
         let mut frame = vec![0u16; width * height * 3];
@@ -2884,9 +2911,9 @@ mod tests {
         );
 
         // The same step through the same taps, and the crossings the shader goes looking for.
-        let taps = crate::image::gaussian(
-            crate::image::DECONVOLVE_SIGMA,
-            crate::image::DECONVOLVE_RADIUS,
+        let taps = crate::detail::gaussian(
+            crate::detail::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_RADIUS,
         );
         let plane: Vec<f32> = (0..w).map(|x| f32::from(x >= w / 2)).collect();
         let profile = blur(&plane, w, 1, &taps);
@@ -2896,7 +2923,7 @@ mod tests {
                 .expect("the profile crosses");
             at as f32 - 1.0 + (want - profile[at - 1]) / (profile[at] - profile[at - 1])
         };
-        let want = (crossing(0.9) - crossing(0.1)) / crate::image::EDGE_SPREAD_PER_SIGMA;
+        let want = (crossing(0.9) - crossing(0.1)) / crate::detail::EDGE_SPREAD_PER_SIGMA;
 
         let Some(gpu) = gpu::device() else {
             return;
@@ -2930,7 +2957,7 @@ mod tests {
         let (w, h) = (64usize, 8usize);
         let (low, high) = (60.0f32 * 257.0, 180.0f32 * 257.0);
         let before = blurred_edge(w, h, low, high);
-        let Some(frame) = gpu_sharpened_at(&before, w, h, crate::image::DECONVOLVE_SIGMA, 0.5)
+        let Some(frame) = gpu_sharpened_at(&before, w, h, crate::detail::DECONVOLVE_SIGMA, 0.5)
         else {
             return;
         };
@@ -2963,9 +2990,9 @@ mod tests {
     fn the_sharpen_recovers_diagonal_edges_and_point_detail() {
         let (w, h) = (64usize, 64usize);
         let (low, high) = (60.0f32 * 257.0, 180.0f32 * 257.0);
-        let taps = crate::image::gaussian(
-            crate::image::DECONVOLVE_SIGMA,
-            crate::image::DECONVOLVE_RADIUS,
+        let taps = crate::detail::gaussian(
+            crate::detail::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_RADIUS,
         );
         let frame_of = |plane: &[f32]| {
             let mut frame = vec![0u16; w * h * 3];
@@ -2981,20 +3008,20 @@ mod tests {
             .map(|pixel| if pixel % w + pixel / w < w { low } else { high })
             .collect();
         let diagonal_before = frame_of(&blur(&diagonal, w, h, &taps));
-        let measured_noise = crate::image::SharpenNoise {
+        let measured_noise = crate::detail::SharpenNoise {
             sensitivity: [
                 [colour::space::LUMA709[0], 0.0, 0.0],
                 [0.0, colour::space::LUMA709[1], 0.0],
                 [0.0, 0.0, colour::space::LUMA709[2]],
             ],
             read_variance: [1e-8; 3],
-            ..crate::image::SharpenNoise::NONE
+            ..crate::detail::SharpenNoise::NONE
         };
         let Some(diagonal_after) = gpu_sharpened_with_noise(
             &diagonal_before,
             w,
             h,
-            crate::image::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_SIGMA,
             0.5,
             measured_noise,
         ) else {
@@ -3022,7 +3049,7 @@ mod tests {
             &point_before,
             w,
             h,
-            crate::image::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_SIGMA,
             0.5,
             measured_noise,
         ) else {
@@ -3056,20 +3083,20 @@ mod tests {
                 light.map(|value| code(value + direction * sigma))
             })
             .collect();
-        let measured_noise = crate::image::SharpenNoise {
+        let measured_noise = crate::detail::SharpenNoise {
             sensitivity: [
                 [colour::space::LUMA709[0], 0.0, 0.0],
                 [0.0, colour::space::LUMA709[1], 0.0],
                 [0.0, 0.0, colour::space::LUMA709[2]],
             ],
             read_variance: [1e-12; 3],
-            ..crate::image::SharpenNoise::NONE
+            ..crate::detail::SharpenNoise::NONE
         };
         let Some(sharpened) = gpu_sharpened_with_noise(
             &frame,
             w,
             h,
-            crate::image::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_SIGMA,
             0.5,
             measured_noise,
         ) else {
@@ -3102,22 +3129,22 @@ mod tests {
         let ideal: Vec<f32> = (0..w * h)
             .map(|pixel| if pixel % w < w / 2 { low } else { high })
             .collect();
-        let taps = crate::image::gaussian(
-            crate::image::DECONVOLVE_SIGMA,
-            crate::image::DECONVOLVE_RADIUS,
+        let taps = crate::detail::gaussian(
+            crate::detail::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_RADIUS,
         );
         let blurred = blur(&ideal, w, h, &taps);
         let frame: Vec<u16> = blurred
             .iter()
             .flat_map(|value| [value.round() as u16; 3])
             .collect();
-        let noise = crate::image::SharpenNoise {
+        let noise = crate::detail::SharpenNoise {
             sensitivity: [[1.0, -0.9, 0.0], [0.0; 3], [0.0; 3]],
             read_variance: [1e-8, 0.0, 0.0],
-            ..crate::image::SharpenNoise::NONE
+            ..crate::detail::SharpenNoise::NONE
         };
         let Some(sharpened) =
-            gpu_sharpened_with_noise(&frame, w, h, crate::image::DECONVOLVE_SIGMA, 0.5, noise)
+            gpu_sharpened_with_noise(&frame, w, h, crate::detail::DECONVOLVE_SIGMA, 0.5, noise)
         else {
             return;
         };
@@ -3144,7 +3171,7 @@ mod tests {
             &blurred_edge(w, h, low, high),
             w,
             h,
-            crate::image::DECONVOLVE_SIGMA,
+            crate::detail::DECONVOLVE_SIGMA,
         ) else {
             return;
         };
@@ -3243,7 +3270,7 @@ mod tests {
         // symptom is not subtle: NaN clamped back to black across the picture.
         let (w, h) = (24usize, 24usize);
         let frame = vec![33410u16; w * h * 3];
-        let Some(sharpened) = gpu_sharpened(&frame, w, h, crate::image::DECONVOLVE_SIGMA) else {
+        let Some(sharpened) = gpu_sharpened(&frame, w, h, crate::detail::DECONVOLVE_SIGMA) else {
             return;
         };
         assert_eq!(sharpened, frame, "a uniform frame came back changed");
@@ -3255,20 +3282,20 @@ mod tests {
         // dependency itself: a pixel one row past it must not move the frame's top row, and
         // one well inside it must - so the probe is known to see anything at all.
         let (w, h) = (96usize, 128usize);
-        let strengths = crate::image::Strengths {
+        let strengths = crate::detail::Strengths {
             sharpen: 1.0,
             defringe: 0.0,
         };
         let halo = strengths.halo();
         let source = blurred_edge(w, h, 9000.0, 41000.0);
-        let Some(baseline) = gpu_sharpened(&source, w, h, crate::image::DECONVOLVE_SIGMA) else {
+        let Some(baseline) = gpu_sharpened(&source, w, h, crate::detail::DECONVOLVE_SIGMA) else {
             return;
         };
         let probe = |row: usize, rgb: [u16; 3]| {
             let mut probed = source.clone();
             let i = (row * w + w / 4) * 3;
             probed[i..i + 3].copy_from_slice(&rgb);
-            let sharpened = gpu_sharpened(&probed, w, h, crate::image::DECONVOLVE_SIGMA)
+            let sharpened = gpu_sharpened(&probed, w, h, crate::detail::DECONVOLVE_SIGMA)
                 .expect("the device answered the baseline");
             sharpened[..w * 3] != baseline[..w * 3]
         };
@@ -3390,12 +3417,12 @@ mod tests {
                 }
             })
             .collect();
-        let taps = crate::image::gaussian(0.7, crate::image::DECONVOLVE_RADIUS);
+        let taps = crate::detail::gaussian(0.7, crate::detail::DECONVOLVE_RADIUS);
         let soft = blur(&plane, w, h, &taps);
         let samples =
             colour::resident::samples_of_levels(soft.iter().flat_map(|value| [value.trunc(); 3]));
 
-        let sigma = crate::image::SharpenSigma {
+        let sigma = crate::detail::SharpenSigma {
             composed: 0.6,
             terms: Some((0.6, 0.0)),
         };
@@ -3405,7 +3432,7 @@ mod tests {
             floor: None,
         }
         .anchored();
-        let run = |sigma: crate::image::SharpenSigma| {
+        let run = |sigma: crate::detail::SharpenSigma| {
             let frame = Resident::upload(gpu, &samples, w, h);
             let (prepared, _) = pollster::block_on(super::prepare(
                 gpu,
@@ -3414,12 +3441,12 @@ mod tests {
                 super::Gather::frame(units::px::Size::exact(w, h)),
                 levels,
                 REFERENCE,
-                crate::image::Strengths {
+                crate::detail::Strengths {
                     sharpen: 1.0,
                     defringe: 0.0,
                 },
                 sigma,
-                crate::image::SharpenNoise::NONE,
+                crate::detail::SharpenNoise::NONE,
                 &geometry::lens::Lens {
                     axis: [0.0; 2],
                     ..bending()
@@ -3431,7 +3458,7 @@ mod tests {
             .expect("the chain runs");
             pollster::block_on(prepared.into_host()).expect("the prepared frame maps")
         };
-        let flat = run(crate::image::SharpenSigma::fixed(sigma.composed));
+        let flat = run(crate::detail::SharpenSigma::fixed(sigma.composed));
         let bent = run(sigma);
 
         let differs = |x0: usize, y0: usize| {
@@ -3477,18 +3504,18 @@ mod tests {
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
         assert_eq!(
             digits.parse::<usize>().expect("a number"),
-            crate::image::DECONVOLVE_RADIUS,
+            crate::detail::DECONVOLVE_RADIUS,
             "sharpen.slang and image.rs disagree on the point spread's half-width",
         );
     }
 
     #[test]
     fn the_sharpen_noise_layout_is_the_shaders() {
-        let noise = crate::image::SharpenNoise {
+        let noise = crate::detail::SharpenNoise {
             sensitivity: [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
             shot_per_light: [10.0, 11.0, 12.0],
             read_variance: [13.0, 14.0, 15.0],
-            ..crate::image::SharpenNoise::NONE
+            ..crate::detail::SharpenNoise::NONE
         };
         let bytes = super::sharpen_noise_bytes(noise);
         let words: Vec<f32> = bytes
@@ -3576,9 +3603,9 @@ mod tests {
                 .parse()
                 .unwrap_or_else(|_| panic!("{name} is a number"))
         };
-        assert_eq!(declared("BINS"), crate::image::DEFOCUS_BINS);
-        assert_eq!(declared("STRIDE"), crate::image::DEFOCUS_STRIDE);
-        assert_eq!(declared("NOISE_BINS"), crate::image::NOISE_BINS);
+        assert_eq!(declared("BINS"), crate::detail::DEFOCUS_BINS);
+        assert_eq!(declared("STRIDE"), crate::detail::DEFOCUS_STRIDE);
+        assert_eq!(declared("NOISE_BINS"), crate::detail::NOISE_BINS);
         assert_eq!(declared("PER_SEGMENT"), super::DEFOCUS_PER_SEGMENT);
     }
 
@@ -4520,7 +4547,7 @@ mod tests {
             floor: None,
         };
         let code =
-            |samples: &mut [u16]| crate::hdr::code_base(samples, levels.anchored(), REFERENCE);
+            |samples: &mut [u16]| crate::base::code_base(samples, levels.anchored(), REFERENCE);
         let grading = |width: usize, height: usize, geometry: geometry::warp::Geometry| {
             crate::grade::Grade {
                 // Rolled rather than PQ, so a difference in counts is a difference in light: the
@@ -4650,7 +4677,7 @@ mod tests {
         // The strengths `prepare` takes, and the pair it will measure for itself off the linear
         // frame as it arrives. Taken here the same way so the staged side is the same arithmetic
         // rather than a number chosen to agree with it.
-        let strengths = crate::image::Strengths {
+        let strengths = crate::detail::Strengths {
             sharpen: 0.0,
             defringe: 1.0,
         };
@@ -4710,8 +4737,8 @@ mod tests {
                 levels,
                 REFERENCE,
                 strengths,
-                crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                crate::image::SharpenNoise::NONE,
+                crate::detail::SharpenSigma::fixed(crate::detail::DECONVOLVE_SIGMA),
+                crate::detail::SharpenNoise::NONE,
                 lens,
                 super::Defringe::Measure,
                 None,
@@ -4799,7 +4826,7 @@ mod tests {
                 sum / count
             })
             .collect();
-        let curvature = crate::image::laplacian(&smooth, width, height);
+        let curvature = crate::detail::laplacian(&smooth, width, height);
 
         let mut state = 0x853c_49e6_748f_ea9bu64;
         let mut normal = || {
@@ -4914,7 +4941,7 @@ mod tests {
             floor: None,
         }
         .anchored();
-        let strengths = crate::image::Strengths {
+        let strengths = crate::detail::Strengths {
             sharpen: 0.0,
             defringe: 1.0,
         };
@@ -4941,8 +4968,8 @@ mod tests {
                 levels,
                 REFERENCE,
                 strengths,
-                crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                crate::image::SharpenNoise::NONE,
+                crate::detail::SharpenSigma::fixed(crate::detail::DECONVOLVE_SIGMA),
+                crate::detail::SharpenNoise::NONE,
                 &none,
                 super::Defringe::Done(pair),
                 None,
@@ -4964,8 +4991,8 @@ mod tests {
                 levels,
                 REFERENCE,
                 strengths,
-                crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                crate::image::SharpenNoise::NONE,
+                crate::detail::SharpenSigma::fixed(crate::detail::DECONVOLVE_SIGMA),
+                crate::detail::SharpenNoise::NONE,
                 &none,
                 super::Defringe::Take(pair),
                 None,

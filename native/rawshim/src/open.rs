@@ -44,7 +44,7 @@ impl Fitting<'_> {
 /// What a caller brings to an open that is not the photograph.
 pub struct Opening<'a> {
     pub grade: crate::hdr::Grade,
-    pub strengths: crate::image::Strengths,
+    pub strengths: render::detail::Strengths,
     /// What is already known about this photograph, so an open measures only what it must.
     pub stored: &'a crate::photo_analysis::PhotoAnalysis,
     pub fitting: Fitting<'a>,
@@ -74,7 +74,7 @@ pub struct Measured {
     /// did not and the photograph's pair is on file, or neither and the chain reads its own. Left to
     /// the callers, one of them consulted the stored pair and the other measured a fresh one - which
     /// is a rendition and the tab that predicts it defringing by different amounts.
-    pub defringe: crate::base::Defringe,
+    pub defringe: render::base::Defringe,
     /// The blur this frame carries, as a Gaussian sigma in *this frame's* pixels - so a caller
     /// whose decode halved doubles it to reach the sensor's. None where the photograph already
     /// had one on file, or where the frame offered too few edges to read one off.
@@ -112,10 +112,10 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let defocus = match needs_fit {
         false => None,
         true => {
-            let refused = || crate::base::without_a_device("the defringe before the camera match");
+            let refused = || render::base::without_a_device("the defringe before the camera match");
             let gpu = gpu::device().ok_or_else(refused)?;
-            let base = crate::base::device(gpu).ok_or_else(refused)?;
-            crate::base::correct(
+            let base = render::base::device(gpu).ok_or_else(refused)?;
+            render::base::correct(
                 gpu,
                 base,
                 frame,
@@ -132,8 +132,11 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     // What the chain is to do, decided once. `correct` ran over this buffer, or the photograph's
     // pair is on file, or neither and the chain reads its own off the frame it is given.
     let defringe = match defocus {
-        Some(pair) => crate::base::Defringe::Done(pair),
-        None => known_defocus.map_or(crate::base::Defringe::Measure, crate::base::Defringe::Take),
+        Some(pair) => render::base::Defringe::Done(pair),
+        None => known_defocus.map_or(
+            render::base::Defringe::Measure,
+            render::base::Defringe::Take,
+        ),
     };
 
     // **The blur the sharpen will be asked to invert, read off the frame that carries it.** Here
@@ -149,10 +152,11 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         false => None,
         true => {
             let gpu = gpu::device();
-            let base = gpu.and_then(crate::base::device);
+            let base = gpu.and_then(render::base::device);
             match (gpu, base) {
                 (Some(gpu), Some(base)) => {
-                    crate::base::measure_edge_spread(gpu, base, frame.buffer(), width, height).await
+                    render::base::measure_edge_spread(gpu, base, frame.buffer(), width, height)
+                        .await
                 }
                 _ => None,
             }
@@ -217,7 +221,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let levels = match known_levels.or(fitted_levels) {
         Some(levels) => levels,
         None => {
-            let refused = || crate::base::without_a_device("the frame's own levels");
+            let refused = || render::base::without_a_device("the frame's own levels");
             let gpu = gpu::device().ok_or_else(refused)?;
             crate::fit_source::levels(gpu, frame, how.grade.white_quantile)
                 .await
@@ -319,7 +323,7 @@ async fn fit_from_preview(
     // pixels; the editor can, because the client asks for the size its stage can show
     // (`docs/raw-edit-gpu.md` §4.1).
     let (width, height) = frame.size();
-    if width.max(height) < crate::hdr_fit::sample_long_edge() {
+    if width.max(height) < colour::matched::sample_long_edge() {
         return None;
     }
     let preview = crate::hdr::match_preview_from_bytes(raw)?;

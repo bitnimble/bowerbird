@@ -44,7 +44,7 @@ fn options(edge: usize) -> EncodeOptions {
 fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
     let opened = support::Open::shipped(path, 0).run().expect("decode");
     let (coded, width, height) =
-        support::graded(&opened, &options(edge), rawshim::grade::Output::Srgb);
+        support::graded(&opened, &options(edge), render::grade::Output::Srgb);
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 

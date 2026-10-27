@@ -67,7 +67,7 @@ fn resolving(gpu: &'static Gpu) -> &'static gpu::compute::Kernel {
 /// The two bands of one window, over the crop-wide lowpass every source was reduced to.
 pub struct Banding {
     gpu: &'static Gpu,
-    base: &'static crate::base::Base,
+    base: &'static render::base::Base,
     lowpass: Vec<gpu::Buffer>,
     width: gpu::Buffer,
     out: Resident,
@@ -82,7 +82,7 @@ impl Banding {
     /// each.
     pub fn over(
         gpu: &'static Gpu,
-        base: &'static crate::base::Base,
+        base: &'static render::base::Base,
         window: Rect<Composite>,
         width: &gpu::Buffer,
         lowpass: &crate::assembly_render::Lowpass,

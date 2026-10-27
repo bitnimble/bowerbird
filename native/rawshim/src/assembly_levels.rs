@@ -5,9 +5,9 @@
 
 use crate::assembly_planes::Plane;
 use crate::assembly_seam::{SHRINK, SeamField, shrunk_size};
-use crate::base::Base;
 use gpu::dispatch::Whole;
 use gpu::{self, Gpu};
+use render::base::Base;
 
 /// The most frames one assembly may hold, which is what bounds the shader's per-frame arrays.
 pub const MOST_SOURCES: usize = 12;
@@ -168,7 +168,7 @@ pub async fn seam_field<E>(
 fn noise_in_plane_units(plane: &Plane) -> [f32; 2] {
     let averaged = f64::from(plane.independent_samples).max(1.0);
     // `assembly_levels.slang`'s `assembly_tint` weighs the same three channels the same way.
-    crate::base::luma_noise_in_light(plane.noise, plane.full_scale_light, plane.wb_gains)
+    render::base::luma_noise_in_light(plane.noise, plane.full_scale_light, plane.wb_gains)
         .map(|term| (term / averaged) as f32)
 }
 

@@ -8,7 +8,7 @@
 // argmax over +-4px, which a smooth radial softening barely moves, and the geometry search scores
 // planes blurred past anything a sharper filter would keep.
 //
-// The radial ratio table is the host's (`image::channel_ratio_table`) - 4097 entries, so it is
+// The radial ratio table is the host's (`lens::channel_ratio_table`) - 4097 entries, so it is
 // nothing to compute or to upload, and it is the only thing that changes between the settle's
 // rounds. One table per channel: they are identical unless the lens carries a lateral correction,
 // which makes the per-channel path free rather than a second one.

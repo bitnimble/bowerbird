@@ -5,6 +5,7 @@ const ROOT = resolve(import.meta.dir, '..');
 const manifests = [
   'native/rawshim/Cargo.toml',
   'native/rawshim_cdylib/Cargo.toml',
+  'native/render/Cargo.toml',
   'native/colour/Cargo.toml',
   'native/denoise/Cargo.toml',
   'native/formats/Cargo.toml',

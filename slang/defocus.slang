@@ -34,7 +34,7 @@ import packed;
 import px;
 import times;
 
-/// `image::DEFOCUS_BINS`, `DEFOCUS_STRIDE` and `NOISE_BINS`. The host asserts all three, because a
+/// `detail::DEFOCUS_BINS`, `DEFOCUS_STRIDE` and `NOISE_BINS`. The host asserts all three, because a
 /// frame binned one way and fitted another has no error that shows.
 static const uint BINS = 6;
 static const uint STRIDE = 3;

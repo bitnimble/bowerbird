@@ -41,9 +41,9 @@ pub async fn lowpass(
     recipe: &crate::assembly::Drawing,
     request: &crate::composite_tile::CompositeRequest<'_>,
 ) -> Result<Lowpass, String> {
-    let refused = || crate::base::without_a_device("the assembly's lowpass");
+    let refused = || render::base::without_a_device("the assembly's lowpass");
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
 
     let spec = &recipe.spec;
     let [cw, ch] = spec.canvas;
@@ -91,7 +91,7 @@ pub async fn lowpass(
     let levels = crate::composite_tile::layers_of(spec, &coarse_request, |i, layer, _| {
         let crate::composite_tile::Layer { rgb, weight } = layer;
         if let Some(slot) = of[i] {
-            bands[slot as usize] = crate::base::resize(gpu, base, &rgb, grid);
+            bands[slot as usize] = render::base::resize(gpu, base, &rgb, grid);
         }
         drop(weight);
         rgb.reclaim();
@@ -125,9 +125,9 @@ pub async fn prepared(
     hold: &Lowpass,
     request: &crate::composite_tile::CompositeRequest<'_>,
 ) -> Result<(colour::resident::Resident, crate::tile::Prepared), String> {
-    let refused = || crate::base::without_a_device("the assembly's render");
+    let refused = || render::base::without_a_device("the assembly's render");
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
 
     // Once for the window, not once a source: every source reads the same array at its own slot,
     // and the flood is the expensive half of a window. No test can see the difference.

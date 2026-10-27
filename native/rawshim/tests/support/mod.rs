@@ -19,7 +19,7 @@ pub enum Patch {
 
 pub struct Rig {
     pub gpu: &'static Gpu,
-    pub base: &'static rawshim::base::Base,
+    pub base: &'static render::base::Base,
 }
 
 /// The device, or none where no adapter answered - said aloud, since a test that quietly passes
@@ -29,7 +29,7 @@ pub fn rig() -> Option<Rig> {
         eprintln!("SKIPPED: no adapter answered, so the analysis fixtures were not built.");
         return None;
     };
-    let base = rawshim::base::device(gpu).expect("the shipped kernels");
+    let base = render::base::device(gpu).expect("the shipped kernels");
     Some(Rig { gpu, base })
 }
 

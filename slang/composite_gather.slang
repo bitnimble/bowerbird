@@ -71,7 +71,7 @@ struct TileWarp {
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> frame;
 [vk::binding(2, 0)] RWStructuredBuffer<uint> out_;
-/// Three of `image::channel_ratio_table` end to end, red then green then blue.
+/// Three of `lens::channel_ratio_table` end to end, red then green then blue.
 [vk::binding(3, 0)] StructuredBuffer<float> ratios;
 /// `tone::gain_in_y` per radius bucket, 1.0 where the falloff cannot move a 16-bit code.
 [vk::binding(4, 0)] StructuredBuffer<float> lifts;

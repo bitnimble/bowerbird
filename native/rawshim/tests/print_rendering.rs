@@ -1,7 +1,7 @@
 use colour::matched::HdrColour;
 use colour::transfer::Primaries;
-use rawshim::grade::{Canvas, Grade, Intent, Output};
-use rawshim::print::{Paper, Presentation, Scene};
+use render::grade::{Canvas, Grade, Intent, Output};
+use render::print::{Paper, Presentation, Scene};
 use units::light::{DisplayNits, Gain, Light, SceneNits};
 use units::px::Size;
 
@@ -575,7 +575,7 @@ fn a_flat_print_is_the_paper_under_diffuse_white() {
 fn a_printer_profile_lays_down_its_own_paper() {
     let icc = ideal_printer(0.5);
     let printer = std::sync::Arc::new(
-        rawshim::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"),
+        render::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"),
     );
     let nits = |source: f64| {
         let scene = Scene {
@@ -704,7 +704,7 @@ fn linear(coded: f32) -> f64 {
 enum Shown {
     Print(Scene),
     /// A print laid down by a printer profile's printer.
-    Printed(Scene, std::sync::Arc<rawshim::printer_gamut::PrinterGamut>),
+    Printed(Scene, std::sync::Arc<render::printer_gamut::PrinterGamut>),
     /// An sRGB soft proof, brought inside the file's gamut by the intent given.
     Srgb(Intent),
 }
@@ -719,7 +719,7 @@ fn drawn_as(
     colour: Option<&HdrColour>,
 ) -> Vec<f32> {
     let gpu = gpu::device().expect("print requires Vulkan");
-    let base = rawshim::base::device(gpu).expect("source pyramid");
+    let base = render::base::device(gpu).expect("source pyramid");
     let (output, peak_nits, intent) = match shown {
         Shown::Print(_) | Shown::Printed(..) => {
             (Output::Pq, Light::exactly(1000.0), Intent::Perceptual)
@@ -761,9 +761,9 @@ fn drawn_as(
     let frame: Vec<u16> = (0..size * size)
         .flat_map(|at| coded(source(at % size)))
         .collect();
-    let pyramid = rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
-    let peak = rawshim::grade::device(gpu).scene_peak();
-    let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
+    let pyramid = render::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
     match shown {
         Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
         Shown::Printed(scene, printer) => {

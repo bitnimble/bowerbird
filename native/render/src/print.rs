@@ -5,11 +5,11 @@ pub mod environment;
 
 pub use environment::Environment;
 
-pub(crate) const ALBEDO_VIEWS: u32 = 128;
-pub(crate) const ALBEDO_ROUGHNESSES: u32 = 64;
-pub(crate) const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
+pub const ALBEDO_VIEWS: u32 = 128;
+pub const ALBEDO_ROUGHNESSES: u32 = 64;
+pub const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
 /// `print_light_calibrate.slang`'s words: the lamp's seven, then the room's nine bands in three channels.
-pub(crate) const CALIBRATION_BYTES: u64 = (7 + 9 * 3) * 4;
+pub const CALIBRATION_BYTES: u64 = (7 + 9 * 3) * 4;
 const FRAME_BORDER: Share = Share::of(1, 8);
 const LAMP_REACH: f64 = 10.0;
 const LAMP_NEAREST: f64 = 1.0;
@@ -305,7 +305,7 @@ impl Scene {
         )
     }
 
-    pub(crate) fn light_parameters(&self) -> [f32; 4] {
+    pub fn light_parameters(&self) -> [f32; 4] {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
         let (light, _) = self.lamp();
@@ -343,7 +343,7 @@ impl Scene {
     }
 
     /// `display_peak` is the grade's own, which the sheet's light is rolled onto as a frame's is.
-    pub(crate) fn uniform(&self, display_peak: Light<DisplayNits>) -> Vec<u8> {
+    pub fn uniform(&self, display_peak: Light<DisplayNits>) -> Vec<u8> {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
         let (light, lengths) = self.lamp();
@@ -411,7 +411,7 @@ impl Scene {
         (shape.0 as f64 + 2.0 * border, shape.1 as f64 + 2.0 * border)
     }
 
-    pub(crate) fn photo_region(
+    pub fn photo_region(
         &self,
         shape: (usize, usize),
         region: (f64, f64, f64, f64),
@@ -433,7 +433,7 @@ impl Scene {
     }
 }
 
-pub(crate) fn light_uniform(parameters: [f32; 4], temperature: f32) -> Vec<u8> {
+pub fn light_uniform(parameters: [f32; 4], temperature: f32) -> Vec<u8> {
     parameters
         .into_iter()
         .chain([temperature, 0.0, 0.0, 0.0])

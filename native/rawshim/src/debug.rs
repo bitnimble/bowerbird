@@ -377,8 +377,8 @@ pub struct GradeSpec {
 }
 
 impl GradeSpec {
-    fn strengths(&self) -> crate::image::Strengths {
-        crate::image::Strengths {
+    fn strengths(&self) -> render::detail::Strengths {
+        render::detail::Strengths {
             sharpen: self.sharpen,
             defringe: self.defringe,
         }

@@ -228,14 +228,14 @@ fn main() {
         let (pq, w, h) = support::graded(
             &opened,
             &options(support::FULL_RENDITION_SIZE as usize),
-            rawshim::grade::Output::Pq,
+            render::grade::Output::Pq,
         );
         hdr_rows(&name, &pq, w, h);
         if std::env::var("AOMQ_HDR_ONLY").is_ok() {
             continue;
         }
         for (edge, label) in [(3840, "sdr3840"), (800, "sdr800")] {
-            let (srgb, w, h) = support::graded(&opened, &options(edge), rawshim::grade::Output::Srgb);
+            let (srgb, w, h) = support::graded(&opened, &options(edge), render::grade::Output::Srgb);
             let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
             sdr_rows(&name, label, &srgb8, w, h);
         }

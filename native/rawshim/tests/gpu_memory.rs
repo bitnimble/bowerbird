@@ -101,16 +101,16 @@ fn every_stage_hands_its_working_planes_back() {
     let frame: Vec<u16> = (0..WIDTH * HEIGHT * 3)
         .map(|at| (at % 4096) as u16)
         .collect();
-    match rawshim::base::device(gpu) {
+    match render::base::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build the base pipelines."),
         Some(base) => {
             gives_it_back(gpu, "defringe", || {
                 let resident = colour::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
-                pollster::block_on(rawshim::base::correct(
+                pollster::block_on(render::base::correct(
                     gpu,
                     base,
                     &resident,
-                    rawshim::image::Strengths {
+                    render::detail::Strengths {
                         sharpen: 0.0,
                         defringe: 0.5,
                     },
@@ -124,7 +124,7 @@ fn every_stage_hands_its_working_planes_back() {
             });
             gives_it_back(gpu, "sharpen", || {
                 let mut samples = frame.clone();
-                pollster::block_on(rawshim::base::sharpen_base(
+                pollster::block_on(render::base::sharpen_base(
                     gpu,
                     base,
                     &mut samples,
@@ -147,22 +147,22 @@ fn every_stage_hands_its_working_planes_back() {
         floor: None,
     }
     .anchored();
-    let grade = rawshim::grade::Grade::new(
+    let grade = render::grade::Grade::new(
         WIDTH,
         HEIGHT,
         *levels,
         units::light::Light::exactly(203.0),
         units::light::Light::exactly(1000.0),
     );
-    let peak = rawshim::grade::device(gpu).scene_peak();
+    let peak = render::grade::device(gpu).scene_peak();
     gives_it_back(gpu, "upload", || {
-        let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
+        let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
         // Encoded as well as uploaded: the counts and the readback are built on the first `encode`,
         // and they are per-`Uploaded` rather than per-device, so they have to go with this one.
         let _ = uploaded.encode(&grade);
     });
 
-    let uploaded = rawshim::grade::device(gpu).upload(&frame, &grade, &peak);
+    let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
     let mut dragged = grade.clone();
     let mut tick = 0.0;
     let mut drag = || {

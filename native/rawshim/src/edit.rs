@@ -10,7 +10,7 @@
 // twelve - against a tick that is entirely the GPU's.
 
 use crate::hdr;
-use crate::image::Strengths;
+use render::detail::Strengths;
 use serde::{Deserialize, Serialize};
 
 /// What the client has to be told to open a RAW, which is the library's settings and
@@ -139,7 +139,7 @@ pub struct PreparedHeader {
     /// page reads a number rather than deriving one.
     pub detail: (f64, f64),
     /// The camera match's tone curve. None where no colour match applies.
-    pub camera_curve: Option<crate::grade::ToneCurve>,
+    pub camera_curve: Option<render::grade::ToneCurve>,
     pub camera_exposure: Option<units::light::Stops>,
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
@@ -425,7 +425,7 @@ pub async fn from_frame(
         let looked = match (reflection.takes_out(), &request.found) {
             (true, None) => {
                 let gpu = gpu::device()
-                    .ok_or_else(|| crate::base::without_a_device("the reflection removal"))?;
+                    .ok_or_else(|| render::base::without_a_device("the reflection removal"))?;
                 crate::dereflect::ready(gpu)
                     .then(|| crate::dereflect::looked(gpu, resident))
                     .flatten()
@@ -550,7 +550,7 @@ pub async fn from_frame(
                 },
                 // At rest: the reader's sliders are the tick's, and what they would widen here is
                 // the window, which is already the whole picture.
-                adjust: crate::grade::Adjust::none(),
+                adjust: render::grade::Adjust::none(),
                 levels: Some(levels),
                 noise_fit,
                 capture_sigma,
@@ -645,13 +645,13 @@ impl Opened {
 pub(crate) fn camera_defaults(
     colour: Option<&colour::matched::HdrColour>,
 ) -> (
-    Option<crate::grade::ToneCurve>,
+    Option<render::grade::ToneCurve>,
     Option<units::light::Stops>,
     Option<f64>,
     Option<colour::white_balance::Illuminant>,
 ) {
     (
-        colour.map(|c| crate::grade::ToneCurve::PchipCbrt3 {
+        colour.map(|c| render::grade::ToneCurve::PchipCbrt3 {
             points: c.curve.clone(),
         }),
         colour.map(|c| c.exposure),

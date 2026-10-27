@@ -107,7 +107,7 @@ impl PrinterGamut {
 
 /// The print's target as `print_scene.slang` reads it: the printer's, or else sRGB laid between the
 /// scene's own paper black and white.
-pub(crate) fn target(scene: &crate::print::Scene, printer: Option<&PrinterGamut>) -> Vec<f32> {
+pub fn target(scene: &crate::print::Scene, printer: Option<&PrinterGamut>) -> Vec<f32> {
     let (table, black, tint) = match printer {
         Some(printer) => (true, printer.black, printer.tint),
         None => {

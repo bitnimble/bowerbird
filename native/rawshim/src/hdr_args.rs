@@ -28,9 +28,9 @@ pub struct EncodeOptions {
     /// all applied to the graded frame after the transfer and before either encoder sees it
     /// (§10.9). None is scaled here: how much noise the frame has is measured off its own
     /// pixels where the filters run.
-    pub strengths: crate::image::Strengths,
+    pub strengths: render::detail::Strengths,
     /// The sigma the deconvolution undoes, already composed for this target's scale
-    /// ([`crate::image::deconvolve_split`]); None is the fixed default.
+    /// ([`render::detail::deconvolve_split`]); None is the fixed default.
     pub sharpen_sigma: Option<f32>,
     /// Longest edge of the output. Infinite means "whatever the frame is".
     pub max_edge: f64,
@@ -79,7 +79,7 @@ mod tests {
             grade: SHIPPING_GRADE,
             crf: 8,
             preset: 8,
-            strengths: crate::image::Strengths::default(),
+            strengths: render::detail::Strengths::default(),
             sharpen_sigma: None,
             max_edge,
             content_light: None,

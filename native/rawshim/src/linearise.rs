@@ -378,7 +378,7 @@ impl Picture {
             window.size.width.raw() / step,
             window.size.height.raw() / step,
         );
-        if out_w == 0 || out_h == 0 || !crate::grade::device(gpu).fits(out_w * out_h) {
+        if out_w == 0 || out_h == 0 || !render::grade::device(gpu).fits(out_w * out_h) {
             return None;
         }
         // The rectangle back through the turn, so it names the stored raster the codes are in.

@@ -250,7 +250,7 @@ fn tile_job(
         sharpen: 0.0,
         defringe: 0.0,
         exposure: None,
-        adjust: crate::grade::Adjust::none(),
+        adjust: render::grade::Adjust::none(),
         geometry: geometry::warp::Geometry::none(),
         preserve_source_orientation: false,
         grade: crate::hdr::Grade {
@@ -285,7 +285,7 @@ fn rendition(
     units::light::Light<units::light::DisplayNits>,
 ) {
     let base = crate::job::Base::build(job, decode).expect("the frame");
-    let scene = crate::grade::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         base.matched.as_ref().and_then(|m| m.colour.as_ref()),
         base.levels,
         job.grade.reference_white_nits,
@@ -302,7 +302,7 @@ fn rendition(
         Lensing::Without => None,
         Lensing::Given(lens) => Some(lens),
     };
-    let sigma = crate::image::deconvolve_split(
+    let sigma = render::detail::deconvolve_split(
         base.capture_sigma,
         base.sensor_long,
         size.width.max(size.height) as usize,
@@ -317,18 +317,18 @@ fn rendition(
     let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma, noise);
     let gpu = gpu::device().expect("an adapter");
     let grade = scene
-        .gpu_grade(cut.width, cut.height, crate::grade::Output::Pq)
+        .gpu_grade(cut.width, cut.height, render::grade::Output::Pq)
         .showing(job.pixel_geometry());
     let (out_width, out_height) = grade.output_size();
-    let peak = crate::grade::device(gpu).scene_peak();
+    let peak = render::grade::device(gpu).scene_peak();
     let resident = cut
         .resident()
         .expect("from_base leaves the cut on the device");
-    let frame = crate::grade::device(gpu)
+    let frame = render::grade::device(gpu)
         .upload_resident(resident, &grade, &peak)
         .encode(&grade);
     let measured =
-        units::light::Light::measured(f64::from(crate::grade::device(gpu).read_peak(&peak)));
+        units::light::Light::measured(f64::from(render::grade::device(gpu).read_peak(&peak)));
     (frame, out_width, out_height, measured)
 }
 
@@ -1132,7 +1132,7 @@ mod decode_geometry {
                     tile: [0, top, width, rows],
                     frame: [width, height],
                     grade: request.grade,
-                    strengths: crate::image::Strengths {
+                    strengths: render::detail::Strengths {
                         sharpen: SHARPEN,
                         defringe: request.defringe,
                     },
@@ -1141,7 +1141,7 @@ mod decode_geometry {
                     denoiser: request.denoiser,
                     highlight_recovery: request.highlight_recovery,
                     dust: request.dust,
-                    adjust: crate::grade::Adjust::none(),
+                    adjust: render::grade::Adjust::none(),
                     levels: Some(colour::tone::Levels {
                         white: whole.header.white,
                         peak: whole.header.peak,
@@ -1152,7 +1152,7 @@ mod decode_geometry {
                     // hundred rows would sharpen the frame at a different blur down its length.
                     capture_sigma: None,
                     sensor_long: Some(held.picture_long()),
-                    defocus: crate::base::Defringe::Take(whole.header.defocus),
+                    defocus: render::base::Defringe::Take(whole.header.defocus),
                     photo_analysis: whole.header.photo_analysis.clone(),
                     scale: crate::view::Scale::Full,
                     repairs: Vec::new(),
@@ -1551,7 +1551,7 @@ mod decode_geometry {
                 "{path} decoded without its camera matrix"
             );
             let fit = frame.noise.expect("the denoise fits the frame");
-            let ceiling = crate::image::noise_ceiling(Some(fit));
+            let ceiling = render::detail::noise_ceiling(Some(fit));
             assert!(
                 ceiling > 0.0 && ceiling < 1.0,
                 "{path} fitted a ceiling of {ceiling}, which is not a fraction of full scale",
@@ -1925,11 +1925,11 @@ mod loupe_tile {
             // at belongs to the photograph, and the window it averages over reaches two hundred
             // pixels past a tile's own edge.
             ("clarity and texture", |job| {
-                job.adjust = crate::grade::Adjust {
+                job.adjust = render::grade::Adjust {
                     clarity: 60.0,
                     texture: 60.0,
                     dehaze: 25.0,
-                    ..crate::grade::Adjust::none()
+                    ..render::grade::Adjust::none()
                 };
             }),
             // Both at once, which is the shipping default plus a slider a reader would reach for,
@@ -1940,10 +1940,10 @@ mod loupe_tile {
             // window's edge in either region this looks at.
             ("sharpened, with clarity", |job| {
                 job.sharpen = 1.0;
-                job.adjust = crate::grade::Adjust {
+                job.adjust = render::grade::Adjust {
                     clarity: 60.0,
                     texture: 60.0,
-                    ..crate::grade::Adjust::none()
+                    ..render::grade::Adjust::none()
                 };
             }),
         ];
@@ -2064,7 +2064,7 @@ mod loupe_tile {
             preset: 6,
             still_full_chroma: false,
             sdr_full_chroma: false,
-            intent: crate::grade::Intent::Perceptual,
+            intent: render::grade::Intent::Perceptual,
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
@@ -2093,7 +2093,7 @@ mod loupe_tile {
                         width: width as u32,
                         height: height as u32,
                     };
-                    let sigma = crate::image::deconvolve_split(
+                    let sigma = render::detail::deconvolve_split(
                         base.capture_sigma,
                         base.sensor_long,
                         width.max(height),
@@ -2115,7 +2115,7 @@ mod loupe_tile {
         };
         let pixel_geometry = job.pixel_geometry();
         let graded = |base: &crate::job::Base, cut: &crate::hdr::Cut| {
-            let scene = crate::grade::SceneGrade::new(
+            let scene = render::grade::SceneGrade::new(
                 base.matched.as_ref().and_then(|m| m.colour.as_ref()),
                 base.levels,
                 job.grade.reference_white_nits,
@@ -2125,7 +2125,7 @@ mod loupe_tile {
             );
             let gpu = gpu::device().expect("an adapter");
             let mut grade = scene
-                .gpu_grade(cut.width, cut.height, crate::grade::Output::Pq)
+                .gpu_grade(cut.width, cut.height, render::grade::Output::Pq)
                 .showing(pixel_geometry);
             if let Some(window) = base.window {
                 grade = grade.windowed(window.photograph, window.origin);
@@ -2134,12 +2134,12 @@ mod loupe_tile {
             // The photograph's own peak, so the two roll off against one number rather than against
             // whatever each frame happens to reach - which is the whole reason it is stored, and
             // what a window could not measure for itself.
-            let peak = crate::grade::device(gpu).given_peak(4000.0);
+            let peak = render::grade::device(gpu).given_peak(4000.0);
             let up = match cut.resident() {
                 Some(resident) => {
-                    crate::grade::device(gpu).upload_resident(resident, &grade, &peak)
+                    render::grade::device(gpu).upload_resident(resident, &grade, &peak)
                 }
-                None => crate::grade::device(gpu).upload(
+                None => render::grade::device(gpu).upload(
                     cut.host_samples()
                         .expect("a cut holds one frame or the other"),
                     &grade,
@@ -2265,7 +2265,7 @@ mod loupe_tile {
             preset: 6,
             still_full_chroma: false,
             sdr_full_chroma: false,
-            intent: crate::grade::Intent::Perceptual,
+            intent: render::grade::Intent::Perceptual,
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
@@ -2761,7 +2761,7 @@ mod camera_match {
             },
             crf: 26,
             preset: 6,
-            strengths: crate::image::Strengths::default(),
+            strengths: render::detail::Strengths::default(),
             sharpen_sigma: None,
             max_edge: 1600.0,
             content_light: None,
@@ -2770,8 +2770,8 @@ mod camera_match {
             &source,
             &options,
             Some(&matched),
-            crate::grade::Output::Srgb,
-            crate::grade::Intent::Perceptual,
+            render::grade::Output::Srgb,
+            render::grade::Intent::Perceptual,
         );
         let camera = crate::decode_embedded_rgb(path.to_str().unwrap(), width.max(height))
             .expect("the embedded JPEG");
@@ -3185,7 +3185,7 @@ mod camera_match {
             let largest = crate::decode_rawler::Preview::Largest;
             let stored =
                 crate::decode_rawler::upright_preview_jpeg(path, largest).expect("a preview");
-            let long_edge = crate::hdr_fit::sample_long_edge();
+            let long_edge = colour::matched::sample_long_edge();
             let upright = crate::decode_embedded_rgb(path, long_edge).expect("a preview");
             let render = decode(&raw, 0);
 
@@ -3426,7 +3426,7 @@ mod hdr_grade {
     const QUANTILE: f64 = 0.9;
     const REFERENCE: units::light::Light<units::light::SceneNits> =
         units::light::Light::exactly(203.0);
-    /// What a rolled frame's `Signal` is a share of (`crate::grade::Output::mastered`).
+    /// What a rolled frame's `Signal` is a share of (`render::grade::Output::mastered`).
     const CEILING: units::light::Light<units::light::DisplayNits> = units::light::Light::PQ_CEILING;
 
     fn options(max_edge: f64, output_path: &str) -> EncodeOptions {
@@ -3440,7 +3440,7 @@ mod hdr_grade {
             crf: 40,
             preset: 8,
             // The grade is what is pinned here, and all of these run after it.
-            strengths: crate::image::Strengths::default(),
+            strengths: render::detail::Strengths::default(),
             sharpen_sigma: None,
             max_edge,
             content_light: None,
@@ -3494,14 +3494,14 @@ mod hdr_grade {
         let levels = crate::hdr::levels_of(gpu, &samples, width, height, QUANTILE)
             .expect("levels")
             .anchored();
-        crate::hdr::code_base(&mut samples, levels, REFERENCE);
-        let base = crate::base::device(gpu).expect("the base pipelines");
+        render::base::code_base(&mut samples, levels, REFERENCE);
+        let base = render::base::device(gpu).expect("the base pipelines");
         let resident = colour::resident::Resident::upload(gpu, &samples, width, height);
-        let gathered = crate::base::warp_lens(
+        let gathered = render::base::warp_lens(
             gpu,
             base,
             &resident,
-            crate::base::Gather::frame(units::px::Size::exact(width, height)),
+            render::base::Gather::frame(units::px::Size::exact(width, height)),
             &fitted.lens,
         )
         .expect("the lens stage runs");
@@ -3848,19 +3848,19 @@ mod hdr_grade {
             .anchored();
             // Coded as both hosts code it, since what a `Cut` carries is the coded base.
             let mut coded = decoded.samples.to_vec();
-            crate::hdr::code_base(&mut coded, levels, REFERENCE);
+            render::base::code_base(&mut coded, levels, REFERENCE);
             let source = crate::hdr::Source {
                 samples: &coded,
                 width: decoded.width,
                 height: decoded.height,
                 as_shot: decoded.as_shot,
             };
-            let scene = crate::grade::SceneGrade::new(
+            let scene = render::grade::SceneGrade::new(
                 m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
                 Some(units::light::Stops::measured(1.0)),
-                crate::grade::Adjust::none(),
+                render::grade::Adjust::none(),
                 None,
             );
             let sized = |edge: f64| {
@@ -3882,8 +3882,8 @@ mod hdr_grade {
                     m.map(|m| &m.lens),
                     size,
                     0.0,
-                    crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                    crate::image::SharpenNoise::NONE,
+                    render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+                    render::detail::SharpenNoise::NONE,
                 )
             };
             let shared = unsharpened(large).downscale(small);
@@ -3894,7 +3894,7 @@ mod hdr_grade {
                 crate::hdr::encode_cut(
                     gpu,
                     cut,
-                    &scene.gpu_grade(cut.width, cut.height, crate::grade::Output::Pq),
+                    &scene.gpu_grade(cut.width, cut.height, render::grade::Output::Pq),
                 )
             };
             let (a, b) = (grade(&shared), grade(&own));
@@ -3953,7 +3953,7 @@ mod hdr_grade {
                 &source(&frame),
                 &options(max_edge, "/dev/null"),
                 m,
-                crate::grade::Output::Pq,
+                render::grade::Output::Pq,
             );
             let name = format!("hdr-grade/{label}");
             if width.max(height) <= 800 {
@@ -4045,10 +4045,10 @@ mod pictures {
             ("white-balance/tint-plus-30", None, Some(30.0)),
         ] {
             let mut job = plain(&sony());
-            job.adjust = crate::grade::Adjust {
+            job.adjust = render::grade::Adjust {
                 temperature,
                 tint,
-                ..crate::grade::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             Snapshot::whole(Frame::Coded(&rendered(&job, SHRUNK)), WHOLE).check(name, NEUTRAL);
         }
@@ -4299,8 +4299,8 @@ mod pictures {
     /// on it, the room falling off the sheet - which is where the failures a reader reports live.
     #[test]
     fn a_print_is_the_sheet_the_reader_is_shown() {
-        use crate::grade::{Canvas, Grade};
-        use crate::print::{Paper, Presentation, Scene};
+        use render::grade::{Canvas, Grade};
+        use render::print::{Paper, Presentation, Scene};
         use units::light::Light;
 
         const CANVAS: (u32, u32) = (320, 240);
@@ -4340,12 +4340,12 @@ mod pictures {
         )
         .expect("the prepared frame");
         let gpu = adapter();
-        let base = crate::base::device(gpu).expect("the source pyramid");
+        let base = render::base::device(gpu).expect("the source pyramid");
         let header = &prepared.header;
         let pyramid =
-            crate::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+            render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
                 .expect("the source pyramid");
-        let peak = crate::grade::device(gpu).scene_peak();
+        let peak = render::grade::device(gpu).scene_peak();
         for (name, surface, scene) in [
             (
                 "print/gloss-glare",
@@ -4440,7 +4440,7 @@ mod pictures {
                     Light::exactly(1000.0),
                 )
             };
-            let uploaded = crate::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
+            let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
             uploaded.collect_candidates(&grade);
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             Snapshot::pq(
@@ -4745,7 +4745,7 @@ mod tone_domain {
     /// Binned off the source rather than either grade, so a slider is measured
     /// against the picture it was handed. Every band at once because the decode and the match
     /// either side of it are seconds, and both tests read two.
-    fn response(path: &PathBuf, mut adjust: crate::grade::Adjust) -> Vec<f64> {
+    fn response(path: &PathBuf, mut adjust: render::grade::Adjust) -> Vec<f64> {
         let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
@@ -4761,7 +4761,7 @@ mod tone_domain {
         let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
             .expect("levels");
-        let curve = Some(crate::grade::ToneCurve::PchipCbrt3 {
+        let curve = Some(render::grade::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.0], [1.0, 1.0]],
         });
         let flat = graded(
@@ -4770,9 +4770,9 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::grade::Adjust {
+            render::grade::Adjust {
                 tone_curve: curve.clone(),
-                ..crate::grade::Adjust::none()
+                ..render::grade::Adjust::none()
             },
         );
         adjust.tone_curve = curve;
@@ -4812,21 +4812,21 @@ mod tone_domain {
         frame: &crate::frame::Frame,
         colour: Option<&colour::matched::HdrColour>,
         levels: colour::tone::Levels,
-        adjust: crate::grade::Adjust,
+        adjust: render::grade::Adjust,
     ) -> Vec<u16> {
         let mut coded = samples.to_vec();
-        crate::hdr::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
-        crate::grade::device(gpu).encode(
+        render::base::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
+        render::grade::device(gpu).encode(
             &coded,
-            &crate::grade::Grade {
+            &render::grade::Grade {
                 colour,
                 exposure: Some(units::light::Stops::ZERO),
                 adjust,
                 // The frame's own, or the balance has no illuminant to move away from and the
                 // temperature slider is the identity whatever it is set to.
                 as_shot: frame.as_shot,
-                output: crate::grade::Output::Rolled,
-                ..crate::grade::Grade::new(
+                output: render::grade::Output::Rolled,
+                ..render::grade::Grade::new(
                     frame.width,
                     frame.height,
                     levels,
@@ -4840,9 +4840,9 @@ mod tone_domain {
     #[test]
     fn highlights_leaves_the_dark_end_of_a_matched_frame_alone() {
         for path in [sony(), canon(), clipped()] {
-            let pulled = crate::grade::Adjust {
+            let pulled = render::grade::Adjust {
                 highlights: -100.0,
-                ..crate::grade::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             let by_band = response(&path, pulled);
             let (bright, dark) = (by_band[0], by_band[4]);
@@ -4880,7 +4880,7 @@ mod tone_domain {
     #[test]
     fn each_pair_is_two_controls_rather_than_one_at_two_strengths() {
         for path in [sony(), canon(), clipped()] {
-            let none = crate::grade::Adjust::none();
+            let none = render::grade::Adjust::none();
             let (zone, end) = (declared("ZONE_STOPS"), declared("END_STOPS"));
             let inner = |band: usize, by: Vec<f64>| openness(by[band], zone);
             let outer = |band: usize, by: Vec<f64>| openness(by[band], end);
@@ -4889,7 +4889,7 @@ mod tone_domain {
                 2,
                 response(
                     &path,
-                    crate::grade::Adjust {
+                    render::grade::Adjust {
                         highlights: -100.0,
                         ..none.clone()
                     },
@@ -4899,7 +4899,7 @@ mod tone_domain {
                 2,
                 response(
                     &path,
-                    crate::grade::Adjust {
+                    render::grade::Adjust {
                         whites: -100.0,
                         ..none.clone()
                     },
@@ -4918,7 +4918,7 @@ mod tone_domain {
                 3,
                 response(
                     &path,
-                    crate::grade::Adjust {
+                    render::grade::Adjust {
                         shadows: -100.0,
                         ..none.clone()
                     },
@@ -4928,7 +4928,7 @@ mod tone_domain {
                 3,
                 response(
                     &path,
-                    crate::grade::Adjust {
+                    render::grade::Adjust {
                         blacks: -100.0,
                         ..none
                     },
@@ -5003,7 +5003,7 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::grade::Adjust::none(),
+            render::grade::Adjust::none(),
         );
         let pulled = graded(
             gpu,
@@ -5011,15 +5011,15 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::grade::Adjust {
+            render::grade::Adjust {
                 highlights: -100.0,
-                ..crate::grade::Adjust::none()
+                ..render::grade::Adjust::none()
             },
         );
 
         let scene_levels = colour::resident::levels_of(&samples);
         let luma = |i: usize| scene_luma(&scene_levels, i) / levels.white.raw();
-        let step = crate::grade::detail_step(width.max(height)) as usize;
+        let step = render::grade::detail_step(width.max(height)) as usize;
         let tiles = width.div_ceil(step);
         let mut block = vec![0.0f64; tiles * height.div_ceil(step)];
         let mut count = vec![0u32; block.len()];
@@ -5090,7 +5090,7 @@ mod tone_domain {
                 &frame,
                 matched.as_ref().and_then(|m| m.colour.as_ref()),
                 levels,
-                crate::grade::Adjust::none(),
+                render::grade::Adjust::none(),
             );
             let cold = graded(
                 gpu,
@@ -5098,9 +5098,9 @@ mod tone_domain {
                 &frame,
                 matched.as_ref().and_then(|m| m.colour.as_ref()),
                 levels,
-                crate::grade::Adjust {
+                render::grade::Adjust {
                     temperature: Some(2000.0),
-                    ..crate::grade::Adjust::none()
+                    ..render::grade::Adjust::none()
                 },
             );
 
@@ -5143,9 +5143,9 @@ mod tone_domain {
     #[test]
     fn shadows_leaves_the_bright_end_of_a_matched_frame_alone() {
         for path in [sony(), canon(), clipped()] {
-            let lifted = crate::grade::Adjust {
+            let lifted = render::grade::Adjust {
                 shadows: 100.0,
-                ..crate::grade::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             let by_band = response(&path, lifted);
             let (dark, bright) = (by_band[5], by_band[1]);

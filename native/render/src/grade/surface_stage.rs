@@ -225,7 +225,7 @@ pub fn draw(
     recording.submit();
 }
 
-pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
+pub fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
     static MODULE: gpu::Cache<wgpu::ShaderModule> = gpu::Cache::new();
     static BUILT: std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>> =
         std::sync::Mutex::new(Vec::new());

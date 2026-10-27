@@ -29,7 +29,7 @@ fn main() {
         content_light: None,
     };
 
-    let rolled = rawshim::grade::Output::Rolled;
+    let rolled = render::grade::Output::Rolled;
     let _ = support::graded(&opened, &options, rolled);
 
     let mut walls = Vec::with_capacity(rounds);

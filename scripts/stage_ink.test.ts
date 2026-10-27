@@ -9,7 +9,7 @@ test("the TV's window and activity are the page's ink", () => {
   const ink = /ink: '(#[0-9a-f]{6})'/.exec(read('web/src/ui/tokens.stylex.ts'))?.[1];
   expect(ink).toBeDefined();
   const bytes = /const INK: \[u8; 3\] = \[0x(..), 0x(..), 0x(..)\]/
-    .exec(read('native/rawshim/src/grade/surface_stage.rs'))
+    .exec(read('native/render/src/grade/surface_stage.rs'))
     ?.slice(1)
     .join('');
   expect(`#${bytes}`).toBe(ink!);

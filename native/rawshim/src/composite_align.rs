@@ -210,8 +210,8 @@ impl Kind {
     /// edge rather than counts of pixels, which is the failure `px.rs` opens on.
     fn plane_long(self) -> usize {
         match self {
-            Kind::Pan => crate::hdr_fit::sample_long_edge(),
-            Kind::Stack(_) => crate::hdr_fit::sample_long_edge() / 2,
+            Kind::Pan => colour::matched::sample_long_edge(),
+            Kind::Stack(_) => colour::matched::sample_long_edge() / 2,
         }
     }
 
@@ -657,7 +657,7 @@ pub async fn previews(
     gpu: &'static gpu::Gpu,
     sources: &[AlignSource<'_>],
 ) -> Result<Vec<crate::hdr_fit::Source>, String> {
-    previews_at(gpu, sources, crate::hdr_fit::sample_long_edge()).await
+    previews_at(gpu, sources, colour::matched::sample_long_edge()).await
 }
 
 /// The same, on a plane of a stated long edge.
@@ -913,7 +913,7 @@ fn middle_lens(fits: &[&geometry::lens::Lens]) -> Option<geometry::lens::Lens> {
 
 /// How far two lenses disagree at the corner, in the pixels of a preview.
 fn corner_apart(one: &geometry::lens::Lens, other: &geometry::lens::Lens) -> f64 {
-    let half = crate::hdr_fit::sample_long_edge() as f64 / 2.0;
+    let half = colour::matched::sample_long_edge() as f64 / 2.0;
     let at = |lens: &geometry::lens::Lens| {
         geometry::lens::sample_radius(
             lens.distortion.as_deref().unwrap_or_default(),
@@ -1168,7 +1168,7 @@ pub(crate) mod tests {
             // windows disagreeing, and there is one here.
             levels: None,
             reference_white_nits: units::light::Light::exactly(203.0),
-            strengths: crate::image::Strengths {
+            strengths: render::detail::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
             },

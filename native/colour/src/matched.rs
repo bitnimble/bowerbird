@@ -3,6 +3,28 @@
 use crate::lattice::ChromaMap;
 use crate::space::IDENTITY;
 
+/// Long edge of the grid the fit runs on. Fitting small and applying at full resolution is
+/// free, and a 60MP fit is minutes of work for the same answer.
+///
+/// Half the 1616px preview Sony embeds, which is what every match fits against where a body
+/// offers it (`decode_rawler::Preview::for_the_match`); a body that offers only its full JPEG
+/// is box-averaged to the same grid in linear light by `hdr_fit::fitted_preview_size`, so the
+/// grade's supervision footprint (`grade::mean_block`) is one number for every body. Measured on
+/// the Canon fixture against fitting its 6000px JPEG at 1280: the fit halves, and against the
+/// camera's own crops the render moves by 0.15 to 0.47 of a count in 255.
+pub const FIT_LONG_EDGE: usize = 808;
+
+/// The long edge a caller should decode the preview to.
+///
+/// Twice the fit grid, and the extra is not for the fit - that still runs at
+/// `FIT_LONG_EDGE`, where the cost of a geometry search lives. It is for the chroma map,
+/// which has to see small saturated objects that the fit grid loses: at 640 a blue pot
+/// 20 pixels across has no interior the blur has not reached, and nine pairs in the whole
+/// frame look like it. The render side is already built at this size on its way down.
+pub fn sample_long_edge() -> usize {
+    FIT_LONG_EDGE * 2
+}
+
 /// Curve resolution over the fit domain.
 ///
 /// Spaced evenly in scene light, which under-describes the shadows: both sides of this fit are

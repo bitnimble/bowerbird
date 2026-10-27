@@ -1,6 +1,6 @@
 use geometry::warp::Geometry;
-use rawshim::grade::{Canvas, Grade};
-use rawshim::print::{Presentation, Scene};
+use render::grade::{Canvas, Grade};
+use render::print::{Presentation, Scene};
 use units::light::{Gain, Light, SceneNits};
 use units::px::Size;
 
@@ -451,10 +451,10 @@ fn linear(coded: f32) -> f64 {
 
 fn draw(frame: &[u16], grade: &Grade<'_>, scene: Option<&Scene>) -> Vec<f32> {
     let gpu = gpu::device().expect("print requires Vulkan");
-    let base = rawshim::base::device(gpu).expect("source pyramid");
-    let pyramid = rawshim::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
-    let peak = rawshim::grade::device(gpu).scene_peak();
-    let uploaded = rawshim::grade::device(gpu).upload(frame, grade, &peak);
+    let base = render::base::device(gpu).expect("source pyramid");
+    let pyramid = render::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(frame, grade, &peak);
     match scene {
         Some(scene) => uploaded.draw_print(grade, &pyramid, scene),
         None => uploaded.draw(grade, &pyramid),

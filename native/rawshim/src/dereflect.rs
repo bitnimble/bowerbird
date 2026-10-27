@@ -630,7 +630,7 @@ pub fn looked(gpu: &'static Gpu, frame: &Resident) -> Option<Resident> {
     if out == (width, height) {
         return Some(frame.duplicate());
     }
-    crate::base::resize_scene(gpu, crate::base::device(gpu)?, frame, out)
+    render::base::resize_scene(gpu, render::base::device(gpu)?, frame, out)
 }
 
 impl Remover {

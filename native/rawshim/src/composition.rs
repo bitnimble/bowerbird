@@ -236,7 +236,7 @@ pub const FOCAL_OF_ONE: f64 = 4096.0;
 pub enum Placement {
     /// The recipe lays this source on the canvas pixel for pixel, so the canvas *is* the
     /// photograph and the gather is the frame's own lens warp
-    /// ([`crate::base::Gather::window`]).
+    /// ([`render::base::Gather::window`]).
     Direct,
     /// The source has to be rotated and projected onto the canvas, which is `composite_gather`'s job.
     Projected,

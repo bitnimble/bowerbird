@@ -100,7 +100,7 @@ impl Snapshot {
     pub fn whole(frame: Frame<'_>, long: Span<Pinned>) -> Snapshot {
         let resident = frame.resident();
         let gpu = resident.gpu();
-        let base = crate::base::device(gpu).expect("the base kernels");
+        let base = render::base::device(gpu).expect("the base kernels");
         let (width, height) = resident.size();
         let scale = long.raw() as f64 / width.max(height) as f64;
         let out = (
@@ -108,8 +108,8 @@ impl Snapshot {
             ((height as f64 * scale).round() as usize).max(1),
         );
         let resized = match frame {
-            Frame::Coded(_) => crate::base::resize(gpu, base, resident, out),
-            Frame::Scene(..) => crate::base::resize_scene(gpu, base, resident, out),
+            Frame::Coded(_) => render::base::resize(gpu, base, resident, out),
+            Frame::Scene(..) => render::base::resize_scene(gpu, base, resident, out),
         };
         let taken = resized.as_ref().unwrap_or(resident);
         let (width, height) = taken.size();
@@ -333,8 +333,8 @@ impl Frame<'_> {
 }
 
 fn code_scene(gpu: &'static gpu::Gpu, mut samples: Vec<u16>, anchoring: Anchoring) -> Vec<u16> {
-    let base = crate::base::device(gpu).expect("the base kernels");
-    pollster::block_on(crate::base::encode_base(
+    let base = render::base::device(gpu).expect("the base kernels");
+    pollster::block_on(render::base::encode_base(
         gpu,
         base,
         &mut samples,

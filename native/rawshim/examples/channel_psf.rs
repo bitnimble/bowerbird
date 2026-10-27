@@ -79,7 +79,7 @@ fn fitted(path: &str) -> String {
     let Some(gpu) = gpu::device() else {
         return "no adapter".to_string();
     };
-    let Some(base) = rawshim::base::device(gpu) else {
+    let Some(base) = render::base::device(gpu) else {
         return "no pipelines".to_string();
     };
     let Ok(bytes) = std::fs::read(path) else {
@@ -94,7 +94,7 @@ fn fitted(path: &str) -> String {
     let rawshim::frame::Pixels::Sixteen(samples) = &frame.pixels else {
         return "not 16-bit".to_string();
     };
-    match pollster::block_on(rawshim::base::measure_defocus(
+    match pollster::block_on(render::base::measure_defocus(
         gpu,
         base,
         samples,

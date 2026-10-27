@@ -184,14 +184,14 @@ impl RetouchedFrame {
     /// The frame's resources for a grade, as `grade::Grader::upload_resident` builds them.
     pub fn upload(
         &self,
-        grade: &crate::grade::Grade<'_>,
-        peak: &crate::grade::ScenePeak,
-    ) -> crate::grade::Uploaded<'static> {
-        crate::grade::device(self.frame.gpu()).upload_resident(&self.frame, grade, peak)
+        grade: &render::grade::Grade<'_>,
+        peak: &render::grade::ScenePeak,
+    ) -> render::grade::Uploaded<'static> {
+        render::grade::device(self.frame.gpu()).upload_resident(&self.frame, grade, peak)
     }
 
-    pub fn pyramid(&self, base: &'static crate::base::Base) -> Option<crate::base::Pyramid> {
-        crate::base::pyramid_of(self.frame.gpu(), base, &self.frame, self.frame.size())
+    pub fn pyramid(&self, base: &'static render::base::Base) -> Option<render::base::Pyramid> {
+        render::base::pyramid_of(self.frame.gpu(), base, &self.frame, self.frame.size())
     }
 
     /// The search around `drawn` started over this frame - or, `without` a repair it holds, over

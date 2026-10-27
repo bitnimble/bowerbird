@@ -43,7 +43,7 @@ fn model() -> HdrColour {
 
 /// `struct Edit`, field for field, in the order the shader declares them.
 ///
-/// Written here rather than taken from `crate::grade::Grade` because `peak_samples` is what the scan is
+/// Written here rather than taken from `render::grade::Grade` because `peak_samples` is what the scan is
 /// asked against, and a grade derives it from the frame rather than taking it.
 fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());

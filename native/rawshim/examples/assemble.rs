@@ -23,7 +23,7 @@ fn main() {
     let args = Args::parse();
     std::fs::create_dir_all(&args.out).expect("the output directory");
     let gpu = gpu::device().expect("a Vulkan adapter");
-    let base = rawshim::base::device(gpu).expect("the base pipelines");
+    let base = render::base::device(gpu).expect("the base pipelines");
 
     let planes_from: Vec<Option<String>> = args
         .raws
@@ -79,7 +79,7 @@ fn main() {
 /// rectangle then seeds a tile taking `--pick`.
 fn auto(
     gpu: &'static gpu::Gpu,
-    base: &'static rawshim::base::Base,
+    base: &'static render::base::Base,
     sources: &[rawshim::composite_align::AlignSource<'_>],
     args: &Args,
 ) {
@@ -189,7 +189,7 @@ fn auto(
 /// colour.
 fn solved(
     gpu: &'static gpu::Gpu,
-    base: &'static rawshim::base::Base,
+    base: &'static render::base::Base,
     analysed: &rawshim::assembly_analysis::Analysed,
     planes: &[Plane],
     (width, height): (usize, usize),
@@ -367,7 +367,7 @@ fn through_the_render(
             white_quantile: support::GRADE.white_quantile,
             levels,
             reference_white_nits: support::GRADE.reference_white_nits,
-            strengths: rawshim::image::Strengths {
+            strengths: render::detail::Strengths {
                 sharpen,
                 defringe: support::STRENGTHS.defringe,
             },
@@ -525,7 +525,7 @@ fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
         // Near-lossless and 4:4:4: this is a picture to pixel-peep, not one to ship.
         crf: 2,
         preset: 6,
-        strengths: rawshim::image::Strengths {
+        strengths: render::detail::Strengths {
             sharpen: 0.0,
             defringe: 0.0,
         },

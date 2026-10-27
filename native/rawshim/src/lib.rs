@@ -86,8 +86,6 @@ pub mod assembly_tiles;
 pub mod assembly_volume;
 /// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
 pub mod assembly_weight;
-/// The stages between the demosaic and the grade, moving onto the GPU one at a time.
-pub mod base;
 pub mod burst;
 #[cfg(test)]
 mod burst_scene;
@@ -124,6 +122,8 @@ pub mod decode_rawler;
 pub mod decode_rendered;
 #[cfg(all(test, feature = "renditions"))]
 mod demosaic_tests;
+#[cfg(test)]
+mod grade_tests;
 pub mod dereflect;
 mod dng_rendering;
 /// The editor's open half. The tick that follows it is the client's GPU.
@@ -141,11 +141,9 @@ pub mod fit_source;
 mod fit_span;
 mod fit_wide;
 pub mod frame;
-pub mod grade;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
-pub mod image;
 pub mod job;
 pub mod lens;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
@@ -165,8 +163,6 @@ pub mod photo_analysis;
 #[cfg(feature = "renditions")]
 pub mod picture;
 pub mod pipelines;
-pub mod print;
-pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
 pub mod progress;
 pub mod raw_cache;

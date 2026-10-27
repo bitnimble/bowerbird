@@ -132,7 +132,7 @@ pub fn prepared(
                 Some(_) => photograph.0.max(photograph.1),
                 None => (size.width as usize).max(size.height as usize),
             };
-            let sigma = crate::image::deconvolve_split(capture_sigma, sensor_long, scaled_long);
+            let sigma = render::detail::deconvolve_split(capture_sigma, sensor_long, scaled_long);
             let noise = sharpen_noise.at(
                 units::px::Span::<units::px::Sensor>::exact(sensor_long),
                 units::px::Span::<units::px::Drawn>::exact(scaled_long),
@@ -158,7 +158,7 @@ pub fn prepared(
             units::px::Size::exact(width, height),
         );
         recording.submit();
-        placed = Some(crate::grade::Window {
+        placed = Some(render::grade::Window {
             photograph: units::px::Size::exact(cut.width, cut.height),
             origin: units::px::At::exact(x, y),
         });
@@ -251,7 +251,7 @@ fn windowed(
         noise_fit: None,
         capture_sigma: None,
         sensor_long: None,
-        defocus: crate::base::Defringe::Measure,
+        defocus: render::base::Defringe::Measure,
         photo_analysis: Some(crate::photo_analysis::encode(&known)),
         scale: crate::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
         // No repairs: the client draws them over whatever level and tiles it holds

@@ -6,7 +6,7 @@
 use denoise::galosh::Detail;
 use rawshim::hdr::Grade;
 use rawshim::hdr_args::EncodeOptions;
-use rawshim::image::Strengths;
+use render::detail::Strengths;
 use units::light::Light;
 
 /// `hdr_reference_white_nits` and `hdr_white_quantile` in `src/schemas/settings.ts`.
@@ -137,28 +137,28 @@ impl<'a> Open<'a> {
 pub fn graded(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::grade::Output,
+    output: render::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
-    graded_under(opened, options, output, rawshim::grade::Intent::default())
+    graded_under(opened, options, output, render::grade::Intent::default())
 }
 
 pub fn graded_under(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::grade::Output,
-    intent: rawshim::grade::Intent,
+    output: render::grade::Output,
+    intent: render::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
     let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let mut cutting = cut(opened, options, matched.map(|m| &m.lens));
-    let scene = rawshim::grade::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         opened.measured.levels.anchored(),
         options.grade.reference_white_nits,
         None,
-        rawshim::grade::Adjust {
+        render::grade::Adjust {
             camera_balance: true,
-            ..rawshim::grade::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         opened.frame.as_shot,
     );
@@ -166,7 +166,7 @@ pub fn graded_under(
     let coded = rawshim::hdr::encode_cut(
         gpu,
         &cutting.cut,
-        &rawshim::grade::Grade {
+        &render::grade::Grade {
             intent,
             ..scene.gpu_grade(width, height, output)
         },
@@ -179,7 +179,7 @@ pub struct Cutting {
     pub cut: rawshim::hdr::Cut,
     /// The open's measured blur, in the sensor's pixels.
     pub capture_sigma: Option<f32>,
-    pub sigma: rawshim::image::SharpenSigma,
+    pub sigma: render::detail::SharpenSigma,
 }
 
 /// `job::Base::build`'s coding, then the fit to size, warp and sharpen a rendition takes.
@@ -195,7 +195,7 @@ pub fn cut(
 ) -> Cutting {
     let frame = &opened.frame;
     let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
-    let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
+    let base = render::base::device(gpu).expect("the device the pipelines were built on");
     let levels = opened.measured.levels.anchored();
     let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, options);
     let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
@@ -204,14 +204,14 @@ pub fn cut(
         .blur
         .map(|blur| blur * frame.reduced.max(1) as f32);
     let sigma = match options.sharpen_sigma {
-        Some(fixed) => rawshim::image::SharpenSigma::fixed(fixed),
-        None => rawshim::image::deconvolve_split(
+        Some(fixed) => render::detail::SharpenSigma::fixed(fixed),
+        None => render::detail::deconvolve_split(
             capture_sigma,
             sensor_long,
             size.width.max(size.height) as usize,
         ),
     };
-    let sharpen_noise = rawshim::base::sharpen_noise(
+    let sharpen_noise = render::base::sharpen_noise(
         levels,
         options.grade.reference_white_nits,
         frame.noise,
@@ -231,17 +231,17 @@ pub fn cut(
         frame.height,
     );
     // No lens: a rendition warps per target, in `Cut::from_base`.
-    let (prepared, _) = pollster::block_on(rawshim::base::prepare(
+    let (prepared, _) = pollster::block_on(render::base::prepare(
         gpu,
         base,
         resident,
-        rawshim::base::Gather::frame(units::px::Size::exact(frame.width, frame.height)),
+        render::base::Gather::frame(units::px::Size::exact(frame.width, frame.height)),
         levels,
         options.grade.reference_white_nits,
         // Sharpen held back for `Cut::from_base`, after the warp.
         options.strengths.before_the_fit(),
-        rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-        rawshim::image::SharpenNoise::NONE,
+        render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+        render::detail::SharpenNoise::NONE,
         &geometry::lens::Lens::none(),
         opened.measured.defringe,
         frame.noise,

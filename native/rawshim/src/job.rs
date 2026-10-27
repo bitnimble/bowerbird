@@ -23,11 +23,11 @@
 use crate::decode::Source as Raw;
 use crate::hdr;
 use crate::hdr_args::{self, EncodeOptions};
-use crate::image::Strengths;
 #[cfg(feature = "renditions")]
 use crate::stacks;
 use colour::tone;
 use formats::still::Chroma;
+use render::detail::Strengths;
 use serde::{Deserialize, Serialize};
 use units::light::{DisplayNits, Light, Stops};
 
@@ -83,7 +83,7 @@ pub struct Target {
     pub sdr_full_chroma: bool,
     /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
     #[serde(default)]
-    pub intent: crate::grade::Intent,
+    pub intent: render::grade::Intent,
     /// Writes no file; still reports the descriptor.
     #[serde(default)]
     pub describe_only: bool,
@@ -206,7 +206,7 @@ pub struct Job {
     /// Defaulted whole, so a caller that knows nothing about edits sends no field and gets
     /// the picture as the camera rendered it.
     #[serde(default)]
-    pub adjust: crate::grade::Adjust,
+    pub adjust: render::grade::Adjust,
     /// The reader's crop, straighten and quarter turn.
     ///
     /// The crop and straighten run in the grade's dispatch. The quarter turn is written to
@@ -350,7 +350,7 @@ pub struct Outcome {
 pub struct CameraTone {
     pub exposure: Stops,
     pub saturation: f64,
-    pub tone_curve: crate::grade::ToneCurve,
+    pub tone_curve: render::grade::ToneCurve,
     /// None where the match leaves the white balance as shot.
     pub balance: Option<colour::white_balance::Illuminant>,
 }
@@ -622,7 +622,7 @@ pub(crate) struct Base {
     /// Every rendition's size is a bound on *this*, so it is what `run` orders the targets by.
     pub(crate) photograph: (usize, usize),
     /// Where the frame sits in that photograph, for the grade's geometry. None when it is all of it.
-    pub(crate) window: Option<crate::grade::Window>,
+    pub(crate) window: Option<render::grade::Window>,
     pub(crate) matched: Option<crate::hdr_fit::HdrMatch>,
     /// Everything this build now knows about the photograph, whether it was told or measured it.
     /// What is worth writing back is decided at the end of the job, once the peak is in too.
@@ -637,7 +637,7 @@ pub(crate) struct Base {
     /// belong to - the pair `image::deconvolve_split` carries to each target's scale.
     pub(crate) capture_sigma: Option<f32>,
     pub(crate) sensor_long: usize,
-    pub(crate) sharpen_noise: crate::image::SharpenNoise,
+    pub(crate) sharpen_noise: render::detail::SharpenNoise,
     /// Whether what this base measured describes the photograph, and so is worth filing under it.
     ///
     /// **False for a composite of the cameras' own pictures**, whose every measurement is of what
@@ -789,7 +789,7 @@ impl Base {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
         };
 
-        let refused = || crate::base::without_a_device("the coding and the defringe");
+        let refused = || render::base::without_a_device("the coding and the defringe");
         let gpu = gpu::device().ok_or_else(refused)?;
         // Shrunk off the frame before the open defringes it in place: the network learned on
         // frames as the demosaic leaves them.
@@ -841,7 +841,7 @@ impl Base {
         // Floored here and carried, so the white the frame is *coded* against and the white the
         // shader is told about are one number rather than two computed alike.
         let levels = measured.anchored();
-        let sharpen_noise = crate::base::sharpen_noise(
+        let sharpen_noise = render::base::sharpen_noise(
             levels,
             job.grade.reference_white_nits,
             noise,
@@ -865,17 +865,17 @@ impl Base {
         // end of it). No lens here: a rendition's warp is per target and happens further down,
         // so this is the coding and the defringe alone. What it does about the aberration is the
         // open's answer, not a second one derived here.
-        let base = crate::base::device(gpu).ok_or_else(refused)?;
-        let (prepared, defocus) = crate::base::prepare(
+        let base = render::base::device(gpu).ok_or_else(refused)?;
+        let (prepared, defocus) = render::base::prepare(
             gpu,
             base,
             resident,
-            crate::base::Gather::frame(units::px::Size::exact(width, height)),
+            render::base::Gather::frame(units::px::Size::exact(width, height)),
             levels,
             job.grade.reference_white_nits,
             strengths,
-            crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-            crate::image::SharpenNoise::NONE,
+            render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+            render::detail::SharpenNoise::NONE,
             &geometry::lens::Lens::none(),
             defringe,
             noise,
@@ -1085,7 +1085,7 @@ impl Base {
                 capture_sigma: stored.from_raw.capture_sigma,
                 // `frame` below is the header's own dimensions, which are the sensor's.
                 sensor_long: None,
-                defocus: crate::base::Defringe::Take(defocus),
+                defocus: render::base::Defringe::Take(defocus),
                 photo_analysis: job
                     .photo_analysis
                     .as_deref()
@@ -1125,7 +1125,7 @@ impl Base {
             )),
             levels: levels.anchored(),
             photograph: drawn.raw(),
-            window: Some(crate::grade::Window {
+            window: Some(render::grade::Window {
                 photograph: drawn,
                 origin,
             }),
@@ -1140,7 +1140,7 @@ impl Base {
             // sigma for it; carried anyway so the analysis written back stays whole.
             capture_sigma: stored.from_raw.capture_sigma,
             sensor_long: photograph.0.max(photograph.1),
-            sharpen_noise: crate::image::SharpenNoise::NONE,
+            sharpen_noise: render::detail::SharpenNoise::NONE,
             describes_the_photograph: true,
             removal: None,
         }))
@@ -1167,8 +1167,8 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     let gpu = gpu::device()?;
     let grade = window.grade(
         &scene,
-        crate::grade::Output::Pq.mastered(job.grade.reference_white_nits),
-        crate::grade::Output::Pq,
+        render::grade::Output::Pq.mastered(job.grade.reference_white_nits),
+        render::grade::Output::Pq,
     );
     let width = window.width;
     // The editor's, where it sent one: the roll-off's input is a reduction over the frame it is
@@ -1177,10 +1177,10 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     // and this takes the same floor - since a number that is not a peak is a picture rather than
     // a failure.
     let peak = match job.scene_peak.filter(|nits| nits.is_a_peak()) {
-        Some(nits) => crate::grade::device(gpu).given_peak(nits.raw() as f32),
-        None => crate::grade::device(gpu).scene_peak(),
+        Some(nits) => render::grade::device(gpu).given_peak(nits.raw() as f32),
+        None => render::grade::device(gpu).scene_peak(),
     };
-    let coded = crate::grade::device(gpu)
+    let coded = render::grade::device(gpu)
         .upload(&window.samples, &grade, &peak)
         .encode(&grade);
 
@@ -1221,7 +1221,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         // frame of this photograph in front of it, so it reads the photograph's own out of the
         // analysis instead of fitting one off the window's edges (`crate::tile::prepared_async`
         // falls back to that where neither is available).
-        defocus: crate::base::Defringe::Measure,
+        defocus: render::base::Defringe::Measure,
         // A tile cannot fit its own and must not try: `fit_all` resamples the whole embedded JPEG
         // to the frame it is given, so fitting against a tile compares a squashed picture of the
         // entire scene with a 400px piece of it. That produces a different match for every tile
@@ -1719,7 +1719,7 @@ pub(crate) async fn graded_bands(
 ) -> Result<Graded, String> {
     let (known, scene_peak) = (&measured.known, measured.peak);
     let gpu = gpu::device().ok_or(NO_ADAPTER)?;
-    let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
+    let base = render::base::device(gpu).ok_or("the device the pipelines were built on")?;
     let photograph = held.size().raw();
     let options = encode_options(job, target, &target.output_path);
     let size = drawn_size(job, photograph, &options);
@@ -1732,10 +1732,10 @@ pub(crate) async fn graded_bands(
     let analysis = with_camera_match(&crate::photo_analysis::encode(known), job.camera_match);
     let scale = crate::view::Scale::for_long_edge(photograph, size.width.max(size.height));
     let output = match target.output {
-        Output::Pq => crate::grade::Output::Pq,
-        Output::Srgb => crate::grade::Output::Srgb,
+        Output::Pq => render::grade::Output::Pq,
+        Output::Srgb => render::grade::Output::Srgb,
     };
-    let peak = crate::grade::device(gpu).given_peak(scene_peak.raw() as f32);
+    let peak = render::grade::device(gpu).given_peak(scene_peak.raw() as f32);
     let mut leak: f64 = 0.0;
     let mut light = formats::still::LightTally::default();
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
@@ -1762,7 +1762,7 @@ pub(crate) async fn graded_bands(
             noise_fit: None,
             capture_sigma: None,
             sensor_long: None,
-            defocus: crate::base::Defringe::Measure,
+            defocus: render::base::Defringe::Measure,
             photo_analysis: Some(analysis.clone()),
             scale,
             repairs: job.repairs.clone(),
@@ -1772,7 +1772,7 @@ pub(crate) async fn graded_bands(
         let (frame, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request).await?;
         let scene = window.scene(job.exposure, job.adjust.clone());
-        let grade = crate::grade::Grade {
+        let grade = render::grade::Grade {
             intent: target.intent,
             ..scene.gpu_grade(window.width, window.height, output)
         }
@@ -1783,7 +1783,7 @@ pub(crate) async fn graded_bands(
         )
         .banded(band);
         let frame = frame.into_frame();
-        let up = crate::grade::device(gpu).upload_resident(&frame, &grade, &peak);
+        let up = render::grade::device(gpu).upload_resident(&frame, &grade, &peak);
         let unread = "a band of the graded frame could not be read back";
         match target.output {
             Output::Pq => {
@@ -1792,12 +1792,12 @@ pub(crate) async fn graded_bands(
                     .encoded_frame()
                     .ok_or("the encode left no frame on the device")?;
                 if !target.still_full_chroma {
-                    let band = crate::base::chroma_leak(gpu, base, coded, out_width, rows)
+                    let band = render::base::chroma_leak(gpu, base, coded, out_width, rows)
                         .await
                         .ok_or("the chroma leak could not be measured")?;
                     leak = leak.max(band);
                 }
-                let band = crate::base::content_light(gpu, base, coded, out_width, rows)
+                let band = render::base::content_light(gpu, base, coded, out_width, rows)
                     .await
                     .ok_or("the content light could not be measured")?;
                 light = light.and(band);
@@ -1876,7 +1876,7 @@ pub(crate) async fn render(
     // The scene, settled once: the camera's colour, the levels every rendition grades against
     // - which are the ones `Base::build` coded the frame with - and the photographer's
     // exposure. The levels stay unexposed and the gain moves against them, which is what
-    // holds the colour still as it changes (`crate::grade::SceneGrade`), and is why the exposure
+    // holds the colour still as it changes (`render::grade::SceneGrade`), and is why the exposure
     // belongs here rather than folded into the anchor the base was coded with.
     //
     // Refused rather than clamped where it is not positive: a gain of zero or less is not a
@@ -1891,7 +1891,7 @@ pub(crate) async fn render(
             job.exposure
         ));
     }
-    let scene = crate::grade::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         job.grade.reference_white_nits,
@@ -1908,7 +1908,7 @@ pub(crate) async fn render(
         Cutting::AlreadyCut(cut) => cut,
         Cutting::OnDevice(frame) => {
             let size = order[0].1;
-            let sigma = crate::image::deconvolve_split(
+            let sigma = render::detail::deconvolve_split(
                 capture_sigma,
                 sensor_long,
                 size.width.max(size.height) as usize,
@@ -1931,7 +1931,7 @@ pub(crate) async fn render(
     // rebuilding the lattice, the curves and the output pair for each of them was most of
     // what a second target cost.
     // Measured on the first frame that goes up, which is the largest, and read by every
-    // rendition after it. See `crate::grade::ScenePeak`.
+    // rendition after it. See `render::grade::ScenePeak`.
     //
     // The photograph's own where it has one and this job is rendering at rest: the peak is read
     // *after* the exposure (`peak.slang`), so a job carrying a gain has to find its own, but every
@@ -1958,10 +1958,10 @@ pub(crate) async fn render(
         false => None,
     };
     let scene_peak = match known_peak {
-        Some(nits) => crate::grade::device(gpu).given_peak(nits.raw() as f32),
-        None => crate::grade::device(gpu).scene_peak(),
+        Some(nits) => render::grade::device(gpu).given_peak(nits.raw() as f32),
+        None => render::grade::device(gpu).scene_peak(),
     };
-    let mut uploaded: Option<crate::grade::Uploaded<'_>> = None;
+    let mut uploaded: Option<render::grade::Uploaded<'_>> = None;
     for (index, (target, size)) in order.iter().enumerate() {
         let want = (size.width as usize, size.height as usize);
         // Never for a window: `Base::cropped` only takes that route when every target wants the
@@ -1975,10 +1975,10 @@ pub(crate) async fn render(
         }
         let mut options = encode_options(job, target, &target.output_path);
         let output = match target.output {
-            Output::Pq => crate::grade::Output::Pq,
-            Output::Srgb => crate::grade::Output::Srgb,
+            Output::Pq => render::grade::Output::Pq,
+            Output::Srgb => render::grade::Output::Srgb,
         };
-        let mut grade = crate::grade::Grade {
+        let mut grade = render::grade::Grade {
             intent: target.intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
         }
@@ -1994,9 +1994,9 @@ pub(crate) async fn render(
             Some(up) => up,
             None => uploaded.insert(match cut.resident() {
                 Some(frame) => {
-                    crate::grade::device(gpu).upload_resident(frame, &grade, &scene_peak)
+                    render::grade::device(gpu).upload_resident(frame, &grade, &scene_peak)
                 }
-                None => crate::grade::device(gpu).upload(
+                None => render::grade::device(gpu).upload(
                     cut.host_samples()
                         .expect("a cut holds one frame or the other"),
                     &grade,
@@ -2021,11 +2021,11 @@ pub(crate) async fn render(
         // would come back wrong is written 4:4:4 on its own, at the memory that costs, rather than
         // every still paying it or this one shipping speckled.
         if target.output == Output::Pq && !target.still_full_chroma {
-            let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
+            let base = render::base::device(gpu).ok_or("the device the pipelines were built on")?;
             let coded = up
                 .encoded_frame()
                 .ok_or("the encode left no frame on the device")?;
-            let leak = crate::base::chroma_leak(gpu, base, coded, out_width, out_height)
+            let leak = render::base::chroma_leak(gpu, base, coded, out_width, out_height)
                 .await
                 .ok_or("the chroma leak could not be measured")?;
             if leak > CHROMA_LEAK_TILE_FRACTION {
@@ -2037,11 +2037,11 @@ pub(crate) async fn render(
             lap("chroma leak");
         }
         if target.output == Output::Pq {
-            let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
+            let base = render::base::device(gpu).ok_or("the device the pipelines were built on")?;
             let coded = up
                 .encoded_frame()
                 .ok_or("the encode left no frame on the device")?;
-            let tally = crate::base::content_light(gpu, base, coded, out_width, out_height)
+            let tally = render::base::content_light(gpu, base, coded, out_width, out_height)
                 .await
                 .ok_or("the content light could not be measured")?;
             options.content_light = Some(tally.content_light());
@@ -2063,7 +2063,7 @@ pub(crate) async fn render(
     let peak: Light<DisplayNits> = match known_peak {
         Some(nits) => nits,
         None => Light::measured(f64::from(
-            crate::grade::device(gpu)
+            render::grade::device(gpu)
                 .peak_of(&scene_peak)
                 .await
                 .ok_or("the scene peak could not be read back")?,
@@ -2420,7 +2420,7 @@ mod tests {
         CameraTone {
             exposure: Stops::measured(0.625),
             saturation: 25.0,
-            tone_curve: crate::grade::ToneCurve::PchipCbrt3 {
+            tone_curve: render::grade::ToneCurve::PchipCbrt3 {
                 points: vec![[0.0, 0.1], [0.5, 0.55], [1.0, 1.0]],
             },
             balance: Some(colour::white_balance::Illuminant {
@@ -2658,7 +2658,7 @@ mod tests {
             "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
             "sharpen": 0, "defringe": 0,
             "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
-            "adjust": { "toneCurve": serde_json::to_value(crate::grade::ToneCurve::PchipCbrt3 {
+            "adjust": { "toneCurve": serde_json::to_value(render::grade::ToneCurve::PchipCbrt3 {
                 points: units::light::IDENTITY_CURVE.to_vec()
             }).unwrap() }
         });

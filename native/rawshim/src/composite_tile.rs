@@ -253,11 +253,11 @@ fn tables(recording: &mut gpu::Recording<'_>, from: &Gathered<'_>) -> (gpu::Buff
         Through::Lens => from.source.lens.to_lens(),
     };
     (
-        crate::base::float_storage(recording, "pano ratios", &crate::base::ratio_tables(&lens)),
-        crate::base::float_storage(
+        render::base::float_storage(recording, "pano ratios", &render::base::ratio_tables(&lens)),
+        render::base::float_storage(
             recording,
             "pano lifts",
-            &crate::base::lift_table(lens.falloff),
+            &render::base::lift_table(lens.falloff),
         ),
     )
 }
@@ -432,7 +432,7 @@ fn resolving(gpu: &'static gpu::Gpu) -> &'static gpu::compute::Kernel {
 /// rows and five, at 130.
 pub struct Blending {
     gpu: &'static gpu::Gpu,
-    base: &'static crate::base::Base,
+    base: &'static render::base::Base,
     out: Resident,
     alpha: gpu::Buffer,
     accumulator: gpu::Buffer,
@@ -444,7 +444,7 @@ pub struct Blending {
 impl Blending {
     pub fn over(
         gpu: &'static gpu::Gpu,
-        base: &'static crate::base::Base,
+        base: &'static render::base::Base,
         window: Rect<units::px::Composite>,
     ) -> Blending {
         let (_, _, width, height) = window.raw();
@@ -685,7 +685,7 @@ pub struct CompositeRequest<'a> {
     /// to know, and then the reference's own strip measures for all of them.
     pub levels: Option<colour::tone::Anchored>,
     pub reference_white_nits: units::light::Light<units::light::SceneNits>,
-    pub strengths: crate::image::Strengths,
+    pub strengths: render::detail::Strengths,
     pub detail: denoise::galosh::Detail,
     pub sources: &'a [SourceFile<'a>],
     pub from: From,
@@ -905,9 +905,10 @@ async fn prepared_with(
     request: &CompositeRequest<'_>,
     merging: Option<Merging<'_>>,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
-    let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
+    let refused =
+        || render::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
     if spec.sources.len() != request.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
     }
@@ -1007,7 +1008,7 @@ struct Taken {
 /// gathered through the recipe's lens onto `request.window`. None where it does not reach it.
 async fn taken(
     gpu: &'static gpu::Gpu,
-    base: &'static crate::base::Base,
+    base: &'static render::base::Base,
     spec: &Composition,
     request: &CompositeRequest<'_>,
     i: usize,
@@ -1015,7 +1016,8 @@ async fn taken(
     merging: Option<Merging<'_>>,
     lap: &mut impl FnMut(&str),
 ) -> Result<Option<Taken>, String> {
-    let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
+    let refused =
+        || render::base::without_a_device("the coding, the lens gather and the composite");
     let source = &spec.sources[i];
     let file = &request.sources[i];
     // A source the recipe holds no slot for is one no tile and not the base uses, so the window
@@ -1144,13 +1146,13 @@ async fn taken(
     let anchored = levels.ok_or("the reference does not reach this window")?;
 
     let mine = coded_as(anchored, source.gain);
-    let (coded, took_off) = crate::base::prepare(
+    let (coded, took_off) = render::base::prepare(
         gpu,
         base,
         resident,
         // No lens: the recipe's own gather applies it, at the radius of the whole photograph
         // rather than of this region.
-        crate::base::Gather::frame(Size::exact(drawn.0, drawn.1)),
+        render::base::Gather::frame(Size::exact(drawn.0, drawn.1)),
         mine,
         request.reference_white_nits,
         // Everything but the sharpen, which belongs to the composite: sharpening each source
@@ -1158,7 +1160,7 @@ async fn taken(
         // nothing at all for a camera's JPEG, which the camera already sharpened and
         // defringed - correcting a finished picture again is a second opinion over the first.
         match request.from {
-            From::Camera => crate::image::Strengths {
+            From::Camera => render::detail::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
@@ -1166,8 +1168,8 @@ async fn taken(
         },
         // Nothing to compose: the sharpen this would be the sigma for is the composite's, and
         // the strengths above zero it here on both arms.
-        crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-        crate::image::SharpenNoise::NONE,
+        render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+        render::detail::SharpenNoise::NONE,
         &geometry::lens::Lens::none(),
         stored
             .and_then(|a| a.from_render.defocus)
@@ -1177,7 +1179,10 @@ async fn taken(
                     photograph.raw().0.max(photograph.raw().1),
                 )
             })
-            .map_or(crate::base::Defringe::Measure, crate::base::Defringe::Take),
+            .map_or(
+                render::base::Defringe::Measure,
+                render::base::Defringe::Take,
+            ),
         noise,
         frame.matrix,
     )
@@ -1253,9 +1258,10 @@ pub async fn layers_of(
     request: &CompositeRequest<'_>,
     mut take: impl FnMut(usize, Layer, Arrived) -> Result<(), String>,
 ) -> Result<Option<colour::tone::Anchored>, String> {
-    let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
+    let refused =
+        || render::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
     if spec.sources.len() != request.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
     }
@@ -1891,7 +1897,7 @@ mod tests {
     #[test]
     fn the_blend_feathers_between_two_layers() {
         let gpu = drawing();
-        let base = crate::base::device(gpu).expect("the base pipelines");
+        let base = render::base::device(gpu).expect("the base pipelines");
         let p = recipe(Projection::Rectilinear, Through::Corrected);
         // Two sources overlapping by about a third, which is what a panorama is shot at.
         let apart = 0.55 * SOURCE[0] as f64 / 5200.0;
@@ -2013,7 +2019,7 @@ mod tests {
             white_quantile: 0.9,
             levels: None,
             reference_white_nits: units::light::Light::exactly(203.0),
-            strengths: crate::image::Strengths {
+            strengths: render::detail::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
             },

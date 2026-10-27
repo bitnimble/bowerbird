@@ -9,10 +9,10 @@ use crate::assembly::Assembly;
 use crate::assembly_levels::{MOST_SOURCES, seam_field};
 use crate::assembly_planes::Plane;
 use crate::assembly_seam::shrunk_size;
-use crate::base::Base;
 use crate::composite_align::AlignSource;
 use crate::composition::Composition;
 use gpu::Gpu;
+use render::base::Base;
 use units::px::{Analysis, Extent, Share, Shrunk, Span};
 
 /// The most pieces a seam solve may answer, and the most vertices across them.
@@ -91,7 +91,7 @@ fn refused_by(why: String) -> Refused {
 
 /// A set of photographs, aligned and analysed into a seam field (§3).
 pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
-    let refused = || Refused::NotAligned(crate::base::without_a_device("the analysis"));
+    let refused = || Refused::NotAligned(render::base::without_a_device("the analysis"));
     // The whole analysis's budget, claimed before the align so that the align's own steps count
     // into this rather than into a pass of their own: a preview and a pair each, the solve, a
     // full-size plane each, and the field.
@@ -99,7 +99,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
     crate::progress::begin(n + n.saturating_sub(1) + 1 + n + FIELD_STEPS);
     stopping()?;
     let gpu = gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
 
     // A burst points every frame at the same place, so a focal no file stated is nearly
     // unobservable and a free solve wanders tens of percent (§3.1).

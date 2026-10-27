@@ -51,10 +51,10 @@ fn main() {
     let sensor = frame.width;
     let defocus = match measured.defringe {
         // `Done` was this open's buffer; the tile decodes its own, which still carries the fringe.
-        rawshim::base::Defringe::Done(pair) | rawshim::base::Defringe::Take(pair) => {
-            rawshim::base::Defringe::Take(pair)
+        render::base::Defringe::Done(pair) | render::base::Defringe::Take(pair) => {
+            render::base::Defringe::Take(pair)
         }
-        rawshim::base::Defringe::Measure => rawshim::base::Defringe::Measure,
+        render::base::Defringe::Measure => render::base::Defringe::Measure,
     };
     let analysis = PhotoAnalysis {
         from_raw: FromRaw {
@@ -77,7 +77,7 @@ fn main() {
         denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
         dust: Default::default(),
-        adjust: rawshim::grade::Adjust::none(),
+        adjust: render::grade::Adjust::none(),
         levels: Some(measured.levels),
         noise_fit: frame.noise,
         capture_sigma: measured.blur,
@@ -93,15 +93,15 @@ fn main() {
     drop(frame);
     let window =
         rawshim::tile::prepared(rawshim::tile::Source::Path(raw), &request).expect("a tile");
-    let scene = window.scene(None, rawshim::grade::Adjust::none());
+    let scene = window.scene(None, render::grade::Adjust::none());
     // Diffuse white as the peak, because this writes sRGB: the same reasoning as `renders`.
     let grade = window.grade(
         &scene,
         units::light::Light::at_diffuse_white(request.grade.reference_white_nits),
-        rawshim::grade::Output::Srgb,
+        render::grade::Output::Srgb,
     );
     let width = window.width;
-    let uploaded = rawshim::grade::device(gpu).upload(&window.samples, &grade, &rawshim::grade::device(gpu).scene_peak());
+    let uploaded = render::grade::device(gpu).upload(&window.samples, &grade, &render::grade::device(gpu).scene_peak());
     let coded = uploaded.encode(&grade);
     // The tick the editor would pay for this tile, best of five.
     let mut tick = f64::INFINITY;

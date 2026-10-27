@@ -11,6 +11,7 @@
 use crate::parallel::*;
 use colour::lattice::{ChromaMap, LutAxes};
 use colour::matched::{BINS, HdrColour, NeighbourhoodThumb, chroma_anchor};
+use colour::matched::{FIT_LONG_EDGE, sample_long_edge};
 use colour::space::{
     IDENTITY, LUMA, invert3, multiply, rec2020_to_srgb, solve_row, srgb_eotf, srgb_eotf_f,
     srgb_to_rec2020,
@@ -19,17 +20,6 @@ use gpu::compute::{Kernel, READ, UNIFORM, WRITE, kernel, kernel_layout};
 use gpu::dispatch::{Banded, Whole};
 use units::light::Light;
 use units::px::TUNED_ON;
-
-/// Long edge of the grid the fit runs on. Fitting small and applying at full resolution is
-/// free, and a 60MP fit is minutes of work for the same answer.
-///
-/// Half the 1616px preview Sony embeds, which is what every match fits against where a body
-/// offers it (`decode_rawler::Preview::for_the_match`); a body that offers only its full JPEG
-/// is box-averaged to the same grid in linear light by `fitted_preview_size`, so the grade's
-/// supervision footprint (`crate::grade::mean_block`) is one number for every body. Measured on the
-/// Canon fixture against fitting its 6000px JPEG at 1280: the fit halves, and against the
-/// camera's own crops the render moves by 0.15 to 0.47 of a count in 255.
-const FIT_LONG_EDGE: usize = 808;
 
 const MIN_BIN_SAMPLES: usize = 8;
 const MIN_PAIRS: usize = 2000;
@@ -1036,12 +1026,12 @@ pub(crate) fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
 
 /// The grade whose uniform hands `colour.slang` the fit's own domain: white, reference and
 /// exposure at their identities, so a sample is read as itself.
-fn probe_grade(colour: &HdrColour) -> crate::grade::Grade<'_> {
-    crate::grade::Grade {
+fn probe_grade(colour: &HdrColour) -> render::grade::Grade<'_> {
+    render::grade::Grade {
         colour: Some(colour),
         // Every anchor at its identity, which is what lets `fit_model` run the grade's own stages
         // over samples that are already scene-relative.
-        ..crate::grade::Grade::new(
+        ..render::grade::Grade::new(
             1,
             1,
             colour::tone::Levels {
@@ -1114,7 +1104,7 @@ pub fn evaluate_over(
             usage,
         })
     };
-    let uniform: Vec<u8> = crate::grade::uniform_words(&probe_grade(colour), colour)
+    let uniform: Vec<u8> = render::grade::uniform_words(&probe_grade(colour), colour)
         .iter()
         .flat_map(|v| v.to_ne_bytes())
         .collect();
@@ -1131,8 +1121,8 @@ pub fn evaluate_over(
         .flat_map(|v| (*v as f32).to_ne_bytes())
         .collect();
     let matrix = init("fit model matrix", &matrix, wgpu::BufferUsages::STORAGE);
-    let (chroma, chroma_luma) = crate::grade::device(gpu).lattice(colour);
-    let curves = crate::grade::device(gpu).curves(colour);
+    let (chroma, chroma_luma) = render::grade::device(gpu).lattice(colour);
+    let curves = render::grade::device(gpu).curves(colour);
     let (chroma, chroma_luma, curves) = (chroma.view(), chroma_luma.view(), curves.view());
     let kernel = model_device(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -1165,7 +1155,7 @@ pub fn evaluate_over(
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: wgpu::BindingResource::Sampler(crate::grade::device(gpu).sampler()),
+                resource: wgpu::BindingResource::Sampler(render::grade::device(gpu).sampler()),
             },
             wgpu::BindGroupEntry {
                 binding: 10,
@@ -5499,12 +5489,12 @@ fn rebalanced(
     to: colour::white_balance::Illuminant,
 ) -> Source {
     let identity = HdrColour::identity();
-    let grade = crate::grade::Grade {
+    let grade = render::grade::Grade {
         as_shot: Some(from),
-        adjust: crate::grade::Adjust {
+        adjust: render::grade::Adjust {
             temperature: Some(to.temperature),
             tint: Some(to.tint),
-            ..crate::grade::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         ..probe_grade(&identity)
     };
@@ -5513,15 +5503,15 @@ fn rebalanced(
     recording.holding(&plane.buffer);
     let edits = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit balance edit"),
-        contents: &crate::grade::uniform_words(&grade, &identity)
+        contents: &render::grade::uniform_words(&grade, &identity)
             .iter()
             .flat_map(|v| v.to_ne_bytes())
             .collect::<Vec<u8>>(),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let balance = crate::grade::device(gpu).balance_buffer();
+    let balance = render::grade::device(gpu).balance_buffer();
     recording.holding(&balance);
-    crate::grade::device(gpu).build_balance(&mut recording, &edits, &balance);
+    render::grade::device(gpu).build_balance(&mut recording, &edits, &balance);
     let lit = rgb_buffer(&mut recording, "fit balanced", plane.width, plane.height);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit balance push"),
@@ -6390,17 +6380,6 @@ pub async fn correspondence_at(
         read_plane(gpu, &sharp.camera).await?,
         found,
     ))
-}
-
-/// The long edge a caller should decode the preview to.
-///
-/// Twice the fit grid, and the extra is not for the fit - that still runs at
-/// `FIT_LONG_EDGE`, where the cost of a geometry search lives. It is for the chroma map,
-/// which has to see small saturated objects that the fit grid loses: at 640 a blue pot
-/// 20 pixels across has no interior the blur has not reached, and nine pairs in the whole
-/// frame look like it. The render side is already built at this size on its way down.
-pub fn sample_long_edge() -> usize {
-    FIT_LONG_EDGE * 2
 }
 
 /// The size a preview settles to for the fit: `sample_long_edge` on its long side, or
@@ -9236,5 +9215,50 @@ mod tests {
         // Neither half is one end of the list, which is what the stride is for.
         assert!(judged.at[0] < HOLDOUT_EVERY);
         assert!(*judged.at.last().unwrap() >= 1000 - HOLDOUT_EVERY);
+    }
+
+    #[test]
+    fn a_pincushion_correction_at_its_fill_crop_leaves_no_black() {
+        // The bug this guards: a lensfun profile with a +1.7% corner was applied at a
+        // crop that did not fill, and the corners showed the black the warp sampled from
+        // outside the frame.
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let (width, height) = (120usize, 80usize);
+        let mut data = vec![0u8; width * height * 3];
+        for (i, byte) in data.iter_mut().enumerate() {
+            // A ramp passes through zero, and a black source pixel is not a black margin.
+            *byte = ((i % 251) as u8).max(1);
+        }
+        let source = units::rgb::Rgb {
+            width,
+            height,
+            data,
+        };
+        let knots = geometry::lens::polynomial_knots(0.0173, 0.0, 16);
+        let lens = geometry::lens::Lens {
+            crop: geometry::lens::fill_crop(&knots, width, height),
+            distortion: Some(knots),
+            falloff: None,
+            tca: None,
+            axis: [0.0; 2],
+        };
+        let resident = super::levelled_source(gpu, source.as_ref());
+        let out = pollster::block_on(super::warped_levels(
+            gpu,
+            &resident,
+            (width, height),
+            &[lens],
+            (width, height),
+        ))
+        .expect("the device warps")
+        .remove(0);
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                assert_ne!((out[i], out[i + 1], out[i + 2]), (0, 0, 0), "pixel {x},{y}");
+            }
+        }
     }
 }
