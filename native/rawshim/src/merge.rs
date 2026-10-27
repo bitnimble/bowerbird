@@ -7,6 +7,7 @@
 use crate::align::{Exposure, Field};
 use crate::condition::Mosaic;
 use crate::galosh::NoiseModel;
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu, Recording};
 use crate::hdr_fit::Kernel;
 use crate::px::{At, Sensor};
@@ -275,6 +276,7 @@ fn storage(gpu: &Gpu, label: &'static str, floats: usize) -> Buffer {
     })
 }
 
+#[track_caller]
 fn dispatch(
     gpu: &'static Gpu,
     entry: Entry,
@@ -332,6 +334,7 @@ fn record_detail(
     );
 }
 
+#[track_caller]
 fn record(
     gpu: &'static Gpu,
     recording: &mut Recording<'static>,
@@ -363,10 +366,14 @@ fn record(
         layout: &kernel.layout,
         entries: &entries,
     });
-    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-    pass.set_pipeline(&kernel.pipeline);
-    pass.set_bind_group(0, &group, &[]);
-    pass.dispatch_workgroups((across as u32).div_ceil(8), (down as u32).div_ceil(8), 1);
+    recording.dispatch(
+        [(across as u32).div_ceil(8), (down as u32).div_ceil(8), 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernel.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
 }
 
 fn colours_of(cfa: &crate::cfa::Cfa) -> [u32; 4] {

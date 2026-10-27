@@ -7,6 +7,7 @@
 //! offset already believed, which is the only affordable way to answer the same question densely
 //! at a preview's own size.
 
+use crate::gpu::dispatch::Whole;
 use crate::hdr_fit::{
     DevicePlane, Kernel, READ, Reach, Source, UNIFORM, WRITE, corresponded_about, kernel,
 };
@@ -124,15 +125,15 @@ pub async fn coarse(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernels.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((candidates as u32).div_ceil(COARSE_GROUP), 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&scored, 0, &staging, 0, (candidates * 3 * 4) as u64);
+    recording.dispatch(
+        [(candidates as u32).div_ceil(COARSE_GROUP), 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&kernels.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&scored, 0, &staging, 0, (candidates * 3 * 4) as u64);
     recording.submit();
 
     // The maximum over candidates, on the host. A reduction over a hundred thousand scores is not

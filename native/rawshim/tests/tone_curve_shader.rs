@@ -72,15 +72,15 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(samples.len().div_ceil(64) as u32, 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&out, 0, &readback, 0, (samples.len() * 16) as u64);
+    recording.dispatch(
+        [samples.len().div_ceil(64) as u32, 1, 1],
+        rawshim::gpu::dispatch::Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&out, 0, &readback, 0, (samples.len() * 16) as u64);
     recording.submit();
     pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {
         bytes

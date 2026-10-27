@@ -14,6 +14,7 @@
 // viewport. A 61MP frame fitted to a 2560x1707 stage costs 4.4MP of colour transform
 // rather than 60, which is 7ms rather than 100.
 import prelude;
+import band;
 import lanes;
 import edit;
 import colour;
@@ -569,9 +570,9 @@ float3 coded_at(uint pixel)
 /// workgroups where one dimension allows 65535.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void encode(uint3 id : SV_DispatchThreadID)
+void encode(uint3 dispatched : SV_DispatchThreadID)
 {
-    let first = linear(id) * 2;
+    let first = linear(banded(dispatched, 1)) * 2;
     // The *output's* pixels, not the frame's: a crop writes fewer than it reads.
     let pixels = edit.output_width * edit.band_rows;
     if (first >= pixels) { return; }

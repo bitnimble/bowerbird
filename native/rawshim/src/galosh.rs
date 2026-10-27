@@ -20,6 +20,8 @@
 //! plane is box-downsampled into four levels, each shrunk as 8x8 DCT blocks at stride 4 (a
 //! block-thresholded pilot, then a Wiener pass off it) and fused back up through its Laplacian.
 
+use crate::gpu::dispatch::Whole;
+
 /// Workgroups for the IRLS reductions, and the invocations in each.
 ///
 /// **Wide enough that the reduction is not a serial walk.** These stride the whole frame five times
@@ -152,8 +154,8 @@ impl Pushes {
 struct Kernel {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
-    /// What the dispatch sweep calls it. The chain records into one encoder, so a truncated run is
-    /// the only way to price a single kernel - and a count with no name is a number nobody can act
+    /// What the dispatch sweep calls it. The chain is waited on once, as a whole, so a truncated run
+    /// is how the sweep prices a single kernel - and a count with no name is a number nobody can act
     /// on without counting `run` calls by hand down the length of `run`.
     name: &'static str,
 }
@@ -855,8 +857,8 @@ const LEAST_NOISE_LEFT: f64 = 0.02;
 ///
 /// Set by `examples/open_bench.rs` to price the chain one kernel at a time: sweeping the count and
 /// differencing consecutive runs is what says which of the twenty dispatches a call's cost is in,
-/// and that is not answerable from the outside - the whole chain records into one encoder, so it
-/// submits and completes as a unit. A count rather than a phase because the question the sweep was
+/// and that is not answerable from the outside - the chain is waited on once, so it completes as a
+/// unit. A count rather than a phase because the question the sweep was
 /// written for turned out to be "which kernel", not "which phase".
 ///
 /// The buffers stay sized for the whole run, so a truncated call differs from a full one only in
@@ -1079,9 +1081,7 @@ pub async fn denoise_in_tiles(
     {
         let bytes = (width * height * 4) as u64;
         let mut recording = gpu.record();
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&mosaic.buffer, 0, &filtered.buffer, 0, bytes);
+        recording.copy_buffer_to_buffer(&mosaic.buffer, 0, &filtered.buffer, 0, bytes);
         recording.submit();
     }
     let mut finished = 0usize;
@@ -1331,32 +1331,21 @@ async fn run(
         .filter(|&channel| cfa.colour_at(channel / pw, channel % pw) == 1)
         .fold(0u64, |mask, channel| mask | 1 << channel);
 
-    // Uncleared: every plane the output depends on is written whole before it is read.
-    macro_rules! scratch {
-        ($label:expr, $len:expr) => {
-            recording.scratch(&wgpu::BufferDescriptor {
-                label: Some($label),
-                size: (($len as usize).max(1) * 4) as u64,
-                usage: storage,
-                mapped_at_creation: false,
-            })
-        };
-    }
     let pyramid_noisy: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
-        .map(|level| scratch!("galosh pyramid noisy", levelled(level)))
+        .map(|level| plane!("galosh pyramid noisy", levelled(level)))
         .collect();
     let pyramid_shrunk: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS)
         .map(|level| {
             let len = if level == 0 { 0 } else { levelled(level) };
-            scratch!("galosh pyramid shrunk", len)
+            plane!("galosh pyramid shrunk", len)
         })
         .collect();
     // Each level's shrunk, boxed to the size of the level below it.
     let pyramid_boxed: Vec<crate::gpu::Buffer> = (0..PYRAMID_LEVELS - 1)
-        .map(|level| scratch!("galosh pyramid boxed", levelled(level + 1)))
+        .map(|level| plane!("galosh pyramid boxed", levelled(level + 1)))
         .collect();
     // One level's luma pilot at a time, so the largest level's luma plane serves them all.
-    let pyramid_pilot = scratch!("galosh pyramid pilot", levelled(0) / planes);
+    let pyramid_pilot = plane!("galosh pyramid pilot", levelled(0) / planes);
     let transform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("galosh site transform"),
         contents: &site_transform(cfa, side)
@@ -1558,7 +1547,6 @@ async fn run(
     let (fx, fy) = groups(width, height, 16);
 
     lap("allocate");
-    let encoder = recording.encoder();
     {
         // Everything past the fit is skipped rather than branched around, so a fit-only run reads
         // as the same sequence it is a prefix of. The buffers those dispatches would have touched
@@ -1574,7 +1562,12 @@ async fn run(
                 .unwrap_or_else(|held| held.into_inner())
                 .clear();
         }
-        let mut run = |kernel: &Kernel, group: &wgpu::BindGroup, offset: u32, x: u32, y: u32| {
+        let mut run = |kernel: &Kernel,
+                       group: &wgpu::BindGroup,
+                       offset: u32,
+                       x: u32,
+                       y: u32,
+                       because: Whole| {
             if done.get() || recorded.get() >= stop_after {
                 return;
             }
@@ -1585,13 +1578,10 @@ async fn run(
                     .unwrap_or_else(|held| held.into_inner())
                     .push((kernel.name, x * y));
             }
-            // **A pass each, rather than one for the chain.** Most dispatches read what the one
-            // before them wrote, and in a single pass on Metal those reads landed before the write
-            // did. A pass boundary is where WebGPU guarantees the write is visible.
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernel.pipeline);
-            pass.set_bind_group(0, group, &[offset]);
-            pass.dispatch_workgroups(x, y, 1);
+            recording.dispatch([x, y, 1], because, |pass| {
+                pass.set_pipeline(&kernel.pipeline);
+                pass.set_bind_group(0, group, &[offset]);
+            });
         };
 
         // Phase 0: the blind Poisson-Gaussian fit, off the frame's own statistics - or off the
@@ -1608,6 +1598,7 @@ async fn run(
                 block_stats,
                 (slots as u32 * ne_sampled as u32).div_ceil(64).max(1),
                 1,
+                Whole::Fixed,
             );
             let g = bind(&galosh.under_black_reduce, &[(0, &raw), (1, &under_black)]);
             run(
@@ -1616,6 +1607,7 @@ async fn run(
                 pattern_push,
                 DR_WORKGROUPS,
                 1,
+                Whole::Measured,
             );
             let g = bind(
                 &galosh.ne_finalize,
@@ -1626,7 +1618,7 @@ async fn run(
                     (3, &params),
                 ],
             );
-            run(&galosh.ne_finalize, &g, finalize, 1, 1);
+            run(&galosh.ne_finalize, &g, finalize, 1, 1, Whole::Fixed);
         }
 
         // Phase 1: into the GAT domain, and the table that comes back out of it. A run handed its
@@ -1639,7 +1631,14 @@ async fn run(
                 &galosh.gat_forward_full,
                 &[(0, &raw), (1, &full_a), (6, &params)],
             );
-            run(&galosh.gat_forward_full, &g, pattern_push, fx, fy);
+            run(
+                &galosh.gat_forward_full,
+                &g,
+                pattern_push,
+                fx,
+                fy,
+                Whole::Measured,
+            );
         }
         // The table that undoes the GAT, which only the last phase reads: a fit stops before it,
         // and the series it sums is long enough that leaving it in doubles what a fit costs.
@@ -1649,9 +1648,9 @@ async fn run(
                 &galosh.build_inv_lut,
                 &[(0, &params), (1, &lut_d), (2, &lut_x), (3, &lut_params)],
             );
-            run(&galosh.build_inv_lut, &g, wh, 16, 1);
+            run(&galosh.build_inv_lut, &g, wh, 16, 1, Whole::Fixed);
             let g = bind(&galosh.lut_finalize, &[(0, &lut_d), (1, &lut_params)]);
-            run(&galosh.lut_finalize, &g, wh, 1, 1);
+            run(&galosh.lut_finalize, &g, wh, 1, 1, Whole::Fixed);
         }
         // The per-CFA sigmas and their RMS, which are whole-region reductions like Phase 0's.
         if supplied.is_none() {
@@ -1662,23 +1661,31 @@ async fn run(
                 sigma_slice,
                 slots as u32 * slices,
                 1,
+                Whole::Measured,
             );
             let g = bind(
                 &galosh.sigma_per_cfa_merge,
                 &[(0, &sigma_partial), (1, &params)],
             );
-            run(&galosh.sigma_per_cfa_merge, &g, sigma_merge, 4, 1);
+            run(
+                &galosh.sigma_per_cfa_merge,
+                &g,
+                sigma_merge,
+                4,
+                1,
+                Whole::Fixed,
+            );
             let g = bind(&galosh.unified_sigma, &[(0, &params)]);
-            run(&galosh.unified_sigma, &g, wh, 1, 1);
+            run(&galosh.unified_sigma, &g, wh, 1, 1, Whole::Fixed);
         }
         if !packs_raw {
             let g = bind(&galosh.normalize_apply, &[(0, &full_a), (5, &params)]);
-            run(&galosh.normalize_apply, &g, wh, fx, fy);
+            run(&galosh.normalize_apply, &g, wh, fx, fy, Whole::Measured);
         }
 
         // Phase 2: the per-slot dark reference, by three IRLS iterations.
         let g = bind(&galosh.irls_seed, &[(0, &params)]);
-        run(&galosh.irls_seed, &g, wh, 1, 1);
+        run(&galosh.irls_seed, &g, wh, 1, 1, Whole::Fixed);
         let reduce = bind(
             &galosh.dark_ref_reduce,
             &[(0, &full_a), (1, &raw), (2, &params), (3, &partial)],
@@ -1702,13 +1709,41 @@ async fn run(
         // checkerboard the shrinkage sees. Left at zero instead.
         if supplied.is_none() && cfa.is_bayer() {
             for iteration in 0..3 {
-                run(&galosh.dark_ref_reduce, &reduce, wh, DR_WORKGROUPS, 1);
-                run(&galosh.dark_ref_finalize, &reduce_fin, n_wg, 1, 1);
+                run(
+                    &galosh.dark_ref_reduce,
+                    &reduce,
+                    wh,
+                    DR_WORKGROUPS,
+                    1,
+                    Whole::Measured,
+                );
+                run(
+                    &galosh.dark_ref_finalize,
+                    &reduce_fin,
+                    n_wg,
+                    1,
+                    1,
+                    Whole::Fixed,
+                );
                 if iteration == 2 {
                     break;
                 }
-                run(&galosh.dark_resid_reduce, &resid, wh, DR_WORKGROUPS, 1);
-                run(&galosh.dark_resid_finalize, &resid_fin, n_wg, 1, 1);
+                run(
+                    &galosh.dark_resid_reduce,
+                    &resid,
+                    wh,
+                    DR_WORKGROUPS,
+                    1,
+                    Whole::Measured,
+                );
+                run(
+                    &galosh.dark_resid_finalize,
+                    &resid_fin,
+                    n_wg,
+                    1,
+                    1,
+                    Whole::Fixed,
+                );
             }
         }
         // The whole-frame statistics are in `params` from here, which is all a fit was after.
@@ -1716,7 +1751,7 @@ async fn run(
 
         if !packs_raw {
             let g = bind(&galosh.dark_sub_full, &[(0, &full_a), (5, &params)]);
-            run(&galosh.dark_sub_full, &g, wh, fx, fy);
+            run(&galosh.dark_sub_full, &g, wh, fx, fy, Whole::Measured);
         }
 
         let size = |level: usize| level_sizes[level];
@@ -1740,14 +1775,21 @@ async fn run(
             ],
         );
         let (px, py) = groups(size(1).0, size(1).1, 16);
-        run(pack, &g, site_push, px, py);
+        run(pack, &g, site_push, px, py, Whole::Measured);
         for level in 1..PYRAMID_LEVELS - 1 {
             let g = bind(
                 &galosh.pyr_down,
                 &[(0, &noisy[level]), (1, &noisy[level + 1])],
             );
             let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
-            run(&galosh.pyr_down, &g, down_pushes[level - 1], dx, dy);
+            run(
+                &galosh.pyr_down,
+                &g,
+                down_pushes[level - 1],
+                dx,
+                dy,
+                Whole::Measured,
+            );
         }
         for level in 0..PYRAMID_LEVELS {
             // The pilot reads no pilot; any plane of the right usage stands in.
@@ -1789,7 +1831,7 @@ async fn run(
                         _ => pass.from_colour,
                     };
                     let across = pass.tiles_x * (to - from) as u32;
-                    run(kernel, &g, push, across, pass.tiles_y);
+                    run(kernel, &g, push, across, pass.tiles_y, Whole::Measured);
                 }
             }
             if level + 1 < PYRAMID_LEVELS {
@@ -1798,7 +1840,14 @@ async fn run(
                     &[(0, shrunk(level)), (1, &pyramid_boxed[level])],
                 );
                 let (dx, dy) = groups(size(level + 1).0, size(level + 1).1, 16);
-                run(&galosh.pyr_down, &g, fuse_pushes[level], dx, dy);
+                run(
+                    &galosh.pyr_down,
+                    &g,
+                    fuse_pushes[level],
+                    dx,
+                    dy,
+                    Whole::Measured,
+                );
             }
         }
         for level in (1..PYRAMID_LEVELS - 1).rev() {
@@ -1811,7 +1860,14 @@ async fn run(
                 ],
             );
             let (ux, uy) = groups(size(level).0, size(level).1, 16);
-            run(&galosh.pyr_fuse, &g, fuse_pushes[level], ux, uy);
+            run(
+                &galosh.pyr_fuse,
+                &g,
+                fuse_pushes[level],
+                ux,
+                uy,
+                Whole::Measured,
+            );
         }
         let g = bind(
             &galosh.pyr_restore,
@@ -1828,7 +1884,7 @@ async fn run(
             ],
         );
         let (rx, ry) = groups(size(0).0, size(0).1, 16);
-        run(&galosh.pyr_restore, &g, site_push, rx, ry);
+        run(&galosh.pyr_restore, &g, site_push, rx, ry, Whole::Measured);
     }
     // Only where nothing was supplied. Phase 0 and Phase 2 are the dispatches that write these
     // slots, both are skipped when the caller brought a fit, and `irls_seed` - the one thing that
@@ -1836,7 +1892,7 @@ async fn run(
     // holding the seed, which is a map and a wait per tile for a number already in hand.
     let measure = supplied.is_none();
     if measure {
-        encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
+        recording.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
     }
     // Taken on the way past, so keeping the table costs this run one 32KB copy onto a map it was
     // already going to wait for, rather than a submit of its own.
@@ -1846,13 +1902,12 @@ async fn run(
             (&lut_x, x, LUT_SIZE as u64),
             (&lut_params, table_params, 8),
         ] {
-            encoder.copy_buffer_to_buffer(from, 0, out, 0, len * 4);
+            recording.copy_buffer_to_buffer(from, 0, out, 0, len * 4);
         }
     }
     lap("record");
     recording.submit();
-    // Before anything below, so the lap that says "dispatch" is the dispatch. It is also what
-    // bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
+    // Bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
     // still pending, so without a wait here the next tile allocates while this one's gigabyte is
     // still owed - which at 61MP is every tile's planes resident at once.
     crate::gpu::finished(gpu)

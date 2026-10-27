@@ -1,6 +1,7 @@
 //! A PQ still's light as a platform shows a PQ video's, on the device (`slang/pq_rematch.slang`).
 
 use crate::gpu::Gpu;
+use crate::gpu::dispatch::Whole;
 use crate::sdr_match::SdrMatch;
 
 const SAMPLES_PER_WORD: usize = 2;
@@ -70,15 +71,11 @@ pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([across, down, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&built.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(across, down, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&codes, 0, &read, 0, bytes);
+    });
+    recording.copy_buffer_to_buffer(&codes, 0, &read, 0, bytes);
     recording.submit();
     let mut out = crate::gpu::read_back(gpu, &read, |mapped| {
         bytemuck::pod_collect_to_vec::<u8, u16>(mapped)

@@ -7,12 +7,14 @@ class FakeWorker {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onerror: unknown = null;
   readonly posted: { id: number; to: unknown }[] = [];
+  readonly sent: unknown[] = [];
 
   constructor() {
     FakeWorker.last = this;
   }
 
   postMessage(message: unknown): void {
+    this.sent.push(message);
     if (typeof message !== 'object' || message == null || !('id' in message)) return;
     const to = 'to' in message ? message.to : null;
     if (typeof message.id === 'number') this.posted.push({ id: message.id, to });
@@ -50,6 +52,46 @@ test('a stage reaches the ask it belongs to, ahead of its answer', async () => {
 
     expect(await Promise.all(asks)).toEqual(['first', 'second']);
     expect(heard).toEqual([['demosaicing'], ['decoding', 'matching']]);
+  } finally {
+    globalThis.Worker = real;
+  }
+});
+
+test('a lost device waits for what is unsaved, reloads, and the next worker splits its sites', async () => {
+  const real = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    const held = new Map<string, string>();
+    const storage = (): Pick<Storage, 'getItem' | 'setItem'> => ({
+      getItem: (key) => held.get(key) ?? null,
+      setItem: (key, value) => {
+        held.set(key, value);
+      },
+    });
+    const happened: string[] = [];
+    const thread = new GpuThread(() => happened.push('reloaded'), storage);
+    let release: () => void = () => {};
+    thread.beforeReload(
+      () =>
+        new Promise((resolve) => {
+          release = () => {
+            happened.push('flushed');
+            resolve();
+          };
+        }),
+    );
+    FakeWorker.last!.reply({ lost: 'hung', submitted: ['gpu.rs:10', 'gpu.rs:10'] });
+    await Bun.sleep(0);
+    expect(happened).toEqual([]);
+    release();
+    await Bun.sleep(0);
+    expect(happened).toEqual(['flushed', 'reloaded']);
+
+    new GpuThread(() => {}, storage);
+    const start = FakeWorker.last!.sent.find(
+      (message) => typeof message === 'object' && message != null && 'splitBands' in message,
+    );
+    expect(start).toMatchObject({ to: 'start', splitBands: ['gpu.rs:10'] });
   } finally {
     globalThis.Worker = real;
   }

@@ -18,6 +18,7 @@
 // Through `pq_inv_nits`, the curve the grade's `nits_of_code` is filled from (21.1), so this
 // average sits where the grade's own reads sit. Not the table itself: three walks of every pixel,
 // each read scattered across its 256KB, cost an integrated GPU more than the curve.
+import band;
 import block_split;
 import packed;
 import prelude;
@@ -105,8 +106,9 @@ void assigned(out Halves h, Block b, float3 first, float3 second)
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void mean(uint3 id : SV_DispatchThreadID)
+void mean(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     let cells = (uint2(pc.width + pc.phase_x, pc.height + pc.phase_y) + pc.block - 1) / pc.block;
     if (id.x >= cells.x || id.y >= cells.y) { return; }
     let b = block_of(id.xy);

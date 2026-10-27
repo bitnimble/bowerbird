@@ -7,6 +7,8 @@
 //! slices of `SLICE`, and a thread per (slice, corner) walks one slice for one of the nodes it
 //! reaches.
 
+use crate::gpu::dispatch::Whole;
+
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
 pub(crate) const NODE_WORDS: usize = 35;
 /// Where the residual-weighted offsets a kernel's reach is sized from start among them.
@@ -237,7 +239,6 @@ pub(crate) async fn moments(
         ],
     });
 
-    // A pass each, because every one of them reads what the last wrote.
     let built = kernels(gpu);
     let over = |n: usize| (n as u32).div_ceil(64).max(1);
     for (pipeline, groups) in [
@@ -250,14 +251,12 @@ pub(crate) async fn moments(
         (&built.gather, over(slices * CORNERS)),
         (&built.fold, over(nodes * NODE_WORDS)),
     ] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(groups, 1, 1);
+        recording.dispatch([groups, 1, 1], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&totals, 0, &staging, 0, (words * 4) as u64);
+    recording.copy_buffer_to_buffer(&totals, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {

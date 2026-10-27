@@ -17,6 +17,7 @@
 // The matrix is the sensor's own, from the file (`camera_to_rec2020`), and not the fitted camera
 // match - that one is the grade's and lives in `colour.slang`. Two different 3x3s, at two different
 // ends of the pipeline.
+import band;
 import lanes;
 import prelude;
 import light;
@@ -557,9 +558,9 @@ void put_pair(uint start, uint samples, uint4 a, float3 held_a, uint4 b, float3 
 /// pixel occupancy, though few pixels run it.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void assemble_rec2020(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
+void assemble_rec2020(uint3 dispatched : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
-    let pair = owned_pair(group, local, id);
+    let pair = owned_pair(banded(group, 1), local, banded(dispatched, 1));
     let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
     if (pair == ~0u) { return; }
     let start = times(pair, 6);
@@ -648,15 +649,15 @@ void assemble_block<let SIDE : int>(uint3 id, uint3 group, uint3 local)
 /// A Bayer 2x2 site to a pixel.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void assemble_halved(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
+void assemble_halved(uint3 dispatched : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
-    assemble_block<2>(id, group, local);
+    assemble_block<2>(banded(dispatched, 1), banded(group, 1), local);
 }
 
 /// The smallest X-Trans window that holds every colour, likewise.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void assemble_thirded(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
+void assemble_thirded(uint3 dispatched : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
-    assemble_block<3>(id, group, local);
+    assemble_block<3>(banded(dispatched, 1), banded(group, 1), local);
 }

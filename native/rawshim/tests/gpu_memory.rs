@@ -35,13 +35,19 @@ fn textured() -> Vec<f32> {
 ///
 /// A warm-up first, and then the measured runs: anything a stage builds on its first call and keeps
 /// for the life of the process is a hold rather than a leak, and would otherwise be indexed as one.
-fn gives_it_back(what: &str, mut once: impl FnMut()) {
+fn gives_it_back(gpu: &rawshim::gpu::Gpu, what: &str, mut once: impl FnMut()) {
+    // Counted once the device is idle: a dispatch's timestamps are read back after its recording
+    // drops, and their buffer is held until that read lands.
+    let settled = || {
+        gpu.block_until_done();
+        rawshim::gpu::live_bytes()
+    };
     once();
-    let before = rawshim::gpu::live_bytes();
+    let before = settled();
     for _ in 0..3 {
         once();
     }
-    let after = rawshim::gpu::live_bytes();
+    let after = settled();
     assert_eq!(
         after,
         before,
@@ -62,7 +68,7 @@ fn every_stage_hands_its_working_planes_back() {
     // and none of it may outlive the call.
     match rawshim::galosh::device(gpu) {
         None => eprintln!("SKIPPED: this adapter has no room for the noise fit's workgroup."),
-        Some(kernels) => gives_it_back("denoise", || {
+        Some(kernels) => gives_it_back(gpu, "denoise", || {
             let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
             pollster::block_on(rawshim::galosh::denoise(
                 gpu,
@@ -78,7 +84,7 @@ fn every_stage_hands_its_working_planes_back() {
     // RCD's nine planes, which the tiled walk takes per tile rather than once.
     match rawshim::demosaic::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build RCD."),
-        Some(rcd) => gives_it_back("demosaic", || {
+        Some(rcd) => gives_it_back(gpu, "demosaic", || {
             let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
             pollster::block_on(rawshim::demosaic::demosaic_plane(
                 gpu,
@@ -98,7 +104,7 @@ fn every_stage_hands_its_working_planes_back() {
     match rawshim::base::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build the base pipelines."),
         Some(base) => {
-            gives_it_back("defringe", || {
+            gives_it_back(gpu, "defringe", || {
                 let resident = rawshim::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
                 pollster::block_on(rawshim::base::correct(
                     gpu,
@@ -116,7 +122,7 @@ fn every_stage_hands_its_working_planes_back() {
                 ));
                 resident.reclaim();
             });
-            gives_it_back("sharpen", || {
+            gives_it_back(gpu, "sharpen", || {
                 let mut samples = frame.clone();
                 pollster::block_on(rawshim::base::sharpen_base(
                     gpu,
@@ -149,16 +155,13 @@ fn every_stage_hands_its_working_planes_back() {
         rawshim::light::Light::exactly(1000.0),
     );
     let peak = gpu.scene_peak();
-    gives_it_back("upload", || {
+    gives_it_back(gpu, "upload", || {
         let uploaded = gpu.upload(&frame, &grade, &peak);
         // Encoded as well as uploaded: the counts and the readback are built on the first `encode`,
         // and they are per-`Uploaded` rather than per-device, so they have to go with this one.
         let _ = uploaded.encode(&grade);
     });
 
-    // The editor holds let-go buffers for the whole visit, so a drag must also leave that pool where
-    // it found it.
-    rawshim::gpu::hold_buffers();
     let uploaded = gpu.upload(&frame, &grade, &peak);
     let mut dragged = grade.clone();
     let mut tick = 0.0;
@@ -179,15 +182,5 @@ fn every_stage_hands_its_working_planes_back() {
             let _ = uploaded.encode(&dragged);
         }
     };
-    drag();
-    let kept = rawshim::gpu::kept_bytes();
-    gives_it_back("colour edit drag", &mut drag);
-    let kept_after = rawshim::gpu::kept_bytes();
-    rawshim::gpu::release_buffers();
-    assert_eq!(
-        kept_after,
-        kept,
-        "a drag grew the editor's kept buffers by {} bytes",
-        kept_after.saturating_sub(kept),
-    );
+    gives_it_back(gpu, "colour edit drag", &mut drag);
 }

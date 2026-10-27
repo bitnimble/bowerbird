@@ -6,6 +6,7 @@
 //! grid, and drops that region before the next source is decoded.
 
 use crate::composition::{Composition, Projection, SourceSpec};
+use crate::gpu::dispatch::Whole;
 use crate::px::{Drawn, Rect, Size};
 use crate::resident::Resident;
 
@@ -381,14 +382,11 @@ pub fn gather_layer(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (x, y) = crate::base::groups(pixels.div_ceil(2));
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = crate::base::groups(pixels.div_ceil(2));
-        pass.dispatch_workgroups(x, y, 1);
-    }
-    recording.submit();
+    });
 
     Layer { rgb, weight }
 }
@@ -435,10 +433,6 @@ fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
 /// as many strips is decoded five times over. A twenty-six frame pan of a 33804x9376 canvas
 /// rendered at 16384 took 180 rows a strip, and so twenty-six strips of 676 decodes; it takes 910
 /// rows and five, at 130.
-///
-/// Order is unchanged and so is the arithmetic: the adds are the same passes over the same
-/// accumulator in the same sequence, submitted one at a time rather than recorded together, and
-/// submissions to one queue run in the order they were made.
 pub struct Blending {
     gpu: &'static crate::gpu::Gpu,
     base: &'static crate::base::Base,
@@ -505,14 +499,11 @@ impl Blending {
         );
         recording.holding(layer.rgb.buffer());
         recording.holding(&layer.weight);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(self.pixels);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(self.pixels);
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
+        });
         self.added += 1;
         // Dropped before the next source is decoded, which is the whole memory argument: the
         // submission holds what it reads, so the handle going here is the allocation coming back.
@@ -534,14 +525,11 @@ impl Blending {
         );
         recording.holding(self.out.buffer());
         recording.holding(&self.alpha);
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(self.pixels.div_ceil(2));
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
+        });
         drop(recording);
         (self.out, self.alpha)
     }
@@ -1690,15 +1678,15 @@ pub async fn probe_layer(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((pixels as u32).div_ceil(GROUP as u32), 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&probe, 0, &staging, 0, (pixels * 3 * 4) as u64);
+    recording.dispatch(
+        [(pixels as u32).div_ceil(GROUP as u32), 1, 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernel.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&probe, 0, &staging, 0, (pixels * 3 * 4) as u64);
     recording.submit();
 
     crate::gpu::read_back(gpu, &staging, |mapped| {
@@ -2004,9 +1992,7 @@ mod tests {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(buffer, 0, &staging, 0, (words * 4) as u64);
+        recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, (words * 4) as u64);
         recording.submit();
         staging
     }

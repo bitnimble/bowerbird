@@ -157,15 +157,11 @@ impl Comparison {
                 },
             ],
         });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        recording.dispatch([1, 1, 1], gpu::dispatch::Whole::Fixed, |pass| {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&output, 0, &readback, 0, 48);
+        });
+        recording.copy_buffer_to_buffer(&output, 0, &readback, 0, 48);
         recording.submit();
         pollster::block_on(gpu::read_back(self.gpu, &readback, |bytes| {
             std::array::from_fn(|i| {

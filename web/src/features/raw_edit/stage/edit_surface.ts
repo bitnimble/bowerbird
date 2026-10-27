@@ -16,8 +16,14 @@ export class EditSurface {
   private adapter: AdapterInfo | null = null;
   private stageHanded = false;
 
-  constructor(private readonly thread: Pick<GpuThread, 'keepSurface' | 'dropSurface'>) {
+  constructor(
+    private readonly thread: Pick<GpuThread, 'keepSurface' | 'dropSurface' | 'beforeReload'>,
+  ) {
     this.stageKey = thread.keepSurface();
+  }
+
+  beforeReload(flush: () => Promise<void>): () => void {
+    return this.thread.beforeReload(flush);
   }
 
   async adapterInfo(): Promise<AdapterInfo | null> {

@@ -8,6 +8,8 @@
 //! Six stages, each a pure map over its site set, so each is one dispatch and nothing inside a
 //! stage depends on anything else the same stage writes.
 
+use crate::gpu::dispatch::{Banded, Pass, Whole};
+
 /// Pixels at the frame edge that RCD does not write, filled by a cheap interpolation instead.
 ///
 /// The specification's reach analysis composes to 10: the low-pass reaches 1, the directional
@@ -32,17 +34,17 @@ pub struct Rcd {
     assemble_layout: wgpu::BindGroupLayout,
     /// The pairs `assemble_rec2020` leaves for `assemble_blown`, and the dispatch that walks them.
     blown_layout: wgpu::BindGroupLayout,
-    assemble: wgpu::ComputePipeline,
+    assemble: Banded,
     /// The same entry point compiled for a 6x6 period, which is the one thing the two patterns
     /// share a walk over.
-    assemble_xtrans: wgpu::ComputePipeline,
+    assemble_xtrans: Banded,
     blown_args: wgpu::ComputePipeline,
     assemble_blown: wgpu::ComputePipeline,
     assemble_blown_xtrans: wgpu::ComputePipeline,
     /// One pipeline per reduction factor: the block's side is a generic in the shader so both walks
     /// unroll, which as a uniform they did not.
-    assemble_halved: wgpu::ComputePipeline,
-    assemble_thirded: wgpu::ComputePipeline,
+    assemble_halved: Banded,
+    assemble_thirded: Banded,
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Rcd> {
@@ -168,12 +170,6 @@ impl Rcd {
             label: Some("assemble blown"),
             entries: &[storage(0, false), storage(1, false)],
         });
-        let assemble_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("assemble"),
-                bind_group_layouts: &[Some(&frame), Some(&assemble_layout)],
-                ..Default::default()
-            });
         let listing_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("assemble listing"),
@@ -197,18 +193,28 @@ impl Rcd {
                 cache: None,
             })
         };
+        let banded = |entry: &str, cfa: &crate::cfa::Cfa, groups: &[&wgpu::BindGroupLayout]| {
+            device.create_banded_pipeline(
+                entry,
+                &assemble_module,
+                groups,
+                entry,
+                crate::wgsl_overrides::for_entry("assemble.wgsl", entry, &cfa.constants()),
+            )
+        };
         // The only entry points either pattern reaches, so the only ones compiled twice. The two
         // reduced walks are each one pattern's by construction: a 2x2 site is Bayer's and the 3x3
         // window is X-Trans's.
         let xtrans = crate::cfa::Cfa::new(6, 6, &[1; 36])?;
         let listing = &listing_pipeline_layout;
-        let assemble = assembling("assemble_rec2020", &bayer, listing);
-        let assemble_xtrans = assembling("assemble_rec2020", &xtrans, listing);
+        let all = [&frame, &assemble_layout, &blown_layout];
+        let assemble = banded("assemble_rec2020", &bayer, &all);
+        let assemble_xtrans = banded("assemble_rec2020", &xtrans, &all);
         let blown_args = assembling("blown_args", &bayer, listing);
         let assemble_blown = assembling("assemble_blown", &bayer, listing);
         let assemble_blown_xtrans = assembling("assemble_blown", &xtrans, listing);
-        let assemble_halved = assembling("assemble_halved", &bayer, &assemble_pipeline_layout);
-        let assemble_thirded = assembling("assemble_thirded", &xtrans, &assemble_pipeline_layout);
+        let assemble_halved = banded("assemble_halved", &bayer, &all[..2]);
+        let assemble_thirded = banded("assemble_thirded", &xtrans, &all[..2]);
 
         Some(Rcd {
             frame,
@@ -636,7 +642,7 @@ pub async fn demosaic_halved_into(
 }
 
 /// The colour pass over `rgb`, a demosaiced plane `at` describes, recorded after what `recording`
-/// already holds and submitted with it.
+/// already holds.
 #[allow(clippy::too_many_arguments)]
 async fn assembled(
     gpu: &'static crate::gpu::Gpu,
@@ -702,7 +708,7 @@ async fn assembled(
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    recording.encoder().clear_buffer(&blown, 0, None);
+    recording.clear_buffer(&blown, 0, None);
     let blown_group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("assemble blown"),
         layout: &rcd.blown_layout,
@@ -717,48 +723,26 @@ async fn assembled(
             },
         ],
     });
-    let bayer = cfa.is_bayer();
-    for (pipeline, dispatch) in [
-        (
-            if bayer {
-                &rcd.assemble
-            } else {
-                &rcd.assemble_xtrans
-            },
-            Some((x, y)),
-        ),
-        (&rcd.blown_args, Some((1, 1))),
-        (
-            if bayer {
-                &rcd.assemble_blown
-            } else {
-                &rcd.assemble_blown_xtrans
-            },
-            None,
-        ),
-    ] {
-        if dispatch.is_none() {
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(&blown, 0, &blown_dispatch, 0, 12);
-        }
-        let mut pass = recording
-            .encoder()
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("assemble"),
-                timestamp_writes: None,
-            });
+    let (assemble, assemble_blown) = match cfa.is_bayer() {
+        true => (&rcd.assemble, &rcd.assemble_blown),
+        false => (&rcd.assemble_xtrans, &rcd.assemble_blown_xtrans),
+    };
+    recording.banded(assemble, [x, y, 1], |pass| {
+        pass.set_bind_group(0, shape_group, &[]);
+        pass.set_bind_group(1, &assemble_group, &[]);
+        pass.set_bind_group(2, &blown_group, &[]);
+    });
+    let bind = |pass: &mut Pass<'_>, pipeline: &wgpu::ComputePipeline| {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, shape_group, &[]);
         pass.set_bind_group(1, &assemble_group, &[]);
         pass.set_bind_group(2, &blown_group, &[]);
-        match dispatch {
-            Some((x, y)) => pass.dispatch_workgroups(x, y, 1),
-            None => pass.dispatch_workgroups_indirect(&blown_dispatch, 0),
-        }
-    }
+    };
+    recording.dispatch([1, 1, 1], Whole::Fixed, |pass| bind(pass, &rcd.blown_args));
+    recording.copy_buffer_to_buffer(&blown, 0, &blown_dispatch, 0, 12);
+    recording.dispatch_indirect(&blown_dispatch, 0, |pass| bind(pass, assemble_blown));
 
-    // **One submit per tile, and that is load-bearing.** A word at the tile's own edge holds one
+    // **Finished per tile, and that is load-bearing.** A word at the tile's own edge holds one
     // sample of this tile and one of its neighbour, so it is read and put back rather than
     // overwritten - which is only safe if the neighbour's write has already landed.
     recording.submit();
@@ -816,22 +800,15 @@ pub async fn reduce_into(
             },
         ],
     });
-    {
-        let mut pass = recording
-            .encoder()
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("reduce"),
-                timestamp_writes: None,
-            });
-        pass.set_pipeline(match at.reduce {
-            3 => &rcd.assemble_thirded,
-            _ => &rcd.assemble_halved,
-        });
+    let (x, y) = at.dispatch();
+    let reduced = match at.reduce {
+        3 => &rcd.assemble_thirded,
+        _ => &rcd.assemble_halved,
+    };
+    recording.banded(reduced, [x, y, 1], |pass| {
         pass.set_bind_group(0, shape_group, &[]);
         pass.set_bind_group(1, &group, &[]);
-        let (x, y) = at.dispatch();
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
     recording.submit();
     crate::gpu::finished(gpu).await
 }
@@ -862,9 +839,7 @@ pub async fn read_frame(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(frame, 0, &readback, 0, bytes);
+    recording.copy_buffer_to_buffer(frame, 0, &readback, 0, bytes);
     recording.submit();
 
     let mut out = vec![0u16; pixels * 3];
@@ -908,9 +883,7 @@ pub async fn demosaic_plane<T>(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
+    recording.copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
     recording.submit();
     crate::gpu::read_back(gpu, &readback, consume).await
 }
@@ -935,7 +908,7 @@ pub fn demosaic_resident(
     Some(rgb)
 }
 
-/// The demosaic this pattern gets, recorded but not submitted, with the plane it writes.
+/// The demosaic this pattern gets, recorded into `recording`, with the plane it writes.
 ///
 /// **The fork is on the pattern and nothing else.** RCD pairs rows and columns into 2x2 sites at
 /// every stage, so it answers for the patterns that have such a site and declines the rest; the
@@ -994,8 +967,8 @@ pub fn shape_group(
     (shape, group)
 }
 
-/// A demosaic recorded and not yet submitted: the pass, the plane it writes, and the description of
-/// the frame that `assemble.slang` reads next out of the same group 0.
+/// A demosaic dispatched, with its recording still open: the plane it writes, and the description
+/// of the frame that `assemble.slang` reads next out of the same group 0.
 pub struct Recorded {
     pub recording: crate::gpu::Recording<'static>,
     pub rgb: crate::gpu::Buffer,
@@ -1003,7 +976,7 @@ pub struct Recorded {
     pub height: usize,
 }
 
-/// RCD's own dispatches, recorded but not submitted, with the plane they write.
+/// RCD's own dispatches, recorded into `recording`, with the plane they write.
 fn record_rcd(
     gpu: &'static crate::gpu::Gpu,
     rcd: &Rcd,
@@ -1077,23 +1050,14 @@ fn record_rcd(
         ],
     });
 
-    {
-        let mut pass = recording
-            .encoder()
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("rcd"),
-                timestamp_writes: None,
-            });
-        pass.set_bind_group(0, shape_group, &[]);
-        pass.set_bind_group(1, &plane_group, &[]);
-        let groups_x = width.div_ceil(8) as u32;
-        let groups_y = height.div_ceil(8) as u32;
-        // In order: the stages have real dependencies on each other (the specification's §12), and
-        // a compute pass gives each dispatch a barrier against the last.
-        for pipeline in &rcd.pipelines {
+    let groups_x = width.div_ceil(8) as u32;
+    let groups_y = height.div_ceil(8) as u32;
+    for pipeline in &rcd.pipelines {
+        recording.dispatch([groups_x, groups_y, 1], Whole::Measured, |pass| {
+            pass.set_bind_group(0, shape_group, &[]);
+            pass.set_bind_group(1, &plane_group, &[]);
             pass.set_pipeline(pipeline);
-            pass.dispatch_workgroups(groups_x, groups_y, 1);
-        }
+        });
     }
 
     lap("record");

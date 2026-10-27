@@ -121,15 +121,18 @@ or the filmstrip, keeps what the next open would otherwise rebuild or remount:
   and the next open's prepare names that key to adopt it (`adoptStage`): a canvas is handed to the
   worker once per element, so the page keeps the element too. An open superseded mid-prepare still
   holds the stage, and the next waits for it to be kept.
-- The buffers. While a visit holds them (`gpu::hold_buffers`), a buffer let go goes to a pool for the
-  next asked for at its size and usage, up to 2GiB idle, and comes back cleared. Allocation was a
-  fifth of a 24MP prepare in Chrome, and the next photo's prepare asks for the same shapes again.
-  Cleared because several kernels accumulate into buffers they never zeroed
-  (`a_reused_buffer_reads_as_a_fresh_one`).
 - The adapter, asked once per visit.
 
 The worker frees a session's picture only once no ask on it is still running: a tick suspended
 inside a freed picture throws when it resumes, outside any ask, and takes the worker down.
+
+**A lost device reloads the page.** A wasm call into a lost device can trap mid-write, so the worker
+is not reused: it posts where it recently submitted from, `GpuThread` records those sites in
+sessionStorage (`gpu_losses.ts`, 3 reloads in 10 minutes at most), waits for the editor to store
+what it holds (`beforeReload`, `EditPresenter.flush`) and reloads. The next worker hands the sites
+to `splitBands`, which cuts the bands dispatched from each 8 times smaller per loss
+(`gpu/dispatch.rs`). Every dispatch is its own submission, and one that follows the picture's size
+runs as bands sized to about 50ms, so Windows' 2s watchdog (TDR) is not reached.
 
 Page retains open header for the panel. Its `stage_resolution.ts` decides backing-store
 dimensions from layout size and device pixel ratio.

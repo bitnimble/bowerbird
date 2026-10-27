@@ -13,6 +13,7 @@
 // The planes are f32, which is not a compromise: they are built from 8-bit samples, so f32's 24-bit
 // mantissa holds them exactly and a 49-term patch sum nowhere near reaches its limits. Measured, one
 // frame's held-out deltaE moves 1e-6 and every fitted matrix and curve is unchanged.
+import band;
 
 struct Push {
     int width;
@@ -20,13 +21,7 @@ struct Push {
     int points;
     float flat_patch;
     float match_min;
-    /// Threads along x, so the second dispatch dimension can carry the rest.
-    ///
-    /// A dense search is one thread per pixel of the camera's plane, and a 61MP frame's plane
-    /// passes the 65535 workgroups a single dimension may hold - which is a validation error,
-    /// which `gpu::build` turns into a panic, so the whole fit fails and the photo ships with
-    /// its own colour. `Asking::dispatch` spreads the overflow across y and states the stride
-    /// it used here.
+    /// Threads along x, the rest going to y; `dispatch_span` says why.
     int span;
     /// How far either way of the centre to look, or negative for the whole `SEARCH` window.
     ///
@@ -140,8 +135,9 @@ float sub_pixel(float lower, float middle, float upper)
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void correspond(uint3 id: SV_DispatchThreadID)
+void correspond(uint3 dispatched: SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 1);
     let point = int(id.y * uint(pc.span) + id.x);
     if (point >= pc.points) { return; }
     let x = at[2 * point];
@@ -308,8 +304,9 @@ float held_score(float mean, float spread, int cx, int cy, int ox, int oy)
 /// lane, and the running best taken over the scores afterwards in `correspond`'s own order.
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void correspond_lanes(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
+void correspond_lanes(uint3 dispatched: SV_GroupID, uint index: SV_GroupIndex)
 {
+    let group = banded(dispatched, 1);
     let point = int(group.y * uint(pc.span) + group.x);
     if (point >= pc.points) { return; }
     let lane = int(index);

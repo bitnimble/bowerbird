@@ -46,6 +46,7 @@
 // of it. A radius in frame pixels would make an 800px tile look nothing like the 3840px view
 // it is a thumbnail of.
 import prelude;
+import band;
 import edit;
 import packed;
 import px;
@@ -192,8 +193,9 @@ float fine_blurred(int2 at, int2 size)
 /// a visible block edge in the sky - which is what the fit downstream is for.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void shrink(uint3 id : SV_DispatchThreadID)
+void shrink(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     uint2 size;
     written.GetDimensions(size.x, size.y);
     if (id.x >= size.x || id.y >= size.y) { return; }
@@ -240,8 +242,9 @@ void shrink(uint3 id : SV_DispatchThreadID)
 /// them separately would be two.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void moments_of(uint3 id : SV_DispatchThreadID)
+void moments_of(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     uint2 size;
     moments_out.GetDimensions(size.x, size.y);
     if (id.x >= size.x || id.y >= size.y) { return; }
@@ -287,8 +290,9 @@ static const float WINDOW_RANGE = 0.5;
 /// the outermost band of the picture.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void window_mean(uint3 id : SV_DispatchThreadID)
+void window_mean(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     uint2 raw;
     moments_out.GetDimensions(raw.x, raw.y);
     let size = int2(raw);
@@ -325,8 +329,9 @@ void window_mean(uint3 id : SV_DispatchThreadID)
 /// there would flip the sign of `a` and put an inverted edge in the smoothed image.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void coefficients(uint3 id : SV_DispatchThreadID)
+void coefficients(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     uint2 size;
     moments_out.GetDimensions(size.x, size.y);
     if (id.x >= size.x || id.y >= size.y) { return; }
@@ -378,8 +383,9 @@ void coefficients(uint3 id : SV_DispatchThreadID)
 /// to be the reference for.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void apply_guided(uint3 id : SV_DispatchThreadID)
+void apply_guided(uint3 dispatched : SV_DispatchThreadID)
 {
+    let id = banded(dispatched, 8);
     uint2 raw;
     written.GetDimensions(raw.x, raw.y);
     let size = int2(raw);

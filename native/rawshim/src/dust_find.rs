@@ -7,16 +7,13 @@
 //! the flood fill's mask and its heights in one plane, and the fitted spots, which are twenty-odd
 //! kilobytes. The mosaic itself never leaves the device.
 
+use crate::gpu::dispatch::Whole;
+
 /// Log-spaced bins the texture's floor is taken from. `HIST_BINS` in the shader, which is where the
 /// quantile over them is worked out; this side only sizes the buffer.
 const HIST_BINS: usize = 512;
 
 /// One dispatch's scalars, at the dynamic offset that binds them.
-///
-/// A slot each rather than a buffer each, as `galosh` does it: WGSL has no push constants, and the
-/// radius, the channel and the floor all change between passes - so a single buffer rewritten
-/// between dispatches would hand every pass the last one's numbers, a queue write landing before the
-/// whole submit rather than between two of its passes.
 const SLOT: u64 = 256;
 
 /// Where `count` sits inside a slot: the one field the host writes after the buffer is built, once
@@ -276,7 +273,7 @@ pub struct Search {
 
 /// Everything up to the mask, leaving the planes the fits read where they are.
 ///
-/// One submit and one readback: the mask's floor is a quantile of a plane this sweep writes, and it
+/// One readback: the mask's floor is a quantile of a plane this sweep writes, and it
 /// is worked out on the device rather than fetched, so nothing here waits on the host.
 pub async fn sweep(
     gpu: &crate::gpu::Gpu,
@@ -364,19 +361,16 @@ pub async fn sweep(
         bound(gpu, &uniforms, layout, buffers)
     };
 
-    // **A pass each rather than one for the chain**, for the reason `galosh` records: most dispatches
-    // here read what the one before them wrote, and a pass boundary is where WebGPU guarantees the
-    // write is visible.
-    let run = |encoder: &mut wgpu::CommandEncoder,
+    let run = |recording: &mut crate::gpu::Recording<'_>,
                pipeline: &wgpu::ComputePipeline,
                group: &wgpu::BindGroup,
                slot: u32,
                items: usize| {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, group, &[slot]);
         let (x, y) = crate::base::groups(items);
-        pass.dispatch_workgroups(x, y, 1);
+        recording.dispatch([x, y, 1], Whole::Measured, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[slot]);
+        });
     };
     // Three box passes down the columns, the frame turned, three more, and turned back - which is
     // close enough to a Gaussian for a background estimate, at eight linear passes rather than a
@@ -388,28 +382,28 @@ pub async fn sweep(
     let words = count / 2;
     let down = |hw: usize, hh: usize| hw / 2 * hh.div_ceil(SEGMENT);
     let tiles = shape.hw.div_ceil(PATCH) * shape.hh.div_ceil(PATCH) * 64;
-    let blur =
-        |encoder: &mut wgpu::CommandEncoder, plane: &crate::gpu::Buffer, window: (u32, u32)| {
-            let out = bind(&kernels.separable, &[(10, plane), (11, scratch)]);
-            let back = bind(&kernels.separable, &[(10, scratch), (11, plane)]);
-            let laid = [
-                (window.0, down(shape.hw, shape.hh)),
-                (window.1, down(shape.hh, shape.hw)),
-            ];
-            for (slot, items) in laid {
-                for step in 0..3 {
-                    let group = match step % 2 {
-                        0 => &out,
-                        _ => &back,
-                    };
-                    run(encoder, &kernels.box_cols, group, slot, items);
-                }
-                run(encoder, &kernels.transpose, &back, slot, tiles);
+    let blur = |recording: &mut crate::gpu::Recording<'_>,
+                plane: &crate::gpu::Buffer,
+                window: (u32, u32)| {
+        let out = bind(&kernels.separable, &[(10, plane), (11, scratch)]);
+        let back = bind(&kernels.separable, &[(10, scratch), (11, plane)]);
+        let laid = [
+            (window.0, down(shape.hw, shape.hh)),
+            (window.1, down(shape.hh, shape.hw)),
+        ];
+        for (slot, items) in laid {
+            for step in 0..3 {
+                let group = match step % 2 {
+                    0 => &out,
+                    _ => &back,
+                };
+                run(recording, &kernels.box_cols, group, slot, items);
             }
-        };
+            run(recording, &kernels.transpose, &back, slot, tiles);
+        }
+    };
 
-    let encoder = recording.encoder();
-    encoder.clear_buffer(&histogram, 0, None);
+    recording.clear_buffer(&histogram, 0, None);
 
     let quads = bind(
         &kernels.quads.layout,
@@ -422,19 +416,25 @@ pub async fn sweep(
             (6, lit),
         ],
     );
-    run(encoder, &kernels.quads.pipeline, &quads, plain, words);
-    blur(encoder, lit, blurs[0]);
+    run(
+        &mut recording,
+        &kernels.quads.pipeline,
+        &quads,
+        plain,
+        words,
+    );
+    blur(&mut recording, lit, blurs[0]);
 
     for (channel, plane) in [red, green, blue].into_iter().enumerate() {
-        encoder.copy_buffer_to_buffer(plane, 0, sharp, 0, (count * 2) as u64);
-        blur(encoder, sharp, blurs[1]);
-        blur(encoder, plane, blurs[2]);
+        recording.copy_buffer_to_buffer(plane, 0, sharp, 0, (count * 2) as u64);
+        blur(&mut recording, sharp, blurs[1]);
+        blur(&mut recording, plane, blurs[2]);
         let fold = bind(
             &kernels.fold.layout,
             &[(20, sharp), (21, plane), (22, sum), (23, low), (24, high)],
         );
         run(
-            encoder,
+            &mut recording,
             &kernels.fold.pipeline,
             &fold,
             folds[channel],
@@ -446,42 +446,64 @@ pub async fn sweep(
         &kernels.judge.layout,
         &[(22, sum), (23, low), (24, high), (30, score), (31, texture)],
     );
-    run(encoder, &kernels.judge.pipeline, &judge, plain, words);
+    run(
+        &mut recording,
+        &kernels.judge.pipeline,
+        &judge,
+        plain,
+        words,
+    );
 
     // The opening, and the top-hat against the score it was taken from. Out into `sum`, which the
     // judge has finished with, because the difference reads both of its inputs.
-    encoder.copy_buffer_to_buffer(score, 0, prominence, 0, (count * 2) as u64);
+    recording.copy_buffer_to_buffer(score, 0, prominence, 0, (count * 2) as u64);
     let out = bind(&kernels.separable, &[(10, prominence), (11, scratch)]);
     let back = bind(&kernels.separable, &[(10, scratch), (11, prominence)]);
     for slot in [erode, dilate] {
-        run(encoder, &kernels.rank_rows, &out, slot, words);
-        run(encoder, &kernels.rank_cols, &back, slot, words);
+        run(&mut recording, &kernels.rank_rows, &out, slot, words);
+        run(&mut recording, &kernels.rank_cols, &back, slot, words);
     }
     let tophat = bind(
         &kernels.tophat.layout,
         &[(40, prominence), (41, score), (42, sum)],
     );
-    run(encoder, &kernels.tophat.pipeline, &tophat, plain, words);
+    run(
+        &mut recording,
+        &kernels.tophat.pipeline,
+        &tophat,
+        plain,
+        words,
+    );
 
     // How busy the neighbourhood is, as the RMS of the band-pass over a window wide enough that one
     // particle is a small part of it. Already squared by `judge`.
-    blur(encoder, texture, blurs[3]);
+    blur(&mut recording, texture, blurs[3]);
 
     let spread = bind(&kernels.spread.layout, &[(50, texture), (51, &histogram)]);
-    run(encoder, &kernels.spread.pipeline, &spread, plain, words);
+    run(
+        &mut recording,
+        &kernels.spread.pipeline,
+        &spread,
+        plain,
+        words,
+    );
 
     // **The quantile is a dispatch, not a readback.** Two kilobytes of counts crossing back to be
     // divided would drain the device and stall everything after it - and the only thing the threshold
     // wants of them is one float, which a single lane can work out where they lie.
     let counts = bind(&kernels.quantile.layout, &[(52, &histogram)]);
-    run(encoder, &kernels.quantile.pipeline, &counts, plain, 1);
+    let (x, y) = crate::base::groups(1);
+    recording.dispatch([x, y, 1], Whole::Fixed, |pass| {
+        pass.set_pipeline(&kernels.quantile.pipeline);
+        pass.set_bind_group(0, &counts, &[plain]);
+    });
 
     let threshold = bind(
         &kernels.threshold.layout,
         &[(60, sum), (61, texture), (62, score), (63, &histogram)],
     );
     run(
-        encoder,
+        &mut recording,
         &kernels.threshold.pipeline,
         &threshold,
         plain,
@@ -552,12 +574,10 @@ impl Search {
             ],
         );
 
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        recording.dispatch([blobs.len() as u32, 1, 1], Whole::Fixed, |pass| {
             pass.set_pipeline(&kernels.fits.pipeline);
             pass.set_bind_group(0, &group, &[self.fits_slot]);
-            pass.dispatch_workgroups(blobs.len() as u32, 1, 1);
-        }
+        });
         recording.submit();
 
         read_f32(gpu, &out, blobs.len() * words).await
@@ -600,9 +620,7 @@ async fn mapped(gpu: &crate::gpu::Gpu, from: &crate::gpu::Buffer, bytes: u64) ->
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
+    recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
     recording.submit();
     crate::gpu::read_back(gpu, &readback, <[u8]>::to_vec).await
 }

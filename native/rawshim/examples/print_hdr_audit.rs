@@ -196,15 +196,11 @@ fn main() -> Result<(), String> {
                         },
                     ],
                 });
-                {
-                    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+                recording.dispatch([1, 1, 1], rawshim::gpu::dispatch::Whole::Fixed, |pass| {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
-                    pass.dispatch_workgroups(1, 1, 1);
-                }
-                recording
-                    .encoder()
-                    .copy_buffer_to_buffer(&result, 0, &readback, 0, 64);
+                });
+                recording.copy_buffer_to_buffer(&result, 0, &readback, 0, 64);
                 recording.submit();
                 let statistics: [f32; 16] =
                     pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {

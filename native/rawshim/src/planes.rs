@@ -4,6 +4,7 @@
 //! and hands back its planes rather than RGB; where there is none, `native/avif_planes` does. `planes.slang` is the conversion libavif does on the
 //! server, so what [`crate::linearise::Picture`] holds is the same either way.
 
+use crate::gpu::dispatch::Whole;
 use serde::Deserialize;
 
 /// The planes as `VideoFrame.copyTo` laid them out.
@@ -125,13 +126,11 @@ pub fn codes(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (x, y) = crate::base::groups(out.words());
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = crate::base::groups(out.words());
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
     recording.submit();
     Ok(out)
 }

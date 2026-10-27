@@ -15,7 +15,7 @@ module lanes;
 /// `base::ROW_GROUPS` does and `the_shaders_split_a_dispatch_where_the_host_does` holds it to. A
 /// row narrower than the host's leaves every row after the first reading another row's samples,
 /// which is a picture assembled out of the wrong pixels rather than a failure.
-public static const uint ROW_GROUPS = 32768;
+public static const uint ROW_GROUPS = 1024;
 
 public uint linear(uint3 id)
 {

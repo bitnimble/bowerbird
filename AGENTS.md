@@ -211,7 +211,8 @@ only: a collapse-stamp bug passed 40 and 1000, then diverged at 2 seeds in 1500
 `src/services/replication` do not need it.
 
 **Render-cost changes require `bun run test:bench`** (`scripts/bench.ts`): shaders, kernels,
-fit, decode, added stages. A stage over budget fails. Different adapters or uniform machine
+fit, decode, added stages. A stage over budget fails, and so does a dispatch run whole past
+100ms: put it through `Recording::banded`. Different adapters or uniform machine
 load shifts report and pass; failures on the budget's machine must be fixed or deliberately
 re-recorded in the same commit (`BOWERBIRD_WRITE_BUDGET=1 bun run bench`, idle machine).
 Never leave the budget red.

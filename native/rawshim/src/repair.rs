@@ -11,6 +11,7 @@
 //! leaves `base::prepare` sharpened (`tile::prepared_on_device`), and a whole rendition is
 //! sharpened per target (`hdr::Cut::from_base`).
 
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{self, Gpu};
 use crate::light::Gain;
 use crate::px::{
@@ -421,7 +422,7 @@ pub(crate) fn apply(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(
+    recording.copy_buffer_to_buffer(
         frame.buffer(),
         (first_word * 4) as u64,
         &band,
@@ -484,13 +485,11 @@ pub(crate) fn apply(
         });
         dispatches.push((group, crate::base::groups(pixels.div_ceil(2))));
     }
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel.pipeline);
-        for (group, (x, y)) in &dispatches {
+    for (group, (x, y)) in &dispatches {
+        recording.dispatch([*x, *y, 1], Whole::Measured, |pass| {
+            pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(*x, *y, 1);
-        }
+        });
     }
     recording.submit();
     Ok(cuts)

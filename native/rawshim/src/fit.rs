@@ -1,8 +1,8 @@
 // Fitting the transform that takes a RAW render to the camera's own JPEG.
 //
 // The whole search runs in one place: it evaluates tens of candidate geometries, each of
-// which is warped on the device, paired and fitted, and the scan's candidates go up in one
-// submit.
+// which is warped on the device, paired and fitted, and the scan's candidates come back in one
+// round trip.
 //
 // Order matters and is not negotiable: geometry first, colour second. A colour
 // transform is fitted from pixel pairs, and a pair means nothing unless both
@@ -17,6 +17,7 @@
 // capacities "all land within 1.5 of each other" - does not stand, being a small
 // difference read off the blind measure described at the `deltaE` section below.
 
+use crate::gpu::dispatch::Whole;
 use crate::image::polynomial_knots;
 #[cfg(test)]
 use crate::rgb::RgbRef;
@@ -224,7 +225,7 @@ struct Grid {
 }
 
 impl Grid {
-    /// The render through each candidate, at the JPEG's size, in one submit.
+    /// The render through each candidate, at the JPEG's size, in one round trip.
     fn warped(&self, gpu: &'static crate::gpu::Gpu, lenses: &[Lens]) -> Vec<crate::gpu::Buffer> {
         let size = (self.jpeg.width, self.jpeg.height);
         crate::hdr_fit::warped_planes(gpu, &self.source, self.source_size, lenses, size)
@@ -348,8 +349,8 @@ impl Sampled {
     }
 }
 
-/// One `fit_grids.slang` pass, in a compute pass of its own so the axis after it reads what this
-/// one wrote.
+/// One `fit_grids.slang` pass.
+#[track_caller]
 pub(crate) fn pass(
     gpu: &'static crate::gpu::Gpu,
     recording: &mut crate::gpu::Recording<'_>,
@@ -374,6 +375,7 @@ pub(crate) fn pass(
 
 /// [`pass`] with its workgroups laid out as `groups`.
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 fn pass_over(
     gpu: &'static crate::gpu::Gpu,
     recording: &mut crate::gpu::Recording<'_>,
@@ -440,12 +442,10 @@ fn pass_over(
             },
         ],
     });
-    {
-        let mut compute = recording.encoder().begin_compute_pass(&Default::default());
-        compute.set_pipeline(pipeline);
-        compute.set_bind_group(0, &group, &[]);
-        compute.dispatch_workgroups(groups.0, groups.1, 1);
-    }
+    recording.dispatch([groups.0, groups.1, 1], Whole::Measured, |pass| {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+    });
     Sampled {
         buffer: out,
         width,
@@ -580,9 +580,7 @@ fn staged(recording: &mut crate::gpu::Recording<'_>, plane: &Sampled) -> crate::
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&plane.buffer, 0, &staging, 0, bytes);
+    recording.copy_buffer_to_buffer(&plane.buffer, 0, &staging, 0, bytes);
     staging
 }
 
@@ -613,7 +611,7 @@ async fn read_rgb(
 
 /// The shared tail of every curve fit: gaps interpolated, ends extended, monotone.
 ///
-/// **`fit_obj_curve` is the one that runs**, in the same submit as the bins that feed it and the
+/// **`fit_obj_curve` is the one that runs**, in the same round trip as the bins that feed it and the
 /// score that reads it. This is the reference it took over, and what the tests below state the
 /// shape against: a curve that dips posterises a gradient, and a bin backed by a handful of pixels
 /// states a ratio rather than a measurement.
@@ -1069,8 +1067,8 @@ fn luma8(r: u8, g: u8, b: u8) -> u8 {
 // exists to remove detail neither image can be trusted on, and a Gaussian commutes with a
 // near-identity resample closely enough that the fitted deltaE does not move.
 
-/// Warps every candidate in one submit, then scores every one of them in another. They share only
-/// their inputs, which is what lets the whole scan be two dispatches rather than a round trip each;
+/// Warps every candidate, then scores every one of them, waiting once. They share only their
+/// inputs, which is what lets the whole scan be one round trip rather than one each;
 /// the refine that follows is sequential by nature, each step depending on the last.
 ///
 /// Ties break on position, not on whichever branch of a reduction happened to hold them. A frame
@@ -1431,8 +1429,8 @@ async fn grids_from_preview(
     render: &crate::fit_source::Rendered,
     preview: &crate::hdr_fit::Source,
 ) -> Option<(Grids, crate::hdr_fit::Source)> {
-    // Already f32 and already on the device: `fit_render` wrote it in the submit that made the
-    // plane, so this is the buffer itself rather than a copy of one.
+    // Already f32 and already on the device, where `fit_render` wrote it, so this is the buffer
+    // itself rather than a copy of one.
     let render = Sampled {
         buffer: render.buffer.clone(),
         width: render.width,

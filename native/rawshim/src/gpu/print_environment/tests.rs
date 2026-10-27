@@ -15,9 +15,7 @@ fn floats(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
+    recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
     recording.submit();
     pollster::block_on(super::super::read_back(gpu, &readback, |bytes| {
         bytes
@@ -103,12 +101,10 @@ fn measured(gpu: &Gpu, environment: Environment) -> (Vec<f32>, u32) {
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([1, 1, 1], super::super::dispatch::Whole::Fixed, |pass| {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
+    });
     (floats(gpu, recording, &output, 7), map.width)
 }
 

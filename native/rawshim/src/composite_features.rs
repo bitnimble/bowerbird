@@ -12,6 +12,7 @@
 //! something everywhere; this finds nothing where there is nothing, so a pair over thin content
 //! comes back with no opinion rather than a wrong one.
 
+use crate::gpu::dispatch::Whole;
 use crate::hdr_fit::{DevicePlane, Kernel, READ, UNIFORM, WRITE, kernel};
 
 /// `composite_features.slang`'s `SIDE` squared: the descriptor's length, which does not depend on
@@ -149,15 +150,15 @@ pub async fn described(gpu: &'static crate::gpu::Gpu, plane: &DevicePlane) -> Op
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernels.corners.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((buckets as u32).div_ceil(64), 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&found, 0, &staging, 0, (buckets * 3 * 4) as u64);
+    recording.dispatch(
+        [(buckets as u32).div_ceil(64), 1, 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernels.corners.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&found, 0, &staging, 0, (buckets * 3 * 4) as u64);
     recording.submit();
 
     // One candidate a bucket, which is what the device already reduced the picture to - so this is
@@ -241,15 +242,15 @@ pub async fn described(gpu: &'static crate::gpu::Gpu, plane: &DevicePlane) -> Op
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernels.describe.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((at.len() as u32).div_ceil(64), 1, 1);
-    }
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&out, 0, &reading, 0, bytes);
+    recording.dispatch(
+        [(at.len() as u32).div_ceil(64), 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&kernels.describe.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
+    recording.copy_buffer_to_buffer(&out, 0, &reading, 0, bytes);
     recording.submit();
 
     let of = crate::gpu::read_back(gpu, &reading, |mapped| {

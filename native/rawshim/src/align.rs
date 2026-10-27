@@ -4,6 +4,7 @@
 //! sensor-anchored tiles measure whole-site tripod offsets and fractional handheld offsets.
 
 use crate::condition::Mosaic;
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{Buffer, Gpu};
 use crate::px::{Sensor, Span};
 
@@ -194,6 +195,7 @@ struct Plane {
     step: usize,
 }
 
+#[track_caller]
 fn plane(
     gpu: &'static Gpu,
     recording: &mut crate::gpu::Recording<'static>,
@@ -249,16 +251,18 @@ fn plane(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
+    recording.dispatch(
+        [
             (output_width as u32).div_ceil(8),
             (output_height as u32).div_ceil(8),
             1,
-        );
-    }
+        ],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernel.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     Plane {
         buffer: output,
         width: output_width,
@@ -424,13 +428,14 @@ pub async fn sharpness(gpu: &'static Gpu, luma: &Mosaic) -> Option<f64> {
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernel.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((across as u32).div_ceil(8), (down as u32).div_ceil(8), 1);
-    }
-    recording.submit();
+    recording.dispatch(
+        [(across as u32).div_ceil(8), (down as u32).div_ceil(8), 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&kernel.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let tiles = read_floats(gpu, &output, across * down * 2).await?;
     let (fine, contrast) = tiles
         .chunks_exact(2)
@@ -453,9 +458,7 @@ pub(crate) async fn read_floats(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
     recording.submit();
     crate::gpu::read_back(gpu, &readback, |mapped| {
         bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
@@ -635,6 +638,7 @@ pub fn measure(
     }
 }
 
+#[track_caller]
 fn dispatch(
     gpu: &'static Gpu,
     recording: &mut crate::gpu::Recording<'static>,
@@ -692,15 +696,13 @@ fn dispatch(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (across, down) = match entry {
+        "refine" => (width as u32, height as u32),
+        _ => ((width as u32).div_ceil(8), (height as u32).div_ceil(8)),
+    };
+    recording.dispatch([across, down, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (across, down) = match entry {
-            "refine" => (width as u32, height as u32),
-            _ => ((width as u32).div_ceil(8), (height as u32).div_ceil(8)),
-        };
-        pass.dispatch_workgroups(across, down, 1);
-    }
+    });
     output
 }

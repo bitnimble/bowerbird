@@ -14,26 +14,28 @@
 //! Its own module rather than more of `gpu.rs` for the reason `demosaic.rs` is its own: the denoise
 //! sits between them, and this one's frame is the demosaiced one.
 
+use crate::gpu::dispatch::{Banded, Whole};
+
 fn source() -> String {
     include_str!(concat!(env!("OUT_DIR"), "/wgsl/base.wgsl")).to_string()
 }
 
 pub struct Base {
     layout: wgpu::BindGroupLayout,
-    encode: wgpu::ComputePipeline,
+    encode: Banded,
     defringe_layout: wgpu::BindGroupLayout,
     defringe_luma: wgpu::ComputePipeline,
     defringe_apply: wgpu::ComputePipeline,
     warp_layout: wgpu::BindGroupLayout,
-    warp: wgpu::ComputePipeline,
+    warp: Banded,
     sharpen_layout: wgpu::BindGroupLayout,
-    sharpen_luma: wgpu::ComputePipeline,
-    sharpen_spread: wgpu::ComputePipeline,
-    sharpen_ratio: wgpu::ComputePipeline,
-    sharpen_gather: wgpu::ComputePipeline,
-    sharpen_correct: wgpu::ComputePipeline,
-    sharpen_range: wgpu::ComputePipeline,
-    sharpen_apply: wgpu::ComputePipeline,
+    sharpen_luma: Banded,
+    sharpen_spread: Banded,
+    sharpen_ratio: Banded,
+    sharpen_gather: Banded,
+    sharpen_correct: Banded,
+    sharpen_range: Banded,
+    sharpen_apply: Banded,
     /// Every code a frame can hold, as the light behind it, normalised so the largest is one.
     ///
     /// The resize's, and the process's: it is the PQ curve inverted and nothing about a particular
@@ -49,8 +51,8 @@ pub struct Base {
     reduce_layout: wgpu::BindGroupLayout,
     reduce: wgpu::ComputePipeline,
     defocus_layout: wgpu::BindGroupLayout,
-    defocus_bins: wgpu::ComputePipeline,
-    defocus_residuals: wgpu::ComputePipeline,
+    defocus_bins: Banded,
+    defocus_residuals: Banded,
     edge_spread_layout: wgpu::BindGroupLayout,
     edge_spread: wgpu::ComputePipeline,
     chroma_leak_layout: wgpu::BindGroupLayout,
@@ -132,19 +134,8 @@ impl Base {
                 read_only_entry(2),
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("base"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let encode = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("encode_base"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("encode_base"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let encode =
+            device.create_banded_pipeline("encode_base", &module, &[&layout], "encode_base", &[]);
         let defringe_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("defringe"),
             source: wgpu::ShaderSource::Wgsl(
@@ -189,19 +180,13 @@ impl Base {
                 storage_entry(5),
             ],
         });
-        let warp_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("warp"),
-            bind_group_layouts: &[Some(&warp_layout)],
-            immediate_size: 0,
-        });
-        let warp = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("warp_lens"),
-            layout: Some(&warp_pipeline_layout),
-            module: &warp_module,
-            entry_point: Some("warp_lens"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let warp = device.create_banded_pipeline(
+            "warp_lens",
+            &warp_module,
+            &[&warp_layout],
+            "warp_lens",
+            &[],
+        );
 
         let sharpen_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sharpen"),
@@ -223,21 +208,8 @@ impl Base {
                 read_only_entry(8),
             ],
         });
-        let sharpen_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("sharpen"),
-                bind_group_layouts: &[Some(&sharpen_layout)],
-                immediate_size: 0,
-            });
         let sharpen = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&sharpen_pipeline_layout),
-                module: &sharpen_module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            device.create_banded_pipeline(entry, &sharpen_module, &[&sharpen_layout], entry, &[])
         };
 
         // The browser's own file, verbatim, exactly as the grade's shaders are: the three entry
@@ -311,21 +283,8 @@ impl Base {
                 storage_entry(3),
             ],
         });
-        let defocus_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("defocus"),
-                bind_group_layouts: &[Some(&defocus_layout)],
-                immediate_size: 0,
-            });
         let defocus = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&defocus_pipeline_layout),
-                module: &defocus_module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            device.create_banded_pipeline(entry, &defocus_module, &[&defocus_layout], entry, &[])
         };
 
         let edge_spread_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -416,7 +375,7 @@ impl Base {
             defringe_apply: defringe("defringe_apply"),
             warp_layout,
             warp,
-            sharpen_layout,
+            sharpen_layout: sharpen_layout.clone(),
             sharpen_luma: sharpen("sharpen_luma"),
             sharpen_spread: sharpen("sharpen_spread"),
             sharpen_ratio: sharpen("sharpen_ratio"),
@@ -431,7 +390,7 @@ impl Base {
             halve,
             reduce_layout,
             reduce,
-            defocus_layout,
+            defocus_layout: defocus_layout.clone(),
             defocus_bins: defocus("defocus_bins"),
             defocus_residuals: defocus("defocus_residuals"),
             edge_spread_layout,
@@ -966,13 +925,11 @@ fn resized_through(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (x, y) = groups(pixels.div_ceil(2));
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(pixels.div_ceil(2));
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
     recording.submit();
     smaller
 }
@@ -1097,16 +1054,16 @@ pub fn pyramid_of(
             },
             entries: &entries,
         });
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(if level == 0 {
-            &base.halve
-        } else {
-            &base.reduce
-        });
-        pass.set_bind_group(0, &group, &[]);
         let across = ((half.0 >> level).max(1) as u32).div_ceil(8);
         let down = ((half.1 >> level).max(1) as u32).div_ceil(8);
-        pass.dispatch_workgroups(across, down, 1);
+        recording.dispatch([across, down, 1], Whole::Measured, |pass| {
+            pass.set_pipeline(if level == 0 {
+                &base.halve
+            } else {
+                &base.reduce
+            });
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
 
     recording.submit();
@@ -1169,7 +1126,7 @@ impl Pyramid {
         });
         for level in 0..self.levels {
             let (width, height) = self.size_of(level);
-            recording.encoder().copy_texture_to_buffer(
+            recording.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
                     mip_level: level,
@@ -1389,22 +1346,16 @@ fn defringe_into(
         ],
     });
 
-    {
-        // A pass each, because the second reads every value the first wrote and a pass is where
-        // wgpu puts that barrier.
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let (x, y) = groups(pixels);
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&base.defringe_luma);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(pixels);
-        pass.dispatch_workgroups(x, y, 1);
-    }
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    });
+    let (x, y) = groups(pixels.div_ceil(2));
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
         pass.set_pipeline(&base.defringe_apply);
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(pixels.div_ceil(2));
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
 }
 
 /// A frame with no room for the deconvolution's stencil has nothing to sharpen.
@@ -1538,15 +1489,11 @@ pub(crate) fn sharpen_into(
         ],
     });
 
-    // A pass each: every dispatch reads what the one before wrote, and on Metal a read within one
-    // pass can land before the write (`galosh::run` measured it).
-    let encoder = recording.encoder();
-    let mut run = |pipeline: &wgpu::ComputePipeline, count: usize| {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
+    let mut run = |pipeline: &Banded, count: usize| {
         let (x, y) = groups(count);
-        pass.dispatch_workgroups(x, y, 1);
+        recording.banded(pipeline, [x, y, 1], |pass| {
+            pass.set_bind_group(0, &group, &[]);
+        });
     };
 
     run(&base.sharpen_luma, pixels);
@@ -1590,7 +1537,9 @@ const LANES: u32 = 64;
 /// one.** The shaders fold `y` back in by multiplying by this rather than by asking how wide the
 /// dispatch actually was, so the two numbers are one number and
 /// `the_shaders_split_a_dispatch_where_the_host_does` refuses a build where they drift.
-pub(crate) const ROW_GROUPS: u32 = 32768;
+///
+/// Narrow, because a row is the least [`crate::gpu::Recording::banded`] can submit at once.
+pub(crate) const ROW_GROUPS: u32 = 1024;
 
 /// Workgroups for `count` invocations, spread over two dimensions.
 ///
@@ -1832,6 +1781,7 @@ pub fn luma_noise_in_light(
 }
 
 /// Records the coding against a frame already in VRAM, `count` samples of it.
+#[track_caller]
 fn encode_base_into(
     gpu: &crate::gpu::Gpu,
     base: &Base,
@@ -1878,13 +1828,10 @@ fn encode_base_into(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.encode);
+    let (x, y) = groups(words);
+    recording.banded(&base.encode, [x, y, 1], |pass| {
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(words);
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
 }
 
 /// `image::ratio_tables` end to end, as `f32`.
@@ -2142,6 +2089,7 @@ fn warps(
 
 /// Records the gather from one resident frame onto another, handing back the per-pixel
 /// Jacobian plane the sharpen scales its sigma by. `warps` is its precondition.
+#[track_caller]
 fn warp_lens_into(
     gpu: &crate::gpu::Gpu,
     base: &Base,
@@ -2227,13 +2175,10 @@ fn warp_lens_into(
         ],
     });
 
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.warp);
+    let (x, y) = groups(pixels.div_ceil(2));
+    recording.banded(&base.warp, [x, y, 1], |pass| {
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(pixels.div_ceil(2));
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
     jacobian
 }
 
@@ -2342,12 +2287,14 @@ pub async fn measure_edge_spread(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.edge_spread);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
-    }
+    recording.dispatch(
+        [(width as u32).div_ceil(16), (height as u32).div_ceil(16), 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&base.edge_spread);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let [mapped] = read_all(&mut recording, [(&histogram, bytes)]).await?;
     crate::image::edge_spread_sigma(&mapped)
 }
@@ -2436,16 +2383,18 @@ pub async fn chroma_leak(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.chroma_leak);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
+    recording.dispatch(
+        [
             (blocks_w as u32).div_ceil(16),
             (blocks_h as u32).div_ceil(16),
             1,
-        );
-    }
+        ],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&base.chroma_leak);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let [mapped] = read_all(&mut recording, [(&tiles, bytes)]).await?;
 
     let mut fractions: Vec<(f64, usize, usize)> = mapped
@@ -2533,12 +2482,14 @@ pub async fn content_light(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.content_light);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(tiles_w as u32, tiles_h as u32, 1);
-    }
+    recording.dispatch(
+        [tiles_w as u32, tiles_h as u32, 1],
+        Whole::Measured,
+        |pass| {
+            pass.set_pipeline(&base.content_light);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let [mapped] = read_all(&mut recording, [(&tiles, bytes)]).await?;
     let (brightest, sum) =
         mapped
@@ -2668,18 +2619,14 @@ async fn measure_defocus_into(
         ],
     });
 
-    {
-        // One pass for both, unlike the defringe's and the noise's: neither kernel reads what the
-        // other writes, so there is no barrier to put between them.
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&base.defocus_bins);
+    let (x, y) = groups(rows * segments);
+    recording.banded(&base.defocus_bins, [x, y, 1], |pass| {
         pass.set_bind_group(0, &group, &[]);
-        let (x, y) = groups(rows * segments);
-        pass.dispatch_workgroups(x, y, 1);
-        pass.set_pipeline(&base.defocus_residuals);
-        let (x, y) = groups(width * height);
-        pass.dispatch_workgroups(x, y, 1);
-    }
+    });
+    let (x, y) = groups(width * height);
+    recording.banded(&base.defocus_residuals, [x, y, 1], |pass| {
+        pass.set_bind_group(0, &group, &[]);
+    });
     let [packed, histograms] = read_all(
         &mut recording,
         [(&partials, partial_bytes), (&residuals, histogram_bytes)],
@@ -2843,8 +2790,7 @@ async fn measure_defocus_into(
     }
 }
 
-/// Submits the work once and brings every result back, since no kernel here reads what another
-/// writes.
+/// Brings every result back in one round trip, since no kernel here reads what another writes.
 async fn read_all<const N: usize>(
     recording: &mut crate::gpu::Recording<'_>,
     sources: [(&crate::gpu::Buffer, usize); N],
@@ -2857,9 +2803,7 @@ async fn read_all<const N: usize>(
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(source, 0, &readback, 0, bytes as u64);
+        recording.copy_buffer_to_buffer(source, 0, &readback, 0, bytes as u64);
         readback
     });
     recording.submit();
@@ -3453,9 +3397,7 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&jacobian, 0, &out, 0, (w * h * 4) as u64);
+        recording.copy_buffer_to_buffer(&jacobian, 0, &out, 0, (w * h * 4) as u64);
         recording.submit();
         let words = pollster::block_on(crate::gpu::read_back(gpu, &out, <[u8]>::to_vec))
             .expect("the jacobian maps");
@@ -4125,13 +4067,21 @@ mod tests {
 
         // Every dispatch the shaders undo has to be exactly that wide, or one row short of it.
         // Narrower with rows above it and the fold reads past its own row.
-        for count in [64usize, 64 * 32_768, 64 * 32_769, 24_240_576, 60_217_344] {
+        for count in [
+            64usize,
+            64 * 1024,
+            64 * 1025,
+            24_240_576,
+            60_217_344,
+            183_000_000,
+        ] {
             let (x, y) = super::groups(count);
             assert!(
                 y == 1 || x == super::ROW_GROUPS,
                 "{count} dispatches {x}x{y}, and the shaders fold at {}",
                 super::ROW_GROUPS,
             );
+            assert!(y <= 65535, "{count} dispatches {y} rows");
         }
     }
 
@@ -4315,15 +4265,15 @@ mod tests {
                     },
                 ],
             });
-            {
-                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-                pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(lights.len().div_ceil(64) as u32, 1, 1);
-            }
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
+            recording.dispatch(
+                [lights.len().div_ceil(64) as u32, 1, 1],
+                crate::gpu::dispatch::Whole::Fixed,
+                |pass| {
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &group, &[]);
+                },
+            );
+            recording.copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
             recording.submit();
             pollster::block_on(crate::gpu::read_back(gpu, &readback, |mapped| {
                 mapped

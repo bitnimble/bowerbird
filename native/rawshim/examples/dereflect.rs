@@ -136,9 +136,7 @@ fn read(gpu: &'static Gpu, buffer: &Buffer, size: usize) -> Vec<u8> {
         mapped_at_creation: false,
     });
     let mut recording = gpu.record();
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
+    recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
     recording.submit();
     pollster::block_on(rawshim::gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("reads back")
 }

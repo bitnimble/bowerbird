@@ -5,6 +5,8 @@
 //! tiling between the two walks, which is index bookkeeping over a few thousand probes rather than
 //! work on a picture.
 
+use crate::gpu::dispatch::Whole;
+
 /// Stepped positions one workgroup of the gate takes.
 const BLOCK: usize = 256;
 // `compact.slang` marks a lane's share in 64 bits, across its 64 lanes.
@@ -294,43 +296,36 @@ pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) ->
     );
     let over_blocks = blocks as u32;
     let built = kernels(gpu);
-    // A pass each: the scan reads what the count wrote.
     for (pipeline, dispatch) in [(&built.count, over_blocks), (&built.offsets, 1)] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(dispatch, 1, 1);
+        recording.dispatch([dispatch, 1, 1], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+        });
     }
     let out = held(
         "fit wide counts out",
         blocks + 1,
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&counts, 0, &out, 0, ((blocks + 1) * 4) as u64);
+    recording.copy_buffer_to_buffer(&counts, 0, &out, 0, ((blocks + 1) * 4) as u64);
     recording.submit();
     let scanned = read_words(gpu, &out).await?;
     let count = scanned[blocks] as usize;
 
     let at = held("fit wide at", (count * 2).max(1), readable);
     let mut recording = gpu.record();
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let group = bound(gpu, planes, &gains, &idle, &counts, &at, &spare, &push);
+    recording.dispatch([over_blocks, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.write);
-        let group = bound(gpu, planes, &gains, &idle, &counts, &at, &spare, &push);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(over_blocks, 1, 1);
-    }
+    });
     let positions = held(
         "fit wide at out",
         (count * 2).max(1),
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
     let bytes = (count * 2 * 4).max(4) as u64;
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&at, 0, &positions, 0, bytes);
+    recording.copy_buffer_to_buffer(&at, 0, &positions, 0, bytes);
     recording.submit();
     let read = read_words(gpu, &positions).await?;
     Some(Admitted {
@@ -375,31 +370,31 @@ pub(crate) async fn gather(
         contents: bytemuck::bytes_of(&block(planes, 1, count)),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&kernels(gpu).gather);
-        let group = bound(
-            gpu,
-            planes,
-            &gains,
-            found,
-            &idle,
-            &admitted.on_device,
-            &samples,
-            &push,
-        );
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((count as u32).div_ceil(64).max(1), 1, 1);
-    }
+    let group = bound(
+        gpu,
+        planes,
+        &gains,
+        found,
+        &idle,
+        &admitted.on_device,
+        &samples,
+        &push,
+    );
+    recording.dispatch(
+        [(count as u32).div_ceil(64).max(1), 1, 1],
+        Whole::Fixed,
+        |pass| {
+            pass.set_pipeline(&kernels(gpu).gather);
+            pass.set_bind_group(0, &group, &[]);
+        },
+    );
     let out = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit wide samples out"),
         size: (words * 4) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&samples, 0, &out, 0, (words * 4) as u64);
+    recording.copy_buffer_to_buffer(&samples, 0, &out, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {

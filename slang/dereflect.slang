@@ -405,14 +405,9 @@ uint scan_place(uint k, uint l, uint h, uint w)
     return (along % h) * w + along / h;
 }
 
-/// The scan's inputs at step `l` of thread `t`'s direction: the step size and the input.
-struct Step {
-    float delta;
-    float u;
-    uint place;
-}
-
-Step scan_step(uint t, uint l)
+/// The scan's inputs at step `l` of thread `t`'s direction: the step size, the input, and where
+/// the step sits.
+void scan_step(uint t, uint l, out float delta, out float u, out uint place)
 {
     let inner = pc.extra3;
     let rank = pc.extra2;
@@ -421,15 +416,12 @@ Step scan_step(uint t, uint l)
     let n = pc.width * pc.height;
     let rows = rank + 2 * STATE;
     let x_dbl = pc.src2_at + k * rows * n;
-    let place = scan_place(k, l, pc.height, pc.width);
+    place = scan_place(k, l, pc.height, pc.width);
     var raw = float(weights[pc.bias_at + t]);
     let dt_at = pc.weight_at + t * rank;
     for (uint r = 0; r < rank; r++) { raw += float(weights[dt_at + r]) * src2[x_dbl + r * n + place]; }
-    Step step;
-    step.delta = raw > 20.0 ? raw : log(1.0 + exp(raw));
-    step.u = src[pc.src_at + d * n + place];
-    step.place = place;
-    return step;
+    delta = raw > 20.0 ? raw : log(1.0 + exp(raw));
+    u = src[pc.src_at + d * n + place];
 }
 
 /// Thread `t` (a direction and inner channel) over chunk `chunk` from `state`: with `write`, each
@@ -453,20 +445,23 @@ void scan_chunk(uint t, uint chunk, inout float state[STATE], out float decay[ST
     let first = chunk * pc.mode;
     let last = min(first + pc.mode, n);
     for (uint l = first; l < last; l++) {
-        let step = scan_step(t, l);
-        var y = skip * step.u;
+        float delta;
+        float u;
+        uint place;
+        scan_step(t, l, delta, u, place);
+        var y = skip * u;
         [ForceUnroll]
         for (uint s = 0; s < STATE; s++) {
-            let b = float(src2[x_dbl + (rank + s) * n + step.place]);
-            let kept = exp(step.delta * a[s]);
-            state[s] = kept * state[s] + step.delta * b * step.u;
+            let b = float(src2[x_dbl + (rank + s) * n + place]);
+            let kept = exp(delta * a[s]);
+            state[s] = kept * state[s] + delta * b * u;
             decay[s] *= kept;
             if (write) {
-                let c = float(src2[x_dbl + (rank + STATE + s) * n + step.place]);
+                let c = float(src2[x_dbl + (rank + STATE + s) * n + place]);
                 y += c * state[s];
             }
         }
-        if (write) { wide_dst[pc.dst_at + t * n + step.place] = y; }
+        if (write) { wide_dst[pc.dst_at + t * n + place] = y; }
     }
 }
 

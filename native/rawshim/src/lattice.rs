@@ -6,6 +6,7 @@
 //! reaches along each axis, and the operator it applies there as a generator. Where kernels overlap
 //! their generators add, and the bake exponentiates the sum per texel.
 
+use crate::gpu::dispatch::Whole;
 use crate::gpu::{Gpu, Texture};
 use crate::light::{Light, Rendered};
 use crate::tone;
@@ -844,19 +845,21 @@ fn params(kernels: usize, axes: LutAxes, scales: [f64; 2], feather: [f64; 4]) ->
     push
 }
 
+#[track_caller]
 fn dispatch(
     recording: &mut crate::gpu::Recording<'_>,
     pipeline: &wgpu::ComputePipeline,
     group: &wgpu::BindGroup,
 ) {
-    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-    pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, group, &[]);
-    pass.dispatch_workgroups(
+    let groups = [
         SIZE.width.div_ceil(4),
         SIZE.height.div_ceil(4),
         SIZE.depth_or_array_layers.div_ceil(4),
-    );
+    ];
+    recording.dispatch(groups, Whole::Fixed, |pass| {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[]);
+    });
 }
 
 fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
@@ -924,11 +927,10 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
                     },
                 ],
             });
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&built.interpolate);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-            drop(pass);
+            recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
+                pass.set_pipeline(&built.interpolate);
+                pass.set_bind_group(0, &group, &[]);
+            });
             solved
         }
     };
@@ -1624,7 +1626,7 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_texture_to_buffer(
+        recording.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: volume,
                 mip_level: 0,

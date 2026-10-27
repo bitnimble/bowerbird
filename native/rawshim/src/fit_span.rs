@@ -4,6 +4,8 @@
 //! model over them, and an exact rank of their chroma. What crosses back is one float, rather than
 //! a sample per pixel up and the whole evaluated plane down again.
 
+use crate::gpu::dispatch::Whole;
+
 /// Buckets each half of a selection counts into.
 const HALF_BINS: usize = 65536;
 /// A bucket, a running count, and the picked value.
@@ -146,16 +148,15 @@ pub(crate) fn lifted(
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let over_plane = [
+        (plane.width as u32).div_ceil(16),
+        (plane.height as u32).div_ceil(16),
+        1,
+    ];
+    recording.dispatch(over_plane, Whole::Fixed, |pass| {
         pass.set_pipeline(&kernels(gpu).gather);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
-            (plane.width as u32).div_ceil(16),
-            (plane.height as u32).div_ceil(16),
-            1,
-        );
-    }
+    });
     recording.submit();
     samples
 }
@@ -255,17 +256,16 @@ pub(crate) async fn ranked_chroma(
 
     let mut recording = gpu.record();
     let over_samples = (pixels as u32).div_ceil(64);
-    // A pass each, which is what orders them: every step reads what the step before it wrote.
     for (pipeline, dispatch) in [
         (&built.high, over_samples),
         (&built.pick, 1),
         (&built.low, over_samples),
         (&built.finish, 1),
     ] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &ranking, &[]);
-        pass.dispatch_workgroups(dispatch, 1, 1);
+        recording.dispatch([dispatch, 1, 1], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &ranking, &[]);
+        });
     }
     let out = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit span out"),
@@ -273,9 +273,7 @@ pub(crate) async fn ranked_chroma(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(&marks, 0, &out, 0, (MARKS * 4) as u64);
+    recording.copy_buffer_to_buffer(&marks, 0, &out, 0, (MARKS * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {

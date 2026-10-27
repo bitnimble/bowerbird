@@ -168,9 +168,7 @@ fn read(gpu: &rawshim::gpu::Gpu, buffer: &rawshim::gpu::Buffer) -> Vec<u8> {
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording
-        .encoder()
-        .copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+    recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
     recording.submit();
     pollster::block_on(rawshim::gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("a read")
 }

@@ -1712,6 +1712,29 @@ describe('leaving the editor', () => {
     expect(finished).toEqual(['a-photo-id']);
   });
 
+  test('a flush before a reload stores the save in flight and then the drag the reader is in', async () => {
+    const saved: (number | undefined)[] = [];
+    let land: () => void = () => {};
+    photoEditsApi.save = (_photoId, doc, rev): Promise<EditState> => {
+      saved.push(doc.exposure);
+      return new Promise((resolve) => {
+        land = () => resolve({ doc, rev: rev + 1, canUndo: true, canRedo: false });
+      });
+    };
+    presenter.settleExposure(1);
+    presenter.previewExposure(2);
+    let done = false;
+    const flushed = presenter.edit.flush().then(() => {
+      done = true;
+    });
+    land();
+    await Bun.sleep(0);
+    expect(saved).toEqual([1, 2]);
+    expect(done).toBe(false);
+    land();
+    await flushed;
+  });
+
   test('writes nothing into the stores the next photo opens on', () => {
     presenter.close();
     presenter.setRepreparing(true);

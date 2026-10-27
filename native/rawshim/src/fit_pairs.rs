@@ -4,10 +4,11 @@
 //! stating the thresholds it gates on - they are `hdr_fit`'s, and a shader restating one would be a
 //! second place to change it - and turning what comes back into the shapes the fit already reads.
 //!
-//! Two submits rather than one, because the pair list's length is not known until the blocks have
+//! Two round trips rather than one, because the pair list's length is not known until the blocks have
 //! been counted and scanned: sizing it for every pixel instead would put an eight megabyte map at
 //! the end of a pass whose answer is a third of that.
 
+use crate::gpu::dispatch::Whole;
 use crate::parallel::*;
 
 /// Buckets each half of the selection counts into.
@@ -285,8 +286,6 @@ pub(crate) async fn select(
     let selecting = group(&idle);
     let over_pixels = ((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
     let over_blocks = (blocks as u32, 1, 1);
-    // A pass each, which is what orders them: within one pass two dispatches may overlap, and
-    // every step here reads what the step before it wrote.
     for (pipeline, (x, y, z)) in [
         (&built.extent_high, over_pixels),
         (&built.extent_pick, (1, 1, 1)),
@@ -296,10 +295,10 @@ pub(crate) async fn select(
         (&built.count, over_blocks),
         (&built.offsets, (1, 1, 1)),
     ] {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &selecting, &[]);
-        pass.dispatch_workgroups(x, y, z);
+        recording.dispatch([x, y, z], Whole::Fixed, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &selecting, &[]);
+        });
     }
     let staging =
         |recording: &mut crate::gpu::Recording<'_>, from: &crate::gpu::Buffer, words: usize| {
@@ -310,9 +309,7 @@ pub(crate) async fn select(
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            recording
-                .encoder()
-                .copy_buffer_to_buffer(from, 0, &out, 0, bytes);
+            recording.copy_buffer_to_buffer(from, 0, &out, 0, bytes);
             out
         };
     let bits_out = staging(&mut recording, &bits_words, pixels);
@@ -338,12 +335,11 @@ pub(crate) async fn select(
 
     let mut recording = gpu.record();
     let pairs = held("fit pairs", total_pairs * PAIR_WORDS, readable);
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let writing = group(&pairs);
+    recording.dispatch([over_blocks.0, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.write);
-        pass.set_bind_group(0, &group(&pairs), &[]);
-        pass.dispatch_workgroups(over_blocks.0, 1, 1);
-    }
+        pass.set_bind_group(0, &writing, &[]);
+    });
     let pairs_out = staging(&mut recording, &pairs, total_pairs * PAIR_WORDS);
     recording.submit();
     let placed = read_words(gpu, &pairs_out).await?;
@@ -366,18 +362,14 @@ pub(crate) async fn select(
     // The same compaction again over `FRAME`, which is a different set rather than a larger one:
     // the counts and the offsets are per-bit, so the second walk cannot share the first's.
     let mut recording = gpu.record();
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    recording.dispatch([over_blocks.0, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.frame_count);
         pass.set_bind_group(0, &selecting, &[]);
-        pass.dispatch_workgroups(over_blocks.0, 1, 1);
-    }
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    });
+    recording.dispatch([1, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.offsets);
         pass.set_bind_group(0, &selecting, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
+    });
     let frame_marks = staging(&mut recording, &marks, marks_words);
     recording.submit();
     let total_frame = read_words(gpu, &frame_marks).await?[TOTAL] as usize;
@@ -385,12 +377,11 @@ pub(crate) async fn select(
 
     let mut recording = gpu.record();
     let frame = held("fit frame", total_frame * PAIR_WORDS, readable);
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    let framing = group(&frame);
+    recording.dispatch([over_blocks.0, 1, 1], Whole::Fixed, |pass| {
         pass.set_pipeline(&built.frame_write);
-        pass.set_bind_group(0, &group(&frame), &[]);
-        pass.dispatch_workgroups(over_blocks.0, 1, 1);
-    }
+        pass.set_bind_group(0, &framing, &[]);
+    });
     let frame_out = staging(&mut recording, &frame, total_frame * PAIR_WORDS);
     recording.submit();
     let framed = read_words(gpu, &frame_out).await?;

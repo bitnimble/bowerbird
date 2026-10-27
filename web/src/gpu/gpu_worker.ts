@@ -5,7 +5,6 @@ import init, {
   buildEveryPipeline,
   finishDraw,
   heifView,
-  holdBuffers,
   holdDereflectModel,
   holdPicture,
   holdPixels,
@@ -16,8 +15,9 @@ import init, {
   holdUpscalerModel,
   holdUpscalerWeights,
   pageDevice,
-  releaseBuffers,
+  recentSubmissions,
   renderRendition,
+  splitBands,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
 import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environments';
@@ -41,6 +41,7 @@ import {
 import {
   AnswerSchema,
   CompilingSchema,
+  LostSchema,
   MessageSchema,
   ProgressSchema,
   StartMessageSchema,
@@ -49,10 +50,12 @@ import {
 } from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
 import { Logger, pageLog } from '../features/logs/page_log';
+import { adapterName } from '../adapter_name';
 import { KeptStages } from './kept_stages';
 
 pageLog.follow('worker');
 const paintLog = new Logger('stage');
+const gpuLog = new Logger('gpu');
 const SLOW_PAINT_MS = 150;
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
@@ -73,12 +76,23 @@ const closed = new Set<number>();
 const weights = new Map<string, Promise<void>>();
 const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
+/** What each message still being answered asked for, and the open step it last reported. */
+const asking = new Map<number, { ask: string; step?: string }>();
 const stages = new KeptStages<KeptStage>(free);
 void device.then((opened) =>
   opened?.lost.then((info) => {
     lost = info.message;
     // A closing open keeps no stage once the device is gone, so nothing would wake these.
     stages.abandon();
+    const submitted = recentSubmissions();
+    gpuLog.error('the GPU was reset', {
+      reason: info.reason,
+      message: info.message,
+      asking: [...asking.values()],
+      submitted,
+    });
+    if (info.reason !== 'destroyed')
+      worker.postMessage(LostSchema.parse({ lost: info.message, submitted }));
   }),
 );
 
@@ -92,9 +106,15 @@ worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
     started.resolve(start.data);
     return;
   }
-  const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));
+  const report = (stage: string): void => {
+    const asked = asking.get(id);
+    if (asked != null) asked.step = stage;
+    worker.postMessage(ProgressSchema.parse({ id, stage }));
+  };
   try {
-    const { value, transfer } = await answer(MessageSchema.parse(event.data), report);
+    const message = MessageSchema.parse(event.data);
+    asking.set(id, { ask: 'ask' in message ? `${message.to} ${message.ask.kind}` : message.to });
+    const { value, transfer } = await answer(message, report);
     worker.postMessage(AnswerSchema.parse({ id, ok: true, value }), transfer ?? []);
   } catch (error) {
     worker.postMessage(
@@ -104,6 +124,8 @@ worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
         error: error instanceof Error ? error.message : String(error),
       }),
     );
+  } finally {
+    asking.delete(id);
   }
 };
 
@@ -115,8 +137,12 @@ worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
 async function openDevice(): Promise<GPUDevice | null> {
   await init();
   // Asked here first: wgpu's page backend never settles when the adapter comes back null.
-  if ((await navigator.gpu?.requestAdapter()) == null) return null;
-  return (pageDevice() as Promise<GPUDevice | null>).catch(() => null);
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (adapter == null) return null;
+  gpuLog.info('drawing on', adapterName(adapter));
+  const opened = await (pageDevice() as Promise<GPUDevice | null>).catch(() => null);
+  if (opened != null) splitBands((await started.promise).splitBands);
+  return opened;
 }
 
 type Report = (stage: string) => void;
@@ -148,12 +174,8 @@ async function answer(
       }
       return { value: null };
     }
-    case 'keepSurface':
-      holdBuffers();
-      return { value: null };
     case 'dropSurface':
       stages.drop(message.key);
-      releaseBuffers();
       return { value: null };
     case 'precompile': {
       if (opened == null) return { value: null };

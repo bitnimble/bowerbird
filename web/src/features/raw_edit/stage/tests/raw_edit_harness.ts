@@ -443,7 +443,11 @@ export class FakeDecoder {
 
 /** A surface on no worker, whose stage is kept under 7. */
 export function testSurface(): EditSurface {
-  return new EditSurface({ keepSurface: () => 7, dropSurface: () => {} });
+  return new EditSurface({
+    keepSurface: () => 7,
+    dropSurface: () => {},
+    beforeReload: () => () => {},
+  });
 }
 
 export type Editor = {

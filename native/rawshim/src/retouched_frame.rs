@@ -12,6 +12,7 @@
 //! Held in memory for the life of an open and nowhere else: an original is what the tool shows as
 //! a removal's thumbnail and what a removal reopened is searched over, and both are the editor's.
 
+use crate::gpu::dispatch::Whole;
 use crate::px::{At, Drawn, Extent, Point, Rect, Size, Stored};
 use crate::repair::Repair;
 use crate::resident::Resident;
@@ -135,7 +136,7 @@ impl RetouchedFrame {
             false => bytes(rows * row),
         };
         let mut recording = gpu.record();
-        recording.encoder().copy_buffer_to_buffer(
+        recording.copy_buffer_to_buffer(
             band.frame.buffer(),
             bytes(from * row),
             self.frame.buffer(),
@@ -354,6 +355,7 @@ pub(crate) fn copying(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit:
 }
 
 /// A `size` rectangle of one frame at its `At` copied over another at its own, recorded.
+#[track_caller]
 pub(crate) fn copy(
     recording: &mut crate::gpu::Recording<'_>,
     (src, src_at): (&Resident, At<Drawn>),
@@ -398,10 +400,10 @@ pub(crate) fn copy(
         ],
     });
     let (x, y) = crate::base::groups(words);
-    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-    pass.set_pipeline(&kernel.pipeline);
-    pass.set_bind_group(0, &group, &[]);
-    pass.dispatch_workgroups(x, y, 1);
+    recording.dispatch([x, y, 1], Whole::Measured, |pass| {
+        pass.set_pipeline(&kernel.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+    });
 }
 
 #[cfg(test)]
