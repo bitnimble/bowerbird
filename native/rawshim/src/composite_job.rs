@@ -291,7 +291,7 @@ pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<formats::header::Bb
     (headers, models)
 }
 
-/// The sources of a search, as `composite_align` and `assembly_analysis` both want them.
+/// The sources of a search, as `composite::align` and `composite::assembly::analysis` both want them.
 pub(crate) fn sources_of<'a>(
     pano: &'a CompositeJob,
     headers: &'a [Option<formats::header::BbHeader>],
@@ -892,7 +892,12 @@ pub(crate) fn base(
     // it holds one, and the joins between them are bands across the finished picture - which is
     // exactly what a loupe tile is forbidden from doing for the same reason.
     let known = job.stored();
-    let stamp = spec.set_stamp();
+    let stamp = fit::photo_analysis::SetStamp::of(
+        spec.sources
+            .iter()
+            .map(|source| (source.photo_id.as_str(), source.gain)),
+        spec.reference,
+    );
     let filed = match from {
         // **Only what this set measured.** These are a quantile and a colour fit over every source
         // at once, so a recipe whose sources or gains changed under the same photograph measured

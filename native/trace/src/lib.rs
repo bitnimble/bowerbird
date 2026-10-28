@@ -1,4 +1,5 @@
-//! What the pipeline says about itself: the lines it logs and the stages it times.
+//! What the pipeline says about itself: the lines it logs, the stages it times and how far it
+//! has got.
 
 #![deny(unsafe_code)]
 

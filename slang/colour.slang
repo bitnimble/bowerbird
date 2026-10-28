@@ -406,7 +406,7 @@ static const float TURNED_HALF_AT = 5.0;
 /// stage's draw to darken by after the grade: read there, the peak pass never sees the mask.
 public static float reach_kept = 1.0;
 
-/// The reader's colour edits (`lattice::ColourNode`) on `m`, keyed on `m` itself.
+/// The reader's colour edits (`colour::lattice::ColourNode`) on `m`, keyed on `m` itself.
 public Colour<Rendered> moved_by_reader(Colour<Rendered> m)
 {
     if (edit.has_nodes == 0) { return m; }

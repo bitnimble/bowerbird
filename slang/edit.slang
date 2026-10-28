@@ -262,7 +262,7 @@ public struct Edit {
     public float node_level_scale;
     public float node_neighbourhood_scale;
     /// How far the stage's draw takes what one colour edit does not reach towards black, from 0
-    /// to 1, and that edit's kernel (`lattice::ColourNode::kernel`) with `lattice::NODE_FEATHER`.
+    /// to 1, and that edit's kernel (`colour::lattice::ColourNode::kernel`) with `colour::lattice::NODE_FEATHER`.
     public float reach_mask;
     public float mask_centre_0;
     public float mask_centre_1;

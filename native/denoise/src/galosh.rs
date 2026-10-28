@@ -2433,7 +2433,7 @@ mod tests {
     /// catches anywhere.
     #[test]
     fn tiling_the_denoise_does_not_move_a_sample() {
-        // `rawshim::RENDITION_TILE_HALO`, which the reach floors.
+        // `decode::RENDITION_TILE_HALO`, which the reach floors.
         const RENDITION_TILE_HALO: usize = 96;
         let _held = ONE_DENOISE_AT_A_TIME
             .lock()

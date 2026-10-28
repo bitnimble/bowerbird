@@ -18,11 +18,10 @@ const ROOT = join(import.meta.dir, '..', '..');
 
 /** The native workspace's own crates, read off its manifest so a crate split out is covered. */
 const CRATES = (
-  readFileSync(join(ROOT, 'native', 'Cargo.toml'), 'utf8').match(/^members = \[(.*)\]$/m)?.[1] ?? ''
-)
-  .split(',')
-  .map((it) => it.trim().replaceAll('"', ''))
-  .filter(Boolean);
+  Bun.TOML.parse(readFileSync(join(ROOT, 'native', 'Cargo.toml'), 'utf8')) as {
+    workspace: { members: string[] };
+  }
+).workspace.members;
 
 const SOURCE = [
   'src',

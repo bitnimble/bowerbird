@@ -250,7 +250,7 @@ formats = { path = "../formats", features = ["testing"] }
 jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 moxcms = "0.9.1"
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,
-# and a synthetic burst with no embedded JPEG is a burst `composite_align` cannot open at all -
+# and a synthetic burst with no embedded JPEG is a burst `composite::align` cannot open at all -
 # `upright_preview_rgb` reads `preview_jpegs` and has no other way in. Pinned to the version rawler
 # already builds, so this declares what is in the tree rather than adding to it.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }

@@ -55,7 +55,7 @@ pub struct Gpu {
     opened_after: u64,
     /// Kept because a surface is asked of the instance rather than of the device, and the
     /// editor's canvas or a TV's window arrives long after the device is opened
-    /// ([`Stage::attach`], [`surface_stage::SurfaceStage::attach`]).
+    /// (`render::grade::Stage::attach`, `render::grade::surface_stage::SurfaceStage::attach`).
     #[cfg_attr(not(any(target_arch = "wasm32", target_os = "android")), allow(dead_code))]
     instance: wgpu::Instance,
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]

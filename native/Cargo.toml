@@ -8,7 +8,7 @@ resolver = "3"
 # An index product that wraps is a picture that comes out wrong rather than a crash, and
 # these run over tens of millions of samples. Keep that failure loud in release.
 #
-# Applies to rawshim's own builds - the server's `build:native` and `cargo test`. The shells set
+# Applies to this workspace's builds - the server's `build:native` and `cargo test`. The shells set
 # their own, because cargo reads profiles from the workspace root only.
 [profile.release]
 overflow-checks = true
@@ -35,8 +35,9 @@ codegen-units = 1
 # quietly wrong picture, which is exactly what the tests are for.
 #
 # **`incremental`, and so no LTO at all.** A crate is rustc's compilation unit, so an edit anywhere
-# in this one recompiles all of it: there is no per-module cache to hit, and the only thing that
-# reuses work across edits is incremental's own codegen units. The two settings go together rather
+# in one recompiles all of that crate and every crate above it: there is no per-module cache to
+# hit, and the only thing that reuses work inside an edited crate is incremental's own codegen
+# units. The two settings go together rather
 # than being two choices - cargo disables incremental when LTO is on, and says so - and this is the
 # profile nothing ships from, so what is being traded away is a link nobody measures.
 #

@@ -550,7 +550,7 @@ fn shifted(p: usize, [ox, oy]: [isize; 2], (w, h): (usize, usize)) -> Option<usi
 ///
 /// Two labels, so one cut: a cell keeps the photograph or takes the fill. `hole` must take it,
 /// and a cell whose fill would come from off the field, from the hole or from `forbidden` must
-/// not. Everything else is the seam's cost - `assembly_labelling`'s, over the photograph against
+/// not. Everything else is the seam's cost - `assembly::labelling`'s, over the photograph against
 /// the fill brought to its light - so the fill grows out to wherever the two agree and stops there.
 fn cut(
     field: &SeamField,

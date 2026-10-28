@@ -6,7 +6,7 @@
 //! format SDR for that reason, and what arrives here is already display-referred sRGB.
 //!
 //! **Eight bits, which is the depth the SDR render has rather than the depth TIFF can hold.**
-//! `crate::grade::Output::Srgb` writes eight bits, so a sixteen-bit TIFF here would be eight bits of
+//! `render::grade::Output::Srgb` writes eight bits, so a sixteen-bit TIFF here would be eight bits of
 //! information in a sixteen-bit container - a bigger file saying nothing more. Giving TIFF the
 //! depth that would justify picking it means a 16-bit SDR output in the shader, which is where
 //! the limit actually is; this writes what the pipeline has.

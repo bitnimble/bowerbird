@@ -167,17 +167,6 @@ impl Composition {
         &self.sources[self.reference.min(self.sources.len() - 1)]
     }
 
-    /// What a measurement over this canvas was measured over, for
-    /// [`fit::photo_analysis::FromRender::set`] to be stamped with and refused by.
-    pub fn set_stamp(&self) -> fit::photo_analysis::SetStamp {
-        fit::photo_analysis::SetStamp::of(
-            self.sources
-                .iter()
-                .map(|source| (source.photo_id.as_str(), source.gain)),
-            self.reference,
-        )
-    }
-
     /// The recipe that places one photograph on a canvas its own size, unchanged.
     ///
     /// **What makes a single file the same call as a panorama of twenty-six.** The canvas is the

@@ -183,7 +183,7 @@ pub struct Job {
     #[serde(default)]
     pub reflection: dereflect::Settings,
     /// The fraction of the deconvolution to blend in, as the Detail panel's Sharpening slider
-    /// sets it (§10.9). Read against `image::SHARPEN_GAIN`, so 1 is the top of that track and
+    /// sets it (§10.9). Read against `render::detail::SHARPEN_GAIN`, so 1 is the top of that track and
     /// the deconvolution as computed is its middle.
     pub sharpen: f64,
     /// How hard to take the colour off a fringing edge (`raw_defringe`, §10.9). Longitudinal
@@ -632,7 +632,7 @@ pub(crate) struct Base {
     /// exists.
     pub(crate) as_shot: Option<colour::white_balance::Illuminant>,
     /// The capture's blur sigma in sensor pixels, and the sensor's long edge those pixels
-    /// belong to - the pair `image::deconvolve_split` carries to each target's scale.
+    /// belong to - the pair `render::detail::deconvolve_split` carries to each target's scale.
     pub(crate) capture_sigma: Option<f32>,
     pub(crate) sensor_long: usize,
     pub(crate) sharpen_noise: render::detail::SharpenNoise,

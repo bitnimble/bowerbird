@@ -111,7 +111,7 @@ bool outside(float2 sample, float2 last)
 /// keystone resampled differently from the file the same edit exports - softer or harder along an
 /// edge, at every angle but zero, with nothing on either side saying which was meant.
 ///
-/// Clamped at the border rather than skipped, as `image::sampled` clamps: a cubic reaches one
+/// Clamped at the border rather than skipped: a cubic reaches one
 /// pixel back and two forward, so the outermost ring has no full neighbourhood and the nearest
 /// sample stands in for what is off the edge. Whether the *point* is on the frame at all is the
 /// caller's `outside`, which is the black wedge a straighten leaves.

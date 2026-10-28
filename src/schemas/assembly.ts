@@ -68,7 +68,7 @@ export const AssemblyRecipeSchema = CompositionSchema.extend({
   // The widest §5.2's feather may be, as a share of the long edge: the reader's to set.
   feather: z.number().min(0).max(MOST_STORED_FEATHER).optional(),
   // Where the picked frames actually meet, solved for `pick` and `base` over the carve's volume
-  // (`assembly_seams`). Absent, the tiles are the seams.
+  // (`composite::assembly::seams`). Absent, the tiles are the seams.
   seams: SeamsSchema.optional(),
   // The layer key the carve's seam volume was written under, which a re-solve reads.
   seamVolume: z

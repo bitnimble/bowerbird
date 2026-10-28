@@ -1513,7 +1513,7 @@ impl HeldRaw {
     /// The one field a window cut from *this* mosaic cannot be told by the page.
     ///
     /// **The sensor's long edge above all.** `capture_sigma` is a blur in the sensor's own pixels
-    /// and `image::deconvolve_split` composes it for whatever scale the target is at, so a window
+    /// and `render::detail::deconvolve_split` composes it for whatever scale the target is at, so a window
     /// that took the *prepared* photograph's long edge for the sensor's sharpens a halved decode at
     /// the wrong sigma - and a loupe is where that shows, being the one place the glass and the
     /// export it predicts are compared. The page names the photograph it is cutting from, which is
@@ -2087,7 +2087,7 @@ impl HeldRaw {
         self.attach(&self.wheel, canvas, side, side, video)
     }
 
-    /// `selected` is a `lattice::ColourNode` as JSON.
+    /// `selected` is a `colour::lattice::ColourNode` as JSON.
     #[wasm_bindgen(js_name = drawWheel)]
     pub fn draw_wheel(&self, lightness: f64, selected: Option<String>) -> Result<(), JsValue> {
         let gpu = gpu::device()
@@ -2277,7 +2277,8 @@ impl HeldRaw {
         Ok(())
     }
 
-    /// The colour edit whose reach the stage shows, as `lattice::ColourNode` JSON, and how strongly.
+    /// The colour edit whose reach the stage shows, as `colour::lattice::ColourNode` JSON, and how
+    /// strongly.
     #[wasm_bindgen(js_name = setReachMask)]
     pub fn set_reach_mask(&self, node: Option<String>, strength: f64) -> Result<(), JsValue> {
         let node = colour_node_of(node)?;

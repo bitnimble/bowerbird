@@ -249,7 +249,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
     await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
 
-    // Left, top, right, bottom - the order `image::Geometry` destructures. A transposed
+    // Left, top, right, bottom - the order `geometry::warp::Geometry` destructures. A transposed
     // pair here is a crop of the wrong rectangle, which no type on either side would catch
     // because all four are the same shape.
     expect(posted[0]?.geometry).toEqual({

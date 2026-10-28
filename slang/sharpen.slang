@@ -30,7 +30,7 @@ struct Params {
     float full;
     /// Normalised Gaussian half-kernel for the sigma this frame wants, centre outwards.
     ///
-    /// Built by the host (`image::gaussian`) so both hosts hand the same three numbers to the
+    /// Built by the host (`detail::gaussian`) so both hosts hand the same three numbers to the
     /// same file; the sigma varies per photograph now that it is estimated rather than assumed.
     ///
     /// `capture` and `resample` sit in the two `float3` tails rather than after them - the
@@ -69,7 +69,7 @@ static const float FLOOR = 1e-4;
 /// **Taps and not pixels**, which is the distinction the unit is carrying: this is how many
 /// samples the stencil reads, and what decides how much picture they span is the sigma, which
 /// `detail::deconvolve_split` composes per scale and clamps to what five taps are honest for.
-/// `image::DECONVOLVE_RADIUS`'s value; a test holds the two together.
+/// `detail::DECONVOLVE_RADIUS`'s value; a test holds the two together.
 static const Span<Tap> RADIUS = { 2 };
 static const float SUPPORT_SIGMAS = 6.0;
 static const uint NOISE_SENSITIVITY = 0;
@@ -110,7 +110,7 @@ uint4 column_taps(uint x, uint y)
         min(y + 2, params.height - 1) * params.width + x);
 }
 
-/// `image::gaussian` for radius 2, at whatever variance this pixel composed: the outer tap's
+/// `detail::gaussian` for radius 2, at whatever variance this pixel composed: the outer tap's
 /// exponent is four times the inner's, so one `exp` serves both.
 float3 taps_for(float variance)
 {

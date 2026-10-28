@@ -57,7 +57,7 @@ fn main() {
 
     // Ours, box averaged to the grid, in multiples of diffuse white - the domain the curve bins.
     //
-    // Averaged from the 16-bit samples rather than through `image::resize`, which takes bytes: the
+    // Averaged from the 16-bit samples rather than through `formats::resize::resize`, which takes bytes: the
     // whole question is about levels under a hundredth of white, and an 8-bit intermediate has two
     // codes to say that in.
     let (wide, tall) = (

@@ -14,8 +14,6 @@ pub mod printer_gamut;
 
 #[cfg(test)]
 mod tests {
-    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
-    ///
     /// The builders are called with whatever arguments produce a block - none of them branch on a
     /// value, they all write a fixed run of words - so the length is the whole of what is asked.
     #[test]

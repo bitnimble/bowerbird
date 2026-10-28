@@ -10,7 +10,7 @@ export interface CropRect {
  * The document's crop as the overlay should lay it out, and back.
  *
  * `EditDocSchema` defines the fractions against the straightened frame **before** the quarter
- * turn - Camera Raw's order, and the one `image::Plan` undoes first - while the overlay sits on
+ * turn - Camera Raw's order, and the one `geometry::warp::Plan` undoes first - while the overlay sits on
  * the picture *after* it. So the pair has to be permuted, in opposite directions, and the two
  * halves live here rather than one in the store and one in the presenter: they are inverses,
  * which is a property worth being able to test rather than to read twice.

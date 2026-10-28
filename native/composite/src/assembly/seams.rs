@@ -2,8 +2,8 @@
 //!
 //! A tile is the least of what its pick takes, drawn by the reader around what they wanted; the
 //! question is where *these* frames agree around it. So the tiles become the data term of a
-//! labelling over the picked frames only (`assembly_labelling`), the seams go wherever that
-//! labelling puts them, and each piece is balanced to the light across them (`assembly_balance`).
+//! labelling over the picked frames only (`assembly::labelling`), the seams go wherever that
+//! labelling puts them, and each piece is balanced to the light across them (`assembly::balance`).
 
 use crate::assembly::analysis::{MOST_TILES, MOST_VERTICES, corridor_share};
 use crate::assembly::balance::balanced;

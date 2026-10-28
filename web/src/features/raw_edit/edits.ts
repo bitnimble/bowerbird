@@ -2,8 +2,8 @@
 //
 // The shapes only, because the rules are the module's - what a stop means, which uniform slot a
 // slider lands in, what a null half of the balance does. These cross as JSON and are read by
-// `grade::Region`, `grade::Adjust` and `image::Geometry`, so a name that drifts is `missing field` at
-// the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
+// `grade::Region`, `grade::Adjust` and `geometry::warp::Geometry`, so a name that drifts is
+// `missing field` at the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
 
 import { z } from 'zod';
 import type { ColourNode, ColourProfile, ToneCurve } from '../../../../src/schemas/photo_edits';
@@ -44,7 +44,7 @@ export interface EditAdjust {
 }
 
 /**
- * The reader's crop, straighten and turn - `image::Geometry`, field for field.
+ * The reader's crop, straighten and turn - `geometry::warp::Geometry`, field for field.
  *
  * The picture they produce is *not* here, and that is the point: the module works the output's
  * size out from these (`hdr::cropped_size`), so a shape sent alongside them would be a second

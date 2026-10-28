@@ -25,9 +25,9 @@ Where the code went:
 
 Four things this note got wrong or did not foresee, each fixed by measurement:
 
-- **`image::finish` is not a per-tick stage.** It runs once, at the open
+- **The finishing filters are not a per-tick stage.** They run once, at the open
   (`edit::open`), on a base already coded into normalised PQ
-  (`tone::encode_base`), which is why it converts nothing. A tick is the grade
+  (`tone::encode_base`), which is why they convert nothing. A tick is the grade
   alone.
 - **The graded frame does not need to exist.** §6 assumed a chain of resident
   textures; the colour transform is one fragment shader straight to the canvas,
@@ -70,7 +70,7 @@ count. Entry: `grade_from` in `wasm.rs`.
 | 1   | Copy   | `working.copy_from_slice`             | Prepared (or interactive) `u16` RGB into the working buffer                                   |
 | 2   | Grade  | `hdr::grade_prepared` → `tone::grade` | Exposure × camera curves / matrix / chroma + BT.2390 EETF roll-off                            |
 | 3   | PQ     | `tone::encode_pq`                     | ST 2084 via a 64k LUT                                                                         |
-| 4   | Finish | `image::finish`                       | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
+| 4   | Finish | the finishing filters                 | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
 | 5   | Emit   | `emit`                                | Sink-dependent (below)                                                                        |
 
 **Emit by sink** (`wasm::Sink`, chosen in `raw_edit_route.ts`):

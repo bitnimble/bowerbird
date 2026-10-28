@@ -287,7 +287,7 @@ fn a_window_reads_the_same_field_as_the_whole_canvas() {
 /// thing a pixel grid can hold at all.
 const BAND_SIZE: (usize, usize) = (1024, 1024);
 
-/// Writes a greyscale PNG `composite_tile` can decode as one source, gamma 1.0 so the codes this
+/// Writes a greyscale PNG `composite::tile` can decode as one source, gamma 1.0 so the codes this
 /// writes are read back as light directly rather than through sRGB's curve.
 fn write_png(
     dir: &std::path::Path,
@@ -331,7 +331,7 @@ fn next_scratch() -> usize {
 }
 
 /// `composite::tile::prepared`'s own defaults for a source nothing has measured yet - no sharpen,
-/// no defringe, no dust - the same ones `composite_align`'s own composite test uses.
+/// no defringe, no dust - the same ones `composite::align`'s own composite test uses.
 fn asking<'a>(
     _spec: &Composition,
     paths: &'a [String],

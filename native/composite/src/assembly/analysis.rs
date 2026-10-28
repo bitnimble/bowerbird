@@ -3,7 +3,7 @@
 //!
 //! The align, the planes and the seam field run here in order, and the refusals are where a set
 //! that cannot be assembled is named rather than silently half-answered. Tiles are the reader's:
-//! each is seeded where they click and grown by `assembly_seams`.
+//! each is seeded where they click and grown by `assembly::seams`.
 
 use crate::align::AlignSource;
 use crate::assembly::Assembly;

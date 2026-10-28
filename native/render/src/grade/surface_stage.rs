@@ -227,9 +227,10 @@ pub fn draw(
 
 pub fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
     static MODULE: gpu::Cache<wgpu::ShaderModule> = gpu::Cache::new();
-    static BUILT: std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>> =
-        std::sync::Mutex::new(Vec::new());
+    static BUILT: gpu::Cache<std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>>> =
+        gpu::Cache::new();
     let mut built = BUILT
+        .get(gpu, Default::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let key = white.raw().to_bits();

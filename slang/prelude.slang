@@ -1,6 +1,6 @@
 // Transfer functions and the roll-off, shared by every module that grades.
 //
-// The constants and the names are `native/rawshim`'s, deliberately: this is a second
+// The constants and the names are `native/colour`'s and `native/units`', deliberately: this is a second
 // implementation of one picture, which is the divergence DESIGN §21.1 warns about, so
 // where a number appears here it appears with the name it has over there.
 module prelude;

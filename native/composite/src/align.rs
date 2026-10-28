@@ -108,7 +108,7 @@ const MIN_CORRESPONDING: f64 = 0.01;
 /// How much better one corner's best match has to be than its second before that corner counts as
 /// having matched clearly.
 ///
-/// Lowe's ratio again, at the strict end of it. `composite_features` has already dropped everything over
+/// Lowe's ratio again, at the strict end of it. `composite::features` has already dropped everything over
 /// `DISTINCT_ENOUGH` when it paired them, so this asks a second and tighter question of what
 /// survived: not whether a corner found a match, but whether it found one place and no other. What
 /// is done with the answer is [`CLEARLY_MATCHED`], which counts them. `PANO_DISTINCT` moves this.

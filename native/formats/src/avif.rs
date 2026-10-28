@@ -8,8 +8,8 @@
 //
 // Nothing about the conversion is reimplemented here. The PQ transfer is `tone::pq`, the
 // same curve the grade rolls highlights with; the sRGB transfer and the
-// Rec.2020-to-BT.709 primaries matrix are `fit::hdr`'s, which has needed both all along
-// because the fit measures its deltaE in sRGB; and the YCbCr matrix with its
+// Rec.2020-to-BT.709 primaries matrix are `colour::space`'s, which the fit measures its
+// deltaE in sRGB through; and the YCbCr matrix with its
 // limited-range quantisation is libavif's own `avifImageRGBToYUV`.
 
 use crate::raw;
@@ -360,7 +360,7 @@ fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), S
 }
 
 /// A PQ still's planes as its file codes them, for the viewer's stage to read
-/// (`crate::grade::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
+/// (`render::grade::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
 pub struct Coded<'a> {
     /// Luma, blue, red, little-endian `u16` samples, each `strides[at]` bytes a row.
     pub planes: [&'a [u8]; 3],

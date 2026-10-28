@@ -153,7 +153,7 @@ impl WhiteAtOne for Scene {}
 
 /// A domain measured in absolute nits, which is the only thing ST 2084 codes.
 ///
-/// **Two of them, and [`crate::tone::pq_inv`] cannot tell which it is handing back.** The curve is
+/// **Two of them, and `colour::tone::pq_inv` cannot tell which it is handing back.** The curve is
 /// absolute, so what comes out of it is real nits either way - but whether those are the scene's,
 /// as `decode.slang`'s table means them, or the display's, as the roll-off means them, is the
 /// caller's to name. So it names one, and the compiler holds it to that afterwards.

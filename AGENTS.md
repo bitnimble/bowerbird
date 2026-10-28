@@ -26,7 +26,7 @@ forces it for tests; other processes use
 `VK_ADD_DRIVER_FILES=native/rawshim/.swiftshader/vk_swiftshader_icd.json`. Docker installs it
 and deletes lavapipe's manifest.
 
-CPU-only algorithms remain valid: solvers (`fit::profile`, `fit::hdr`, `tca.rs`: least squares,
+CPU-only algorithms remain valid: solvers (`fit::profile`, `fit::hdr`, `fit::tca`: least squares,
 golden section), shader input tables, dust blob flood fill (`dust.rs`, surrounded by
 `slang/dust_find.slang`). Restriction covers pixel arithmetic.
 
@@ -61,11 +61,12 @@ In Rust and Slang:
 - **Lights need domains.** Ratios use domain-free `Stops` or `Gain`. Decode before weighting;
   never sum coded values as light.
 - **Cross planes through `Share`**, never an ad hoc ratio.
-- **Declare shared constants once.** Use `prelude::LUMA` and `LUMA709` luma weights.
+- **Declare shared constants once.** Use `prelude::LUMA` and `LUMA709` luma weights
+  (`colour::space::LUMA`, `LUMA709` in Rust).
 
 These modules are opt-in: `(usize, usize)` and `f32` boundaries compile without them.
-Audit new files for `px`/`light` imports and named spaces/domains, including the `assembly_*`
-family's ten Rust modules and eight shaders. Compilation does not prove unit safety.
+Audit new files for `px`/`light` imports and named spaces/domains, including `composite::assembly`'s
+thirteen modules and the `assembly_*` shaders. Compilation does not prove unit safety.
 
 Before adding a shader constant, classify it in `px.slang`'s header: picture share, absolute
 mosaic distance, scale-exact fixed working plane, intentional output pixel, or non-pixel unit.
@@ -136,7 +137,8 @@ a build carries: a running app downloads newer ones from Hugging Face itself (`M
 `NOT_IMPLEMENTED` for every 4:2:0 encode, including grid tiles.
 
 Trees live in recipe-named directories under `~/.cache/bowerbird/<name>/`, reached through
-`native/rawshim/.<name>` symlinks. Worktrees share matching builds; different pins coexist.
+`native/rawshim/.<name>` symlinks, which the other crates reach by relative path
+(`../rawshim/.upscaler`). Worktrees share matching builds; different pins coexist.
 Run getters in each worktree to create symlinks. `XDG_CACHE_HOME` moves cache;
 `BOWERBIRD_SLANGC` still selects an external compiler.
 

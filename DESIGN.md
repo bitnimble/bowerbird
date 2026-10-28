@@ -68,7 +68,8 @@ Pixel processing lives in the `native/` Cargo workspace, linked into one library
 Rust and Slang elsewhere. No image-processing package. Its crates, each depending only on those
 before it: `units`, `trace`, `shaders`, `gpu`; `colour`, `linalg`, `mosaic`, `denoise`,
 `formats`, `geometry`, `stacks`; `render`; `fit`; `composition`, `burst`; `decode`;
-`composite`, `dereflect`; then `rawshim`'s jobs and its FFI and wasm entry points.
+`composite`, `dereflect`; then `rawshim`'s jobs and its FFI and wasm entry points, which
+`rawshim_cdylib` links into the shared library.
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
@@ -98,7 +99,7 @@ limit cannot hold a 144MB 24MP frame.
 Ban extends to every host pixel loop. Fit resamplers, histograms, descriptor grids and
 illuminant search use kernels for consistent measurements across machines.
 
-CPU-only algorithms remain valid: fit solvers (`fit::profile`, `fit::hdr`, `tca.rs`: f64 least
+CPU-only algorithms remain valid: fit solvers (`fit::profile`, `fit::hdr`, `fit::tca`: f64 least
 squares, golden section), dust blob flood fill, shader input tables, `decode::raw::conditioned`.
 The latter builds conditioning tables, never a second frame path;
 `the_kernel_conditions_every_sample_at_its_own_position` pins kernel agreement.

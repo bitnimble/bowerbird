@@ -1,7 +1,7 @@
 //! A finished picture through the whole editor open, which is the claim the feature actually
 //! makes: everything below the mosaic runs on one unchanged.
 //!
-//! `gpu_linearise.rs` pins the kernel and `rendered_decode.rs` pins the readers. What neither can
+//! `gpu_linearise.rs` pins the kernel and `native/formats/tests/rendered_decode.rs` pins the readers. What neither can
 //! say is whether the *chain* takes what they produce - the correction, the levels, the coding,
 //! the defringe, the gather and the sharpen are written against a frame a demosaic left, and a
 //! decode with no mosaic behind it reaches them with `noise` and `matrix` both absent.

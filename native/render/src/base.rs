@@ -3505,7 +3505,7 @@ mod tests {
         assert_eq!(
             digits.parse::<usize>().expect("a number"),
             crate::detail::DECONVOLVE_RADIUS,
-            "sharpen.slang and image.rs disagree on the point spread's half-width",
+            "sharpen.slang and detail.rs disagree on the point spread's half-width",
         );
     }
 

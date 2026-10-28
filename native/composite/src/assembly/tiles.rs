@@ -21,7 +21,7 @@ pub const W_MAX: Share = Share::of(1, 100);
 /// One region of a solve's labelling, and the room its seam has.
 #[derive(Clone, Debug)]
 pub struct Cell {
-    /// Bitmask of the frames the region takes; `assembly_seams` sets one bit.
+    /// Bitmask of the frames the region takes; `assembly::seams` sets one bit.
     pub label: u32,
     /// The region, at the shrunk scale of §3.4.
     pub inside: Vec<bool>,

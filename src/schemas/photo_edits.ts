@@ -145,7 +145,7 @@ const HueSchema = z.number().min(0).max(360);
 const ChromaSchema = z.number().min(0).max(100);
 const LightnessSchema = z.number().min(0).max(300);
 
-/** ZCAM lightness, chroma, hue in degrees (`lattice::ColourNode`). Null lightness reaches every lightness. */
+/** ZCAM lightness, chroma, hue in degrees (`colour::lattice::ColourNode`). Null lightness reaches every lightness. */
 export const ColourNodeSchema = z.object({
   hue: HueSchema,
   chroma: ChromaSchema,
@@ -216,7 +216,7 @@ export const EditDocSchema = z
 
     // The capture sharpening beside them, and a position rather than a strength for the same
     // reason: 50 is the deconvolution as computed and 100 twice its difference from the frame
-    // (`image::SHARPEN_GAIN`), which is a gain rather than a unit in anything.
+    // (`detail::SHARPEN_GAIN`), which is a gain rather than a unit in anything.
     //
     // Null is the denoiser's default (`sharpeningOf`), so an unmoved slider follows a change of
     // denoiser.

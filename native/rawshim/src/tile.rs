@@ -590,7 +590,7 @@ fn presence_reach(adjust: &render::grade::Adjust, frame: Size<Drawn>) -> Span<Dr
 ///   window and cannot be assumed to be.
 ///
 /// On top of that the window is grown by the reach of everything that runs after the gather. **A
-/// deconvolution reads past what it writes**, by `image::Strengths::halo`: the decode's
+/// deconvolution reads past what it writes**, by `render::detail::Strengths::halo`: the decode's
 /// own halo is eaten by the demosaic and the mosaic denoise long before the sharpen, so a tile
 /// built at exactly the rectangle asked for rings along all four edges - and the loupe's tile is
 /// only half again its glass, so at high magnification that ringing is inside what the reader is

@@ -131,7 +131,7 @@ fn main() {
         // response to noise alone with no picture underneath it to confuse the ratio.
         let stencil = coded.as_ref().and_then(|plane| stencil_terms(plane, w, h));
         // Over the flat arm, which is pure reconstructed grain: what a 3x3-mean residual keeps of
-        // it, which is the divisor `image::sigma_from` needs.
+        // it, which is the divisor `render::detail::sigma_from` needs.
         let kept = coded
             .as_ref()
             .and_then(|plane| residual_fraction(plane, w, h));
@@ -242,7 +242,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
 }
 
 /// What fraction of a plane's noise survives the residual of a 3x3 mean, against the 0.83
-/// `image::sigma_from` divides by.
+/// `render::detail::sigma_from` divides by.
 ///
 /// **That constant is the independent-noise answer too.** A pixel's own grain is 8/9 of what a 3x3
 /// mean of it returns, so subtracting the mean leaves most of it - but only where the eight

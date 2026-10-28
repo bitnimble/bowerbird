@@ -49,7 +49,7 @@
 //   radii*, a multiplier of a measured axis; `sharpen.slang`'s `RADIUS` is a count of *taps*,
 //   whose sigma is what spans a picture. Each carries its own unit, `BlobRadius` and `Tap`, even
 //   where one constant is the unit's only inhabitant - because a distance that reads as pixels
-//   and is not is the one a later edit turns into pixels by accident. `repair_solve`'s `GROW`,
+//   and is not is the one a later edit turns into pixels by accident. `repair::solve`'s `GROW`,
 //   `REACH` and `GUARD` are the same kind: counts of cells, a cell being `repair::CELLS_ACROSS`
 //   of the loop the reader drew, so a dust spot and a person are searched alike. They reach a
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.

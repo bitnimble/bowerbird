@@ -1210,7 +1210,7 @@ const CANVAS_COLOR_SPACE: wgpu::SurfaceColorSpace = wgpu::SurfaceColorSpace::Ext
 /// a texture does not cross one either, so a canvas owned by the page and a frame owned by this
 /// module could only meet through the host - the frame down into wasm memory, across as bytes, and
 /// up again into a second device's buffer, every open. Handed the canvas instead
-/// ([`crate::wasm::Editor::attach_stage`]), the draw is one more pass on the queue that already holds the
+/// (`rawshim::wasm::Editor::attach_stage`), the draw is one more pass on the queue that already holds the
 /// prepare, and nothing is read back at all.
 ///
 /// `ExtendedDisplayP3` is `colorSpace: "display-p3"` with `toneMapping: { mode: "extended" }`,

@@ -53,7 +53,7 @@ pub struct Assembly {
     pub spec: Composition,
     /// Canvas pixels the tile loops are drawn from.
     pub vertices: Vec<[f32; 2]>,
-    /// One loop of vertex indices a tile: the least of what its pick takes (`assembly_seams`).
+    /// One loop of vertex indices a tile: the least of what its pick takes (`assembly::seams`).
     pub tiles: Vec<Vec<u32>>,
     /// Which source each tile takes.
     pub pick: Vec<usize>,
@@ -67,7 +67,7 @@ pub struct Assembly {
     /// The most §5.2's `W(x)` may be anywhere, as a share of the long edge: the reader's.
     #[serde(default = "default_feather")]
     pub feather: f32,
-    /// Where the picked frames actually meet, solved for `pick` and `base` (`assembly_seams`).
+    /// Where the picked frames actually meet, solved for `pick` and `base` (`assembly::seams`).
     /// Absent, the tiles are the seams.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seams: Option<crate::assembly::seams::Seams>,

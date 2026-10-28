@@ -302,7 +302,7 @@ pub fn framed(solved: &Solved, sizes: &[[usize; 2]], full_scale: f64) -> Framing
         .flat_map(|&i| border(&sizes[i]).map(move |at| (i, at)))
         .map(|(i, [x, y])| {
             let (cx, cy) = (sizes[i][0] as f64 / 2.0, sizes[i][1] as f64 / 2.0);
-            // **That source's own focal, not the set's.** `composite_align` builds
+            // **That source's own focal, not the set's.** `composite::align` builds
             // `SourceSpec::focal` as `focal * scales[i] * full_scale`, and that is what places its
             // pixels on the canvas - so a canvas sized against the shared focal alone would state a
             // field of view the render does not have, by as much as `SCALE_LEASH`. Identical for a
@@ -508,7 +508,7 @@ const RESIDUAL_CLAMP: f64 = std::f64::consts::SQRT_2;
 /// `measured` is one entry a pair: `(a, b, ratio)` where `ratio` is the median of a's samples over
 /// b's across the overlap, so b times it matches a.
 ///
-/// **The one production caller passes an empty slice.** `composite_align` never measures a pairwise
+/// **The one production caller passes an empty slice.** `composite::align` never measures a pairwise
 /// ratio, so `walked` never grows past the reference and every gain answers `stops(i)` - the header
 /// arithmetic alone. `measured`, the graph walk and [`RESIDUAL_CLAMP`] are exercised only from this
 /// module's own tests until a caller starts measuring real overlaps.
@@ -2228,7 +2228,7 @@ mod tests {
     /// A scale difference is radial by nature - it displaces a corner and leaves the middle alone -
     /// so it is exactly what `radial_px` sees. Measured before `scale_each`, a burst whose only
     /// fault was a breathing lens reads as not-near-identity *after* the step that corrected it,
-    /// and `assembly_analysis` refuses a set it had just fixed.
+    /// and `assembly::analysis` refuses a set it had just fixed.
     #[test]
     fn the_corner_reading_is_taken_after_the_scales_are_fitted() {
         let (sizes, pairs, mut solved) = a_burst_apart_by(1.03);

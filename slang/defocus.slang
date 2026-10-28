@@ -75,8 +75,8 @@ float sample_at(uint at)
     return level_of(half_of(frame[at / 2], at));
 }
 
-/// `image::luma_of`, normalised the same way round: the weights sum first and the divide comes
-/// after, or the response and the regressor round differently from the CPU's.
+/// Luma with the weights summed first and the divide after, or the response and the regressor
+/// round differently.
 float luma_at(uint x, uint y)
 {
     let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;

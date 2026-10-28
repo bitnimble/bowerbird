@@ -5,7 +5,7 @@
 //! so the views are generated from a scene with content at every scale and no period to it, which
 //! is what a correspondence search has to work against.
 //!
-//! Three things want the same six views and two of them are not tests: `composite_align`'s own suite,
+//! Three things want the same six views and two of them are not tests: `composite::align`'s own suite,
 //! an example that writes them to a directory, and the library the end-to-end suite opens a
 //! composite out of. One scene, so a change to it cannot make the suite and the fixture disagree
 //! about what they are looking at.

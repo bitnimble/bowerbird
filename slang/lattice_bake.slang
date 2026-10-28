@@ -280,7 +280,7 @@ void interpolate()
     }
 }
 
-/// The reader's colour edits (`lattice::ColourNode::kernel`), summed but not exponentiated: each
+/// The reader's colour edits (`colour::lattice::ColourNode::kernel`), summed but not exponentiated: each
 /// is a move in ZCAM's opponent plane rather than a generator, so half of one is half the move.
 [shader("compute")]
 [numthreads(4, 4, 4)]

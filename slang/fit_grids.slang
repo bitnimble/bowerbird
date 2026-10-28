@@ -4,7 +4,7 @@
 // - and both reading either an 8-bit plane held as its own bytes, four samples to a word, or the
 // f32 RGB every pass emits.
 //
-// The Lanczos conventions are `fast_image_resize`'s, which is what `image::resize` reduces a host
+// The Lanczos conventions are `fast_image_resize`'s, which is what `formats::resize::resize` reduces a host
 // plane by and what the fit's recorded numbers were measured against: on a downscale the support
 // scales with the ratio, a source pixel's weight is read at its own centre, the window is truncated
 // at the frame's edge rather than extended, and what survives it is normalised to sum to one.

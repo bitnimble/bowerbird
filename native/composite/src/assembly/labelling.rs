@@ -1,7 +1,7 @@
 //! Which frame each cell takes under the reader's picks: the tiles as the data term of a labelling
 //! over the picked frames only, solved by alpha-expansion.
 //!
-//! Host code for `assembly_seam`'s reason: a bounded graph over a field the device produced, at the
+//! Host code for `assembly::seam`'s reason: a bounded graph over a field the device produced, at the
 //! shrunk scale of §3.4.
 
 use crate::assembly::seam::{MinCut, NEIGHBOURS, SHRINK, TIE, along_an_edge, differ, disagreement};

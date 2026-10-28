@@ -157,8 +157,12 @@ pub async fn seam_field<E>(
     stepped()?;
     over(levelling(gpu), planes[0].rgb.buffer(), 0, cells);
     Ok(SeamField {
-        level: read_words::<f32>(gpu, &level, cells * (sources + 1)).await,
-        tint: read_words::<f32>(gpu, &tint, cells * sources * 2).await,
+        level: gpu::read_floats(gpu, &level, cells * (sources + 1))
+            .await
+            .expect("an assembly readback"),
+        tint: gpu::read_floats(gpu, &tint, cells * sources * 2)
+            .await
+            .expect("an assembly readback"),
         sources,
     })
 }
@@ -170,29 +174,6 @@ fn noise_in_plane_units(plane: &Plane) -> [f32; 2] {
     // `assembly_levels.slang`'s `assembly_tint` weighs the same three channels the same way.
     render::base::luma_noise_in_light(plane.noise, plane.full_scale_light, plane.wb_gains)
         .map(|term| (term / averaged) as f32)
-}
-
-/// A buffer's words, on the host. `COPY_SRC`, since a storage buffer cannot be mapped.
-async fn read_words<T: bytemuck::Pod>(
-    gpu: &'static Gpu,
-    buffer: &gpu::Buffer,
-    count: usize,
-) -> Vec<T> {
-    let bytes = (count * std::mem::size_of::<T>()) as u64;
-    let mut recording = gpu.record();
-    let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("assembly readback"),
-        size: bytes,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
-    recording.submit();
-    gpu::read_back(gpu, &readback, |mapped| {
-        bytemuck::cast_slice::<u8, T>(mapped).to_vec()
-    })
-    .await
-    .expect("an assembly readback")
 }
 
 #[cfg(test)]

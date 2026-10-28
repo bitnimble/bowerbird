@@ -294,7 +294,7 @@ void fit_mask(uint3 id: SV_DispatchThreadID)
     let t = jpeg_at(p);
     // Before every gate below, because those gates are what this set exists to see past - the
     // camera's own clipping included. A clipped target has no level to be measured against, and
-    // the host marks it so (`hdr_fit`, a negative balance) - but it says the colour is at least
+    // the host marks it so (`fit::hdr`, a negative balance) - but it says the colour is at least
     // that saturated, so a candidate that renders it past the gamut is wrong there, and the
     // objective's gamut term is what reads it.
     var frame = 0u;

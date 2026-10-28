@@ -169,10 +169,6 @@ fn settling(gpu: &'static Gpu) -> &'static Entry {
     BUILT.get(gpu, || built(gpu, "assembly_settle", &[4, 6, 8, 9, 10, 11]))
 }
 
-// `zeroed`, `uploaded` and `dispatch` are `composite::assembly::analysis`'s, copied rather than shared -
-// they are eight lines each and sharing them would make one module's binding count another's
-// problem.
-
 fn zeroed(gpu: &'static Gpu, words: usize, label: &str) -> gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),

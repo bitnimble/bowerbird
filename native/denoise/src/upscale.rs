@@ -1046,7 +1046,7 @@ const BUNDLED: Option<&[u8]> = None;
 struct Model {
     manifest: &'static str,
     weights: Option<&'static [u8]>,
-    built: Option<Option<&'static Upscaler>>,
+    built: Option<(u64, Option<&'static Upscaler>)>,
 }
 
 const UNBUILT: Model = Model {
@@ -1094,18 +1094,20 @@ pub fn hold_model(manifest: String, weights: Vec<u8>) {
     });
 }
 
-/// The network on its fastest arm, built on the first frame that asks for it and kept until a model
-/// replaces it. `None` in a page until it has handed over what it fetched.
+/// The network on its fastest arm, built on the first frame that asks for it on each device and kept
+/// until a model replaces it. `None` in a page until it has handed over what it fetched.
 pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Upscaler> {
     with_model(|held| {
-        if let Some(tried) = held.built {
+        if let Some((device, tried)) = held.built
+            && device == gpu.id()
+        {
             return tried;
         }
         let made = Upscaler::fastest(gpu, held.manifest, held.weights?)
             .map_err(|why| trace::warn(&format!("rawshim: the upscaler did not build: {why}")))
             .ok()
             .map(|made| &*Box::leak(Box::new(made)));
-        held.built = Some(made);
+        held.built = Some((gpu.id(), made));
         made
     })
 }

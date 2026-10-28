@@ -1770,7 +1770,7 @@ mod tests {
         );
     }
 
-    /// The device reduce against `image::resize`, which is the convention it was written to.
+    /// The device reduce against `formats::resize::resize`, which is the convention it was written to.
     ///
     /// **What this pins is the half-pixel and the support**, which nothing else can see: a filter
     /// centred on the source pixel's corner rather than its centre, or one whose window does not

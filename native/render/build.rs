@@ -1,9 +1,6 @@
 use std::env;
 use std::path::PathBuf;
 
-/// The pinned tree `.environments` links to rather than the link, so every worktree on one pin
-/// compiles the same library and a build cache can share it. Left as the link when it is missing,
-/// for `print::Environment::bytes` to name the getter.
 fn main() {
     let link = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
         .join("../rawshim/.environments");
@@ -14,6 +11,8 @@ fn main() {
     if pin.exists() {
         println!("cargo:rerun-if-changed={}", pin.display());
     }
+    // The pinned tree, not the link, so worktrees on one pin share a build cache. The link when
+    // missing, for `print::Environment::bytes` to name the getter.
     let tree = link.canonicalize().unwrap_or(link);
     println!("cargo:rustc-env=BOWERBIRD_ENVIRONMENTS={}", tree.display());
 }

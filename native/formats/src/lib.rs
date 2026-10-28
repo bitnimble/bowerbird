@@ -26,10 +26,10 @@ pub mod hevc;
 pub mod jpeg;
 /// The gain map a JPEG carries as its second MPF image, in either spelling of the terms.
 pub mod jpeg_gain;
-/// The same, in the spelling a JPEG carries it.
+/// Writing a JPEG's gain map, which only an export asks for.
 #[cfg(feature = "renditions")]
 pub mod jpeg_gain_write;
-/// JPEG XL, the same.
+/// Writing JPEG XL, which only an export asks for.
 #[cfg(feature = "renditions")]
 pub mod jxl_write;
 /// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
@@ -43,15 +43,12 @@ pub mod rendered;
 /// A picture resized, and a finished file decoded to a bounded size.
 pub mod resize;
 pub mod still;
-/// TIFF, the same.
+/// Writing TIFF, which only an export asks for.
 #[cfg(feature = "renditions")]
 pub mod tiff_write;
 
-/// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
-/// no C at all and so has no bindings to declare.
 #[cfg(test)]
 mod tests {
-    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
     #[test]
     fn every_uniform_is_the_size_its_shader_reads() {
         shaders::layout::check(&[(
@@ -63,6 +60,8 @@ mod tests {
     }
 }
 
+/// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
+/// no C at all and so has no bindings to declare.
 #[cfg(feature = "renditions")]
 pub mod raw {
     #![allow(

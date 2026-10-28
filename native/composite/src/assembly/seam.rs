@@ -3,7 +3,7 @@
 //! A seam finder minimises the cost of the boundary itself, so this is a min cut - Interactive
 //! Digital Photomontage's (Agarwala et al., 2004), over the Boykov-Kolmogorov neighbourhood.
 //!
-//! The cut is host code for `dust.rs`'s reason and no other: `assembly_seams` walks a bounded graph
+//! The cut is host code for `dust.rs`'s reason and no other: `assembly::seams` walks a bounded graph
 //! over a field the device produced (`assembly_levels`), at the shrunk scale, where a figure's ring
 //! is tens of thousands of nodes. There is no second arithmetic over the picture here.
 

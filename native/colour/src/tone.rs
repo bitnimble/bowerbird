@@ -41,7 +41,7 @@ const PQ_MAX_NITS: f64 = 10000.0;
 ///
 /// PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates
 /// rather than being carried. That is BT.2408's own headroom above a 203-nit white, and the one
-/// clamp a scene-referred rendition takes (`rawshim::grade::Output::mastered`).
+/// clamp a scene-referred rendition takes (`render::grade::Output::mastered`).
 ///
 /// **The domain is the caller's to name**, as it is in `prelude.slang`: the curve is absolute, so
 /// `base::coding_curve` codes the *scene's* nits with it and the roll-off compresses the

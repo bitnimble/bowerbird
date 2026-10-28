@@ -883,7 +883,7 @@ mod tests {
     }
 
     /// The bound is honoured whichever format the file is, which is the half of
-    /// `image::decode` a JPEG never exercises.
+    /// `formats::resize::decode` a JPEG never exercises.
     #[test]
     fn transcoding_a_rendition_honours_the_long_edge() {
         let dir = std::env::temp_dir().join("bb-transcode-bounded");

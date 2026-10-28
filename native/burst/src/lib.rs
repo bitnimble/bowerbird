@@ -1,6 +1,6 @@
-//! Where a burst's frames should sit against the reference: the recipe's placement of each,
-//! projected through its lens, less any shift the camera made on purpose, as the prior the aligner
-//! searches from.
+//! A burst aligned and merged on the mosaic (`align`, `merge`), searching from where each frame
+//! should sit against the reference: the recipe's placement of it, projected through its lens,
+//! less any shift the camera made on purpose.
 
 #![deny(unsafe_code)]
 
@@ -109,7 +109,6 @@ mod tests {
     use crate::align::{self, Exposure, Search};
     use units::px::{At, Rect};
 
-    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
     #[test]
     fn every_uniform_is_the_size_its_shader_reads() {
         shaders::layout::check(&[
@@ -203,20 +202,7 @@ mod tests {
     }
 
     fn floats(gpu: &'static gpu::Gpu, buffer: &gpu::Buffer, count: usize) -> Vec<f32> {
-        let bytes = (count * 4) as u64;
-        let mut recording = gpu.record();
-        let readback = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("align readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        recording.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
-        recording.submit();
-        pollster::block_on(gpu::read_back(gpu, &readback, |mapped| {
-            bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
-        }))
-        .unwrap()
+        pollster::block_on(gpu::read_floats(gpu, buffer, count)).unwrap()
     }
 
     #[test]

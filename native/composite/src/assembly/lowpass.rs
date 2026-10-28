@@ -115,7 +115,7 @@ pub async fn lowpass(
 ///
 /// The panorama's own loop with two things changed: the weight each source is gathered with comes
 /// from §5.2's fields rather than from the feather, and the layers land in two bands rather than
-/// one accumulator. The decode, the coding, the lens gather and the order are `composite_tile`'s,
+/// one accumulator. The decode, the coding, the lens gather and the order are `composite::tile`'s,
 /// unchanged - which is what makes the editor and a rendition one implementation rather than two.
 ///
 /// `hold` is [`lowpass`]'s answer, built once for a whole render: it is a decode a source and it

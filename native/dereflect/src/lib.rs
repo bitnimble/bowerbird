@@ -294,10 +294,10 @@ impl Unpacked {
 
 impl Remover {
     pub fn new(gpu: &Gpu, manifest: &str, weights: &[u8], cells: Cells) -> Result<Remover, String> {
-        Remover::built(gpu, Unpacked::new(manifest, weights)?, cells)
+        Remover::built(gpu, &Unpacked::new(manifest, weights)?, cells)
     }
 
-    fn built(gpu: &Gpu, unpacked: Unpacked, cells: Cells) -> Result<Remover, String> {
+    fn built(gpu: &Gpu, unpacked: &Unpacked, cells: Cells) -> Result<Remover, String> {
         let Unpacked {
             net,
             dino,
@@ -395,14 +395,14 @@ impl Remover {
             layout,
             pipelines,
             cells,
-            net: upload("dereflect weights", &cells.encoded(&net)),
-            dino: upload("dereflect DINOv2", &cells.encoded(&dino)),
+            net: upload("dereflect weights", &cells.encoded(net)),
+            dino: upload("dereflect DINOv2", &cells.encoded(dino)),
             empty: upload("dereflect empty", &[0; 16]),
             sink: upload("dereflect sink", &[0; 16]),
-            tensors,
-            positions,
-            blocks,
-            dino_depth,
+            tensors: tensors.clone(),
+            positions: positions.clone(),
+            blocks: blocks.clone(),
+            dino_depth: *dino_depth,
             uniform_stride: (std::mem::size_of::<Params>() as u64).next_multiple_of(alignment),
         })
     }
@@ -985,7 +985,7 @@ impl FrameKernels {
 
 struct Model {
     unpacked: Option<Unpacked>,
-    built: Option<Option<&'static Remover>>,
+    built: Option<(u64, Option<&'static Remover>)>,
 }
 
 const UNHELD: Model = Model {
@@ -1038,15 +1038,17 @@ pub fn ready(gpu: &'static Gpu) -> bool {
     device(gpu).is_some()
 }
 
-/// The network, built on the first frame that asks for it and kept until a model replaces it.
-/// `None` until the app has handed one over.
+/// The network, built on the first frame that asks for it on each device and kept until a model
+/// replaces it. `None` until the app has handed one over.
 fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
     with_model(|held| {
-        if let Some(tried) = held.built {
+        if let Some((device, tried)) = held.built
+            && device == gpu.id()
+        {
             return tried;
         }
         let cells = Cells::of(gpu.describing().features());
-        let made = Remover::built(gpu, held.unpacked.take()?, cells)
+        let made = Remover::built(gpu, held.unpacked.as_ref()?, cells)
             .map_err(|why| {
                 trace::warn(&format!(
                     "rawshim: the reflection remover did not build: {why}"
@@ -1055,7 +1057,7 @@ fn device(gpu: &'static Gpu) -> Option<&'static Remover> {
             .ok()
             // ponytail: one network leaked per model update, since a frame mid-render may hold it.
             .map(|made| &*Box::leak(Box::new(made)));
-        held.built = Some(made);
+        held.built = Some((gpu.id(), made));
         made
     })
 }

@@ -27,7 +27,6 @@ pub mod tile;
 
 #[cfg(test)]
 mod tests {
-    /// Every uniform block, against the struct the shader declares (`shaders::layout`).
     #[test]
     fn every_uniform_is_the_size_its_shader_reads() {
         shaders::layout::check(&[

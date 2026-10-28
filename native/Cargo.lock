@@ -335,7 +335,6 @@ dependencies = [
 name = "composition"
 version = "0.1.0"
 dependencies = [
- "fit",
  "geometry",
  "serde",
  "serde_json",

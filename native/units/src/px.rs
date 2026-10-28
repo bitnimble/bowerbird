@@ -52,7 +52,7 @@ pub enum Sensor {}
 /// tile, the frame a stored analysis describes.
 pub enum Photograph {}
 
-/// The frame the corrections run on: what a decode produced, which [`crate::view::Scale::Half`]
+/// The frame the corrections run on: what a decode produced, which `decode::view::Scale::Half`
 /// halves, or that resized to a size neither resolution gives ([`Decoded`]).
 ///
 /// Equal to [`Photograph`] whenever the scale is `Full`, which is most of the time and is exactly
@@ -85,8 +85,8 @@ pub enum Millimetre {}
 /// The camera match's own plane, at the fixed long edge its fit sets (`FIT_LONG_EDGE`).
 pub enum FitPlane {}
 
-/// The reflection remover's plane: the frame shrunk to [`crate::dereflect::EDGE`] on its long
-/// edge, and padded out to whole multiples of [`crate::dereflect::MULTIPLE`].
+/// The reflection remover's plane: the frame shrunk to `dereflect::EDGE` on its long
+/// edge, and padded out to whole multiples of `dereflect::MULTIPLE`.
 pub enum Looked {}
 
 /// The grid an edit document writes a position on: [`STORED_LONG`] steps across the photograph's
@@ -106,10 +106,10 @@ pub const STORED_LONG: usize = 65535;
 /// The plane a composite's geometry search runs on: the frames' embedded JPEGs, brought to one
 /// size.
 ///
-/// **Deliberately not [`Absolute`]**: the long edge is `composite_align::Kind`'s choice - 1616 for
+/// **Deliberately not [`Absolute`]**: the long edge is `composite::align::Kind`'s choice - 1616 for
 /// a pan and 808 for a burst - and a body whose embedded JPEG is shorter brings the whole set down
 /// to its own size. So a distance here is a ratio until a [`Share`] gives it a plane, which is how
-/// `composite_align::Aligned::radial` leaves it.
+/// `composite::align::Aligned::radial` leaves it.
 pub enum Search {}
 
 /// A composite's canvas at scale 1, which its recipe sizes and every window of it is cut from.
@@ -121,7 +121,7 @@ pub enum Composite {}
 ///
 /// [`Absolute`] because that number is the pipeline's and not the caller's - every §3 threshold
 /// that reads as so-many-pixels is so many of these. **The plane the align's own search runs on is
-/// not this one and is not absolute**: `composite_align::Kind` chooses its long edge, so a number
+/// not this one and is not absolute**: `composite::align::Kind` chooses its long edge, so a number
 /// in its pixels is a ratio and has to be written as a [`Share`] before it can become one of these.
 pub enum Analysis {}
 
@@ -141,7 +141,7 @@ pub enum Pinned {}
 // are exactly the ones a later edit converts into pixels by accident.
 
 /// Taps of a kernel: how many samples a stencil reads, not how much picture they span. What
-/// carries the scale is the sigma they weigh, which [`crate::image::deconvolve_split`] composes
+/// carries the scale is the sigma they weigh, which `render::detail::deconvolve_split` composes
 /// per scale and clamps to what five taps are honest for.
 pub enum Tap {}
 
@@ -943,7 +943,7 @@ mod tests {
     /// The failure this module opens on, in the shape §3.1 met it: **the same count of pixels is a
     /// different distance on a different plane.**
     ///
-    /// `composite_align::Kind` searches a burst at 808 where a pan wants 1616, and the corner check
+    /// `composite::align::Kind` searches a burst at 808 where a pan wants 1616, and the corner check
     /// reads its number in those pixels while its bound is in the analysis plane's. Resolved as a
     /// share, one reading crosses and the other does not, which is the answer; taken as a bare
     /// count, both pass and one of them should not.
