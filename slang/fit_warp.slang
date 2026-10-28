@@ -8,7 +8,7 @@
 // argmax over +-4px, which a smooth radial softening barely moves, and the geometry search scores
 // planes blurred past anything a sharper filter would keep.
 //
-// The radial ratio table is the host's (`image::channel_ratio_table`) - 4097 entries, so it is
+// The radial ratio table is the host's (`lens::channel_ratio_table`) - 4097 entries, so it is
 // nothing to compute or to upload, and it is the only thing that changes between the settle's
 // rounds. One table per channel: they are identical unless the lens carries a lateral correction,
 // which makes the per-channel path free rather than a second one.
@@ -68,7 +68,7 @@ static const int FINISH_MATRIX = 1;
 /// width every other plane here is, so that a grid the geometry search reads never has to come back
 /// to the host to be rounded and sent up again. `fit_source.slang`'s `fit_render` does the same.
 static const int FINISH_CODES = 2;
-/// The lens's own falloff lifted back in, `radial` holding `fit::Gain::at` per radius bucket. Read
+/// The lens's own falloff lifted back in, `radial` holding `geometry::lens::falloff` per radius bucket. Read
 /// by `fit_box` alone rather than in `write`, so that `fit_box_packed` - which never carries one -
 /// does not have to bind a radial table to say so.
 static const int FINISH_FALLOFF = 3;

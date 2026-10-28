@@ -7,8 +7,8 @@
 //! Writes the noisy input, the denoised output, and the residual against the clean scene
 //! (amplified) as PGMs, plus a per-slot residual so a CFA-slot imbalance shows as such.
 
-use rawshim::condition::Mosaic;
-use rawshim::galosh::{Amounts, denoise};
+use denoise::galosh::{Amounts, denoise};
+use mosaic::condition::Mosaic;
 
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 768;
@@ -70,15 +70,15 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let (clean, noisy) = frames();
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let galosh = rawshim::galosh::device(gpu).expect("the kernels built");
+    let gpu = gpu::device().expect("an adapter");
+    let galosh = denoise::galosh::device(gpu).expect("the kernels built");
     let uploaded = Mosaic::upload(gpu, &noisy, WIDTH, HEIGHT);
     let fit = pollster::block_on(denoise(
         gpu,
         galosh,
         &uploaded,
-        &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
-        rawshim::galosh::UNGAINED,
+        &mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+        denoise::galosh::UNGAINED,
         Amounts::from_sliders(luminance, colour),
     ));
     eprintln!("fit: {fit:?}");

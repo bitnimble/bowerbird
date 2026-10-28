@@ -1,6 +1,6 @@
 // Pixels that know which picture they are pixels of, and what its pixels are the size of.
 //
-// `native/rawshim/src/px.rs` on this side of the boundary, and for the same reason: naming the
+// `native/units/src/px.rs` on this side of the boundary, and for the same reason: naming the
 // space says which picture a number is a number of, and does not say how finely that picture was
 // sampled. The frame a grade writes is sampled at whatever the rendition asked for, so a count of
 // its pixels is a different share of the same photograph at 3840 than at a sensor's own size -
@@ -42,14 +42,14 @@
 //   the frame shrunk to 1024 on its long edge (`dereflect.slang`, `dereflect_frame.slang`, whose
 //   `BRUSH_SOFTNESS` is a share of a stroke's own radius). A working plane of fixed size has fixed
 //   pixels, so constants in it are safe.
-// - *A pixel of whatever is drawn, on purpose.* `assembly_weight::W_HIGH_PX`, the high band's two
+// - *A pixel of whatever is drawn, on purpose.* `composite::assembly::weight::W_HIGH_PX`, the high band's two
 //   render pixels: what it smooths is the staircase a rasteriser leaves, which is one pixel at
 //   every size, so a share of the picture would be the wrong answer at every size but one.
 // - *A distance in units that are not pixels of anything.* `dust.slang`'s `SPAN` is 2.5 *blob
 //   radii*, a multiplier of a measured axis; `sharpen.slang`'s `RADIUS` is a count of *taps*,
 //   whose sigma is what spans a picture. Each carries its own unit, `BlobRadius` and `Tap`, even
 //   where one constant is the unit's only inhabitant - because a distance that reads as pixels
-//   and is not is the one a later edit turns into pixels by accident. `repair_solve`'s `GROW`,
+//   and is not is the one a later edit turns into pixels by accident. `repair::solve`'s `GROW`,
 //   `REACH` and `GUARD` are the same kind: counts of cells, a cell being `repair::CELLS_ACROSS`
 //   of the loop the reader drew, so a dust spot and a person are searched alike. They reach a
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.
@@ -104,7 +104,7 @@ public struct Looked : IAbsolute {}
 /// The plane a composite's geometry search runs on: the frames' embedded JPEGs, brought to one
 /// size.
 ///
-/// **Deliberately not `IAbsolute`.** Its long edge is the caller's choice - `composite_align::Kind`
+/// **Deliberately not `IAbsolute`.** Its long edge is the caller's choice - `composite::align::Kind`
 /// asks for 1616 for a pan and 808 for a burst, and a body whose embedded JPEG is shorter brings
 /// the whole set down to its own size - so a count of these pixels is a ratio, and a constant in
 /// them describes a different amount of picture in each case.
@@ -116,7 +116,7 @@ public struct Search : ISpace {}
 
 /// Taps of a kernel. A count of samples a stencil reads, not a distance across a picture: five of
 /// these is five taps whatever the sigma they are weighing, and the sigma is what carries the
-/// scale (`image::deconvolve_split` clamps it to what five are honest for).
+/// scale (`detail::deconvolve_split` clamps it to what five are honest for).
 public struct Tap : IAbsolute {}
 
 /// Multiples of a particle's own measured axis, which is what `dust.slang` reaches out in. The

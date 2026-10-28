@@ -1,13 +1,13 @@
-//! The viewer's stage in a TV's window (`gpu::surface_stage`), for the Android shell, which owns
+//! The viewer's stage in a TV's window (`render::grade::surface_stage`), for the Android shell, which owns
 //! the window and calls these from the thread it draws on.
 
 #![expect(unsafe_code)]
 
-use crate::gpu::surface_stage::{Display, Picture, SurfaceStage, measured};
-use crate::light::Gain;
-use crate::px::Size;
+use render::grade::surface_stage::{Display, Picture, SurfaceStage, measured};
 use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
+use units::light::Gain;
+use units::px::Size;
 
 /// A rendition's planes on the device, with its shown size in `width` and `height`; null where
 /// the stage does not draw this file, which leaves the page drawing it.
@@ -26,9 +26,9 @@ pub unsafe extern "C" fn bb_stage_picture(
     }
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
     let picture = crate::guard("bb_stage_picture", None, || {
-        let gpu = crate::gpu::device()?;
-        crate::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
-            .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
+        let gpu = gpu::device()?;
+        formats::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
+            .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()??
     });
     unsafe { handed(picture, width, height) }
@@ -55,10 +55,10 @@ pub extern "C" fn bb_stage_warm(white: f32) -> c_int {
         return -1;
     }
     crate::guard("bb_stage_warm", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
-        crate::gpu::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
+        render::grade::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
         0
     })
 }
@@ -77,7 +77,7 @@ pub unsafe extern "C" fn bb_stage_flat(
         return std::ptr::null_mut();
     }
     let picture = crate::guard("bb_stage_flat", None, || {
-        Picture::flat(crate::gpu::device()?, f64::from(nits))
+        Picture::flat(gpu::device()?, f64::from(nits))
     });
     unsafe { handed(picture, width, height) }
 }
@@ -105,11 +105,11 @@ pub unsafe extern "C" fn bb_stage_attach(
         return std::ptr::null_mut();
     };
     let stage = crate::guard("bb_stage_attach", None, || {
-        let gpu = crate::gpu::device()?;
+        let gpu = gpu::device()?;
         let size = Size::measured(width as usize, height as usize);
         // SAFETY: the caller's.
         unsafe { SurfaceStage::attach(gpu, window, size) }
-            .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
+            .inspect_err(|refused| trace::warn(&format!("rawshim stage: {refused}")))
             .ok()
     });
     stage.map_or(std::ptr::null_mut(), |stage| Box::into_raw(Box::new(stage)))
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn bb_stage_present(
     };
     let (stage, picture) = unsafe { (&mut *stage, &*picture) };
     crate::guard("bb_stage_present", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
         stage.resize(gpu, Size::measured(width as usize, height as usize));
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn bb_stage_present(
         match stage.present(gpu, picture, fit, display) {
             Ok(()) => 0,
             Err(refused) => {
-                crate::warn(&format!("rawshim stage: {refused}"));
+                trace::warn(&format!("rawshim stage: {refused}"));
                 -1
             }
         }

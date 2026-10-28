@@ -17,14 +17,14 @@ fn main() {
     let height: usize = args.next().expect("a height").parse().expect("a height");
 
     const GAP: usize = 12;
-    let panels: Vec<rawshim::rgb::Rgb> = args
+    let panels: Vec<units::rgb::Rgb> = args
         .map(|spec| {
             let mut parts = spec.split(',');
             let path = parts.next().expect("an image path").to_string();
             let region: Vec<f64> = parts.filter_map(|v| v.trim().parse().ok()).collect();
             let region = <[f64; 4]>::try_from(region).expect("l,t,r,b");
             let bytes = std::fs::read(&path).expect("a readable image");
-            let picture = rawshim::image::decode(&bytes, 0).expect("a JPEG or an AVIF");
+            let picture = formats::resize::decode(&bytes, 0).expect("a JPEG or an AVIF");
             cropped(&picture, region, height)
         })
         .collect();
@@ -43,18 +43,18 @@ fn main() {
         at += panel.width + GAP;
     }
 
-    let sheet = rawshim::rgb::RgbRef {
+    let sheet = units::rgb::RgbRef {
         data: &data,
         width: wide,
         height,
     };
-    let jpeg = rawshim::jpeg::encode(sheet, 94).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(sheet, 94).expect("a jpeg");
     std::fs::write(&out, jpeg).expect("a writable path");
     println!("wrote {out} ({wide}x{height}, {} panels)", panels.len());
 }
 
 /// That region of `picture`, scaled to `height` and keeping its shape.
-fn cropped(picture: &rawshim::rgb::Rgb, region: [f64; 4], height: usize) -> rawshim::rgb::Rgb {
+fn cropped(picture: &units::rgb::Rgb, region: [f64; 4], height: usize) -> units::rgb::Rgb {
     let left = (region[0] * picture.width as f64) as usize;
     let top = (region[1] * picture.height as f64) as usize;
     let right = ((region[2] * picture.width as f64) as usize)
@@ -74,8 +74,8 @@ fn cropped(picture: &rawshim::rgb::Rgb, region: [f64; 4], height: usize) -> raws
     }
     // A panel is a few thousand pixels down to a few hundred, which two taps an axis alias badly
     // enough to look like the rendering fault the comparison is meant to find.
-    rawshim::image::resize(
-        rawshim::rgb::RgbRef {
+    formats::resize::resize(
+        units::rgb::RgbRef {
             data: &patch,
             width: span,
             height: deep,

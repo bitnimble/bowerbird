@@ -1,8 +1,8 @@
-use rawshim::gpu::{Canvas, Grade};
-use rawshim::image::Geometry;
-use rawshim::light::{Gain, Light, SceneNits};
-use rawshim::print::{Presentation, Scene};
-use rawshim::px::Size;
+use geometry::warp::Geometry;
+use render::grade::{Canvas, Grade};
+use render::print::{Presentation, Scene};
+use units::light::{Gain, Light, SceneNits};
+use units::px::Size;
 
 #[test]
 fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
@@ -73,7 +73,7 @@ fn chromaticity(drawn: &[f32], white: &[f32], at: usize) -> [f32; 2] {
 }
 
 fn in_rec2020(drawn: &[f32], at: usize) -> [f64; 3] {
-    let matrix = rawshim::transfer::Primaries::DISPLAY_P3.to_rec2020();
+    let matrix = colour::transfer::Primaries::DISPLAY_P3.to_rec2020();
     matrix.map(|row| {
         row.into_iter()
             .enumerate()
@@ -417,7 +417,7 @@ fn grade() -> Grade<'static> {
         ..Grade::new(
             64,
             64,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(10000.0),
                 peak: Light::measured(10000.0),
                 floor: None,
@@ -429,13 +429,13 @@ fn grade() -> Grade<'static> {
 }
 
 fn coded(rgb: [f64; 3]) -> [u16; 3] {
-    rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+    colour::space::srgb_to_rec2020().map(|row| {
         let value = row
             .into_iter()
             .zip(rgb)
             .map(|(weight, value)| weight * value)
             .sum::<f64>();
-        (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+        (colour::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
             as u16
     })
 }
@@ -450,11 +450,11 @@ fn linear(coded: f32) -> f64 {
 }
 
 fn draw(frame: &[u16], grade: &Grade<'_>, scene: Option<&Scene>) -> Vec<f32> {
-    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
-    let base = rawshim::base::device(gpu).expect("source pyramid");
-    let pyramid = rawshim::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(frame, grade, &peak);
+    let gpu = gpu::device().expect("print requires Vulkan");
+    let base = render::base::device(gpu).expect("source pyramid");
+    let pyramid = render::base::pyramid(gpu, base, frame, (64, 64)).expect("source pyramid");
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(frame, grade, &peak);
     match scene {
         Some(scene) => uploaded.draw_print(grade, &pyramid, scene),
         None => uploaded.draw(grade, &pyramid),

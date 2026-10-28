@@ -37,7 +37,7 @@ fn main() {
         eprintln!("usage: dust_probe <raw>...");
         return;
     }
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no Vulkan adapter answered");
         return;
     };
@@ -47,11 +47,11 @@ fn main() {
             eprintln!("{path}: could not be read");
             continue;
         };
-        let header = rawshim::header::read_path(&path);
+        let header = formats::header::read_path(&path);
         let aperture = header.as_ref().map_or(0.0, |header| header.aperture);
 
         let started = std::time::Instant::now();
-        let Some(held) = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)) else {
+        let Some(held) = pollster::block_on(decode::raw::hold_bytes(&bytes)) else {
             eprintln!("{path}: no decoder read these bytes");
             continue;
         };
@@ -62,7 +62,7 @@ fn main() {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(aperture);
-        let sensor = rawshim::dust::Sensor { aperture, ..sensor };
+        let sensor = denoise::dust::Sensor { aperture, ..sensor };
         let read = started.elapsed().as_millis();
         let held_mb = peak_mb();
 
@@ -70,7 +70,7 @@ fn main() {
         // search is what switching this on costs once, and the correction is what every band, every
         // loupe tile and every rendition pays again.
         let at = std::time::Instant::now();
-        let spots = pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
+        let spots = pollster::block_on(denoise::dust::detect(gpu, held.device_mosaic(), &sensor))
             .unwrap_or_default();
         let found = at.elapsed().as_millis();
         let detected_mb = peak_mb();
@@ -89,12 +89,12 @@ fn main() {
         // Many, then divided: one dispatch is a fraction of the readback that has to be waited on
         // to see it at all, so timing a single one measures the noise on the readback instead.
         for _ in 0..RUNS {
-            rawshim::dust::correct(
+            denoise::dust::correct(
                 gpu,
-                rawshim::dust::device(gpu),
+                denoise::dust::device(gpu),
                 &copy,
                 &spots,
-                rawshim::dust::Removal {
+                denoise::dust::Removal {
                     sensitivity: 0.5,
                     intensity: 1.0,
                 },

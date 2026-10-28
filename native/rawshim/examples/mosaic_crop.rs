@@ -21,8 +21,8 @@ fn main() {
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
 
     let bytes = std::fs::read(&path).expect("read the raw");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
+    let gpu = gpu::device().expect("an adapter");
     let cfa = held.cfa();
     assert!(
         cfa.aligned(x, y),
@@ -52,12 +52,9 @@ fn main() {
         [0, 1, 2, 3].map(|k| cfa.colour_at(k / 2, k % 2))
     );
     println!("upright {:?}", held.upright());
-    println!(
-        "ceiling {:?}",
-        rawshim::decode_rawler::channel_ceilings(&image)
-    );
+    println!("ceiling {:?}", decode::raw::channel_ceilings(&image));
     println!(
         "matrix {:?}",
-        rawshim::decode_rawler::camera_to_rec2020(&image).expect("a camera matrix")
+        decode::raw::camera_to_rec2020(&image).expect("a camera matrix")
     );
 }

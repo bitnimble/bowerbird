@@ -34,7 +34,7 @@ type Box = Point & { width: number; height: number };
 // **This is the only test that spans the whole path, and that is what it is for.** Three
 // things check the GPU and they fail at different places:
 //
-//   gpu_shader.rs      the WGSL arithmetic against `hdr_fit`, in `cargo test`, ~40ms
+//   gpu_shader.rs      the WGSL arithmetic against `fit::hdr`, in `cargo test`, ~40ms
 //   gpu_fixture.rs     that the grade still draws its snapshots in `test/fixtures/snapshots/`
 //   this file          that a real photo reaches a real device and comes back `live`
 //
@@ -424,7 +424,7 @@ async function bitDepth(thumbnail: Locator): Promise<number> {
  * A loop drawn with a real pointer on the stage as the reader has it - zoomed - is searched by the
  * real module, and a fill kept reaches the document.
  *
- * What the search finds is `repair_solve`'s to test, over a field whose answer is known, and what
+ * What the search finds is `composite::repair::solve`'s to test, over a field whose answer is known, and what
  * the presenter does with an offer is `raw_edit_presenter.test.ts`. What is left is the gesture on
  * a real overlay, the wheel still zooming under it, and the search on the page's own device through
  * the worker - where a wasm signature out of step with the page is a rejected promise and nothing

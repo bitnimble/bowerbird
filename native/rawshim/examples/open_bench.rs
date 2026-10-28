@@ -19,7 +19,7 @@
 
 mod support;
 
-use rawshim::galosh::{Amounts, UNGAINED};
+use denoise::galosh::{Amounts, UNGAINED};
 
 fn main() {
     let files: Vec<String> = std::env::args().skip(1).collect();
@@ -103,13 +103,13 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
     // what an amount can move - the denoise, the demosaic, the coding and the warp. If the two are
     // close then holding the mosaic bought nothing.
     let began = std::time::Instant::now();
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes))?;
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes))?;
     let fit = pollster::block_on(held.fit());
     let held_ms = began.elapsed().as_millis();
 
     let stored = analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode)
+        .and_then(fit::photo_analysis::decode)
         .unwrap_or_default();
     let mut request = request(analysis);
     for (luminance, colour) in [(40.0, 40.0), (20.0, 30.0)] {
@@ -119,9 +119,9 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
         let frame = pollster::block_on(held.frame(
             request.detail(),
             request.long_edge,
-            fit.map_or(rawshim::galosh::Fit::Measure, rawshim::galosh::Fit::Given),
+            fit.map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given),
             request.dust.wanted(stored.from_raw.dust.as_deref()),
-            &rawshim::open_stage::quiet,
+            &decode::open_stage::quiet,
         ));
         let frame = frame?;
         let prepared = pollster::block_on(rawshim::edit::from_frame(
@@ -130,7 +130,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             true,
             &request,
             sharpen,
-            &rawshim::open_stage::quiet,
+            &decode::open_stage::quiet,
         ));
         let ms = began.elapsed().as_millis();
         println!(
@@ -156,7 +156,7 @@ fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
         // The document's defaults, so the open being timed is the one a reader waits for.
         denoise_luminance: None,
         denoise_colour: None,
-        denoiser: rawshim::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
     }
 }
@@ -191,7 +191,7 @@ fn repeat(label: &str, mut run: impl FnMut()) -> u128 {
 
 /// The stages that run on the mosaic, timed apart from the decode that feeds them.
 fn mosaic_stages(width: usize, height: usize) {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no GPU: skipping the mosaic stages");
         return;
     };
@@ -203,19 +203,19 @@ fn mosaic_stages(width: usize, height: usize) {
     );
 
     let mosaic = synthesise(width, height);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
 
     // Uploaded once and reused, which is what the chain does now: the stages hand each other a
     // device buffer, so a timing that included the upload would be timing something no decode does.
     let uploaded = upload(gpu, &mosaic, width, height);
 
-    if let Some(kernels) = rawshim::galosh::device(gpu) {
+    if let Some(kernels) = denoise::galosh::device(gpu) {
         let amounts = Amounts::from_sliders(50.0, 50.0);
-        let fit = block(rawshim::galosh::fit(
+        let fit = block(denoise::galosh::fit(
             gpu, kernels, &uploaded, &cfa, UNGAINED,
         ));
         repeat("galosh fit only (the open's)", || {
-            block(rawshim::galosh::fit(
+            block(denoise::galosh::fit(
                 gpu, kernels, &uploaded, &cfa, UNGAINED,
             ));
         });
@@ -223,18 +223,18 @@ fn mosaic_stages(width: usize, height: usize) {
         // dispatch shape is fixed by the frame's size.
         let scratch = upload(gpu, &mosaic, width, height);
         repeat("galosh denoise, 50/50, given a fit", || {
-            block(rawshim::galosh::denoise_with(
+            block(denoise::galosh::denoise_with(
                 gpu, kernels, &scratch, &cfa, UNGAINED, amounts, fit,
             ));
         });
         drop(scratch);
         let whole = upload(gpu, &mosaic, width, height);
-        block(rawshim::galosh::denoise_with(
+        block(denoise::galosh::denoise_with(
             gpu, kernels, &whole, &cfa, UNGAINED, amounts, fit,
         ));
         let whole = read(gpu, &whole);
 
-        let halo = rawshim::EDITOR_TILE_HALO;
+        let halo = decode::EDITOR_TILE_HALO;
 
         // One region at a time, over a range of sizes. Tiling costs far more than the halo can
         // account for, so what this separates is the part of a call that scales with the region
@@ -246,7 +246,7 @@ fn mosaic_stages(width: usize, height: usize) {
             repeat(
                 &format!("galosh over one {}x{} region", region.w, region.h),
                 || {
-                    block(rawshim::galosh::denoise_with(
+                    block(denoise::galosh::denoise_with(
                         gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
                     ));
                 },
@@ -257,7 +257,7 @@ fn mosaic_stages(width: usize, height: usize) {
             repeat(
                 &format!("  fit alone over {}x{}", region.w, region.h),
                 || {
-                    block(rawshim::galosh::fit(gpu, kernels, &window, &cfa, UNGAINED));
+                    block(denoise::galosh::fit(gpu, kernels, &window, &cfa, UNGAINED));
                 },
             );
         }
@@ -268,7 +268,7 @@ fn mosaic_stages(width: usize, height: usize) {
         let region = centred(width, height, vw, vh, halo);
         let window = uploaded.window(gpu, region.left, region.top, region.w, region.h);
         repeat(&format!("galosh over one {vw}x{vh} stage"), || {
-            block(rawshim::galosh::denoise_with(
+            block(denoise::galosh::denoise_with(
                 gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
             ));
         });
@@ -278,11 +278,11 @@ fn mosaic_stages(width: usize, height: usize) {
         // are not the same denoise then every tile disagrees with the render it exists to
         // preview, everywhere and not only at a seam.
         let measured = upload(gpu, &mosaic, width, height);
-        let _ = block(rawshim::galosh::denoise(
+        let _ = block(denoise::galosh::denoise(
             gpu, kernels, &measured, &cfa, UNGAINED, amounts,
         ));
         let given = upload(gpu, &mosaic, width, height);
-        block(rawshim::galosh::denoise_with(
+        block(denoise::galosh::denoise_with(
             gpu, kernels, &given, &cfa, UNGAINED, amounts, fit,
         ));
         let worst = read(gpu, &measured)
@@ -316,7 +316,7 @@ fn mosaic_stages(width: usize, height: usize) {
                     for_each_tile(width, height, side, halo, |region| {
                         let window =
                             uploaded.window(gpu, region.left, region.top, region.w, region.h);
-                        block(rawshim::galosh::denoise_with(
+                        block(denoise::galosh::denoise_with(
                             gpu, kernels, &window, &cfa, UNGAINED, amounts, fit,
                         ));
                     });
@@ -332,7 +332,7 @@ fn mosaic_stages(width: usize, height: usize) {
         // CFA site where the denoise needs `galosh::lattice` and its halo short of `galosh::reach`:
         // this one is exact.
         let mut tiled = upload(gpu, &mosaic, width, height);
-        block(rawshim::galosh::denoise_in_tiles(
+        block(denoise::galosh::denoise_in_tiles(
             gpu,
             kernels,
             &mut tiled,
@@ -340,8 +340,8 @@ fn mosaic_stages(width: usize, height: usize) {
             UNGAINED,
             amounts,
             fit,
-            rawshim::RENDITION_TILE_HALO,
-            rawshim::decode_rawler::RENDER_TILE,
+            decode::RENDITION_TILE_HALO,
+            decode::raw::RENDER_TILE,
             |_| {},
         ));
         let worst = read(gpu, &tiled)
@@ -353,12 +353,12 @@ fn mosaic_stages(width: usize, height: usize) {
         drop(whole);
     }
 
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         return;
     };
     let mut whole: Vec<f32> = Vec::new();
     repeat("rcd whole frame", || {
-        whole = block(rawshim::demosaic::demosaic_plane(
+        whole = block(mosaic::demosaic::demosaic_plane(
             gpu, rcd, &uploaded, &cfa, floats,
         ))
         .expect("the whole frame demosaics");
@@ -374,15 +374,15 @@ fn block<T>(work: impl std::future::Future<Output = T>) -> T {
 }
 
 fn upload(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     values: &[f32],
     width: usize,
     height: usize,
-) -> rawshim::condition::Mosaic {
-    rawshim::condition::Mosaic::upload(gpu, values, width, height)
+) -> mosaic::condition::Mosaic {
+    mosaic::condition::Mosaic::upload(gpu, values, width, height)
 }
 
-fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
+fn read(gpu: &gpu::Gpu, mosaic: &mosaic::condition::Mosaic) -> Vec<f32> {
     block(mosaic.read(gpu)).expect("the mosaic reads back")
 }
 
@@ -400,12 +400,12 @@ fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32
 /// Handed no fit, the sweep covers the reductions a measuring run opens with, which no caller can
 /// otherwise separate from the filtering.
 fn kernel_by_kernel(
-    gpu: &'static rawshim::gpu::Gpu,
-    kernels: &'static rawshim::galosh::Galosh,
-    mosaic: &rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
+    gpu: &'static gpu::Gpu,
+    kernels: &'static denoise::galosh::Galosh,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     amounts: Amounts,
-    fit: Option<rawshim::galosh::NoiseFit>,
+    fit: Option<denoise::galosh::NoiseFit>,
     last: usize,
 ) {
     let handed = match fit {
@@ -417,33 +417,33 @@ fn kernel_by_kernel(
     // than a list that could be written here: a supplied fit skips Phase 2's iterations, and a
     // cached inverse table skips two more.
     let names = {
-        rawshim::galosh::stop_after(usize::MAX);
+        denoise::galosh::stop_after(usize::MAX);
         match fit {
             Some(fit) => {
-                block(rawshim::galosh::denoise_with(
+                block(denoise::galosh::denoise_with(
                     gpu, kernels, mosaic, cfa, UNGAINED, amounts, fit,
                 ));
             }
             None => {
-                block(rawshim::galosh::denoise(
+                block(denoise::galosh::denoise(
                     gpu, kernels, mosaic, cfa, UNGAINED, amounts,
                 ));
             }
         }
-        rawshim::galosh::dispatched()
+        denoise::galosh::dispatched()
     };
     let truncated = |count: usize| {
-        rawshim::galosh::stop_after(count);
+        denoise::galosh::stop_after(count);
         let mut taken: Vec<u128> = (0..REPEATS)
             .map(|_| {
                 time(|| match fit {
                     Some(fit) => {
-                        block(rawshim::galosh::denoise_with(
+                        block(denoise::galosh::denoise_with(
                             gpu, kernels, mosaic, cfa, UNGAINED, amounts, fit,
                         ));
                     }
                     None => {
-                        block(rawshim::galosh::denoise(
+                        block(denoise::galosh::denoise(
                             gpu, kernels, mosaic, cfa, UNGAINED, amounts,
                         ));
                     }
@@ -463,7 +463,7 @@ fn kernel_by_kernel(
         );
         previous = taken;
     }
-    rawshim::galosh::stop_after(usize::MAX);
+    denoise::galosh::stop_after(usize::MAX);
 }
 
 fn floats(bytes: &[u8]) -> Vec<f32> {
@@ -480,12 +480,12 @@ fn floats(bytes: &[u8]) -> Vec<f32> {
 /// the comparison asks is whether the two agree exactly, since RCD is a pure local map and so it
 /// should: anything above zero is a reach that does not compose the way §10 says it does.
 fn tiled(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
-    mosaic: &rawshim::condition::Mosaic,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
+    mosaic: &mosaic::condition::Mosaic,
     width: usize,
     height: usize,
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     side: usize,
     whole: &[f32],
 ) {
@@ -498,10 +498,10 @@ fn tiled(
             width,
             height,
             side,
-            rawshim::demosaic::MARGIN as usize,
+            mosaic::demosaic::MARGIN as usize,
             |region| {
                 let window = cut(region);
-                block(rawshim::demosaic::demosaic_plane(
+                block(mosaic::demosaic::demosaic_plane(
                     gpu,
                     rcd,
                     &window,
@@ -520,10 +520,10 @@ fn tiled(
         width,
         height,
         side,
-        rawshim::demosaic::MARGIN as usize,
+        mosaic::demosaic::MARGIN as usize,
         |region| {
             let window = cut(region);
-            let out = block(rawshim::demosaic::demosaic_plane(
+            let out = block(mosaic::demosaic::demosaic_plane(
                 gpu, rcd, &window, cfa, floats,
             ))
             .expect("the tile demosaics");

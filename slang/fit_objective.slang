@@ -20,7 +20,7 @@ struct Params {
     int blocks;
     /// Candidates in this batch, each with a warped plane and a slot of its own throughout.
     int candidates;
-    /// `fit::MAX_PAIR_GRADIENT`, summed over the camera's red across a pixel each way. Red rather
+    /// `fit::profile::MAX_PAIR_GRADIENT`, summed over the camera's red across a pixel each way. Red rather
     /// than luma because it is what the host gated on, and a gate is not a measurement.
     int max_gradient;
     /// Whether `gain` carries a falloff's level table, or a pair's level is its own luma.
@@ -28,7 +28,7 @@ struct Params {
     /// Which half `fit_obj_curve` draws from, and which `fit_obj_score` then reads.
     int fitted;
     int held;
-    /// `fit::MIN_BIN_SAMPLES`: below this a bin states a ratio rather than a measurement.
+    /// `fit::profile::MIN_BIN_SAMPLES`: below this a bin states a ratio rather than a measurement.
     int min_bin;
     /// Pairs the gate admitted, which is what `fit_obj_falloff` walks. The records past it belong
     /// to no candidate.
@@ -40,7 +40,7 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float> warped;
 /// The camera's grid, the same shape, shared by every candidate.
 [vk::binding(1, 0)] StructuredBuffer<float> jpeg;
-/// `fit::Gain`'s 256x256 level table, four levels to a word.
+/// `fit::profile::Gain`'s 256x256 level table, four levels to a word.
 [vk::binding(2, 0)] StructuredBuffer<uint> gain;
 /// Pairs per block, then where each block's run starts, per candidate.
 [vk::binding(3, 0)] RWStructuredBuffer<uint> counts;
@@ -58,7 +58,8 @@ struct Params {
 [vk::binding(5, 0)] RWStructuredBuffer<Atomic<uint> > tallies;
 /// Each candidate's fitted curve, 256 levels, one to a word so `fit_obj_curve` can write it.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> curves;
-/// `fit::invert_curve`'s answer for the round's own curve, 256 levels, then `fit::linear_table`'s
+/// `fit::profile::invert_curve`'s answer for the round's own curve, 256 levels, then
+/// `fit::profile::linear_table`'s
 /// 256 - the sRGB transfer undone, which is the light a ratio of levels has to be taken in.
 [vk::binding(8, 0)] StructuredBuffer<float> falloff_tables;
 /// Per block, `FALLOFF_BINS` triples: the light the camera wants, the light we have, and the pairs
@@ -68,7 +69,7 @@ struct Params {
 /// Words a candidate's answer occupies.
 static const int SCORE_WORDS = 3;
 
-/// `fit::refit_gain`'s radius bins, and the three sums each carries.
+/// `fit::profile::refit_gain`'s radius bins, and the three sums each carries.
 static const int FALLOFF_BINS = 12;
 static const int FALLOFF_WORDS = 3;
 /// Where `falloff_tables` stops being the inverted curve and starts being the linear table.
@@ -85,7 +86,7 @@ int pixels() { return pc.width * pc.height; }
 int bins_per_candidate() { return PHASES * LEVELS * 2; }
 int bins_from() { return times(pc.candidates, SCORE_WORDS); }
 
-/// The 8-bit level a float plane's sample carries, as `fit::read_rgb` rounds it.
+/// The 8-bit level a float plane's sample carries, as `fit::profile::read_rgb` rounds it.
 int level_of(StructuredBuffer<float> plane, int base, int i)
 {
     return int(clamp(round(plane[base + i] * 255.0), 0.0, 255.0));
@@ -217,7 +218,7 @@ void fit_obj_scan(uint3 group: SV_GroupID, uint index: SV_GroupIndex)
     if (lane == 0) { counts[total_at(candidate)] = total; }
 }
 
-/// The radius bucket a pixel sits at, as `fit::Gain::radius` quantises it.
+/// The radius bucket a pixel sits at, as `fit::profile::Gain::radius` quantises it.
 int radius_of(int p)
 {
     let cx = float(pc.width) * 0.5;

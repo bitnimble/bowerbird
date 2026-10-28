@@ -11,9 +11,9 @@
 
 use std::borrow::Cow;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, ContentLight};
-use rawshim::light::{DisplayNits, Light};
+use formats::avif;
+use formats::still::{Chroma, ContentLight};
+use units::light::{DisplayNits, Light};
 
 const LADDER_NITS: [f64; 12] = [
     203.0, 400.0, 600.0, 800.0, 1000.0, 1200.0, 1600.0, 2000.0, 3000.0, 4000.0, 6000.0, 10000.0,
@@ -32,7 +32,7 @@ fn main() {
         .zip(pq.chunks_exact_mut(3))
     {
         let nits: Light<DisplayNits> = Light::exactly(LADDER_NITS[x / PATCH]);
-        let code = (rawshim::tone::pq(nits).raw() * 65535.0).round() as u16;
+        let code = (colour::tone::pq(nits).raw() * 65535.0).round() as u16;
         pixel.fill(code);
     }
     let files = [
@@ -52,7 +52,7 @@ fn main() {
         ),
         ("undeclared.avif", None),
     ];
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     for (name, light) in files {
         let options = avif::StillOptions {
             cicp: avif::Cicp {

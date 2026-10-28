@@ -1,4 +1,4 @@
-"""Every arm of the device upscaler (`native/rawshim/src/upscale.rs`) held against torch on one cached
+"""Every arm of the device upscaler (`native/denoise/src/upscale.rs`) held against torch on one cached
 crop, without grain and at full strength: natively through `examples/upscale_bench.rs`, whole and in
 tiles small enough to cross, and in Chromium through `scripts/upscale-bench-browser.ts`.
 
@@ -21,7 +21,7 @@ from training.mosaic import stabilise
 from training.pmrid import REPOSITORY
 from upscaler.model import load, stabiliser, upscaled
 
-BENCH = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "upscale_bench"
+BENCH = REPOSITORY / "native" / "target" / "quick" / "examples" / "upscale_bench"
 SMALL_TILE = 96
 
 

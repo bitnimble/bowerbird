@@ -22,7 +22,7 @@
 //! luma on one side and as a maximum on the other, the same rank lands on a higher level and the
 //! error grows with how saturated the picture is.
 
-use rawshim::galosh::{Detail, Fit};
+use denoise::galosh::{Detail, Fit};
 
 /// `H_sat / H_grey` under ISO 12232: saturation-based speed is `78/H_sat`, and the metered grey
 /// sits at `10/H`, so the ratio is fixed by the standard rather than by the camera.
@@ -87,7 +87,7 @@ fn ranked(path: &str, samples: &[u16]) -> Option<Ranked> {
     let mut levels: Vec<f32> = samples
         .chunks_exact(3)
         .map(|rgb| {
-            rawshim::resident::level_of_bits(rgb[0].max(rgb[1]).max(rgb[2])) / f32::from(u16::MAX)
+            colour::resident::level_of_bits(rgb[0].max(rgb[1]).max(rgb[2])) / f32::from(u16::MAX)
         })
         .collect();
     levels.sort_by(f32::total_cmp);
@@ -129,7 +129,7 @@ fn main() {
         let name = std::path::Path::new(path)
             .file_name()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let Some(header) = rawshim::header::read_path(path) else {
+        let Some(header) = formats::header::read_path(path) else {
             println!("{name:<16} unreadable header");
             continue;
         };
@@ -142,7 +142,7 @@ fn main() {
             println!("{name:<16} not 16-bit");
             continue;
         };
-        let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let Some(levels) = rawshim::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
         else {
             println!("{name:<16} no levels");

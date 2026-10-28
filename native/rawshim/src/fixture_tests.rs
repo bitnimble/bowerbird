@@ -119,7 +119,7 @@ const INJECTED_CORNER: f64 = 0.65;
 ///   (the same fit scores 1.844 under the old metric). CIEDE2000 is not a rescaling of
 ///   deltaE76: `S_H` drops below one wherever `T` does and `R_T` rotates blue error into
 ///   chroma, so a chromatic frame can read higher while being no worse.
-/// - Then the planes stopped being blurred (`hdr_fit::registered`). Scoring against sharp
+/// - Then the planes stopped being blurred (`fit::hdr::registered`). Scoring against sharp
 ///   corresponded samples is a harder test than scoring against smeared ones, so the same
 ///   quality of fit reads 4.315 and 4.551 where it read 2.460 and 2.806.
 ///
@@ -143,15 +143,15 @@ const MAX_HELD_OUT_DELTA_E: f64 = 7.0;
 /// that wants a gain has to inject one rather than fit the fixture and hope.
 /// The device the fit's correspondence search runs on. A fixture test with no adapter has nothing
 /// to measure, and saying so beats a `None` that reads as a fit declining.
-fn adapter() -> &'static crate::gpu::Gpu {
-    crate::gpu::device().expect("an adapter for the fit's search")
+fn adapter() -> &'static gpu::Gpu {
+    gpu::device().expect("an adapter for the fit's search")
 }
 
-fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
+fn injected_falloff() -> (fit::profile::Profile, fit::hdr::HdrMatch) {
     let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
-    let target = crate::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
+    let target = formats::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
         .expect("the injected target encodes");
-    let target = crate::jpeg::decode(&target, 0).expect("the injected target decodes");
+    let target = formats::jpeg::decode(&target, 0).expect("the injected target decodes");
     let frame = decode(&sony(), 3840);
     let resident = frame.on_device(adapter()).expect("a 16-bit decode");
     // Uncorrected skips the geometry search, so nothing but the falloff is in play.
@@ -159,10 +159,10 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
         adapter(),
         &resident,
         0.9,
-        crate::fit::Geometry::Uncorrected,
+        fit::profile::Geometry::Uncorrected,
         &target,
         None,
-        crate::hdr_fit::CameraMatch::LensAndColour,
+        fit::hdr::CameraMatch::LensAndColour,
         frame.as_shot,
     ))
     .expect("the fit finds something worth applying");
@@ -175,7 +175,7 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
 
 /// Multiplies linear light by `1 + (corner - 1) r^2`, the shape a lens's falloff has
 /// and the one the fit models.
-fn falloff(source: &crate::rgb::Rgb, corner: f64) -> crate::rgb::Rgb {
+fn falloff(source: &units::rgb::Rgb, corner: f64) -> units::rgb::Rgb {
     let (width, height) = (source.width, source.height);
     let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt();
@@ -195,36 +195,35 @@ fn falloff(source: &crate::rgb::Rgb, corner: f64) -> crate::rgb::Rgb {
             let i = (y * width + x) * 3;
             for c in 0..3 {
                 let lit = to_linear(source.data[i + c]) * g;
-                data[i + c] =
-                    (crate::hdr_fit::srgb_oetf(lit.clamp(0.0, 1.0)) * 255.0).round() as u8;
+                data[i + c] = (colour::space::srgb_oetf(lit.clamp(0.0, 1.0)) * 255.0).round() as u8;
             }
         }
     }
-    crate::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height,
         data,
     }
 }
 
-fn decode(path: &PathBuf, long_edge: u32) -> crate::frame::Frame {
+fn decode(path: &PathBuf, long_edge: u32) -> decode::frame::Frame {
     crate::decode_frame(path.to_str().unwrap(), long_edge)
         .unwrap_or_else(|| panic!("could not decode {}", path.display()))
 }
 
-fn long_edge(frame: &crate::frame::Frame) -> usize {
+fn long_edge(frame: &decode::frame::Frame) -> usize {
     frame.width.max(frame.height)
 }
 
 fn tile_job(
     path: &str,
     tile: Option<[usize; 4]>,
-    levels: Option<crate::tone::Levels>,
+    levels: Option<colour::tone::Levels>,
 ) -> crate::job::Job {
     crate::job::Job {
         raw_file_path: path.to_string(),
         // A crop cannot fit one, and the point here is the coding rather than the colour.
-        camera_match: crate::hdr_fit::CameraMatch::None,
+        camera_match: fit::hdr::CameraMatch::None,
         half_size: false,
         header: false,
         composite: None,
@@ -238,11 +237,11 @@ fn tile_job(
         // the shrinkage's lattice would shrink against other blocks than the frame did, unseen.
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
-        denoiser: crate::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
         // Off: a tile of this job is compared against a whole render of it, and a correction
         // the whole render detected for itself is not one a tile can be handed here.
-        dust: crate::dust::Settings {
+        dust: denoise::dust::Settings {
             enabled: false,
             ..Default::default()
         },
@@ -251,11 +250,11 @@ fn tile_job(
         sharpen: 0.0,
         defringe: 0.0,
         exposure: None,
-        adjust: crate::gpu::Adjust::none(),
-        geometry: crate::image::Geometry::none(),
+        adjust: render::grade::Adjust::none(),
+        geometry: geometry::warp::Geometry::none(),
         preserve_source_orientation: false,
-        grade: crate::hdr::Grade {
-            reference_white_nits: crate::light::Light::exactly(203.0),
+        grade: crate::hdr_args::Grade {
+            reference_white_nits: units::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
         targets: Vec::new(),
@@ -269,7 +268,7 @@ enum Lensing {
     /// The camera match's, as a job takes it.
     Fitted,
     Without,
-    Given(crate::fit::Lens),
+    Given(geometry::lens::Lens),
 }
 
 /// The rendition, assembled as `job::run` assembles it: cut, sharpened, and graded through a
@@ -283,10 +282,10 @@ fn rendition(
     Vec<u16>,
     usize,
     usize,
-    crate::light::Light<crate::light::DisplayNits>,
+    units::light::Light<units::light::DisplayNits>,
 ) {
     let base = crate::job::Base::build(job, decode).expect("the frame");
-    let scene = crate::tone::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         base.matched.as_ref().and_then(|m| m.colour.as_ref()),
         base.levels,
         job.grade.reference_white_nits,
@@ -294,7 +293,7 @@ fn rendition(
         job.adjust.clone(),
         base.as_shot,
     );
-    let size = crate::hdr_args::Size {
+    let size = formats::still::Size {
         width: base.width as u32,
         height: base.height as u32,
     };
@@ -303,30 +302,33 @@ fn rendition(
         Lensing::Without => None,
         Lensing::Given(lens) => Some(lens),
     };
-    let sigma = crate::image::deconvolve_split(
+    let sigma = render::detail::deconvolve_split(
         base.capture_sigma,
         base.sensor_long,
         size.width.max(size.height) as usize,
     );
     let noise = base.sharpen_noise.at(
-        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
-        crate::px::Span::<crate::px::Drawn>::exact(size.width.max(size.height) as usize),
+        units::px::Span::<units::px::Sensor>::exact(base.sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
     let crate::job::Cutting::OnDevice(frame) = base.frame else {
         panic!("a whole-frame build leaves its frame on the device")
     };
     let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma, noise);
-    let gpu = crate::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let grade = scene
-        .gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq)
+        .gpu_grade(cut.width, cut.height, render::grade::Output::Pq)
         .showing(job.pixel_geometry());
     let (out_width, out_height) = grade.output_size();
-    let peak = gpu.scene_peak();
+    let peak = render::grade::device(gpu).scene_peak();
     let resident = cut
         .resident()
         .expect("from_base leaves the cut on the device");
-    let frame = gpu.upload_resident(resident, &grade, &peak).encode(&grade);
-    let measured = crate::light::Light::measured(f64::from(gpu.read_peak(&peak)));
+    let frame = render::grade::device(gpu)
+        .upload_resident(resident, &grade, &peak)
+        .encode(&grade);
+    let measured =
+        units::light::Light::measured(f64::from(render::grade::device(gpu).read_peak(&peak)));
     (frame, out_width, out_height, measured)
 }
 
@@ -341,8 +343,7 @@ mod decode_geometry {
     #[test]
     fn a_real_raf_yields_a_six_by_six_xtrans_period() {
         let path = fuji();
-        let source =
-            crate::decode_rawler::mapped(path.to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(path.to_str().unwrap()).expect("the fixture maps");
         let image = rawler::get_decoder(&source)
             .expect("a decoder for a RAF")
             .raw_image(
@@ -352,7 +353,7 @@ mod decode_geometry {
             )
             .expect("the frame decodes");
 
-        let cfa = crate::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
+        let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
         assert_eq!(cfa.period(), (6, 6));
         assert_eq!(
             cfa.counts(),
@@ -379,8 +380,7 @@ mod decode_geometry {
     /// second body lands on one of them. An X-Trans II sensor against the X-T3's IV.
     #[test]
     fn a_second_body_yields_a_pattern_of_its_own() {
-        let source =
-            crate::decode_rawler::mapped(fuji_noisy().to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(fuji_noisy().to_str().unwrap()).expect("the fixture maps");
         let image = rawler::get_decoder(&source)
             .expect("a decoder for a RAF")
             .raw_image(
@@ -389,7 +389,7 @@ mod decode_geometry {
                 false,
             )
             .expect("the frame decodes");
-        let cfa = crate::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
+        let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern we can carry");
         assert!(cfa.is_xtrans(), "an X-Trans II sensor is still X-Trans");
         assert_eq!(cfa.counts(), [8, 20, 8]);
     }
@@ -406,7 +406,7 @@ mod decode_geometry {
     #[test]
     fn the_two_fuji_fixtures_are_four_stops_apart() {
         let iso = |path: &PathBuf| -> f32 {
-            crate::header::read_path(path.to_str().unwrap())
+            formats::header::read_path(path.to_str().unwrap())
                 .expect("header")
                 .iso
         };
@@ -429,12 +429,12 @@ mod decode_geometry {
     #[test]
     fn an_xtrans_frame_decodes_to_a_picture() {
         let frame = decode(&fuji(), 0);
-        let header = crate::header::read_path(fuji().to_str().unwrap()).expect("header");
+        let header = formats::header::read_path(fuji().to_str().unwrap()).expect("header");
         assert_eq!(frame.width, header.width as usize);
         assert_eq!(frame.height, header.height as usize);
 
         let host = pollster::block_on(frame.to_host()).expect("the frame reads back");
-        let samples = crate::resident::levels_of(host.samples16().expect("sixteen-bit samples"));
+        let samples = colour::resident::levels_of(host.samples16().expect("sixteen-bit samples"));
         let mut sums = [0f64; 3];
         let mut highs = [0f32; 3];
         let mut lows = [f32::MAX; 3];
@@ -497,7 +497,7 @@ mod decode_geometry {
     #[test]
     fn the_recorded_dimensions_are_the_dimensions_that_get_decoded() {
         for path in [sony(), canon()] {
-            let header = crate::header::read_path(path.to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(path.to_str().unwrap()).expect("header");
             let frame = decode(&path, 0);
             assert_eq!(frame.width, header.width as usize, "{}", path.display());
             assert_eq!(frame.height, header.height as usize, "{}", path.display());
@@ -514,7 +514,7 @@ mod decode_geometry {
             let data = frame.samples16().expect("a 16-bit decode");
             let lit = |x: usize, y: usize| {
                 let i = (y * frame.width + x) * 3;
-                crate::resident::levels_of(&data[i..i + 3])
+                colour::resident::levels_of(&data[i..i + 3])
                     .iter()
                     .sum::<f32>()
                     > 24.0
@@ -532,13 +532,13 @@ mod decode_geometry {
     }
 
     /// A window of a photograph on disk, at the sensor's own resolution.
-    fn viewing(path: &str, tile: crate::Tile) -> crate::view::View {
-        let header = crate::header::read_path(path).expect("a header");
-        crate::view::View::whole(crate::px::Size::exact(
+    fn viewing(path: &str, tile: formats::orientation::Tile) -> decode::view::View {
+        let header = formats::header::read_path(path).expect("a header");
+        decode::view::View::whole(units::px::Size::exact(
             header.width as usize,
             header.height as usize,
         ))
-        .showing(crate::px::Rect::exact(
+        .showing(units::px::Rect::exact(
             tile.left,
             tile.top,
             tile.width,
@@ -556,7 +556,7 @@ mod decode_geometry {
     /// ordinary drag of the magnifier, and nothing here decoded a tile at all.
     #[test]
     fn a_tile_of_any_size_survives_the_denoise() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         assert!(
             detail.could_do_anything(),
             "the denoise has to run or this tests nothing"
@@ -567,7 +567,7 @@ mod decode_geometry {
             (2001, 1401, 400, 401),
             (2001, 1401, 401, 401),
         ] {
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left,
                 top,
                 width,
@@ -577,8 +577,8 @@ mod decode_geometry {
                 canon().to_str().unwrap(),
                 viewing(canon().to_str().unwrap(), tile),
                 detail,
-                crate::galosh::Fit::Measure,
-                crate::RENDITION_TILE_HALO,
+                denoise::galosh::Fit::Measure,
+                decode::RENDITION_TILE_HALO,
             )
             .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
             assert_eq!((frame.width, frame.height), (width, height));
@@ -604,7 +604,7 @@ mod decode_geometry {
     /// column.
     #[test]
     fn a_tile_past_one_render_tile_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(0.0, 0.0);
+        let detail = denoise::galosh::Detail::at(0.0, 0.0);
         assert!(
             !detail.could_do_anything(),
             "a fitted denoise would not compare against the frame"
@@ -612,7 +612,7 @@ mod decode_geometry {
         let path = canon();
         let path = path.to_str().unwrap();
         let whole = pollster::block_on(
-            crate::decode_rawler::decode(path, detail)
+            decode::raw::decode(path, detail)
                 .expect("the whole frame")
                 .to_host(),
         )
@@ -621,19 +621,19 @@ mod decode_geometry {
 
         // Large enough that the region grown around it crosses 2048 on both axes.
         for span in [2200usize, 2202] {
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left: 700,
                 top: 900,
                 width: span,
                 height: span,
             };
-            let cut = crate::decode_rawler::decode_tile(
+            let cut = decode::raw::decode_tile(
                 path,
                 viewing(path, tile),
                 detail,
-                crate::galosh::Fit::Measure,
-                crate::RENDITION_TILE_HALO,
-                crate::dust::Known::Off,
+                denoise::galosh::Fit::Measure,
+                decode::RENDITION_TILE_HALO,
+                denoise::dust::Known::Off,
             )
             .and_then(|cut| pollster::block_on(cut.to_host()))
             .expect("the tile");
@@ -663,9 +663,9 @@ mod decode_geometry {
     /// would have been graded less accurately than every Sony one for a reason nothing reported.
     #[test]
     fn a_raf_hands_back_the_preview_the_camera_wrote() {
-        let jpeg = crate::decode_rawler::upright_preview_jpeg(
+        let jpeg = decode::raw::upright_preview_jpeg(
             fuji().to_str().unwrap(),
-            crate::decode_rawler::Preview::Largest,
+            decode::raw::Preview::Largest,
         )
         .expect("the embedded JPEG");
         assert_eq!(&jpeg[..2], &[0xff, 0xd8], "a JPEG starts with SOI");
@@ -684,9 +684,9 @@ mod decode_geometry {
         let path = fuji_noisy();
         let path = path.to_str().unwrap();
         let read = |colour: f64| {
-            let detail = crate::galosh::Detail::at(0.0, colour);
+            let detail = denoise::galosh::Detail::at(0.0, colour);
             pollster::block_on(
-                crate::decode_rawler::decode(path, detail)
+                decode::raw::decode(path, detail)
                     .expect("the frame")
                     .to_host(),
             )
@@ -695,11 +695,11 @@ mod decode_geometry {
         // Neighbour to neighbour over the green channel, which every position of the period holds
         // something of, against the level - the same shape of measure the pane test takes. Inside
         // the blue pane and clear of its edges: an edge's contrast is not roughness.
-        let roughness = |frame: &crate::frame::Frame| {
+        let roughness = |frame: &decode::frame::Frame| {
             let samples = frame.samples16().expect("16-bit");
             let (x0, y0, side) = (2150usize, 1006, 32);
             let at = |x: usize, y: usize| {
-                f64::from(crate::resident::level_of_bits(
+                f64::from(colour::resident::level_of_bits(
                     samples[(y * frame.width + x) * 3 + 1],
                 ))
             };
@@ -747,19 +747,19 @@ mod decode_geometry {
         let frame = crate::decode_frame_denoised(
             path.to_str().unwrap(),
             0,
-            crate::galosh::Detail::at(0.0, 0.0),
-            crate::galosh::Fit::Only,
+            denoise::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Fit::Only,
         )
         .expect("the frame decodes");
         let samples = frame.samples16().expect("16-bit");
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         let levels = crate::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
             .expect("the frame has levels");
         let white = levels.white.raw();
 
         let (x0, y0, side) = (2030usize, 980usize, 64usize);
         let blue = |x: usize, y: usize| {
-            f64::from(crate::resident::level_of_bits(
+            f64::from(colour::resident::level_of_bits(
                 samples[(y * frame.width + x) * 3 + 2],
             ))
         };
@@ -821,15 +821,15 @@ mod decode_geometry {
     fn the_denoise_takes_no_pattern_off(path: &str) {
         let read = |detail| {
             pollster::block_on(
-                crate::decode_rawler::decode(path, detail)
+                decode::raw::decode(path, detail)
                     .expect("the frame")
                     .to_host(),
             )
             .expect("the frame reads back")
         };
 
-        let plain = read(crate::galosh::Detail::at(0.0, 0.0));
-        let asked = crate::galosh::Detail::at(80.0, 80.0);
+        let plain = read(denoise::galosh::Detail::at(0.0, 0.0));
+        let asked = denoise::galosh::Detail::at(80.0, 80.0);
         assert!(
             asked.could_do_anything(),
             "the sliders have to be asking for something"
@@ -860,7 +860,7 @@ mod decode_geometry {
             for (at, &bits) in samples.iter().enumerate().skip(1).step_by(3) {
                 let pixel = at / 3;
                 let slot = (pixel / width) % 6 * 6 + (pixel % width) % 6;
-                let value = f64::from(crate::resident::level_of_bits(bits));
+                let value = f64::from(colour::resident::level_of_bits(bits));
                 sums[slot] += value;
                 counts[slot] += 1.0;
                 total += value;
@@ -895,8 +895,8 @@ mod decode_geometry {
     /// own, and a tail light clipped in the red.
     #[test]
     fn the_denoise_at_each_setting_is_the_one_last_looked_at() {
-        use crate::px::{Drawn, Rect};
         use crate::snapshot::{Anchoring, Frame, Snapshot, Tolerance};
+        use units::px::{Drawn, Rect};
         let at = |left, top| Rect::<Drawn>::exact(left, top, 256, 256);
         let frames = [
             (
@@ -934,9 +934,9 @@ mod decode_geometry {
 
         for (path, prefix, crops, tolerance) in frames {
             let path = path.to_str().unwrap();
-            let decode = |detail| crate::decode_rawler::decode(path, detail).expect("the frame");
+            let decode = |detail| decode::raw::decode(path, detail).expect("the frame");
 
-            let off = decode(crate::galosh::Detail::at(0.0, 0.0));
+            let off = decode(denoise::galosh::Detail::at(0.0, 0.0));
             let resident = off
                 .resident()
                 .expect("the decode leaves the frame on the device");
@@ -946,14 +946,14 @@ mod decode_geometry {
                 .expect("the frame has levels");
             let anchoring = Anchoring {
                 levels: levels.anchored(),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
             };
             let name = |setting| format!("denoise/{prefix}{setting}");
             Snapshot::crops(Frame::Scene(resident, anchoring), &crops)
                 .check(&name("off"), tolerance);
             for (setting, detail) in [
-                ("auto", crate::galosh::Detail::AUTO),
-                ("full", crate::galosh::Detail::at(100.0, 100.0)),
+                ("auto", denoise::galosh::Detail::AUTO),
+                ("full", denoise::galosh::Detail::at(100.0, 100.0)),
             ] {
                 let frame = decode(detail);
                 let resident = frame
@@ -976,7 +976,7 @@ mod decode_geometry {
     /// below is deliberately on none of the boundaries anything aligns to.
     #[test]
     fn an_xtrans_tile_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(0.0, 0.0);
+        let detail = denoise::galosh::Detail::at(0.0, 0.0);
         assert!(
             !detail.could_do_anything(),
             "a fitted denoise would not compare against the frame"
@@ -984,26 +984,26 @@ mod decode_geometry {
         let path = fuji();
         let path = path.to_str().unwrap();
         let whole = pollster::block_on(
-            crate::decode_rawler::decode(path, detail)
+            decode::raw::decode(path, detail)
                 .expect("the whole frame")
                 .to_host(),
         )
         .expect("the frame reads back");
         let frame = whole.samples16().expect("16-bit");
 
-        let tile = crate::Tile {
+        let tile = formats::orientation::Tile {
             left: 703,
             top: 901,
             width: 512,
             height: 512,
         };
-        let cut = crate::decode_rawler::decode_tile(
+        let cut = decode::raw::decode_tile(
             path,
             viewing(path, tile),
             detail,
-            crate::galosh::Fit::Measure,
-            crate::RENDITION_TILE_HALO,
-            crate::dust::Known::Off,
+            denoise::galosh::Fit::Measure,
+            decode::RENDITION_TILE_HALO,
+            denoise::dust::Known::Off,
         )
         .and_then(|cut| pollster::block_on(cut.to_host()))
         .expect("the tile");
@@ -1045,8 +1045,8 @@ mod decode_geometry {
         let bytes = std::fs::read(canon()).expect("the fixture reads");
         let request = crate::edit::EditRequest {
             long_edge: 0,
-            grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+            grade: crate::hdr_args::Grade {
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
             defringe: 0.5,
@@ -1054,9 +1054,9 @@ mod decode_geometry {
             // f/2.8, where the pupil spreads a speck's shadow into nothing. Arriving this way is
             // also the ordinary case: a photograph that has been opened before carries its spots
             // in the sidecar, and this is the route by which a band ever sees them.
-            photo_analysis: Some(crate::photo_analysis::encode(
-                &crate::photo_analysis::PhotoAnalysis {
-                    from_raw: crate::photo_analysis::FromRaw {
+            photo_analysis: Some(fit::photo_analysis::encode(
+                &fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         dust: Some(particles()),
                         ..Default::default()
                     },
@@ -1065,13 +1065,13 @@ mod decode_geometry {
             )),
             denoise_luminance: Some(40.0),
             denoise_colour: Some(40.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             // **On, and that is the point of it being on here.** The frame corrects from that list
             // and the bands are handed it through the analysis; a band that looked for its own, or
             // that was handed coordinates in the wrong space, would divide a shadow out of the
             // wrong photosites and this is what says so.
-            dust: crate::dust::Settings {
+            dust: denoise::dust::Settings {
                 enabled: true,
                 sensitivity: 0.5,
                 intensity: 1.0,
@@ -1082,7 +1082,7 @@ mod decode_geometry {
             stated_white: false,
         };
 
-        let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
+        let held = pollster::block_on(decode::hold_bytes(&bytes)).expect("held");
         let Some(fit) = pollster::block_on(held.fit()) else {
             return;
         };
@@ -1092,7 +1092,7 @@ mod decode_geometry {
             held.frame(
                 request.detail(),
                 request.long_edge,
-                crate::galosh::Fit::Given(fit),
+                denoise::galosh::Fit::Given(fit),
                 request
                     .dust
                     .wanted(request.stored().from_raw.dust.as_deref()),
@@ -1109,7 +1109,7 @@ mod decode_geometry {
                 .await
         })
         .expect("the open");
-        use crate::open_stage::Stage;
+        use decode::open_stage::Stage;
         assert_eq!(
             stages.into_inner(),
             [
@@ -1130,7 +1130,7 @@ mod decode_geometry {
                     tile: [0, top, width, rows],
                     frame: [width, height],
                     grade: request.grade,
-                    strengths: crate::image::Strengths {
+                    strengths: render::detail::Strengths {
                         sharpen: SHARPEN,
                         defringe: request.defringe,
                     },
@@ -1139,8 +1139,8 @@ mod decode_geometry {
                     denoiser: request.denoiser,
                     highlight_recovery: request.highlight_recovery,
                     dust: request.dust,
-                    adjust: crate::gpu::Adjust::none(),
-                    levels: Some(crate::tone::Levels {
+                    adjust: render::grade::Adjust::none(),
+                    levels: Some(colour::tone::Levels {
                         white: whole.header.white,
                         peak: whole.header.peak,
                         floor: whole.header.floor,
@@ -1150,9 +1150,9 @@ mod decode_geometry {
                     // hundred rows would sharpen the frame at a different blur down its length.
                     capture_sigma: None,
                     sensor_long: Some(held.picture_long()),
-                    defocus: crate::base::Defringe::Take(whole.header.defocus),
+                    defocus: render::base::Defringe::Take(whole.header.defocus),
                     photo_analysis: whole.header.photo_analysis.clone(),
-                    scale: crate::view::Scale::Full,
+                    scale: decode::view::Scale::Full,
                     repairs: Vec::new(),
                     drawn: None,
                     removal: None,
@@ -1195,7 +1195,7 @@ mod decode_geometry {
     /// better - it is deterministic, and it can be put exactly on the seams.
     ///
     /// Coordinates are the sensor's own, halved, which is the space a `Spot` speaks.
-    fn particles() -> Vec<crate::dust::Spot> {
+    fn particles() -> Vec<denoise::dust::Spot> {
         [
             (420.0, 260.0),
             (900.0, 1040.0),
@@ -1203,7 +1203,7 @@ mod decode_geometry {
             (760.0, 2260.0),
         ]
         .into_iter()
-        .map(|(x, y)| crate::dust::Spot {
+        .map(|(x, y)| denoise::dust::Spot {
             x,
             y,
             scale: 7.0,
@@ -1212,7 +1212,7 @@ mod decode_geometry {
             turn: (0.8, 0.6),
             snr: 6.0,
             profile: std::array::from_fn(|bin| {
-                let along = (bin as f32 + 0.5) / crate::dust::BINS as f32 * crate::dust::SPAN;
+                let along = (bin as f32 + 0.5) / denoise::dust::BINS as f32 * denoise::dust::SPAN;
                 0.12 * (1.4 - along).clamp(0.0, 1.0)
             }),
         })
@@ -1234,14 +1234,14 @@ mod decode_geometry {
     #[test]
     fn a_band_of_a_held_mosaic_is_the_frame_it_was_cut_from() {
         for detail in [
-            crate::galosh::Detail::at(40.0, 40.0),
-            crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler),
+            denoise::galosh::Detail::at(40.0, 40.0),
+            denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler),
         ] {
             a_band_is_the_frame(detail);
         }
     }
 
-    fn a_band_is_the_frame(detail: crate::galosh::Detail) {
+    fn a_band_is_the_frame(detail: denoise::galosh::Detail) {
         assert!(
             detail.could_do_anything(),
             "a band that filters nothing proves nothing"
@@ -1249,7 +1249,7 @@ mod decode_geometry {
         let path = canon();
         let bytes = std::fs::read(&path).expect("the fixture reads");
 
-        let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
+        let held = pollster::block_on(decode::hold_bytes(&bytes)).expect("held");
         let Some(fit) = pollster::block_on(held.fit()) else {
             return;
         };
@@ -1257,7 +1257,7 @@ mod decode_geometry {
         // On here as well as in the band test above, and for a sharper reason: this is the half
         // where the coordinates are, so a spot placed in the window's space rather than the
         // sensor's shows up as a band that differs from the frame exactly where a particle is.
-        let settings = crate::dust::Settings {
+        let settings = denoise::dust::Settings {
             enabled: true,
             sensitivity: 0.5,
             intensity: 1.0,
@@ -1273,9 +1273,9 @@ mod decode_geometry {
         let decoded = pollster::block_on(held.frame(
             detail,
             0,
-            crate::galosh::Fit::Given(fit),
+            denoise::galosh::Fit::Given(fit),
             settings.wanted(Some(&spots)),
-            &crate::open_stage::quiet,
+            &decode::open_stage::quiet,
         ))
         .expect("the whole frame");
         let whole = pollster::block_on(decoded.to_host()).expect("the frame on the host");
@@ -1290,7 +1290,7 @@ mod decode_geometry {
             if top + rows > whole.height {
                 break;
             }
-            let tile = crate::Tile {
+            let tile = formats::orientation::Tile {
                 left: 0,
                 top,
                 width: whole.width,
@@ -1298,11 +1298,11 @@ mod decode_geometry {
             };
             let cut = pollster::block_on(async {
                 held.window(
-                    crate::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
-                    crate::view::Scale::Full,
+                    units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
+                    decode::view::Scale::Full,
                     detail,
-                    crate::galosh::Fit::Given(fit),
-                    crate::RENDITION_TILE_HALO,
+                    denoise::galosh::Fit::Given(fit),
+                    decode::RENDITION_TILE_HALO,
                     settings.known(&spots),
                 )
                 .await?
@@ -1339,7 +1339,7 @@ mod decode_geometry {
     /// after the denoise, so both of these see the same full-resolution mosaic.
     #[test]
     fn the_fit_alone_is_the_fit_the_denoise_makes() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         for path in [sony(), canon()] {
             let path = path.to_str().unwrap().to_string();
             let denoised = crate::decode_frame_denoised(&path, 0, detail, Default::default())
@@ -1347,9 +1347,10 @@ mod decode_geometry {
                 .expect("the denoise fits the frame");
             let bytes = std::fs::read(&path).expect("the fixture reads");
             for long_edge in [0u32, 1000] {
-                let alone = crate::decode_frame_bytes(&bytes, long_edge, crate::galosh::Fit::Only)
-                    .and_then(|frame| frame.noise)
-                    .expect("the fit alone");
+                let alone =
+                    crate::decode_frame_bytes(&bytes, long_edge, denoise::galosh::Fit::Only)
+                        .and_then(|frame| frame.noise)
+                        .expect("the fit alone");
                 assert_eq!(alone, denoised, "{path} fitted differently at {long_edge}");
             }
         }
@@ -1378,13 +1379,13 @@ mod decode_geometry {
             let auto = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::AUTO,
-                crate::galosh::Fit::Measure,
+                denoise::galosh::Detail::AUTO,
+                denoise::galosh::Fit::Measure,
             )
             .expect("the frame decodes");
             let fit = auto.noise.expect("an automatic decode measures the frame");
-            let (luminance, colour) = crate::galosh::Detail::AUTO.resolved(Some(fit));
-            if crate::galosh::Detail::AUTO
+            let (luminance, colour) = denoise::galosh::Detail::AUTO.resolved(Some(fit));
+            if denoise::galosh::Detail::AUTO
                 .amounts(Some(fit))
                 .does_anything()
             {
@@ -1394,8 +1395,8 @@ mod decode_geometry {
             let asked = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::at(luminance, colour),
-                crate::galosh::Fit::Given(fit),
+                denoise::galosh::Detail::at(luminance, colour),
+                denoise::galosh::Fit::Given(fit),
             )
             .expect("the frame decodes");
             let (from_auto, from_asking) = (
@@ -1436,9 +1437,9 @@ mod decode_geometry {
     /// gated on.
     #[test]
     fn the_fit_is_the_one_this_sensor_has() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         // alpha and sigma_sq are green's, in the conditioned mosaic's own units - where full scale
-        // is the most amplified channel's saturation (`decode_rawler::channel_ceilings`). The dark
+        // is the most amplified channel's saturation (`decode::raw::channel_ceilings`). The dark
         // reference slots are in the stabilised domain those two define.
         let recorded = [
             (
@@ -1507,8 +1508,8 @@ mod decode_geometry {
             let fit = crate::decode_frame_denoised(
                 &path,
                 0,
-                crate::galosh::Detail::at(0.0, 0.0),
-                crate::galosh::Fit::Only,
+                denoise::galosh::Detail::at(0.0, 0.0),
+                denoise::galosh::Fit::Only,
             )
             .and_then(|frame| frame.noise)
             .expect("every fixture here has a mosaic to fit");
@@ -1533,12 +1534,12 @@ mod decode_geometry {
     /// Both of the defringe's noise inputs survive the decode, which no other test would miss.
     ///
     /// `measure_defocus` takes them as `Option`, and every unit test of it passes `None` because a
-    /// GPU fixture has neither. So a refactor that stopped `decode_rawler` populating either one
+    /// GPU fixture has neither. So a refactor that stopped `decode::raw` populating either one
     /// leaves the fit falling back to a constant ceiling and the lattice's own correlations, on
     /// every photograph, with the whole suite still green.
     #[test]
     fn a_decoded_frame_carries_what_the_defringe_measures_its_noise_with() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         for path in [sony(), canon()] {
             let path = path.to_str().unwrap().to_string();
             let frame = crate::decode_frame_denoised(&path, 0, detail, Default::default())
@@ -1548,7 +1549,7 @@ mod decode_geometry {
                 "{path} decoded without its camera matrix"
             );
             let fit = frame.noise.expect("the denoise fits the frame");
-            let ceiling = crate::image::noise_ceiling(Some(fit));
+            let ceiling = render::detail::noise_ceiling(Some(fit));
             assert!(
                 ceiling > 0.0 && ceiling < 1.0,
                 "{path} fitted a ceiling of {ceiling}, which is not a fraction of full scale",
@@ -1575,14 +1576,14 @@ mod decode_geometry {
     /// `galosh::reach`, whose coarsest level reads hundreds of photosites.
     #[test]
     fn a_denoised_region_is_the_frame_it_was_cut_from() {
-        let galosh = crate::galosh::Detail::at(40.0, 40.0);
-        let upscaler = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        let galosh = denoise::galosh::Detail::at(40.0, 40.0);
+        let upscaler = denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler);
         for (path, detail) in [(sony(), galosh), (fuji_noisy(), galosh), (sony(), upscaler)] {
             let path = path.to_str().unwrap().to_string();
             let path = path.as_str();
             let whole = crate::decode_frame_denoised(path, 0, detail, Default::default())
                 .expect("the frame decodes");
-            let fit = crate::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
+            let fit = denoise::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
             let (width, height) = (whole.width, whole.height);
             let samples = whole.samples16().expect("a 16-bit decode");
 
@@ -1590,25 +1591,25 @@ mod decode_geometry {
             // None reaches the denoise's own tile: `galosh`'s
             // `tiling_the_denoise_does_not_move_a_sample` cuts it small.
             let regions = [
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 504,
                     top: 504,
                     width: 512,
                     height: 512,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 501,
                     top: 733,
                     width: 512,
                     height: 512,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 800,
                     top: 600,
                     width: width / 2,
                     height: height / 2,
                 },
-                crate::Tile {
+                formats::orientation::Tile {
                     left: width - 900,
                     top: height - 700,
                     width: 896,
@@ -1621,7 +1622,7 @@ mod decode_geometry {
                     viewing(path, region),
                     detail,
                     fit,
-                    crate::RENDITION_TILE_HALO,
+                    decode::RENDITION_TILE_HALO,
                 )
                 .expect("the region decodes");
                 assert_eq!((cut.width, cut.height), (region.width, region.height));
@@ -1656,7 +1657,7 @@ mod decode_geometry {
     /// that frame's pixels.
     #[test]
     fn a_halved_region_under_the_upscaler_is_the_halved_frame() {
-        let detail = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        let detail = denoise::galosh::Detail::AUTO.using(denoise::galosh::Denoiser::Upscaler);
         let path = sony().to_str().unwrap().to_string();
         let path = path.as_str();
         let whole = crate::decode_frame_denoised(path, 640, detail, Default::default())
@@ -1665,11 +1666,11 @@ mod decode_geometry {
         let plain = crate::decode_frame_denoised(
             path,
             640,
-            crate::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Detail::at(0.0, 0.0),
             Default::default(),
         )
         .expect("the plain frame decodes");
-        let fit = crate::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
+        let fit = denoise::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
         let (width, height) = (whole.width, whole.height);
         let samples = whole.samples16().expect("a 16-bit decode");
         assert_ne!(
@@ -1679,13 +1680,13 @@ mod decode_geometry {
         );
 
         for region in [
-            crate::Tile {
+            formats::orientation::Tile {
                 left: 504,
                 top: 504,
                 width: 512,
                 height: 512,
             },
-            crate::Tile {
+            formats::orientation::Tile {
                 left: 2 * width - 1800,
                 top: 2 * height - 1400,
                 width: 1792,
@@ -1694,10 +1695,10 @@ mod decode_geometry {
         ] {
             let cut = crate::decode_tile(
                 path,
-                viewing(path, region).at(crate::view::Scale::Half),
+                viewing(path, region).at(decode::view::Scale::Half),
                 detail,
                 fit,
-                crate::RENDITION_TILE_HALO,
+                decode::RENDITION_TILE_HALO,
             )
             .expect("the region decodes");
             let (cut_w, cut_h) = (region.width / 2, region.height / 2);
@@ -1731,25 +1732,25 @@ mod decode_geometry {
     /// not two names for one measurement.
     #[test]
     fn a_tile_denoises_at_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(20.0, 30.0);
+        let detail = denoise::galosh::Detail::at(20.0, 30.0);
         let path = canon().to_str().unwrap().to_string();
         let bytes = std::fs::read(&path).expect("the fixture reads");
-        let frame = crate::decode_frame_bytes(&bytes, 0, crate::galosh::Fit::Only)
+        let frame = crate::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
             .and_then(|f| f.noise)
             .expect("the frame's fit");
 
-        let tile = crate::Tile {
+        let tile = formats::orientation::Tile {
             left: 2000,
             top: 1400,
             width: 512,
             height: 512,
         };
-        let halo = crate::RENDITION_TILE_HALO;
+        let halo = decode::RENDITION_TILE_HALO;
         let given = crate::decode_tile(
             &path,
             viewing(&path, tile),
             detail,
-            crate::galosh::Fit::Given(frame),
+            denoise::galosh::Fit::Given(frame),
             halo,
         )
         .and_then(|f| f.noise)
@@ -1758,7 +1759,7 @@ mod decode_geometry {
             &path,
             viewing(&path, tile),
             detail,
-            crate::galosh::Fit::Measure,
+            denoise::galosh::Fit::Measure,
             halo,
         )
         .and_then(|f| f.noise)
@@ -1783,8 +1784,7 @@ mod decode_geometry {
     #[test]
     fn a_held_region_is_the_decode_it_stands_in_for() {
         let path = clipped();
-        let source =
-            crate::decode_rawler::mapped(path.to_str().unwrap()).expect("the fixture maps");
+        let source = decode::raw::mapped(path.to_str().unwrap()).expect("the fixture maps");
         let params = rawler::decoders::RawDecodeParams::default();
         // Off the grid the rest of the suite asks on, so that this test's own two calls are the
         // only ones the process-wide store has ever been asked for these rectangles.
@@ -1804,16 +1804,16 @@ mod decode_geometry {
                 .expect("a decoder")
                 .raw_image_region_tight(&source, &params, region, false)
                 .expect("the region decodes");
-            crate::raw_cache::Region { image, covered }
+            decode::raw_cache::Region { image, covered }
         };
-        let samples = |region: &crate::raw_cache::Region| match &region.image.data {
+        let samples = |region: &decode::raw_cache::Region| match &region.image.data {
             rawler::RawImageData::Integer(samples) => samples.clone(),
             rawler::RawImageData::Float(_) => panic!("a CFA frame came back as floats"),
         };
 
-        let first = crate::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
+        let first = decode::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
             .expect("the region decodes");
-        let again = crate::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
+        let again = decode::raw_cache::region(&source, &params, asked, || Some(decode(asked)))
             .expect("the region is held");
         assert_eq!(
             decodes.get(),
@@ -1830,7 +1830,7 @@ mod decode_geometry {
         // And a rectangle the store has not been asked for is decoded rather than answered with
         // the one it holds, which is the failure a key too loose would produce.
         let other =
-            crate::raw_cache::region(&source, &params, elsewhere, || Some(decode(elsewhere)))
+            decode::raw_cache::region(&source, &params, elsewhere, || Some(decode(elsewhere)))
                 .expect("the region decodes");
         assert_eq!(
             decodes.get(),
@@ -1854,7 +1854,7 @@ mod loupe_tile {
     /// A dark corner of the Sony fixture, which is where the difference is worth measuring: its
     /// own diffuse white is a third of the frame's, so a tile coded against it is lifted by that
     /// factor.
-    const DARK: crate::Tile = crate::Tile {
+    const DARK: formats::orientation::Tile = formats::orientation::Tile {
         left: 500,
         top: 4500,
         width: 512,
@@ -1883,7 +1883,7 @@ mod loupe_tile {
         for (path, bright) in [
             (
                 sony(),
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 1536,
                     top: 2048,
                     width: 512,
@@ -1892,7 +1892,7 @@ mod loupe_tile {
             ),
             (
                 canon(),
-                crate::Tile {
+                formats::orientation::Tile {
                     left: 3072,
                     top: 5120,
                     width: 512,
@@ -1904,12 +1904,12 @@ mod loupe_tile {
         }
     }
 
-    fn a_tile_is_the_rendition(path: &str, bright: crate::Tile) {
+    fn a_tile_is_the_rendition(path: &str, bright: formats::orientation::Tile) {
         let mut fitted = tile_job(path, None, None);
-        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        fitted.camera_match = fit::hdr::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
-        let kept = crate::photo_analysis::encode(&base.analysis);
+        let kept = fit::photo_analysis::encode(&base.analysis);
         drop(base);
 
         let edits: [(&str, fn(&mut crate::job::Job)); 4] = [
@@ -1922,11 +1922,11 @@ mod loupe_tile {
             // at belongs to the photograph, and the window it averages over reaches two hundred
             // pixels past a tile's own edge.
             ("clarity and texture", |job| {
-                job.adjust = crate::gpu::Adjust {
+                job.adjust = render::grade::Adjust {
                     clarity: 60.0,
                     texture: 60.0,
                     dehaze: 25.0,
-                    ..crate::gpu::Adjust::none()
+                    ..render::grade::Adjust::none()
                 };
             }),
             // Both at once, which is the shipping default plus a slider a reader would reach for,
@@ -1937,17 +1937,17 @@ mod loupe_tile {
             // window's edge in either region this looks at.
             ("sharpened, with clarity", |job| {
                 job.sharpen = 1.0;
-                job.adjust = crate::gpu::Adjust {
+                job.adjust = render::grade::Adjust {
                     clarity: 60.0,
                     texture: 60.0,
-                    ..crate::gpu::Adjust::none()
+                    ..render::grade::Adjust::none()
                 };
             }),
         ];
         for (what, edit) in edits {
-            let built = |tile: Option<[usize; 4]>, levels: Option<crate::tone::Levels>| {
+            let built = |tile: Option<[usize; 4]>, levels: Option<colour::tone::Levels>| {
                 let mut job = tile_job(path, tile, levels);
-                job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+                job.camera_match = fit::hdr::CameraMatch::LensAndColour;
                 job.photo_analysis = Some(kept.clone());
                 edit(&mut job);
                 job
@@ -1978,8 +1978,8 @@ mod loupe_tile {
                 if place == "highlight" && what == "as metered" {
                     let frame_max = *reference.iter().max().expect("a frame");
                     let nits = |code| {
-                        crate::tone::pq_inv::<crate::light::DisplayNits>(
-                            crate::light::Light::measured(f64::from(code) / 65535.0),
+                        colour::tone::pq_inv::<units::light::DisplayNits>(
+                            units::light::Light::measured(f64::from(code) / 65535.0),
                         )
                     };
                     let share = nits(reference_max) / nits(frame_max);
@@ -2028,7 +2028,7 @@ mod loupe_tile {
     #[test]
     fn a_restricted_decode_at_half_is_the_whole_one_halved() {
         let path = sony();
-        let header = crate::header::read_path(path.to_str().unwrap()).expect("the header reads");
+        let header = formats::header::read_path(path.to_str().unwrap()).expect("the header reads");
         let half = (header.width.max(header.height) / 2) as u32;
         restricted_decode_is_the_whole_one(half);
     }
@@ -2042,7 +2042,7 @@ mod loupe_tile {
         let path = path.to_str().unwrap();
         // Off-centre, straightened and turned, and small enough that the restriction is worth
         // taking - `cropped` declines a crop that reads nearly the whole picture anyway.
-        let geometry = crate::image::Geometry {
+        let geometry = geometry::warp::Geometry {
             crop: [0.31, 0.22, 0.68, 0.63],
             angle_degrees: 1.75,
             rotate: 90,
@@ -2061,11 +2061,11 @@ mod loupe_tile {
             preset: 6,
             still_full_chroma: false,
             sdr_full_chroma: false,
-            intent: crate::gpu::Intent::Perceptual,
+            intent: render::grade::Intent::Perceptual,
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
-        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        job.camera_match = fit::hdr::CameraMatch::LensAndColour;
         job.geometry = geometry;
         job.sharpen = 1.0;
         job.defringe = 1.0;
@@ -2086,18 +2086,18 @@ mod loupe_tile {
             match taken {
                 crate::job::Cutting::AlreadyCut(cut) => cut,
                 crate::job::Cutting::OnDevice(frame) => {
-                    let size = crate::hdr_args::Size {
+                    let size = formats::still::Size {
                         width: width as u32,
                         height: height as u32,
                     };
-                    let sigma = crate::image::deconvolve_split(
+                    let sigma = render::detail::deconvolve_split(
                         base.capture_sigma,
                         base.sensor_long,
                         width.max(height),
                     );
                     let noise = base.sharpen_noise.at(
-                        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
-                        crate::px::Span::<crate::px::Drawn>::exact(width.max(height)),
+                        units::px::Span::<units::px::Sensor>::exact(base.sensor_long),
+                        units::px::Span::<units::px::Drawn>::exact(width.max(height)),
                     );
                     crate::hdr::Cut::from_base(
                         frame,
@@ -2112,7 +2112,7 @@ mod loupe_tile {
         };
         let pixel_geometry = job.pixel_geometry();
         let graded = |base: &crate::job::Base, cut: &crate::hdr::Cut| {
-            let scene = crate::tone::SceneGrade::new(
+            let scene = render::grade::SceneGrade::new(
                 base.matched.as_ref().and_then(|m| m.colour.as_ref()),
                 base.levels,
                 job.grade.reference_white_nits,
@@ -2120,9 +2120,9 @@ mod loupe_tile {
                 job.adjust.clone(),
                 base.as_shot,
             );
-            let gpu = crate::gpu::device().expect("an adapter");
+            let gpu = gpu::device().expect("an adapter");
             let mut grade = scene
-                .gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq)
+                .gpu_grade(cut.width, cut.height, render::grade::Output::Pq)
                 .showing(pixel_geometry);
             if let Some(window) = base.window {
                 grade = grade.windowed(window.photograph, window.origin);
@@ -2131,10 +2131,12 @@ mod loupe_tile {
             // The photograph's own peak, so the two roll off against one number rather than against
             // whatever each frame happens to reach - which is the whole reason it is stored, and
             // what a window could not measure for itself.
-            let peak = gpu.given_peak(4000.0);
+            let peak = render::grade::device(gpu).given_peak(4000.0);
             let up = match cut.resident() {
-                Some(resident) => gpu.upload_resident(resident, &grade, &peak),
-                None => gpu.upload(
+                Some(resident) => {
+                    render::grade::device(gpu).upload_resident(resident, &grade, &peak)
+                }
+                None => render::grade::device(gpu).upload(
                     cut.host_samples()
                         .expect("a cut holds one frame or the other"),
                     &grade,
@@ -2150,7 +2152,7 @@ mod loupe_tile {
         // through the file, and the chroma lattice is kept at the `f16` its texture holds: that is
         // a fifth of a percent of colour on every pixel, which is a real difference about storage
         // and nothing to do with how much of the sensor was decoded.
-        job.photo_analysis = Some(crate::photo_analysis::encode(
+        job.photo_analysis = Some(fit::photo_analysis::encode(
             // At the size the restricted route will ask for, not at the sensor's: the whole-frame
             // decode halves itself for the same floor, and the aberration it measures is keyed on
             // the resolution it was measured at.
@@ -2158,7 +2160,7 @@ mod loupe_tile {
                 .expect("the frame")
                 .analysis,
         ));
-        let stored = crate::photo_analysis::decode(job.photo_analysis.as_ref().unwrap())
+        let stored = fit::photo_analysis::decode(job.photo_analysis.as_ref().unwrap())
             .expect("it reads back");
         let mut whole = crate::job::Base::build(&job, size).expect("the frame");
         let mut cropped = crate::job::Base::cropped(&job, &[&job.targets[0]], &stored)
@@ -2178,9 +2180,9 @@ mod loupe_tile {
         // at the window's edge where the frame's carries on. That ring is halo - it exists to be
         // read past and never to be read - so comparing it would be asserting the two routes agree
         // about pixels neither of them shows.
-        let out_size = crate::hdr::cropped_size(whole.width, whole.height, geometry);
+        let out_size = geometry::warp::cropped_size(whole.width, whole.height, geometry);
         let read =
-            crate::image::geometry_footprint((whole.width, whole.height), out_size, geometry);
+            geometry::warp::geometry_footprint((whole.width, whole.height), out_size, geometry);
         let (whole_cut, cropped_cut) = (framed(&mut whole), framed(&mut cropped));
         let (whole_w, cropped_w) = (whole_cut.width, cropped_cut.width);
         // Both routes are graded below off the same cuts, so the frames are read here rather
@@ -2260,12 +2262,12 @@ mod loupe_tile {
             preset: 6,
             still_full_chroma: false,
             sdr_full_chroma: false,
-            intent: crate::gpu::Intent::Perceptual,
+            intent: render::grade::Intent::Perceptual,
             describe_only: false,
         };
         let mut job = tile_job(path, None, None);
-        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
-        job.geometry = crate::image::Geometry {
+        job.camera_match = fit::hdr::CameraMatch::LensAndColour;
+        job.geometry = geometry::warp::Geometry {
             crop: [0.12, 0.08, 0.93, 0.9],
             angle_degrees: -2.25,
             rotate: 90,
@@ -2276,7 +2278,7 @@ mod loupe_tile {
         job.adjust.clarity = 40.0;
         job.targets = vec![target];
         // Measured once and handed to both, as `restricted_decode_is_the_whole_one` says why.
-        job.photo_analysis = Some(crate::photo_analysis::encode(
+        job.photo_analysis = Some(fit::photo_analysis::encode(
             &crate::job::Base::build(&job, 4800)
                 .expect("the frame")
                 .analysis,
@@ -2300,8 +2302,7 @@ mod loupe_tile {
             panic!("a PQ target")
         };
 
-        let held =
-            pollster::block_on(crate::decode::hold_path(path)).expect("the photograph opens");
+        let held = pollster::block_on(decode::hold_path(path)).expect("the photograph opens");
         let banded = pollster::block_on(crate::job::graded_bands(
             &job,
             &job.targets[0],
@@ -2411,29 +2412,29 @@ mod loupe_tile {
         let path = sony();
         let path = path.to_str().unwrap();
         let mut fitted = tile_job(path, None, None);
-        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        fitted.camera_match = fit::hdr::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
-        let kept = crate::photo_analysis::encode(&base.analysis);
+        let kept = fit::photo_analysis::encode(&base.analysis);
         drop(base);
 
         // The camera match and the noise fit, with nothing a render measured: what is being asked
         // here is what a tile left to read its own levels does, and a stored analysis would answer
         // that question for it - which is the whole point of storing one, and not this test's
         // subject.
-        let from_raw = crate::photo_analysis::encode(&crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::decode(&kept)
+        let from_raw = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::decode(&kept)
                 .expect("it reads back")
                 .from_raw,
             ..Default::default()
         });
-        let built = |levels: Option<crate::tone::Levels>| {
+        let built = |levels: Option<colour::tone::Levels>| {
             let mut job = tile_job(
                 path,
                 Some([DARK.left, DARK.top, DARK.width, DARK.height]),
                 levels,
             );
-            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+            job.camera_match = fit::hdr::CameraMatch::LensAndColour;
             job.photo_analysis = Some(from_raw.clone());
             job
         };
@@ -2466,38 +2467,38 @@ mod loupe_tile {
             .frame
             .host();
 
-        let level = crate::light::Light::measured;
+        let level = units::light::Light::measured;
         let floor = Some(level(141.0));
         for levels in [
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(0.0),
                 peak: level(13783.0),
                 floor,
             },
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(f64::NAN),
                 peak: level(13783.0),
                 floor,
             },
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(f64::INFINITY),
                 floor,
             },
             // A peak below white would roll the highlights the wrong way.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(100.0),
                 floor,
             },
             // No floor at all, which is a client that cannot say where the low pair go.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(13783.0),
                 floor: None,
             },
             // A floor above the white it is a fraction of describes no photograph either.
-            crate::tone::Levels {
+            colour::tone::Levels {
                 white: level(8133.0),
                 peak: level(13783.0),
                 floor: Some(level(9000.0)),
@@ -2538,7 +2539,7 @@ mod halving {
         );
         // Aspect must survive the halving, or the crop insets were scaled wrongly and
         // the frame comes out stretched.
-        let aspect = |f: &crate::frame::Frame| f.width as f64 / f.height as f64;
+        let aspect = |f: &decode::frame::Frame| f.width as f64 / f.height as f64;
         assert!((aspect(&halved) - aspect(&whole)).abs() < 0.01);
     }
 
@@ -2592,8 +2593,8 @@ mod halving {
 mod a_halved_frame_is_the_same_picture {
     use super::*;
 
-    fn frame_mean(frame: &crate::frame::Frame) -> f64 {
-        let levels = crate::resident::levels_of(frame.samples16().expect("16-bit"));
+    fn frame_mean(frame: &decode::frame::Frame) -> f64 {
+        let levels = colour::resident::levels_of(frame.samples16().expect("16-bit"));
         levels.iter().map(|&level| f64::from(level)).sum::<f64>() / levels.len() as f64
     }
 
@@ -2672,19 +2673,19 @@ mod a_halved_frame_is_the_same_picture {
 /// "the fit ran and the picture was wrong" (§10.8).
 mod camera_match {
     use super::*;
-    use crate::image::SPLINE_UNIT;
+    use geometry::lens::SPLINE_UNIT;
 
     #[test]
     fn lens_only_is_measured_and_completed_with_colour_through_the_same_geometry() {
-        use crate::hdr_fit::CameraMatch;
+        use fit::hdr::CameraMatch;
         let path = sony();
         let mut job = tile_job(path.to_str().unwrap(), None, None);
         job.camera_match = CameraMatch::Lens;
         let lens = crate::job::Base::build(&job, 3840).expect("lens render");
         assert!(lens.matched.as_ref().expect("lens").colour.is_none());
-        let stored = crate::photo_analysis::encode(&lens.analysis);
+        let stored = fit::photo_analysis::encode(&lens.analysis);
         drop(lens);
-        let kept = crate::photo_analysis::decode(&stored).expect("stored lens");
+        let kept = fit::photo_analysis::decode(&stored).expect("stored lens");
         let known = &kept.from_raw.matched.as_ref().expect("lens").lens;
         job.photo_analysis = Some(stored);
         job.camera_match = CameraMatch::LensAndColour;
@@ -2695,7 +2696,7 @@ mod camera_match {
         assert_eq!(matched.lens.distortion, known.distortion);
         assert_eq!(matched.lens.falloff, known.falloff);
         assert!(full.analysis.adds_to(&kept));
-        job.photo_analysis = Some(crate::photo_analysis::encode(&full.analysis));
+        job.photo_analysis = Some(fit::photo_analysis::encode(&full.analysis));
         drop(full);
         job.camera_match = CameraMatch::None;
         let neutral = crate::job::Base::build(&job, 3840).expect("neutral render");
@@ -2705,17 +2706,18 @@ mod camera_match {
     /// The lens and the match, fitted the way a job fits them off the linear decode. Not
     /// cached: one of the assertions below is that fitting twice agrees, and a cache would
     /// answer it with the same object and prove nothing.
-    fn fitted(path: &PathBuf) -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
+    fn fitted(path: &PathBuf) -> (fit::profile::Profile, fit::hdr::HdrMatch) {
         let frame = decode(path, 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
-        let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+        let geometry =
+            crate::lens_geometry::geometry_for(path.to_str().unwrap()).expect("a geometry");
         let (profile, matched, _) = pollster::block_on(crate::hdr::fit_all(
             adapter(),
             path.to_str().unwrap(),
             &resident,
             0.9,
             geometry,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
@@ -2748,15 +2750,15 @@ mod camera_match {
             as_shot: frame.as_shot,
         };
         let options = crate::hdr_args::EncodeOptions {
-            still_chroma: crate::hdr_args::Chroma::Yuv444,
+            still_chroma: formats::still::Chroma::Yuv444,
             output_path: String::new(),
-            grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+            grade: crate::hdr_args::Grade {
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
             crf: 26,
             preset: 6,
-            strengths: crate::image::Strengths::default(),
+            strengths: render::detail::Strengths::default(),
             sharpen_sigma: None,
             max_edge: 1600.0,
             content_light: None,
@@ -2765,8 +2767,8 @@ mod camera_match {
             &source,
             &options,
             Some(&matched),
-            crate::gpu::Output::Srgb,
-            crate::gpu::Intent::Perceptual,
+            render::grade::Output::Srgb,
+            render::grade::Intent::Perceptual,
         );
         let camera = crate::decode_embedded_rgb(path.to_str().unwrap(), width.max(height))
             .expect("the embedded JPEG");
@@ -2818,7 +2820,7 @@ mod camera_match {
     }
 
     fn green_drift(reference: [f64; 3], colour: [f64; 3]) -> (f64, f64, f64) {
-        let weights = crate::image::LUMA.map(f64::from);
+        let weights = colour::space::LUMA709.map(f64::from);
         let total = weights.iter().sum::<f64>();
         let luma = |rgb: [f64; 3]| -> f64 {
             rgb.into_iter()
@@ -2892,7 +2894,7 @@ mod camera_match {
         let bytes = outcome
             .photo_analysis
             .expect("a measure job answers an analysis to keep");
-        let analysis = crate::photo_analysis::decode(&bytes).expect("the analysis parses");
+        let analysis = fit::photo_analysis::decode(&bytes).expect("the analysis parses");
         // The match is the whole point of asking: its lens is the table a panorama's RAW gather
         // reaches each sensor through, and a canvas stitched without one doubles every seam. What
         // that lens *contains* is the fit's own business, pinned by the tests beside this one.
@@ -2946,7 +2948,7 @@ mod camera_match {
         };
         let decoded = |file: &std::path::Path| {
             let bytes = std::fs::read(file).expect("the rendition was written");
-            crate::avif::decode_at(&bytes, 12)
+            formats::avif::decode_at(&bytes, 12)
                 .expect("the rendition decodes")
                 .0
         };
@@ -2975,7 +2977,7 @@ mod camera_match {
             crate::job::write_rendered(&client, &framed).expect("the frame is written");
 
             let exif = |file: &std::path::Path| {
-                crate::avif::exif(&std::fs::read(file).expect("a rendition"))
+                formats::avif::exif(&std::fs::read(file).expect("a rendition"))
             };
             let carried = exif(&served).expect("the server's rendition carries the camera's EXIF");
             assert_eq!(
@@ -3025,7 +3027,7 @@ mod camera_match {
     /// nothing. This holds the parser to that shape.
     #[test]
     fn reads_the_lateral_pair_the_body_recorded() {
-        let Some(curve) = crate::ffi::recorded_lateral(sony().to_str().unwrap()) else {
+        let Some(curve) = crate::lens_geometry::recorded_lateral(sony().to_str().unwrap()) else {
             eprintln!("SKIPPED: this ARW records no lateral pair");
             return;
         };
@@ -3051,7 +3053,7 @@ mod camera_match {
     #[test]
     fn reads_no_lateral_pair_from_a_body_that_writes_none() {
         assert!(
-            crate::ffi::recorded_lateral(canon().to_str().unwrap()).is_none(),
+            crate::lens_geometry::recorded_lateral(canon().to_str().unwrap()).is_none(),
             "a CR3 is not a TIFF and carries no Sony SubIFD",
         );
     }
@@ -3066,7 +3068,7 @@ mod camera_match {
     /// than deleting a source that may be worth revisiting when coverage improves.
     #[test]
     fn reads_a_lateral_curve_out_of_the_database() {
-        let curve = crate::ffi::database_lateral(canon().to_str().unwrap())
+        let curve = crate::lens_geometry::database_lateral(canon().to_str().unwrap())
             .expect("the database carries a lateral curve for this lens");
         assert_eq!(
             curve[0].len(),
@@ -3098,8 +3100,9 @@ mod camera_match {
         /// real file can.
         #[test]
         fn reads_the_ilce_6300_distortion_spline_out_of_a_real_arw() {
-            let knots = crate::ffi::_for_testing_distortion_spline(sony().to_str().unwrap())
-                .expect("the ARW records a spline");
+            let knots =
+                crate::lens_geometry::_for_testing_distortion_spline(sony().to_str().unwrap())
+                    .expect("the ARW records a spline");
             // This body writes 11 knots, not the ILCE-7CR's 16.
             assert_eq!(knots.len(), 11);
             // Anchored at zero in the centre, and a small correction on a 50mm prime.
@@ -3114,11 +3117,11 @@ mod camera_match {
         /// search what it needs; `lensdb`'s own suite pins what the search then answers.
         #[test]
         fn resolves_a_third_party_lens_name_against_the_lensfun_database() {
-            let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(canon().to_str().unwrap()).expect("header");
             let knots = lensdb::distortion_knots(
-                crate::header::name(&header.camera_make),
-                crate::header::name(&header.camera_model),
-                crate::header::name(&header.lens_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
+                formats::header::name(&header.lens_model),
                 header.focal,
                 header.aperture,
                 header.crop(),
@@ -3137,11 +3140,11 @@ mod camera_match {
         /// frame and the render gets warped by a curve from the wrong lens.
         #[test]
         fn refuses_a_lens_the_shot_could_not_have_been_taken_with() {
-            let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
+            let header = formats::header::read_path(canon().to_str().unwrap()).expect("header");
             let knots = lensdb::distortion_knots(
-                crate::header::name(&header.camera_make),
-                crate::header::name(&header.camera_model),
-                crate::header::name(&header.lens_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
+                formats::header::name(&header.lens_model),
                 24.0,
                 2.8,
                 header.crop(),
@@ -3162,7 +3165,7 @@ mod camera_match {
         /// database being consulted behind the body's back.
         #[test]
         fn never_takes_the_database_over_a_spline_the_body_recorded() {
-            assert_ne!(fitted(&sony()).0.source, crate::fit::SOURCE_LENSFUN);
+            assert_ne!(fitted(&sony()).0.source, fit::profile::SOURCE_LENSFUN);
         }
     }
 
@@ -3177,10 +3180,9 @@ mod camera_match {
     fn the_preview_the_fit_measures_arrives_upright() {
         for raw in [sony(), canon()] {
             let path = raw.to_str().expect("a fixture path");
-            let largest = crate::decode_rawler::Preview::Largest;
-            let stored =
-                crate::decode_rawler::upright_preview_jpeg(path, largest).expect("a preview");
-            let long_edge = crate::hdr_fit::sample_long_edge();
+            let largest = decode::raw::Preview::Largest;
+            let stored = decode::raw::upright_preview_jpeg(path, largest).expect("a preview");
+            let long_edge = colour::matched::sample_long_edge();
             let upright = crate::decode_embedded_rgb(path, long_edge).expect("a preview");
             let render = decode(&raw, 0);
 
@@ -3204,7 +3206,7 @@ mod camera_match {
             // The JPEG-returning path has to agree, since the editor's open and the download
             // read that one and a viewer would show it lying down.
             let bytes =
-                crate::jpeg::decode(&stored, long_edge).expect("the stored preview decodes");
+                formats::jpeg::decode(&stored, long_edge).expect("the stored preview decodes");
             assert_eq!(
                 (bytes.width, bytes.height),
                 (upright.width, upright.height),
@@ -3306,9 +3308,9 @@ mod camera_match {
         // Scaled to fill, which is the half of the injection that makes it a picture a
         // camera could have produced: one that left the corners black would ask the fit
         // for a geometry it correctly refuses to consider.
-        let target = crate::jpeg::encode(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
+        let target = formats::jpeg::encode(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
             .expect("the injected target encodes");
-        let target = crate::jpeg::decode(&target, 0).expect("the injected target decodes");
+        let target = formats::jpeg::decode(&target, 0).expect("the injected target decodes");
 
         let frame = decode(&sony(), 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
@@ -3318,14 +3320,14 @@ mod camera_match {
             adapter(),
             &resident,
             0.9,
-            crate::fit::Geometry::Unstated,
+            fit::profile::Geometry::Unstated,
             &target,
             None,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
-        assert_eq!(fitted.source, crate::fit::SOURCE_FITTED);
+        assert_eq!(fitted.source, fit::profile::SOURCE_FITTED);
 
         // The target samples outward, so the map from target back to render carries the
         // same sign as the injected coefficient. Compare centre-to-corner displacement
@@ -3342,7 +3344,7 @@ mod camera_match {
     ///
     /// Hand-rolled rather than through `fit_warp.slang`: injecting with the same code the
     /// fit inverts would let a bug in it cancel itself out.
-    fn pincushion(source: &crate::rgb::Rgb, k1: f64, crop: f64) -> crate::rgb::Rgb {
+    fn pincushion(source: &units::rgb::Rgb, k1: f64, crop: f64) -> units::rgb::Rgb {
         let (width, height) = (source.width, source.height);
         let mut out = vec![0u8; width * height * 3];
         let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
@@ -3370,7 +3372,7 @@ mod camera_match {
                 }
             }
         }
-        crate::rgb::Rgb {
+        units::rgb::Rgb {
             width,
             height,
             data: out,
@@ -3415,26 +3417,27 @@ mod camera_match {
 /// weighted - neither would fail an assertion about shape.
 mod hdr_grade {
     use super::*;
-    use crate::hdr_args::{Chroma, EncodeOptions};
+    use crate::hdr_args::EncodeOptions;
+    use formats::still::Chroma;
 
     const QUANTILE: f64 = 0.9;
-    const REFERENCE: crate::light::Light<crate::light::SceneNits> =
-        crate::light::Light::exactly(203.0);
-    /// What a rolled frame's `Signal` is a share of (`gpu::Output::mastered`).
-    const CEILING: crate::light::Light<crate::light::DisplayNits> = crate::light::Light::PQ_CEILING;
+    const REFERENCE: units::light::Light<units::light::SceneNits> =
+        units::light::Light::exactly(203.0);
+    /// What a rolled frame's `Signal` is a share of (`render::grade::Output::mastered`).
+    const CEILING: units::light::Light<units::light::DisplayNits> = units::light::Light::PQ_CEILING;
 
     fn options(max_edge: f64, output_path: &str) -> EncodeOptions {
         EncodeOptions {
             still_chroma: Chroma::Yuv420,
             output_path: output_path.to_string(),
-            grade: crate::hdr::Grade {
+            grade: crate::hdr_args::Grade {
                 reference_white_nits: REFERENCE,
                 white_quantile: QUANTILE,
             },
             crf: 40,
             preset: 8,
             // The grade is what is pinned here, and all of these run after it.
-            strengths: crate::image::Strengths::default(),
+            strengths: render::detail::Strengths::default(),
             sharpen_sigma: None,
             max_edge,
             content_light: None,
@@ -3442,11 +3445,11 @@ mod hdr_grade {
     }
 
     /// The scene-linear decode every case here grades from.
-    fn linear() -> crate::frame::Frame {
+    fn linear() -> decode::frame::Frame {
         decode(&sony(), 0)
     }
 
-    fn source(frame: &crate::frame::Frame) -> crate::hdr::Source<'_> {
+    fn source(frame: &decode::frame::Frame) -> crate::hdr::Source<'_> {
         crate::hdr::Source {
             samples: frame.samples16().expect("a 16-bit decode"),
             width: frame.width,
@@ -3456,7 +3459,7 @@ mod hdr_grade {
     }
 
     /// The camera match, fitted the way a job fits it (§10.8.1).
-    fn matched(frame: &crate::frame::Frame) -> Option<crate::hdr_fit::HdrMatch> {
+    fn matched(frame: &decode::frame::Frame) -> Option<fit::hdr::HdrMatch> {
         let resident = frame.on_device(adapter())?;
         crate::fit_hdr_for(&resident, sony().to_str().unwrap(), QUANTILE, frame.as_shot)
     }
@@ -3471,7 +3474,7 @@ mod hdr_grade {
         // This body corrects no illumination, so the lift has to be given something to
         // carry - which is also the only way to reach a corner gain worth measuring.
         // A quarter more light at the corner, none at the centre.
-        fitted.lens = crate::fit::Lens {
+        fitted.lens = geometry::lens::Lens {
             distortion: None,
             crop: 1.0,
             falloff: Some((0.25, 0.0)),
@@ -3484,18 +3487,18 @@ mod hdr_grade {
         // ratio has to be read in light rather than in codes, which is the claim anyway: a
         // falloff correction is a multiplication of light whatever the buffer holds.
         let mut samples = frame.samples16().expect("a 16-bit decode").to_vec();
-        let gpu = crate::gpu::device().expect("an adapter");
+        let gpu = gpu::device().expect("an adapter");
         let levels = crate::hdr::levels_of(gpu, &samples, width, height, QUANTILE)
             .expect("levels")
             .anchored();
-        crate::hdr::code_base(&mut samples, levels, REFERENCE);
-        let base = crate::base::device(gpu).expect("the base pipelines");
-        let resident = crate::resident::Resident::upload(gpu, &samples, width, height);
-        let gathered = crate::base::warp_lens(
+        render::base::code_base(&mut samples, levels, REFERENCE);
+        let base = render::base::device(gpu).expect("the base pipelines");
+        let resident = colour::resident::Resident::upload(gpu, &samples, width, height);
+        let gathered = render::base::warp_lens(
             gpu,
             base,
             &resident,
-            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            render::base::Gather::frame(units::px::Size::exact(width, height)),
             &fitted.lens,
         )
         .expect("the lens stage runs");
@@ -3504,11 +3507,11 @@ mod hdr_grade {
 
         let at = |data: &[u16], x: usize, y: usize| {
             let code = f64::from(data[(y * width + x) * 3 + 1]) / 65535.0;
-            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(code))
+            colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(code))
         };
         let (corner_x, corner_y) = (width - 1, height - 1);
         // The corner sits at r = 1, so it takes the whole of the coefficient.
-        let floor = crate::light::Light::measured(1e-9);
+        let floor = units::light::Light::measured(1e-9);
         let corner = at(&samples, corner_x, corner_y).max(floor);
         let ratio = (at(&lit, corner_x, corner_y) / corner).raw();
         assert!(
@@ -3534,14 +3537,15 @@ mod hdr_grade {
         let path = canon();
         let frame = decode(&path, 3840);
         let resident = frame.on_device(adapter()).expect("a 16-bit decode");
-        let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+        let geometry =
+            crate::lens_geometry::geometry_for(path.to_str().unwrap()).expect("a geometry");
         let (profile, matched, _) = pollster::block_on(crate::hdr::fit_all(
             adapter(),
             path.to_str().unwrap(),
             &resident,
             QUANTILE,
             geometry,
-            crate::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             frame.as_shot,
         ))
         .expect("the linear fit");
@@ -3563,7 +3567,7 @@ mod hdr_grade {
         let path = sony();
         let p = path.to_str().unwrap();
         let curves = |falloff| {
-            let lens = crate::fit::Lens {
+            let lens = geometry::lens::Lens {
                 distortion: None,
                 crop: 1.0,
                 falloff,
@@ -3590,9 +3594,9 @@ mod hdr_grade {
     /// `hdr::graded`, which is already the shader - these tests only ever wanted the rolled
     /// frame it returns.
     fn graded(
-        frame: &crate::frame::Frame,
+        frame: &decode::frame::Frame,
         options: &EncodeOptions,
-        m: Option<&crate::hdr_fit::HdrMatch>,
+        m: Option<&fit::hdr::HdrMatch>,
     ) -> (Vec<u16>, usize, usize) {
         crate::hdr::graded(&source(frame), options, m)
     }
@@ -3657,7 +3661,7 @@ mod hdr_grade {
         // quantile lands under the reference rather than on it - but nowhere near the
         // peak, which is what a lost anchor would look like.
         let of_reference = |by: f64| {
-            crate::light::Light::at_diffuse_white(REFERENCE) * crate::light::Gain::of_ratio(by)
+            units::light::Light::at_diffuse_white(REFERENCE) * units::light::Gain::of_ratio(by)
         };
         assert!(at[0] > of_reference(0.25), "diffuse white at {:?}", at[0]);
         assert!(at[0] < of_reference(1.5), "diffuse white at {:?}", at[0]);
@@ -3668,9 +3672,9 @@ mod hdr_grade {
         // At a rendition's size, not the frame's: what is compared is whether two
         // grades agree, which no amount of resolution makes truer.
         let frame = linear();
-        let digest = |m: Option<&crate::hdr_fit::HdrMatch>| {
+        let digest = |m: Option<&fit::hdr::HdrMatch>| {
             let (graded, _, _) = graded(&frame, &options(800.0, "/dev/null"), m);
-            crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(
+            crate::debug::sha256_hex(&crate::debug::to_bytes(&decode::frame::Pixels::Sixteen(
                 graded,
             )))
         };
@@ -3778,13 +3782,13 @@ mod hdr_grade {
         let pq_mean = graded
             .iter()
             .map(|s| {
-                crate::tone::pq(CEILING * crate::light::Gain::of_ratio(f64::from(*s) / full)).raw()
+                colour::tone::pq(CEILING * units::light::Gain::of_ratio(f64::from(*s) / full)).raw()
             })
             .sum::<f64>()
             / graded.len() as f64;
 
         let encoded = std::fs::read(&path).expect("the still");
-        let decoded = crate::avif::decode(&encoded).expect("the still decodes");
+        let decoded = formats::avif::decode(&encoded).expect("the still decodes");
         let _ = std::fs::remove_dir_all(&dir);
         let mean = decoded
             .data
@@ -3818,7 +3822,7 @@ mod hdr_grade {
     /// Graded through the shader both ways, since that is the only grade there is.
     #[test]
     fn a_rendition_cut_from_a_larger_frame_is_the_picture_it_would_have_been() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no GPU adapter, so the grade could not run");
             return;
         };
@@ -3842,19 +3846,19 @@ mod hdr_grade {
             .anchored();
             // Coded as both hosts code it, since what a `Cut` carries is the coded base.
             let mut coded = decoded.samples.to_vec();
-            crate::hdr::code_base(&mut coded, levels, REFERENCE);
+            render::base::code_base(&mut coded, levels, REFERENCE);
             let source = crate::hdr::Source {
                 samples: &coded,
                 width: decoded.width,
                 height: decoded.height,
                 as_shot: decoded.as_shot,
             };
-            let scene = crate::tone::SceneGrade::new(
+            let scene = render::grade::SceneGrade::new(
                 m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
-                Some(crate::light::Stops::measured(1.0)),
-                crate::gpu::Adjust::none(),
+                Some(units::light::Stops::measured(1.0)),
+                render::grade::Adjust::none(),
                 None,
             );
             let sized = |edge: f64| {
@@ -3868,7 +3872,7 @@ mod hdr_grade {
 
             // Cut at 1600 and taken down, against cut at 800 outright.
             let resident = || {
-                crate::resident::Resident::upload(gpu, source.samples, source.width, source.height)
+                colour::resident::Resident::upload(gpu, source.samples, source.width, source.height)
             };
             let unsharpened = |size| {
                 crate::hdr::Cut::from_base(
@@ -3876,8 +3880,8 @@ mod hdr_grade {
                     m.map(|m| &m.lens),
                     size,
                     0.0,
-                    crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                    crate::image::SharpenNoise::NONE,
+                    render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+                    render::detail::SharpenNoise::NONE,
                 )
             };
             let shared = unsharpened(large).downscale(small);
@@ -3888,7 +3892,7 @@ mod hdr_grade {
                 crate::hdr::encode_cut(
                     gpu,
                     cut,
-                    &scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq),
+                    &scene.gpu_grade(cut.width, cut.height, render::grade::Output::Pq),
                 )
             };
             let (a, b) = (grade(&shared), grade(&own));
@@ -3920,7 +3924,7 @@ mod hdr_grade {
         use crate::snapshot::{Frame, Snapshot, Tolerance};
         let frame = linear();
         let fitted = matched(&frame);
-        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let gpu = gpu::device().expect("a Vulkan adapter");
         // Measured against radv: the matched cases are 5.8 codes out on average and 1735 at worst,
         // the chroma lattice's filter weights rounding differently by vendor over a real photo; the
         // neutral ones, which read no lattice, 0.13 and 18. A wrong matrix row or a moved knee moves
@@ -3947,27 +3951,27 @@ mod hdr_grade {
                 &source(&frame),
                 &options(max_edge, "/dev/null"),
                 m,
-                crate::gpu::Output::Pq,
+                render::grade::Output::Pq,
             );
             let name = format!("hdr-grade/{label}");
             if width.max(height) <= 800 {
                 Snapshot::pq(
                     &graded,
-                    crate::px::Size::<crate::px::Output>::measured(width, height),
+                    units::px::Size::<units::px::Output>::measured(width, height),
                 )
                 .check(&name, tolerance);
                 continue;
             }
-            let resident = crate::resident::Resident::upload(gpu, &graded, width, height);
-            Snapshot::whole(Frame::Coded(&resident), crate::px::Span::exact(960))
+            let resident = colour::resident::Resident::upload(gpu, &graded, width, height);
+            Snapshot::whole(Frame::Coded(&resident), units::px::Span::exact(960))
                 .check(&name, tolerance);
             // The nose and whiskers on the floor, with the fur above white at their edge.
-            let detail = crate::px::Rect::<crate::px::Output> {
-                at: crate::px::At {
-                    x: crate::px::Place::measured(1150),
-                    y: crate::px::Place::measured(2000),
+            let detail = units::px::Rect::<units::px::Output> {
+                at: units::px::At {
+                    x: units::px::Place::measured(1150),
+                    y: units::px::Place::measured(2000),
                 },
-                size: crate::px::Size::measured(512, 512),
+                size: units::px::Size::measured(512, 512),
             };
             Snapshot::crops(Frame::Coded(&resident), &[detail])
                 .check(&format!("{name}-1to1"), tolerance);
@@ -3979,12 +3983,12 @@ mod hdr_grade {
 /// snapshot per setting, with every stage the claim is not about held off.
 mod pictures {
     use super::*;
-    use crate::px::{At, Output, Place, Rect, Size, Span};
     use crate::snapshot::{Anchoring, Frame, Snapshot, Tolerance};
+    use units::px::{At, Output, Place, Rect, Size, Span};
 
     /// The decode floor for a claim a frame shrunk to [`WHOLE`] answers, which lets the decode halve.
     const SHRUNK: u32 = 1600;
-    const WHOLE: Span<crate::px::Pinned> = Span::exact(960);
+    const WHOLE: Span<units::px::Pinned> = Span::exact(960);
     /// No camera match, so no lattice: every pin under it holds on SwiftShader against the
     /// 3080's, the lens gather and the sharpen included.
     const NEUTRAL: Tolerance = Tolerance {
@@ -4006,7 +4010,7 @@ mod pictures {
         job
     }
 
-    fn rendered(job: &crate::job::Job, decode: u32) -> crate::resident::Resident {
+    fn rendered(job: &crate::job::Job, decode: u32) -> colour::resident::Resident {
         rendered_through(job, decode, Lensing::Without)
     }
 
@@ -4014,9 +4018,9 @@ mod pictures {
         job: &crate::job::Job,
         decode: u32,
         lensing: Lensing,
-    ) -> crate::resident::Resident {
+    ) -> colour::resident::Resident {
         let (samples, width, height, _) = rendition(job, decode, lensing);
-        crate::resident::Resident::upload(adapter(), &samples, width, height)
+        colour::resident::Resident::upload(adapter(), &samples, width, height)
     }
 
     fn square(x: usize, y: usize, side: usize) -> Rect<Output> {
@@ -4039,10 +4043,10 @@ mod pictures {
             ("white-balance/tint-plus-30", None, Some(30.0)),
         ] {
             let mut job = plain(&sony());
-            job.adjust = crate::gpu::Adjust {
+            job.adjust = render::grade::Adjust {
                 temperature,
                 tint,
-                ..crate::gpu::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             Snapshot::whole(Frame::Coded(&rendered(&job, SHRUNK)), WHOLE).check(name, NEUTRAL);
         }
@@ -4050,7 +4054,7 @@ mod pictures {
 
     #[test]
     fn the_geometry_is_the_one_the_reader_drew() {
-        // `keystone.ts`'s correction for a pair of leaning uprights, as `gpu.rs` pins it.
+        // `keystone.ts`'s correction for a pair of leaning uprights, as `grade.rs` pins it.
         const LEANING: [f64; 8] = [
             0.847_222_222_222_222_2,
             0.0,
@@ -4061,26 +4065,26 @@ mod pictures {
             -0.083_333_333_333_333_3,
             -0.125,
         ];
-        let none = crate::image::Geometry::none();
+        let none = geometry::warp::Geometry::none();
         for (name, geometry) in [
             ("geometry/none", none),
             (
                 "geometry/crop",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     crop: [0.1, 0.15, 0.85, 0.8],
                     ..none
                 },
             ),
             (
                 "geometry/straighten",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     angle_degrees: 6.0,
                     ..none
                 },
             ),
             (
                 "geometry/keystone",
-                crate::image::Geometry {
+                geometry::warp::Geometry {
                     keystone: Some(LEANING),
                     ..none
                 },
@@ -4117,9 +4121,9 @@ mod pictures {
             0.0,
             0.0,
         ];
-        let lens = crate::fit::Lens {
+        let lens = geometry::lens::Lens {
             distortion: Some(CANON_KNOTS.to_vec()),
-            ..crate::fit::Lens::none()
+            ..geometry::lens::Lens::none()
         };
         let job = plain(&canon());
         // The tablecloth's edge at the left border and the shelf's at the right, high-contrast
@@ -4155,7 +4159,7 @@ mod pictures {
     fn default_sharpening_does_not_turn_high_iso_shadow_grain_into_speckles() {
         let render = |sharpen, decode| {
             let mut job = tile_job(bayer_noisy().to_str().unwrap(), None, None);
-            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+            job.camera_match = fit::hdr::CameraMatch::LensAndColour;
             job.denoise_luminance = None;
             job.denoise_colour = None;
             job.sharpen = sharpen;
@@ -4185,7 +4189,7 @@ mod pictures {
                 after * 10 <= before * 11,
                 "default sharpening raised {name}'s p99 high-frequency magnitude from {before} to {after}",
             );
-            let resident = crate::resident::Resident::upload(adapter(), &sharpened, width, height);
+            let resident = colour::resident::Resident::upload(adapter(), &sharpened, width, height);
             Snapshot::crops(Frame::Coded(&resident), &[square(crop.0, crop.1, crop.2)])
                 .check(name, NEUTRAL);
         }
@@ -4234,14 +4238,13 @@ mod pictures {
             ),
         ] {
             let bytes = std::fs::read(&path).expect("the fixture reads");
-            let held =
-                pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("the mosaic");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("the mosaic");
             let frame = pollster::block_on(held.frame(
-                crate::galosh::Detail::at(0.0, 0.0),
+                denoise::galosh::Detail::at(0.0, 0.0),
                 0,
-                crate::galosh::Fit::Only,
-                crate::dust::Wanted::Off,
-                &crate::open_stage::quiet,
+                denoise::galosh::Fit::Only,
+                denoise::dust::Wanted::Off,
+                &decode::open_stage::quiet,
             ))
             .expect("the frame");
             let resident = frame
@@ -4252,7 +4255,7 @@ mod pictures {
                 .expect("the frame has levels");
             let anchoring = Anchoring {
                 levels: levels.anchored(),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
             };
             // The denoise snapshot's, which is this path with a denoise after it.
             let tolerance = Tolerance {
@@ -4260,12 +4263,12 @@ mod pictures {
                 mean: 0.1,
             };
 
-            let drawn = crops.map(|(x, y, side)| Rect::<crate::px::Drawn>::exact(x, y, side, side));
+            let drawn = crops.map(|(x, y, side)| Rect::<units::px::Drawn>::exact(x, y, side, side));
             // The same photosites, in the orientation the file stored them in.
             let (left, top, width, height) = held.crop();
             let sensor = crops.map(|(x, y, side)| {
-                let stored = crate::orientation::unoriented_rect(
-                    crate::Tile {
+                let stored = formats::orientation::unoriented_rect(
+                    formats::orientation::Tile {
                         left: x,
                         top: y,
                         width: side,
@@ -4275,7 +4278,7 @@ mod pictures {
                     height,
                     held.upright(),
                 );
-                Rect::<crate::px::Sensor>::exact(
+                Rect::<units::px::Sensor>::exact(
                     stored.left + left,
                     stored.top + top,
                     stored.width,
@@ -4293,9 +4296,9 @@ mod pictures {
     /// on it, the room falling off the sheet - which is where the failures a reader reports live.
     #[test]
     fn a_print_is_the_sheet_the_reader_is_shown() {
-        use crate::gpu::{Canvas, Grade};
-        use crate::light::Light;
-        use crate::print::{Paper, Presentation, Scene};
+        use render::grade::{Canvas, Grade};
+        use render::print::{Paper, Presentation, Scene};
+        use units::light::Light;
 
         const CANVAS: (u32, u32) = (320, 240);
         // Wider than the pins beside it, and set by two adapters rather than by the lighting: an
@@ -4314,7 +4317,7 @@ mod pictures {
             &bytes,
             &crate::edit::EditRequest {
                 long_edge: SHRUNK,
-                grade: crate::hdr::Grade {
+                grade: crate::hdr_args::Grade {
                     reference_white_nits: Light::exactly(203.0),
                     white_quantile: 0.995,
                 },
@@ -4322,7 +4325,7 @@ mod pictures {
                 photo_analysis: None,
                 denoise_luminance: Some(0.0),
                 denoise_colour: Some(0.0),
-                denoiser: crate::galosh::Denoiser::Galosh,
+                denoiser: denoise::galosh::Denoiser::Galosh,
                 highlight_recovery: None,
                 dust: Default::default(),
                 repairs: Vec::new(),
@@ -4334,12 +4337,12 @@ mod pictures {
         )
         .expect("the prepared frame");
         let gpu = adapter();
-        let base = crate::base::device(gpu).expect("the source pyramid");
+        let base = render::base::device(gpu).expect("the source pyramid");
         let header = &prepared.header;
         let pyramid =
-            crate::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+            render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
                 .expect("the source pyramid");
-        let peak = gpu.scene_peak();
+        let peak = render::grade::device(gpu).scene_peak();
         for (name, surface, scene) in [
             (
                 "print/gloss-glare",
@@ -4424,7 +4427,7 @@ mod pictures {
                 ..Grade::new(
                     header.width,
                     header.height,
-                    crate::tone::Levels {
+                    colour::tone::Levels {
                         white: header.white,
                         peak: header.peak,
                         floor: header.floor,
@@ -4434,12 +4437,12 @@ mod pictures {
                     Light::exactly(1000.0),
                 )
             };
-            let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+            let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
             uploaded.collect_candidates(&grade);
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             Snapshot::pq(
                 &samples,
-                Size::<crate::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             )
             .check(name, SHEET);
         }
@@ -4472,8 +4475,8 @@ mod one_open_at_a_time {
             // Small, so this costs a second rather than ten. What is being measured is
             // whether two of them overlap, which does not depend on how big each one is.
             long_edge: 1200,
-            grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+            grade: crate::hdr_args::Grade {
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
             defringe: 0.5,
@@ -4487,7 +4490,7 @@ mod one_open_at_a_time {
             // rather than a cheaper one that skips the denoise.
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
         }
     }
@@ -4614,7 +4617,7 @@ mod tile_header {
             .expect("the tile job runs")
             .header
             .expect("a tile job asked for the header reports it");
-        let read = crate::header::read_path(&path.to_string_lossy()).expect("the header reads");
+        let read = formats::header::read_path(&path.to_string_lossy()).expect("the header reads");
 
         assert_eq!(reported, crate::job::HeaderFields::from(read));
     }
@@ -4665,8 +4668,8 @@ mod tone_domain {
     use super::*;
 
     const QUANTILE: f64 = 0.995;
-    const REFERENCE_NITS: crate::light::Light<crate::light::SceneNits> =
-        crate::light::Light::exactly(203.0);
+    const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =
+        units::light::Light::exactly(203.0);
     /// What counts as leaving a band alone. Generous on purpose: the claim is disjoint ends,
     /// not a particular falloff, and the constants in `adjust.slang` are taste.
     const ALONE: f64 = 3.0;
@@ -4730,7 +4733,7 @@ mod tone_domain {
     }
 
     fn scene_luma(levels: &[f32], i: usize) -> f64 {
-        let [r, g, b] = crate::hdr_fit::LUMA;
+        let [r, g, b] = colour::space::LUMA;
         r * f64::from(levels[i]) + g * f64::from(levels[i + 1]) + b * f64::from(levels[i + 2])
     }
 
@@ -4739,8 +4742,8 @@ mod tone_domain {
     /// Binned off the source rather than either grade, so a slider is measured
     /// against the picture it was handed. Every band at once because the decode and the match
     /// either side of it are seconds, and both tests read two.
-    fn response(path: &PathBuf, mut adjust: crate::gpu::Adjust) -> Vec<f64> {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    fn response(path: &PathBuf, mut adjust: render::grade::Adjust) -> Vec<f64> {
+        let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
         let matched = {
@@ -4755,7 +4758,7 @@ mod tone_domain {
         let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
             .expect("levels");
-        let curve = Some(crate::gpu::ToneCurve::PchipCbrt3 {
+        let curve = Some(render::grade::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.0], [1.0, 1.0]],
         });
         let flat = graded(
@@ -4764,9 +4767,9 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::gpu::Adjust {
+            render::grade::Adjust {
                 tone_curve: curve.clone(),
-                ..crate::gpu::Adjust::none()
+                ..render::grade::Adjust::none()
             },
         );
         adjust.tone_curve = curve;
@@ -4774,7 +4777,7 @@ mod tone_domain {
 
         let mut total = vec![0.0f64; BANDS];
         let mut count = vec![0u64; BANDS];
-        let scene_levels = crate::resident::levels_of(&samples);
+        let scene_levels = colour::resident::levels_of(&samples);
         for i in (0..flat.len()).step_by(3) {
             let scene = scene_luma(&scene_levels, i) / levels.white.raw();
             let was = f64::from(flat[i]);
@@ -4801,31 +4804,31 @@ mod tone_domain {
     }
 
     fn graded(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         samples: &[u16],
-        frame: &crate::frame::Frame,
-        colour: Option<&crate::hdr_fit::HdrColour>,
-        levels: crate::tone::Levels,
-        adjust: crate::gpu::Adjust,
+        frame: &decode::frame::Frame,
+        colour: Option<&colour::matched::HdrColour>,
+        levels: colour::tone::Levels,
+        adjust: render::grade::Adjust,
     ) -> Vec<u16> {
         let mut coded = samples.to_vec();
-        crate::hdr::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
-        gpu.encode(
+        render::base::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
+        render::grade::device(gpu).encode(
             &coded,
-            &crate::gpu::Grade {
+            &render::grade::Grade {
                 colour,
-                exposure: Some(crate::light::Stops::ZERO),
+                exposure: Some(units::light::Stops::ZERO),
                 adjust,
                 // The frame's own, or the balance has no illuminant to move away from and the
                 // temperature slider is the identity whatever it is set to.
                 as_shot: frame.as_shot,
-                output: crate::gpu::Output::Rolled,
-                ..crate::gpu::Grade::new(
+                output: render::grade::Output::Rolled,
+                ..render::grade::Grade::new(
                     frame.width,
                     frame.height,
                     levels,
                     REFERENCE_NITS,
-                    crate::light::Light::exactly(1000.0),
+                    units::light::Light::exactly(1000.0),
                 )
             },
         )
@@ -4834,9 +4837,9 @@ mod tone_domain {
     #[test]
     fn highlights_leaves_the_dark_end_of_a_matched_frame_alone() {
         for path in [sony(), canon(), clipped()] {
-            let pulled = crate::gpu::Adjust {
+            let pulled = render::grade::Adjust {
                 highlights: -100.0,
-                ..crate::gpu::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             let by_band = response(&path, pulled);
             let (bright, dark) = (by_band[0], by_band[4]);
@@ -4874,7 +4877,7 @@ mod tone_domain {
     #[test]
     fn each_pair_is_two_controls_rather_than_one_at_two_strengths() {
         for path in [sony(), canon(), clipped()] {
-            let none = crate::gpu::Adjust::none();
+            let none = render::grade::Adjust::none();
             let (zone, end) = (declared("ZONE_STOPS"), declared("END_STOPS"));
             let inner = |band: usize, by: Vec<f64>| openness(by[band], zone);
             let outer = |band: usize, by: Vec<f64>| openness(by[band], end);
@@ -4883,7 +4886,7 @@ mod tone_domain {
                 2,
                 response(
                     &path,
-                    crate::gpu::Adjust {
+                    render::grade::Adjust {
                         highlights: -100.0,
                         ..none.clone()
                     },
@@ -4893,7 +4896,7 @@ mod tone_domain {
                 2,
                 response(
                     &path,
-                    crate::gpu::Adjust {
+                    render::grade::Adjust {
                         whites: -100.0,
                         ..none.clone()
                     },
@@ -4912,7 +4915,7 @@ mod tone_domain {
                 3,
                 response(
                     &path,
-                    crate::gpu::Adjust {
+                    render::grade::Adjust {
                         shadows: -100.0,
                         ..none.clone()
                     },
@@ -4922,7 +4925,7 @@ mod tone_domain {
                 3,
                 response(
                     &path,
-                    crate::gpu::Adjust {
+                    render::grade::Adjust {
                         blacks: -100.0,
                         ..none
                     },
@@ -4981,7 +4984,7 @@ mod tone_domain {
     /// The block is `detail.slang`'s own footprint - a linear area mean of `detail_step` square,
     /// which is the thing a narrow gap of sky disappears into.
     fn by_surroundings(path: &PathBuf) -> (f64, f64) {
-        let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+        let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
         let (width, height) = (frame.width, frame.height);
@@ -4997,7 +5000,7 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::gpu::Adjust::none(),
+            render::grade::Adjust::none(),
         );
         let pulled = graded(
             gpu,
@@ -5005,15 +5008,15 @@ mod tone_domain {
             &frame,
             colour,
             levels,
-            crate::gpu::Adjust {
+            render::grade::Adjust {
                 highlights: -100.0,
-                ..crate::gpu::Adjust::none()
+                ..render::grade::Adjust::none()
             },
         );
 
-        let scene_levels = crate::resident::levels_of(&samples);
+        let scene_levels = colour::resident::levels_of(&samples);
         let luma = |i: usize| scene_luma(&scene_levels, i) / levels.white.raw();
-        let step = crate::gpu::detail_step(width.max(height)) as usize;
+        let step = render::grade::detail_step(width.max(height)) as usize;
         let tiles = width.div_ceil(step);
         let mut block = vec![0.0f64; tiles * height.div_ceil(step)];
         let mut count = vec![0u32; block.len()];
@@ -5071,7 +5074,7 @@ mod tone_domain {
         for path in [sony(), canon(), clipped()] {
             let frame = decode(&path, 0);
             let samples = frame.samples16().expect("16-bit").to_vec();
-            let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+            let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
             let matched = {
                 let resident = frame.on_device(gpu).expect("the frame reaches the device");
                 crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE, frame.as_shot)
@@ -5084,7 +5087,7 @@ mod tone_domain {
                 &frame,
                 matched.as_ref().and_then(|m| m.colour.as_ref()),
                 levels,
-                crate::gpu::Adjust::none(),
+                render::grade::Adjust::none(),
             );
             let cold = graded(
                 gpu,
@@ -5092,9 +5095,9 @@ mod tone_domain {
                 &frame,
                 matched.as_ref().and_then(|m| m.colour.as_ref()),
                 levels,
-                crate::gpu::Adjust {
+                render::grade::Adjust {
                     temperature: Some(2000.0),
-                    ..crate::gpu::Adjust::none()
+                    ..render::grade::Adjust::none()
                 },
             );
 
@@ -5137,9 +5140,9 @@ mod tone_domain {
     #[test]
     fn shadows_leaves_the_bright_end_of_a_matched_frame_alone() {
         for path in [sony(), canon(), clipped()] {
-            let lifted = crate::gpu::Adjust {
+            let lifted = render::grade::Adjust {
                 shadows: 100.0,
-                ..crate::gpu::Adjust::none()
+                ..render::grade::Adjust::none()
             };
             let by_band = response(&path, lifted);
             let (dark, bright) = (by_band[5], by_band[1]);
@@ -5158,6 +5161,175 @@ mod tone_domain {
                  sum to an exposure",
                 path.display(),
             );
+        }
+    }
+}
+
+mod pmrid {
+    /// The network moves the committed Bayer frames' photosites by next to nothing on average at
+    /// `NETWORK_NOISE` of the fit: what it lifts is how far that is from the noise it finds.
+    #[test]
+    fn the_fit_leaves_the_network_nothing_to_lift() {
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let network = denoise::pmrid::device(gpu).expect("the network built");
+        for path in [
+            super::canon(),
+            super::sony(),
+            super::clipped(),
+            super::bayer_noisy(),
+        ] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = decode::raw::channel_ceilings(&image);
+            let lift = pollster::block_on(denoise::pmrid::lift(
+                gpu,
+                network,
+                held.device_mosaic(),
+                &held.cfa(),
+                gains,
+                fit,
+            ))
+            .expect("the tally reads back");
+            assert!(
+                lift.abs() < 0.25,
+                "{}: the network lifts {lift:+.3} sigma at the fit's {fit:?}",
+                path.display()
+            );
+        }
+    }
+
+    /// What each arm costs over a whole photograph on this adapter, and how far apart their
+    /// pictures are.
+    ///
+    /// **A report more than a test**: the times go to stderr past the harness's capture, so a plain
+    /// `bun run test:native pmrid_arms --features fixtures` prints them. With the arena held, as a
+    /// render queue holds it, so what is timed is the network rather than an allocation. What is
+    /// asserted is only that the arms paint the same picture, which the synthetic comparison beside
+    /// this one cannot say about a frame with real highlights in it.
+    #[test]
+    fn pmrid_arms_on_a_photograph() {
+        use std::io::Write;
+        const RUNS: usize = 5;
+        let Some(gpu) = gpu::device() else {
+            return;
+        };
+        let weights = denoise::pmrid::weights().expect("the weights");
+        let arms: Vec<(denoise::pmrid::Arm, denoise::pmrid::Pmrid)> = [
+            denoise::pmrid::Arm::Matrix,
+            denoise::pmrid::Arm::Half,
+            denoise::pmrid::Arm::Float,
+        ]
+        .into_iter()
+        .map(|arm| (arm, denoise::pmrid::build_kernels(gpu, weights, arm)))
+        .filter(|(arm, kernels)| kernels.arm == *arm)
+        .collect();
+        let mut report = std::io::stderr();
+
+        denoise::pmrid::hold_arenas();
+        for path in [super::sony(), super::clipped()] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = decode::raw::channel_ceilings(&image);
+            let (cfa, mosaic) = (held.cfa(), held.device_mosaic());
+            let detail = denoise::galosh::Detail::at(100.0, 100.0);
+            let run = |network: &denoise::pmrid::Pmrid| {
+                let mut frame = mosaic.duplicate(gpu);
+                gpu.block_until_done();
+                let started = trace::clock::Mark::now();
+                denoise::pmrid::denoise(gpu, network, &mut frame, &cfa, gains, detail, fit);
+                gpu.block_until_done();
+                (started.elapsed(), frame)
+            };
+
+            // The first of each compiles whatever pipelines the driver has not cached.
+            let answers: Vec<Vec<f32>> = arms
+                .iter()
+                .map(|(_, kernels)| {
+                    pollster::block_on(run(kernels).1.read(gpu)).expect("the mosaic reads back")
+                })
+                .collect();
+            let mut fastest = vec![std::time::Duration::MAX; arms.len()];
+            for _ in 0..RUNS {
+                for (at, (_, kernels)) in arms.iter().enumerate() {
+                    fastest[at] = fastest[at].min(run(kernels).0);
+                }
+            }
+
+            let name = path.file_name().expect("a file").to_string_lossy();
+            let megapixels = (mosaic.width * mosaic.height) as f64 / 1e6;
+            let _ = writeln!(
+                report,
+                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:",
+                gpu.adapter
+            );
+            let float = answers.last().expect("every device builds the float arm");
+            let slowest = fastest.last().expect("and times it").as_secs_f64();
+            let mut apart_most = (denoise::pmrid::Arm::Float, 0.0);
+            for (at, (arm, _)) in arms.iter().enumerate() {
+                let took = fastest[at].as_secs_f64();
+                if *arm == denoise::pmrid::Arm::Float {
+                    let _ = writeln!(report, "  {:<7} {:>7.1}ms", "Float", took * 1e3);
+                    continue;
+                }
+                let apart: Vec<f64> = answers[at]
+                    .iter()
+                    .zip(float)
+                    .map(|(a, b)| f64::from((a - b).abs()) * 255.0)
+                    .collect();
+                let mean = apart.iter().sum::<f64>() / apart.len() as f64;
+                let worst = apart.iter().copied().fold(0.0, f64::max);
+                let _ = writeln!(
+                    report,
+                    "  {:<7} {:>7.1}ms  {:.2}x Float's speed, {mean:.4} codes of 255 from it on \
+                     average, {worst:.2} at the worst photosite",
+                    format!("{arm:?}"),
+                    took * 1e3,
+                    slowest / took,
+                );
+                if mean > apart_most.1 {
+                    apart_most = (*arm, mean);
+                }
+            }
+            let (arm, mean) = apart_most;
+            assert!(
+                mean < 0.05,
+                "{name}: {arm:?} is {mean:.4} codes from Float on average"
+            );
+        }
+        denoise::pmrid::release_arenas();
+    }
+}
+
+mod exif {
+    use super::{canon, fuji, sony};
+    use formats::exif::{NON_IDENTIFYING, Recorded};
+    use formats::header::{name, read_path};
+
+    /// Each container keeps its EXIF somewhere different, and every one of them has to reach a block.
+    #[test]
+    fn every_fixture_writes_the_record_the_catalogue_reads() {
+        for path in [sony(), canon(), fuji()] {
+            let path = path.to_str().expect("a path");
+            let header = read_path(path).expect("the header");
+            let block = Recorded::read(path)
+                .and_then(|recorded| recorded.block(NON_IDENTIFYING))
+                .unwrap_or_else(|| panic!("{path} writes a block"));
+            let back = Recorded::parse(&block).expect("the block parses");
+
+            assert_eq!(back.model, name(&header.camera_model), "{path}");
+            let iso = back
+                .exif
+                .iso_speed
+                .or(back.exif.iso_speed_ratings.map(u32::from));
+            assert_eq!(iso.map(|iso| iso as f32), Some(header.iso), "{path}");
+            assert!(back.exif.date_time_original.is_some(), "{path}");
+            assert_eq!(back.exif.serial_number, None, "{path}");
         }
     }
 }

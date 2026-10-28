@@ -54,3 +54,4 @@ web/test-results
 # use for, and the integration tests do not run in it.
 .photos
 test/fixtures
+.e2e

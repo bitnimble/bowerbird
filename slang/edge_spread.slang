@@ -53,7 +53,7 @@ float sample_at(uint at)
     return level_of(half_of(frame[at / 2], at));
 }
 
-/// `image::luma709`, normalised the same way round: the weights sum first and the divide comes
+/// `colour::space::luma709`, normalised the same way round: the weights sum first and the divide comes
 /// after, or this and the CPU round differently.
 float luma_at(uint x, uint y)
 {

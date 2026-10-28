@@ -9,7 +9,7 @@
 //!
 //! A render is a specification and nothing else - a decode, a set of edits, a size - so it belongs
 //! here rather than in Playwright. The editor's tick is the one that looks like it needs a browser
-//! and does not: `gpu.rs` runs the same grade shaders the client does.
+//! and does not: `grade.rs` runs the same grade shaders the client does.
 //!
 //! One render, because the editor and a rendition are one pipeline: the denoise is on the mosaic
 //! in `galosh.rs` and everything downstream is shared code on one host.
@@ -21,9 +21,10 @@
 mod support;
 
 use rawshim::hdr;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Stops;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
+use render::detail::Strengths;
+use units::light::Stops;
 
 /// Which stages of the chain below the decode this render is to run.
 ///
@@ -80,7 +81,7 @@ struct Stages<'a> {
     shadows: f64,
     texture: f64,
     clarity: f64,
-    nodes: &'a [rawshim::lattice::ColourNode],
+    nodes: &'a [colour::lattice::ColourNode],
     /// The colour wheel's dots under this rectangle, as fractions of the frame.
     probe: Option<[f64; 4]>,
     /// The fitted curves' slope, expanded about their own middle. A regression whose predictor
@@ -101,7 +102,7 @@ struct Stages<'a> {
     /// that.
     domain: Domain,
     /// How an sRGB render is brought inside its gamut.
-    intent: rawshim::gpu::Intent,
+    intent: render::grade::Intent,
     /// A PQ render goes through the rendition's AVIF encoder and back before it is cut, at this
     /// quantizer and chroma. `max` ships at `(1, Yuv420)`; `(0, Yuv444)` is the pipeline's own
     /// codes in a file `avif_crop` can measure, and the gap between the two is the encoder's.
@@ -153,7 +154,7 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
 /// `job::Base::build` in miniature, decoded at the floor a target of `edge` sets.
 fn rendition(
     path: &str,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
     edge: usize,
     stages: Stages<'_>,
 ) -> (Vec<u8>, usize, usize, Vec<u16>) {
@@ -185,7 +186,7 @@ fn graded(
 ) -> (Vec<u8>, usize, usize, Vec<u16>) {
     let options = options(edge, stages);
     let frame = &opened.frame;
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let levels = opened.measured.levels.anchored();
     // The anchor and what the match made of it, because a render that came out the wrong colour
@@ -219,11 +220,11 @@ fn graded(
                 [x, x, x, 0.0]
             })
             .collect();
-        let toned = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let toned = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &bins,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         let shape: Vec<String> = toned
@@ -240,11 +241,11 @@ fn graded(
                 [x, x, x, 0.0]
             })
             .collect();
-        let over = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let over = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &whole,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         let full: Vec<String> = over
@@ -317,12 +318,12 @@ fn graded(
             }
             colour
         });
-    let scene = rawshim::tone::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         colour.as_ref(),
         levels,
         options.grade.reference_white_nits,
         stages.ev,
-        rawshim::gpu::Adjust {
+        render::grade::Adjust {
             contrast: stages.contrast,
             saturation: stages.saturation_adjust,
             blacks: stages.blacks,
@@ -330,24 +331,24 @@ fn graded(
             texture: stages.texture,
             clarity: stages.clarity,
             colour_profile: if stages.none_profile {
-                rawshim::gpu::ColourProfile::None
+                render::grade::ColourProfile::None
             } else {
-                rawshim::gpu::ColourProfile::Matched
+                render::grade::ColourProfile::Matched
             },
             camera_balance: true,
             colour_nodes: stages.nodes.to_vec(),
-            ..rawshim::gpu::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         // The frame's own, as `job::run` carries it: without it the neutral arm white-balances
         // against nothing and a render's colour is not the render's.
         frame.as_shot,
     );
     let output = match stages.domain {
-        Domain::Srgb => rawshim::gpu::Output::Srgb,
-        Domain::Pq => rawshim::gpu::Output::Pq,
-        Domain::Linear => rawshim::gpu::Output::Rolled,
+        Domain::Srgb => render::grade::Output::Srgb,
+        Domain::Pq => render::grade::Output::Pq,
+        Domain::Linear => render::grade::Output::Rolled,
     };
-    let grade = rawshim::gpu::Grade {
+    let grade = render::grade::Grade {
         intent: stages.intent,
         ..scene.gpu_grade(cut.width, cut.height, output)
     };
@@ -355,7 +356,7 @@ fn graded(
     if let Some([x0, y0, x1, y1]) = stages.probe {
         let uploaded = hdr::upload_cut(gpu, &cut, &grade);
         let probed = pollster::block_on(uploaded.colour_probe(&grade, &[])).expect("the probe");
-        let across = rawshim::gpu::colour_wheel::DOTS_ACROSS;
+        let across = render::grade::colour_wheel::DOTS_ACROSS;
         let down = probed.scatter.len() / across;
         for (k, [lightness, a, b, _]) in probed.scatter.iter().enumerate() {
             let (x, y) = (
@@ -384,14 +385,14 @@ fn graded(
             let at = (py as usize * cut.width + px as usize) * 3;
             let shown = std::array::from_fn(|c| {
                 let signal =
-                    rawshim::light::Light::measured(f64::from(coded[at + c]) / f64::from(u16::MAX));
-                let nits: rawshim::light::Light<rawshim::light::DisplayNits> =
-                    rawshim::tone::pq_inv(signal);
-                rawshim::light::Light::measured(
+                    units::light::Light::measured(f64::from(coded[at + c]) / f64::from(u16::MAX));
+                let nits: units::light::Light<units::light::DisplayNits> =
+                    colour::tone::pq_inv(signal);
+                units::light::Light::measured(
                     nits.raw() / options.grade.reference_white_nits.raw(),
                 )
             });
-            let shown = rawshim::lattice::opponent_of(shown);
+            let shown = colour::lattice::opponent_of(shown);
             let (hue, chroma) = hue_chroma(shown);
             line += &format!(
                 " | shown lightness {:.1} hue {hue:.0} chroma {chroma:.1}",
@@ -403,8 +404,8 @@ fn graded(
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
-        let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
-        let leak = pollster::block_on(rawshim::base::chroma_leak_of(
+        let base = render::base::device(gpu).expect("the device the pipelines were built on");
+        let leak = pollster::block_on(render::base::chroma_leak_of(
             gpu, base, &coded, cut.width, cut.height,
         ))
         .expect("the leak measures");
@@ -416,9 +417,9 @@ fn graded(
     // laid at the encoder's door or taken away from it. `max`'s settings: `lossless_quantizer`
     // and `avif_speed`, 4:2:0 as `hdr_still_full_chroma` defaults.
     if let (Domain::Pq, Some((quantizer, chroma))) = (stages.domain, stages.encode) {
-        let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
-        let still = rawshim::avif::StillOptions {
-            cicp: rawshim::avif::Cicp {
+        let (primaries, transfer, matrix) = formats::still::cicp();
+        let still = formats::avif::StillOptions {
+            cicp: formats::avif::Cicp {
                 primaries,
                 transfer,
                 matrix,
@@ -429,14 +430,14 @@ fn graded(
             light: None,
         };
         let started = std::time::Instant::now();
-        let file = rawshim::avif::encode_still(
+        let file = formats::avif::encode_still(
             std::borrow::Cow::Borrowed(&coded),
             cut.width,
             cut.height,
             &still,
         )
         .expect("the rendition encodes");
-        let (decoded, w, h) = rawshim::avif::decode_at(&file, 16).expect("the rendition decodes");
+        let (decoded, w, h) = formats::avif::decode_at(&file, 16).expect("the rendition decodes");
         assert_eq!((w, h), (cut.width, cut.height));
         eprintln!(
             "  encoded and decoded in {}ms, {} bytes",
@@ -472,7 +473,7 @@ fn main() {
     let out = args.next().expect("an output directory");
     // What the library ships with nothing said, so a render with no flags is the picture a
     // rendition is.
-    let mut detail = rawshim::galosh::Detail::AUTO;
+    let mut detail = denoise::galosh::Detail::AUTO;
     let mut sweep: Vec<f64> = Vec::new();
     let mut sweep_colour: Option<f64> = None;
     let mut sweep_luma: Option<f64> = None;
@@ -505,7 +506,7 @@ fn main() {
         defocus: None,
         ev: None,
         domain: Domain::Pq,
-        intent: rawshim::gpu::Intent::default(),
+        intent: render::grade::Intent::default(),
         encode: None,
         out: &out,
     };
@@ -529,8 +530,8 @@ fn main() {
                 stages.defringe = args.next().expect("a number").parse().expect("a number");
             }
             "--sdr" => stages.domain = Domain::Srgb,
-            "--relative" => stages.intent = rawshim::gpu::Intent::RelativeColorimetric,
-            "--perceptual" => stages.intent = rawshim::gpu::Intent::Perceptual,
+            "--relative" => stages.intent = render::grade::Intent::RelativeColorimetric,
+            "--perceptual" => stages.intent = render::grade::Intent::Perceptual,
             "--linear" => stages.domain = Domain::Linear,
             "--encode" => {
                 let spec = args.next().expect("quantizer,420|444");
@@ -610,10 +611,10 @@ fn main() {
             "--detail" => {
                 let asked = args.next().expect("a number or `auto`");
                 detail = match asked.as_str() {
-                    "auto" => rawshim::galosh::Detail::AUTO,
+                    "auto" => denoise::galosh::Detail::AUTO,
                     number => {
                         let both: f64 = number.parse().expect("a number or `auto`");
-                        rawshim::galosh::Detail::at(both, both)
+                        denoise::galosh::Detail::at(both, both)
                     }
                 }
                 .using(detail.denoiser);
@@ -633,14 +634,14 @@ fn main() {
             "--denoiser" => {
                 let asked = args.next().expect("galosh, pmrid or upscaler");
                 detail = detail.using(match asked.as_str() {
-                    "galosh" => rawshim::galosh::Denoiser::Galosh,
-                    "pmrid" => rawshim::galosh::Denoiser::Pmrid,
-                    "upscaler" => rawshim::galosh::Denoiser::Upscaler,
+                    "galosh" => denoise::galosh::Denoiser::Galosh,
+                    "pmrid" => denoise::galosh::Denoiser::Pmrid,
+                    "upscaler" => denoise::galosh::Denoiser::Upscaler,
                     other => panic!("{other} is not a denoiser"),
                 });
             }
             "--nodes" => {
-                let nodes: Vec<rawshim::lattice::ColourNode> =
+                let nodes: Vec<colour::lattice::ColourNode> =
                     serde_json::from_str(&args.next().expect("a JSON array of colour nodes"))
                         .expect("colour nodes as the document holds them");
                 stages.nodes = Box::leak(nodes.into_boxed_slice());
@@ -739,7 +740,7 @@ fn main() {
         let started = std::time::Instant::now();
         let (data, width, height, codes) = rendition(&path, detail, edge, stages);
         eprintln!("  {width}x{height} in {}ms", started.elapsed().as_millis());
-        let whole = rawshim::rgb::RgbRef {
+        let whole = units::rgb::RgbRef {
             width,
             height,
             data: &data,
@@ -758,7 +759,7 @@ fn main() {
             // taught on.
             let fitted = rawshim::hdr::match_preview(&path).expect("the match's preview");
             eprintln!("  match preview {}x{}", fitted.width, fitted.height);
-            let fitted = rawshim::image::resize(fitted.as_ref(), width, height);
+            let fitted = formats::resize::resize(fitted.as_ref(), width, height);
             for (x, y, side) in &crops {
                 let want = cut(whole, *x, *y, *side);
                 for (name, from) in [("camera", preview.as_ref()), ("fitted", fitted.as_ref())] {
@@ -766,7 +767,7 @@ fn main() {
                     let cut = greyscale(magnify(cut, crop_zoom()));
                     let path = format!("{dir}/{name}-{x}-{y}.jpg");
                     let bytes =
-                        rawshim::jpeg::encode(cut.as_ref(), 95).expect("the camera crop encodes");
+                        formats::jpeg::encode(cut.as_ref(), 95).expect("the camera crop encodes");
                     std::fs::write(&path, bytes).expect("the camera crop writes");
                     let [r, g, b] = channel_means(cut.as_ref());
                     let [cr, cb] = chroma_roughness(cut.as_ref());
@@ -820,7 +821,7 @@ fn main() {
         }
 
         if crops.is_empty() {
-            let small = rawshim::image::resize_to_fit(whole, 1600);
+            let small = formats::resize::resize_to_fit(whole, 1600);
             write(&format!("{out}/{name}.avif"), small.as_ref(), file);
             continue;
         }
@@ -880,7 +881,7 @@ fn main() {
                 // and only half of green: a correlation the *interpolation* introduced shows up
                 // unevenly across the three, where one the denoise introduced does not.
                 for (name, channel) in [("r", 0usize), ("g", 1), ("b", 2)] {
-                    let one = rawshim::rgb::Rgb {
+                    let one = units::rgb::Rgb {
                         width: cut.width,
                         height: cut.height,
                         data: (0..cut.width * cut.height)
@@ -908,7 +909,7 @@ fn main() {
     }
 }
 
-fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
+fn cut(image: units::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> units::rgb::Rgb {
     let (x, y, side) = fitted((x, y, side), image.width, image.height);
     let mut data = vec![0u8; side * side * 3];
     for row in 0..side {
@@ -916,7 +917,7 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raws
         data[row * side * 3..(row + 1) * side * 3]
             .copy_from_slice(&image.data[from..from + side * 3]);
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: side,
         height: side,
         data,
@@ -962,7 +963,7 @@ const BANDS: usize = 6;
 /// À trous rather than a decimating pyramid: the levels stay the frame's own size, so no band's
 /// answer is a resampler's. Comparable between two renderings of one subject at one scale, and
 /// meaningless across subjects.
-fn noise_by_scale(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> [(f64, f64); BANDS] {
+fn noise_by_scale(image: units::rgb::RgbRef<'_>, which: Plane) -> [(f64, f64); BANDS] {
     let (w, h) = (image.width, image.height);
     let mut plane: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1029,7 +1030,7 @@ fn noise_by_scale(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> [(f64, f64);
 }
 
 /// The bands as one line, widest last, which is the order a defect grows along.
-fn bands(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> String {
+fn bands(image: units::rgb::RgbRef<'_>, which: Plane) -> String {
     noise_by_scale(image, which)
         .map(|(v, _)| format!("{v:.2}"))
         .join("/")
@@ -1044,7 +1045,7 @@ fn bands(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> String {
 ///
 /// The sharpest decile rather than the median, since a real scene edge may be softer than the
 /// optics but never harder - and `None` where too few transitions qualify to rank.
-fn edge_spread(image: rawshim::rgb::RgbRef<'_>) -> Option<(usize, f32)> {
+fn edge_spread(image: units::rgb::RgbRef<'_>) -> Option<(usize, f32)> {
     let luma: Vec<f32> = (0..image.width * image.height)
         .map(|i| {
             let p = i * 3;
@@ -1099,7 +1100,7 @@ fn edge_spread(image: rawshim::rgb::RgbRef<'_>) -> Option<(usize, f32)> {
 /// Reported at lags 1, 2 and 4, as the residual's normalised autocorrelation averaged over both
 /// axes. Zero at every lag is film grain; a number that stays high out to 4 is a picture with
 /// four-pixel lumps in it whatever its sigma says.
-fn grain_correlation(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
+fn grain_correlation(image: units::rgb::RgbRef<'_>) -> [f64; 3] {
     let (w, h) = (image.width, image.height);
     let luma: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1162,7 +1163,7 @@ fn grain_correlation(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
 /// lattice or of the transform's block grid has a *period* - it dips and returns. The two ask for
 /// completely different fixes, and the averaged figure cannot tell them apart because a 2-pixel
 /// structure and a 4-pixel blob both raise the lag-two number.
-fn correlation_profile(image: rawshim::rgb::RgbRef<'_>) -> (Vec<f64>, Vec<f64>) {
+fn correlation_profile(image: units::rgb::RgbRef<'_>) -> (Vec<f64>, Vec<f64>) {
     let (w, h) = (image.width, image.height);
     let luma: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1230,7 +1231,7 @@ fn correlation_profile(image: rawshim::rgb::RgbRef<'_>) -> (Vec<f64>, Vec<f64>) 
 /// lands on a source sample differently from the three that do not - the first keeps its noise and
 /// the others are averaged - so the leftovers come back with a two-pixel periodic amplitude, which
 /// is read as a woven texture rather than as grain. No figure that pools the four can see it.
-fn phase_noise(image: rawshim::rgb::RgbRef<'_>) -> ([f64; 4], f64) {
+fn phase_noise(image: units::rgb::RgbRef<'_>) -> ([f64; 4], f64) {
     let (w, h) = (image.width, image.height);
     let luma: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1317,7 +1318,7 @@ enum Plane {
 }
 
 fn noise_blobs(
-    image: rawshim::rgb::RgbRef<'_>,
+    image: units::rgb::RgbRef<'_>,
     plane: Plane,
 ) -> Option<([f64; 4], [f64; 4], usize)> {
     let (w, h) = (image.width, image.height);
@@ -1451,7 +1452,7 @@ const DARK_EXCURSION: f64 = 1.0;
 /// Pixels are split by how much *structure* surrounds them, measured on a plane smoothed past the
 /// scale the noise lives at so the classification is not itself made of noise. One is what a
 /// uniform residual reads; the body's own JPEG sits near it and a shrinkage does not.
-fn edge_bias(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
+fn edge_bias(image: units::rgb::RgbRef<'_>) -> (f64, f64, f64) {
     let (w, h) = (image.width, image.height);
     let luma: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1552,7 +1553,7 @@ fn edge_bias(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
 ///
 /// Reported per axis rather than summed. A cast that pulls one colour difference is a different
 /// defect from noise across both, and one number cannot tell them apart.
-fn chroma_roughness(image: rawshim::rgb::RgbRef<'_>) -> [f64; 2] {
+fn chroma_roughness(image: units::rgb::RgbRef<'_>) -> [f64; 2] {
     let axis = |i: usize, axis: usize| {
         let at = |c: usize| f64::from(image.data[i * 3 + c]);
         let luma = 0.2126 * at(0) + 0.7152 * at(1) + 0.0722 * at(2);
@@ -1581,17 +1582,17 @@ fn chroma_roughness(image: rawshim::rgb::RgbRef<'_>) -> [f64; 2] {
 /// panel that is half a lattice bar out says nothing. Searched over translation only: a whole crop
 /// that lines up is the evidence that translation was enough.
 fn aligned(
-    preview: rawshim::rgb::RgbRef<'_>,
-    want: rawshim::rgb::RgbRef<'_>,
+    preview: units::rgb::RgbRef<'_>,
+    want: units::rgb::RgbRef<'_>,
     x: usize,
     y: usize,
     side: usize,
-) -> (i64, i64, rawshim::rgb::Rgb) {
+) -> (i64, i64, units::rgb::Rgb) {
     const RANGE: i64 = 128;
     // Every fourth pixel, on a search whose answer is a whole-pixel offset: what is being matched
     // is where the lattice bars are, and they are hundreds of samples across.
     const STRIDE: usize = 4;
-    let luma = |image: &rawshim::rgb::RgbRef<'_>, at: usize| {
+    let luma = |image: &units::rgb::RgbRef<'_>, at: usize| {
         i64::from(image.data[at * 3]) * 2126
             + i64::from(image.data[at * 3 + 1]) * 7152
             + i64::from(image.data[at * 3 + 2]) * 722
@@ -1656,7 +1657,7 @@ fn aligned(
 /// grain of the same amplitude - so a judgement about grain *size* made on a colour crop is a
 /// judgement about whichever of the two happens to dominate. Here both panels lose their chroma and
 /// what is left is the only thing under discussion.
-fn greyscale(image: rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
+fn greyscale(image: units::rgb::Rgb) -> units::rgb::Rgb {
     if std::env::var("BOWERBIRD_CROP_GREY").is_err() {
         return image;
     }
@@ -1670,7 +1671,7 @@ fn greyscale(image: rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
         data[i * 3 + 1] = grey;
         data[i * 3 + 2] = grey;
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: image.width,
         height: image.height,
         data,
@@ -1688,7 +1689,7 @@ fn crop_zoom() -> usize {
 /// a crop written at 1:1 is exactly the size at which it cannot be told from grain. Replicating
 /// rather than interpolating, so what is magnified is the samples and not a resampler's opinion of
 /// them.
-fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
+fn magnify(image: units::rgb::Rgb, by: usize) -> units::rgb::Rgb {
     if by <= 1 {
         return image;
     }
@@ -1700,7 +1701,7 @@ fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
             out[(y * w * by + x) * 3..][..3].copy_from_slice(&image.data[from..from + 3]);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w * by,
         height: h * by,
         data: out,
@@ -1721,7 +1722,7 @@ fn sweep_grid(
     columns: usize,
     crops: &[(usize, usize, usize)],
     edge: usize,
-    denoiser: rawshim::galosh::Denoiser,
+    denoiser: denoise::galosh::Denoiser,
     stages: Stages<'_>,
 ) {
     assert!(
@@ -1736,15 +1737,15 @@ fn sweep_grid(
         "--encode writes one still per run and --grid renders many; ask for one of them",
     );
     let preview = rawshim::decode_embedded_rgb(path, 100_000).expect("an embedded preview");
-    let mut panels: Vec<Vec<rawshim::rgb::Rgb>> = vec![Vec::new(); crops.len()];
+    let mut panels: Vec<Vec<units::rgb::Rgb>> = vec![Vec::new(); crops.len()];
 
     // `Fit::Only` measures this frame and filters nothing, which is what the suggestion is read off
     // - the same number the panel would be handed on open.
     let opened = rawshim::decode_frame_denoised(
         path,
         0,
-        rawshim::galosh::Detail::at(0.0, 0.0),
-        rawshim::galosh::Fit::Only,
+        denoise::galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Fit::Only,
     )
     .expect("decode");
     let measured_gains = opened.wb_gains;
@@ -1784,11 +1785,11 @@ fn sweep_grid(
         };
         let (data, width, height, _) = rendition(
             path,
-            rawshim::galosh::Detail::at(pair.0, pair.1).using(denoiser),
+            denoise::galosh::Detail::at(pair.0, pair.1).using(denoiser),
             edge,
             stages,
         );
-        let whole = rawshim::rgb::RgbRef {
+        let whole = units::rgb::RgbRef {
             width,
             height,
             data: &data,
@@ -1821,7 +1822,7 @@ fn sweep_grid(
     for (i, (x, y, _)) in crops.iter().enumerate() {
         let sheet = grid(&panels[i], columns);
         let at = format!("{out}/grid-{x}-{y}.jpg");
-        let bytes = rawshim::jpeg::encode(sheet.as_ref(), 95).expect("the grid encodes");
+        let bytes = formats::jpeg::encode(sheet.as_ref(), 95).expect("the grid encodes");
         std::fs::write(&at, bytes).expect("the grid writes");
         eprintln!("  wrote {at} ({}x{})", sheet.width, sheet.height);
     }
@@ -1831,7 +1832,7 @@ fn sweep_grid(
 ///
 /// Nothing here writes a caption - there is no font in this crate, and a grid captioned by its
 /// caller in prose beats one captioned by hand-plotted pixels.
-fn grid(panels: &[rawshim::rgb::Rgb], columns: usize) -> rawshim::rgb::Rgb {
+fn grid(panels: &[units::rgb::Rgb], columns: usize) -> units::rgb::Rgb {
     assert!(columns > 0, "a grid needs at least one column");
     assert!(!panels.is_empty(), "a grid needs a panel");
     let (pw, ph) = (panels[0].width, panels[0].height);
@@ -1855,7 +1856,7 @@ fn grid(panels: &[rawshim::rgb::Rgb], columns: usize) -> rawshim::rgb::Rgb {
             data[to..to + pw * 3].copy_from_slice(&panel.data[from..from + pw * 3]);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height,
         data,
@@ -1876,7 +1877,7 @@ const CROP_SPEED: i32 = 10;
 /// Per channel rather than on luma, because a luma mean cannot tell a lifted patch from a tinted
 /// one - and the tint is the half a reader notices. The three together are a colour, and two
 /// renders of one subject can be held to it.
-fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
+fn channel_means(image: units::rgb::RgbRef<'_>) -> [f64; 3] {
     let mut sum = [0.0f64; 3];
     for i in 0..image.width * image.height {
         for c in 0..3 {
@@ -1895,9 +1896,9 @@ fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize
         .flat_map(|row| &codes[(row * width + x) * 3..(row * width + x + side) * 3])
         .copied()
         .collect();
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
-    let still = rawshim::avif::StillOptions {
-        cicp: rawshim::avif::Cicp {
+    let (primaries, transfer, matrix) = formats::still::cicp();
+    let still = formats::avif::StillOptions {
+        cicp: formats::avif::Cicp {
             primaries,
             transfer,
             matrix,
@@ -1907,14 +1908,14 @@ fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize
         speed: CROP_SPEED,
         light: None,
     };
-    let file = rawshim::avif::encode_still(std::borrow::Cow::Owned(cut), side, side, &still)
+    let file = formats::avif::encode_still(std::borrow::Cow::Owned(cut), side, side, &still)
         .expect("the crop encodes");
     std::fs::write(path, file).expect("the crop writes");
     eprintln!("    wrote {path}");
 }
 
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
-    rawshim::avif::encode_rendition(
+fn write(path: &str, image: units::rgb::RgbRef<'_>, file: File) {
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,
@@ -2093,33 +2094,33 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
 
     let beside = path.trim_end_matches(".avif").to_string() + ".jpg";
     let stored = match std::env::var("BOWERBIRD_CROP_RAW").is_ok() {
-        true => rawshim::rgb::Rgb {
+        true => units::rgb::Rgb {
             width: image.width,
             height: image.height,
             data: image.data.to_vec(),
         },
         false => std::fs::read(path)
             .ok()
-            .and_then(|bytes| rawshim::image::decode(&bytes, 0).ok())
+            .and_then(|bytes| formats::resize::decode(&bytes, 0).ok())
             .expect("the crop reads back"),
     };
     // **Beside, in one file.** Crops in separate files are compared by remembering the first one,
     // which is exactly the comparison a sharpening change needs not to rely on. The named images
     // go on the left in the order given, at whatever size they already are; this render goes last.
-    let left: Vec<rawshim::rgb::Rgb> = std::env::var("BOWERBIRD_CROP_BESIDE")
+    let left: Vec<units::rgb::Rgb> = std::env::var("BOWERBIRD_CROP_BESIDE")
         .unwrap_or_default()
         .split(',')
         .filter(|p| !p.is_empty())
         .map(|p| {
             let bytes = std::fs::read(p).unwrap_or_else(|why| panic!("{p} reads: {why}"));
-            rawshim::image::decode(&bytes, 0).unwrap_or_else(|why| panic!("{p} decodes: {why}"))
+            formats::resize::decode(&bytes, 0).unwrap_or_else(|why| panic!("{p} decodes: {why}"))
         })
         .collect();
     let stored = match left.is_empty() {
         true => stored,
         false => {
             const GAP: usize = 8;
-            let panels: Vec<&rawshim::rgb::Rgb> = left.iter().chain([&stored]).collect();
+            let panels: Vec<&units::rgb::Rgb> = left.iter().chain([&stored]).collect();
             let height = panels.iter().map(|p| p.height).max().unwrap_or(0);
             let width = panels.iter().map(|p| p.width + GAP).sum::<usize>() - GAP;
             let mut out = vec![32u8; width * height * 3];
@@ -2133,14 +2134,14 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
                 }
                 at += piece.width + GAP;
             }
-            rawshim::rgb::Rgb {
+            units::rgb::Rgb {
                 width,
                 height,
                 data: out,
             }
         }
     };
-    match rawshim::jpeg::encode(stored.as_ref(), 95) {
+    match formats::jpeg::encode(stored.as_ref(), 95) {
         Ok(bytes) => {
             std::fs::write(&beside, bytes).expect("the crop writes");
             eprintln!("    wrote {beside}");

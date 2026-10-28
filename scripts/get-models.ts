@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // The denoisers' weights, each in a tree of its own in the user's cache, which
 // `native/rawshim/.pmrid/` and `.upscaler/` then point at (`pinned.ts` says why they are not in
-// the checkout). `src/pmrid.rs` and `src/upscale.rs` embed them, so the crate does not build
-// without them.
+// the checkout). `native/denoise`'s `pmrid.rs` and `upscale.rs` embed them, so the crate does not
+// build without them.
 //
 // PMRID's published checkpoint is unpacked into a flat f32 blob and a plan the shader can walk. It
 // is a PyTorch zip - `archive/data.pkl` naming storages under `archive/data/`, each a raw

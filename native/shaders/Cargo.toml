@@ -1,0 +1,16 @@
+[package]
+name = "shaders"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# `layout`, for the tests that hold a host's uniform block to the struct its shader declares.
+layout = ["dep:naga"]
+
+[dependencies]
+# The WGSL front end wgpu already carries, taken directly so the tests can walk the parsed IR rather
+# than grep the text. Pinned to wgpu's own naga, so nothing new enters the tree.
+naga = { version = "30.0", features = ["wgsl-in"], optional = true }
+
+[dev-dependencies]
+naga = { version = "30.0", features = ["wgsl-in"] }

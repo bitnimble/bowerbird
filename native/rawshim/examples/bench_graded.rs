@@ -3,7 +3,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 use std::time::Instant;
 
@@ -28,7 +29,7 @@ fn main() {
         content_light: None,
     };
 
-    let rolled = rawshim::gpu::Output::Rolled;
+    let rolled = render::grade::Output::Rolled;
     let _ = support::graded(&opened, &options, rolled);
 
     let mut walls = Vec::with_capacity(rounds);

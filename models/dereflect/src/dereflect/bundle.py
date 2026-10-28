@@ -1,5 +1,5 @@
 """Exported weights with the DINOv2 backbone they read beside them, under `dino.`: the one model the
-app downloads (`native/rawshim/src/dereflect.rs`).
+app downloads (`native/dereflect/src/lib.rs`).
 
     uv run python -m dereflect.bundle <weights dir> <out dir>
 """

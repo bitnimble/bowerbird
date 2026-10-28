@@ -310,7 +310,7 @@ async function refusePlanes(natural: { width: number; height: number }): Promise
 let adapterTextureEdge: Promise<number> | null = null;
 
 function textureEdge(gpu: GPU): Promise<number> {
-  // The GPU thread's device is this default adapter at its full limits (`gpu.rs` `limits_of`).
+  // The GPU thread's device is this default adapter at its full limits (`gpu::limits_of`).
   adapterTextureEdge ??= gpu
     .requestAdapter()
     .then((adapter) => adapter?.limits.maxTextureDimension2D ?? 0);

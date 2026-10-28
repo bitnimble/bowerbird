@@ -24,7 +24,7 @@ fn main() {
     let mut frames: Vec<(u32, rawler::RawImage)> = paths
         .iter()
         .map(|path| {
-            let shot = rawshim::header::read_path(path).map_or(0, |header| header.sequence_index);
+            let shot = formats::header::read_path(path).map_or(0, |header| header.sequence_index);
             (shot, rawler::decode_file(path).expect("decodes"))
         })
         .collect();
@@ -64,7 +64,7 @@ fn main() {
     let worst = scored.last().expect("a candidate");
     println!("worst: mean square {:.5}  p90 {:.4}", worst.0.1, worst.0.0);
 
-    println!("search prior SHIFTS {:?}", rawshim::burst::SHIFTS);
+    println!("search prior SHIFTS {:?}", burst::SHIFTS);
 }
 
 /// The first frame where it is; the other three a photosite away, one at each of the three other

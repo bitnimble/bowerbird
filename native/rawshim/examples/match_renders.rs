@@ -10,7 +10,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use rawshim::snapshot::{Frame, Snapshot};
 
 /// The long edge the snapshot is downscaled to, as the grade fixtures take theirs.
@@ -37,7 +38,7 @@ fn main() {
         .collect();
     paths.sort();
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let options = EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
@@ -62,11 +63,11 @@ fn main() {
             skipped = true;
             continue;
         };
-        let (pq, width, height) = support::graded(&opened, &options, rawshim::gpu::Output::Pq);
-        let resident = rawshim::resident::Resident::upload(gpu, &pq, width, height);
+        let (pq, width, height) = support::graded(&opened, &options, render::grade::Output::Pq);
+        let resident = colour::resident::Resident::upload(gpu, &pq, width, height);
         let snapshot = Snapshot::whole(
             Frame::Coded(&resident),
-            rawshim::px::Span::exact(SNAPSHOT_LONG),
+            units::px::Span::exact(SNAPSHOT_LONG),
         );
         let written = std::path::Path::new(&out).join(format!("{name}.png"));
         std::fs::write(&written, snapshot.encode()).expect("the snapshot writes");

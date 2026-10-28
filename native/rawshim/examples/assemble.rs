@@ -1,4 +1,4 @@
-//! N RAWs of a burst through `assembly_analysis::analyse`, and the seams a drawn seed grows.
+//! N RAWs of a burst through `composite::assembly::analysis::analyse`, and the seams a drawn seed grows.
 //!
 //! ```text
 //! assemble <a.ARW> <b.ARW> [more...] [--pick N] [--out <dir>] [--planes <dir>]
@@ -16,14 +16,14 @@
 
 mod support;
 
-use rawshim::assembly_planes::Plane;
-use rawshim::composite_tile::{Blending, Layer, SourceFile};
+use composite::assembly::planes::Plane;
+use composite::tile::{Blending, Layer, SourceFile};
 
 fn main() {
     let args = Args::parse();
     std::fs::create_dir_all(&args.out).expect("the output directory");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let base = rawshim::base::device(gpu).expect("the base pipelines");
+    let gpu = gpu::device().expect("a Vulkan adapter");
+    let base = render::base::device(gpu).expect("the base pipelines");
 
     let planes_from: Vec<Option<String>> = args
         .raws
@@ -33,7 +33,7 @@ fn main() {
     // One fit for the lens the burst was shot on, handed to the first frame: `shared_lenses` gives
     // every member of the group that one answer, and a group with none is `Refused::Lensless`.
     let fitted = fitted_lens(&args.raws[0]);
-    let sources: Vec<rawshim::composite_align::AlignSource<'_>> = args
+    let sources: Vec<composite::align::AlignSource<'_>> = args
         .raws
         .iter()
         .zip(&planes_from)
@@ -42,11 +42,11 @@ fn main() {
             // The metering, because the recipe's per-source gain is *only* ever what the headers
             // say - `align` hands `gains` no measured ratios at all - so a caller that leaves these
             // out is asking about a step with the correction switched off.
-            let header = rawshim::header::read_path(path);
-            let said = |of: fn(&rawshim::header::BbHeader) -> f32| {
+            let header = formats::header::read_path(path);
+            let said = |of: fn(&formats::header::BbHeader) -> f32| {
                 header.as_ref().map(of).filter(|v| *v > 0.0)
             };
-            rawshim::composite_align::AlignSource {
+            composite::align::AlignSource {
                 photo_id: path,
                 path,
                 preview_path: plane.as_deref(),
@@ -74,17 +74,17 @@ fn main() {
     }
 }
 
-/// **The whole of §3, end to end**: [`rawshim::assembly_analysis::analyse`] is the align, the
+/// **The whole of §3, end to end**: [`composite::assembly::analysis::analyse`] is the align, the
 /// intersection crop, the plane gather and the seam field stitched together. Each `--draw`
 /// rectangle then seeds a tile taking `--pick`.
 fn auto(
-    gpu: &'static rawshim::gpu::Gpu,
-    base: &'static rawshim::base::Base,
-    sources: &[rawshim::composite_align::AlignSource<'_>],
+    gpu: &'static gpu::Gpu,
+    base: &'static render::base::Base,
+    sources: &[composite::align::AlignSource<'_>],
     args: &Args,
 ) {
     let started = std::time::Instant::now();
-    let analysed = match pollster::block_on(rawshim::assembly_analysis::analyse(sources)) {
+    let analysed = match pollster::block_on(composite::assembly::analysis::analyse(sources)) {
         Ok(found) => found,
         Err(refused) => {
             println!("\nrefused: {refused:?}");
@@ -118,12 +118,12 @@ fn auto(
     println!(
         "  §3.1's corner check: {:.3} analysis px of radial pattern, against a bound of {:?}{}",
         analysed.radial.map_or(f64::NAN, |radial| {
-            let plane = rawshim::assembly_planes::ANALYSIS_LONG;
+            let plane = composite::assembly::planes::ANALYSIS_LONG;
             radial
-                .across(rawshim::px::Span::<rawshim::px::Analysis>::exact(plane))
+                .across(units::px::Span::<units::px::Analysis>::exact(plane))
                 .raw()
         }),
-        rawshim::assembly_analysis::NEAR_IDENTITY,
+        composite::assembly::analysis::NEAR_IDENTITY,
         if analysed.unaligned {
             " - unaligned"
         } else {
@@ -131,7 +131,7 @@ fn auto(
         },
     );
 
-    let stored: Vec<Option<rawshim::photo_analysis::PhotoAnalysis>> = spec
+    let stored: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = spec
         .sources
         .iter()
         .map(|held| {
@@ -139,7 +139,7 @@ fn auto(
                 .iter()
                 .find(|offered| offered.photo_id == held.photo_id)
                 .and_then(|offered| offered.analysis)
-                .and_then(rawshim::photo_analysis::decode)
+                .and_then(fit::photo_analysis::decode)
         })
         .collect();
     let files: Vec<SourceFile<'_>> = spec
@@ -152,11 +152,11 @@ fn auto(
         })
         .collect();
     let started = std::time::Instant::now();
-    let planes = pollster::block_on(rawshim::assembly_planes::analysis_planes(spec, &files))
+    let planes = pollster::block_on(composite::assembly::planes::analysis_planes(spec, &files))
         .expect("the analysis planes");
     let gathered = started.elapsed().as_secs_f64();
     let started = std::time::Instant::now();
-    let again = pollster::block_on(rawshim::assembly_analysis::analysis_of(
+    let again = pollster::block_on(composite::assembly::analysis::analysis_of(
         gpu,
         base,
         spec.clone(),
@@ -188,9 +188,9 @@ fn auto(
 /// the planes composited through the pieces with the pieces outlined and the seeds in a second
 /// colour.
 fn solved(
-    gpu: &'static rawshim::gpu::Gpu,
-    base: &'static rawshim::base::Base,
-    analysed: &rawshim::assembly_analysis::Analysed,
+    gpu: &'static gpu::Gpu,
+    base: &'static render::base::Base,
+    analysed: &composite::assembly::analysis::Analysed,
     planes: &[Plane],
     (width, height): (usize, usize),
     args: &Args,
@@ -211,7 +211,7 @@ fn solved(
     }
     let moved = recipe.pick.iter().filter(|&&s| s != recipe.base).count();
     let started = std::time::Instant::now();
-    let seams = match rawshim::assembly_seams::solve(&recipe, &analysed.volume) {
+    let seams = match composite::assembly::seams::solve(&recipe, &analysed.volume) {
         Ok(seams) => seams,
         Err(why) => {
             println!("\nsolve refused: {why}");
@@ -249,7 +249,7 @@ fn solved(
             }
         }
     }
-    let window = rawshim::px::Rect::<rawshim::px::Composite>::exact(0, 0, width, height);
+    let window = units::px::Rect::<units::px::Composite>::exact(0, 0, width, height);
     let mut blending = Blending::over(gpu, base, window);
     for source in 0..sources {
         let weights: Vec<f32> = owner
@@ -297,8 +297,8 @@ fn solved(
 /// The whole crop rendered through §5.2 once per source, with every tile picking that source and
 /// the base set to it, and the browser then masking between them - so it is the render whose
 /// sharpness answers "is the merge page soft".
-fn layers(sources: &[rawshim::composite_align::AlignSource<'_>], args: &Args, dir: &str) {
-    let analysed = match pollster::block_on(rawshim::assembly_analysis::analyse(sources)) {
+fn layers(sources: &[composite::align::AlignSource<'_>], args: &Args, dir: &str) {
+    let analysed = match pollster::block_on(composite::assembly::analysis::analyse(sources)) {
         Ok(found) => found,
         Err(refused) => {
             println!("\nrefused: {refused:?}");
@@ -324,18 +324,18 @@ fn layers(sources: &[rawshim::composite_align::AlignSource<'_>], args: &Args, di
     }
 }
 
-/// One recipe, over its own crop, in strips - `assembly_render::lowpass` then `prepared`.
+/// One recipe, over its own crop, in strips - `composite::assembly::lowpass::lowpass` then `prepared`.
 ///
 /// `long` is the crop's own long edge in output pixels, which is what a rendition size names
 /// (`canvasLongEdgeFor`). At the canvas's own scale this is the whole picture at 1:1; below it, the
 /// render is the downscale the server asks for, and a measurement taken at 1:1 instead is a
 /// measurement of a picture nobody is shown.
 fn through_the_render(
-    recipe: &rawshim::assembly::Drawing,
+    recipe: &composite::assembly::Drawing,
     path: &str,
     long: usize,
     sharpen: f64,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
 ) {
     let files: Vec<SourceFile<'_>> = recipe
         .spec
@@ -359,27 +359,27 @@ fn through_the_render(
     let (width, height) = (render(crop_w), render(crop_h));
     println!("  crop {crop_w}x{crop_h} of the canvas, rendered {width}x{height}");
 
-    let asking = |window: rawshim::px::Rect<rawshim::px::Composite>, levels| {
-        rawshim::composite_tile::CompositeRequest {
+    let asking = |window: units::px::Rect<units::px::Composite>, levels| {
+        composite::tile::CompositeRequest {
             window,
             parts: &[],
             scale,
             white_quantile: support::GRADE.white_quantile,
             levels,
             reference_white_nits: support::GRADE.reference_white_nits,
-            strengths: rawshim::image::Strengths {
+            strengths: render::detail::Strengths {
                 sharpen,
                 defringe: support::STRENGTHS.defringe,
             },
             detail,
             sources: &files,
-            from: rawshim::composite_tile::From::Original,
-            weight: rawshim::composite_tile::Weight::Feather,
+            from: composite::tile::From::Original,
+            weight: composite::tile::Weight::Feather,
         }
     };
-    let whole = rawshim::px::Rect::exact(left, top, width, height);
+    let whole = units::px::Rect::exact(left, top, width, height);
     let started = std::time::Instant::now();
-    let held = pollster::block_on(rawshim::assembly_render::lowpass(
+    let held = pollster::block_on(composite::assembly::lowpass::lowpass(
         recipe,
         &asking(whole, None),
     ))
@@ -396,8 +396,8 @@ fn through_the_render(
     let mut row = top;
     while row < top + height {
         let tall = STRIP_ROWS.min(top + height - row);
-        let window = rawshim::px::Rect::exact(left, row, width, tall);
-        let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(
+        let window = units::px::Rect::exact(left, row, width, tall);
+        let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(
             recipe,
             &held,
             &asking(window, Some(held.levels)),
@@ -420,7 +420,7 @@ fn through_the_render(
 /// rendition does, and because the weight field is four bytes a pixel a slot.
 const STRIP_ROWS: usize = 512;
 
-fn weights_of(gpu: &'static rawshim::gpu::Gpu, values: &[f32]) -> rawshim::gpu::Buffer {
+fn weights_of(gpu: &'static gpu::Gpu, values: &[f32]) -> gpu::Buffer {
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("assemble mask"),
@@ -496,36 +496,36 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
     let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()
         .and_then(|opened| Some((opened.measured.matched?, opened.measured.levels)));
-    let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
+    let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
     match measured {
         Some((matched, levels)) => {
             println!("lens: fitted off {}", name_of(path));
             analysis.from_raw.matched = Some(matched);
-            analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
+            analysis.from_render.levels = Some(fit::photo_analysis::MeasuredLevels {
                 levels,
                 white_quantile: support::GRADE.white_quantile,
             });
         }
         None => {
             println!("lens: {} matches nothing, so the identity", name_of(path));
-            analysis.from_raw.matched = Some(rawshim::hdr_fit::HdrMatch {
-                lens: rawshim::fit::Lens::none(),
+            analysis.from_raw.matched = Some(fit::hdr::HdrMatch {
+                lens: geometry::lens::Lens::none(),
                 colour: None,
             });
         }
     }
-    Some(rawshim::photo_analysis::encode(&analysis))
+    Some(fit::photo_analysis::encode(&analysis))
 }
 
 fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
     let options = rawshim::hdr_args::EncodeOptions {
-        still_chroma: rawshim::hdr_args::Chroma::Yuv444,
+        still_chroma: formats::still::Chroma::Yuv444,
         output_path: path.to_string(),
         grade: support::GRADE,
         // Near-lossless and 4:4:4: this is a picture to pixel-peep, not one to ship.
         crf: 2,
         preset: 6,
-        strengths: rawshim::image::Strengths {
+        strengths: render::detail::Strengths {
             sharpen: 0.0,
             defringe: 0.0,
         },
@@ -549,7 +549,7 @@ struct Args {
     long: usize,
     /// The deconvolution's strength and GALOSH's detail, as a library sets them.
     sharpen: f64,
-    detail: rawshim::galosh::Detail,
+    detail: denoise::galosh::Detail,
     /// The focal a body would have written, for a file with no header to read it from.
     ///
     /// A burst of a scene at infinity is degenerate in the focal (§3.1), so a solve that is told
@@ -569,7 +569,7 @@ impl Args {
             layers: None,
             long: support::FULL_RENDITION_SIZE as usize,
             sharpen: support::STRENGTHS.sharpen,
-            detail: rawshim::galosh::Detail::AUTO,
+            detail: denoise::galosh::Detail::AUTO,
             focal: None,
         };
         let mut args = std::env::args().skip(1);
@@ -597,10 +597,10 @@ impl Args {
                 "--detail" => {
                     let asked = args.next().expect("a number or `auto`");
                     parsed.detail = match asked.as_str() {
-                        "auto" => rawshim::galosh::Detail::AUTO,
+                        "auto" => denoise::galosh::Detail::AUTO,
                         number => {
                             let both: f64 = number.parse().expect("a number or `auto`");
-                            rawshim::galosh::Detail::at(both, both)
+                            denoise::galosh::Detail::at(both, both)
                         }
                     };
                 }
@@ -632,14 +632,14 @@ fn plane_for(args: &Args, path: &str) -> Option<String> {
 
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
-    let header = rawshim::header::read_path(path)?;
-    rawshim::composite_job::focal_in_pixels(&header, rawshim::header::name(&header.camera_model))
+    let header = formats::header::read_path(path)?;
+    rawshim::composite_job::focal_in_pixels(&header, formats::header::name(&header.camera_model))
 }
 
 fn size_of(path: &str) -> [usize; 2] {
-    let header = match rawshim::decode_rendered::is_rendered(path) {
-        true => rawshim::header::read_rendered(path),
-        false => rawshim::header::read_path(path),
+    let header = match formats::rendered::is_rendered(path) {
+        true => formats::header::read_rendered(path),
+        false => formats::header::read_path(path),
     };
     header.map_or([0, 0], |h| [h.width as usize, h.height as usize])
 }

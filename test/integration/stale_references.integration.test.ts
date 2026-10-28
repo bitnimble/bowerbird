@@ -16,14 +16,22 @@ import { extname, join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..', '..');
 
+/** The native workspace's own crates, read off its manifest so a crate split out is covered. */
+const CRATES = (
+  Bun.TOML.parse(readFileSync(join(ROOT, 'native', 'Cargo.toml'), 'utf8')) as {
+    workspace: { members: string[] };
+  }
+).workspace.members;
+
 const SOURCE = [
   'src',
   'web/src',
   'web/e2e',
   'e2e-tauri',
   'scripts',
-  'native/rawshim/src',
+  ...CRATES.map((it) => `native/${it}/src`),
   'native/rawshim/examples',
+  'native/rawshim/tests',
   'src-tauri/src',
   'docs',
 ];
@@ -166,7 +174,7 @@ const RUST_PATH = /^[a-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+$/;
 
 describe('a Rust comment naming a path', () => {
   test('names one that is written down somewhere', () => {
-    const rust = walk(join(ROOT, 'native', 'rawshim'))
+    const rust = CRATES.flatMap((it) => walk(join(ROOT, 'native', it)))
       .concat(walk(join(ROOT, 'src-tauri', 'src')))
       .filter((path) => extname(path) === '.rs');
     const source = new Map(rust.map((path) => [path, readFileSync(path, 'utf8')]));

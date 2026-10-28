@@ -1,9 +1,9 @@
 mod support;
 
-use rawshim::gpu::{Canvas, Grade, Output};
-use rawshim::light::Light;
-use rawshim::print::{Paper, Scene};
-use rawshim::px::Size;
+use render::grade::{Canvas, Grade, Output};
+use units::light::Light;
+use render::print::{Paper, Scene};
+use units::px::Size;
 
 fn main() -> Result<(), String> {
     let path = std::env::args()
@@ -20,7 +20,7 @@ fn main() -> Result<(), String> {
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
-            denoiser: rawshim::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),
@@ -30,15 +30,15 @@ fn main() -> Result<(), String> {
         },
         support::STRENGTHS.sharpen,
     )?;
-    let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
+    let gpu = gpu::device().ok_or("print requires Vulkan")?;
+    let base = render::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let analysis = header
         .photo_analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode);
+        .and_then(fit::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("the source pyramid")?;
     let grade = Grade {
         colour: analysis
@@ -54,7 +54,7 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,
@@ -63,8 +63,8 @@ fn main() -> Result<(), String> {
             Light::exactly(1000.0),
         )
     };
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     let texture = |format| {
         gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("print HDR audit"),
@@ -92,7 +92,7 @@ fn main() -> Result<(), String> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("print HDR audit"),
         source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_hdr_audit.wgsl")).into(),
+            shaders::PRINT_HDR_AUDIT.source.into(),
         ),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -196,14 +196,14 @@ fn main() -> Result<(), String> {
                         },
                     ],
                 });
-                recording.dispatch([1, 1, 1], rawshim::gpu::dispatch::Whole::Fixed, |pass| {
+                recording.dispatch([1, 1, 1], gpu::dispatch::Whole::Fixed, |pass| {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
                 });
                 recording.copy_buffer_to_buffer(&result, 0, &readback, 0, 64);
                 recording.submit();
                 let statistics: [f32; 16] =
-                    pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {
+                    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
                         std::array::from_fn(|index| {
                             f32::from_le_bytes(
                                 bytes[index * 4..index * 4 + 4].try_into().expect("float"),

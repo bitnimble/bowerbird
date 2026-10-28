@@ -98,8 +98,8 @@ function nativeLibrary(triple: string): string {
   // the clock decides between them; for any other triple the bare root is a *host* build, a valid
   // ELF that passes the copy, the relocation and the check and fails at `dlopen` on the reader's
   // machine.
-  const roots = [join(ROOT, 'native', 'rawshim', 'target', triple)];
-  if (triple === hostTriple()) roots.push(join(ROOT, 'native', 'rawshim', 'target'));
+  const roots = [join(ROOT, 'native', 'target', triple)];
+  if (triple === hostTriple()) roots.push(join(ROOT, 'native', 'target'));
   const built = roots
     .flatMap((root) => ['release', 'quick'].map((profile) => join(root, profile, name)))
     .filter((candidate) => existsSync(candidate))

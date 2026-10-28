@@ -37,8 +37,8 @@ public float tap(StructuredBuffer<uint> frame, uint2 size, float px, float py, u
     return total;
 }
 
-/// Channel `c`'s ratio at a radius, from three of `image::channel_ratio_table` end to end, red then
-/// green then blue. `r2` is the radius about the axis squared, as a fraction of `fit::Lens::reach`'s.
+/// Channel `c`'s ratio at a radius, from three of `lens::channel_ratio_table` end to end, red then
+/// green then blue. `r2` is the radius about the axis squared, as a fraction of `geometry::lens::Lens::reach`'s.
 public float lens_ratio(StructuredBuffer<float> ratios, float r2, uint c)
 {
     uint count;

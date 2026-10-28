@@ -22,16 +22,16 @@
 //! they release while the device is up does not move it, and `fit_bench` and `bench_stages` share
 //! every one of these calls and exit cleanly. Read the numbers; the exit code is not about them.
 
-use rawshim::fit_score::{Probe, Scoring, Shape};
+use fit::score::{Probe, Scoring, Shape};
 
 /// Calls per measurement. The first is discarded: it builds the pipeline.
 const REPEATS: usize = 40;
 
-/// `hdr_fit::SCORE_BLOCK`.
+/// `fit::hdr::SCORE_BLOCK`.
 const BLOCK: usize = 256;
 
 fn main() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("score_bench: no adapter");
         std::process::exit(2);
     };
@@ -54,7 +54,7 @@ fn main() {
     }
 }
 
-fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
+fn scoring(gpu: &'static gpu::Gpu, pairs: usize) -> Scoring {
     // A spread rather than a constant: the neutral arm of `delta_e2000` is a different path, and a
     // frame is a mix of the two.
     let mut state = 0x2545_f491_4f6c_dd1du64;
@@ -85,10 +85,10 @@ fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
     let balance: Vec<f64> = (0..pairs).map(|k| 1.0 + (k % 5) as f64 * 0.25).collect();
     Scoring::new(
         gpu,
-        rawshim::fit_score::below_buffer(gpu, &below),
+        fit::score::below_buffer(gpu, &below),
         &target,
         &balance,
-        &rawshim::hdr_fit::rec2020_to_srgb(),
+        &colour::space::rec2020_to_srgb(),
         BLOCK,
         32,
     )

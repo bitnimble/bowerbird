@@ -3,13 +3,13 @@
 //! The loupe wants a rendition-quality crop per pointer move. Denoising the whole frame for one
 //! is seconds; the question this answers is whether denoising just the tile is milliseconds.
 
-use rawshim::galosh::UNGAINED;
+use denoise::galosh::UNGAINED;
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let galosh = rawshim::galosh::device(gpu).expect("the denoise");
-    let amounts = rawshim::galosh::Amounts::from_sliders(40.0, 40.0);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let gpu = gpu::device().expect("an adapter");
+    let galosh = denoise::galosh::device(gpu).expect("the denoise");
+    let amounts = denoise::galosh::Amounts::from_sliders(40.0, 40.0);
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
 
     println!(
         "{:>7}  {:>9}  {:>9}  {:>9}",
@@ -26,10 +26,10 @@ fn main() {
                 0.25 + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.02
             })
             .collect();
-        let mosaic = rawshim::condition::Mosaic::upload(gpu, &mosaic, side, side);
+        let mosaic = mosaic::condition::Mosaic::upload(gpu, &mosaic, side, side);
 
         let started = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise(
+        pollster::block_on(denoise::galosh::denoise(
             gpu, galosh, &mosaic, &cfa, UNGAINED, amounts,
         ));
         let first = started.elapsed();
@@ -39,7 +39,7 @@ fn main() {
         let mut best = std::time::Duration::from_secs(9999);
         for _ in 0..3 {
             let round = std::time::Instant::now();
-            pollster::block_on(rawshim::galosh::denoise(
+            pollster::block_on(denoise::galosh::denoise(
                 gpu, galosh, &mosaic, &cfa, UNGAINED, amounts,
             ));
             best = best.min(round.elapsed());

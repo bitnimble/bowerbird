@@ -15,7 +15,7 @@ Where the code went:
 - The tick is too. `wasm.rs` holds the prepared frame on its own device, takes
   the page's canvas through `transferControlToOffscreen`, and draws onto it - so
   a tick is a region and a set of edits crossing the worker boundary, and no
-  pixels at all. `gpu.rs` records the same passes for a rendition.
+  pixels at all. `grade.rs` records the same passes for a rendition.
 - What is left on the page is `raw_edit_presenter.ts`, which decides _what_ to
   draw, and `stage_resolution.ts`, which decides how large a backing store the
   reader's box is worth - the one thing that needs a layout box and a device
@@ -25,9 +25,9 @@ Where the code went:
 
 Four things this note got wrong or did not foresee, each fixed by measurement:
 
-- **`image::finish` is not a per-tick stage.** It runs once, at the open
+- **The finishing filters are not a per-tick stage.** They run once, at the open
   (`edit::open`), on a base already coded into normalised PQ
-  (`tone::encode_base`), which is why it converts nothing. A tick is the grade
+  (`tone::encode_base`), which is why they convert nothing. A tick is the grade
   alone.
 - **The graded frame does not need to exist.** §6 assumed a chain of resident
   textures; the colour transform is one fragment shader straight to the canvas,
@@ -70,7 +70,7 @@ count. Entry: `grade_from` in `wasm.rs`.
 | 1   | Copy   | `working.copy_from_slice`             | Prepared (or interactive) `u16` RGB into the working buffer                                   |
 | 2   | Grade  | `hdr::grade_prepared` → `tone::grade` | Exposure × camera curves / matrix / chroma + BT.2390 EETF roll-off                            |
 | 3   | PQ     | `tone::encode_pq`                     | ST 2084 via a 64k LUT                                                                         |
-| 4   | Finish | `image::finish`                       | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
+| 4   | Finish | the finishing filters                 | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
 | 5   | Emit   | `emit`                                | Sink-dependent (below)                                                                        |
 
 **Emit by sink** (`wasm::Sink`, chosen in `raw_edit_route.ts`):
@@ -302,7 +302,7 @@ compute pipeline the whole diagnosis is `Compute library failed creation` - no
 constant named, no line number, because nothing on that path sets an `NSError`
 (`Pipeline.mm`; fixed in trunk June 2026, so it will be a Safari floor for a
 while). So a module's constants go only to the entry points
-`wgsl_overrides::READS_OVERRIDES` lists, and `tests/wgsl_overrides.rs` holds that
+`shaders::overrides::READS_OVERRIDES` lists, and `native/shaders/tests/overrides.rs` holds that
 list to what each entry point of the compiled WGSL actually reads - a listed one
 reads every constant its module declares, an unlisted one none - so a shader
 edit that moves a read fails a test rather than every open on Safari. Where a
@@ -836,8 +836,9 @@ The part worth spelling out is that **the tick path needs no wasm at all**.
 
 So the wasm build stops being something the desktop app carries and becomes the
 _web_ build's business only. That is not a fork in the source: `rawshim` already
-compiles as a cdylib for wasm and an rlib for the server, and this is the same
-arrangement with the desktop app as a third consumer of the native side.
+compiles as an rlib and, through `rawshim_cdylib`, a cdylib for wasm and the
+server, and this is the same arrangement with the desktop app as a third
+consumer of the native side.
 
 Keeping wasm open under Tauri retains browser costs, 6.7MB module and `SharedArrayBuffer`.
 Tauri-controlled headers make isolation available but don't justify it.

@@ -1,0 +1,1908 @@
+// The still's encode, in this process (DESIGN 10.7).
+//
+// libavif is what puts the nclx `colr` box on the file - the thing Chrome reads to
+// decide a still is HDR, and the whole reason ffmpeg's avif muxer cannot write these.
+// Linked rather than spawned, so the graded frame reaches it as a pointer instead of
+// being written out, converted and read back: 56MB at 3840 and ~366MB at native
+// resolution, moved for a picture no process wanted kept.
+//
+// Nothing about the conversion is reimplemented here. The PQ transfer is `tone::pq`, the
+// same curve the grade rolls highlights with; the sRGB transfer and the
+// Rec.2020-to-BT.709 primaries matrix are `colour::space`'s, which the fit measures its
+// deltaE in sRGB through; and the YCbCr matrix with its
+// limited-range quantisation is libavif's own `avifImageRGBToYUV`.
+
+use crate::raw;
+use units::rgb::Rgb;
+
+/// CICP, the only signalling that matters (`still::cicp`).
+pub struct Cicp {
+    pub primaries: u16,
+    pub transfer: u16,
+    pub matrix: u16,
+}
+
+pub struct StillOptions {
+    pub cicp: Cicp,
+    /// From the still's chroma setting (`still::Chroma`).
+    pub format: raw::avifPixelFormat,
+    /// libaom's quantizer.
+    pub quantizer: i32,
+    /// libavif's encoder speed, 0 slowest and 10 fastest.
+    pub speed: i32,
+    /// The still's `clli`.
+    pub light: Option<crate::still::ContentLight>,
+}
+
+const AVIF_RANGE_LIMITED: raw::avifRange = raw::avifRange::AVIF_RANGE_LIMITED;
+/// What an ordinary 8-bit picture uses, and what libheif was writing. Limited range
+/// spends 7% of the code values on headroom a still has no use for, and it costs
+/// measurably: the same quantizer scored SSIM 0.878 limited against 0.902 full.
+const AVIF_RANGE_FULL: raw::avifRange = raw::avifRange::AVIF_RANGE_FULL;
+/// The depth every HDR still is written at, and it is twelve rather than ten because ten is
+/// not finer than the eight-bit SDR it replaces: at the luminance of a daylit sky one 10-bit
+/// PQ code is 1.13% of the light it sits on against sRGB 8-bit's 1.15%, since PQ spends the
+/// extra codes on the range up to 10000 nits rather than on the range a photograph occupies.
+/// Twelve bits is 0.28%, and is the first depth here that can carry a gradient the encoder
+/// has not already flattened.
+///
+/// **AV1 Professional profile**, which is software-decoded almost everywhere - Main is what
+/// hardware takes. Chrome decodes it by both the `<img>` and `ImageDecoder` routes, measured;
+/// `stage_gpu.ts` reads the frame's depth back off the format and scales for it.
+const AVIF_DEPTH: u32 = 12;
+const AVIF_PIXEL_FORMAT_YUV444: raw::avifPixelFormat =
+    raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat =
+    raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
+const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FORMAT_RGB;
+/// libsharpyuv's solver for the 4:2:0 chroma, in place of a 2x2 box average; a no-op at 4:4:4.
+///
+/// **The box average is what speckles a saturated red.** Chroma is stored once per 2x2 and Y'
+/// once per pixel, so a decoder reconstructs each pixel's R' as `R' − 0.737·ΔR' + 0.678·ΔG' +
+/// 0.059·ΔB'`, Δ being the pixel's departure from its block's mean - the green channel's
+/// per-pixel swing lands in red at two thirds. Where a colour sits at the gamut floor, G' is
+/// clipped to 0 on half the pixels and PQ's foot makes the other half's residual noise thousands
+/// of codes, so the averaged block hands the bright channel a hard speckle it never had:
+/// measured on a red hood, R's 99th-percentile Laplacian went 2174 codes to 8630 through a
+/// *lossless* 4:2:0 encode, and was unchanged through 4:4:4. The solver picks the block's chroma
+/// so that the reconstruction lands closest to the source given each pixel's own Y', which is the
+/// leak term.
+const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling =
+    raw::avifChromaDownsampling::AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV;
+/// The curve that solver works under, sRGB's for every file, a PQ still's included.
+const SHARP_YUV_TRANSFER: u16 = 13;
+const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
+// A flag set is a `uint32_t` typedef beside its enum, so its bits are written as that typedef: the
+// enum's `.0` is `unsigned` to the Unixes and `int` to MSVC, and fits only on the first.
+const AVIF_PLANES_YUV: raw::avifPlanesFlags = 1;
+const AVIF_ADD_IMAGE_FLAG_SINGLE: raw::avifAddImageFlags = 1 << 1;
+const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
+/// CICP's SMPTE ST 2084.
+const PQ_TRANSFER: u16 = 16;
+/// `avifImageContentTypeFlag`'s gain map bit, which decoding one is off without.
+const AVIF_IMAGE_CONTENT_GAIN_MAP: u32 = 1 << 2;
+
+fn max_threads() -> i32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(1)
+}
+
+/// libavif's decoder, freed when it leaves scope.
+pub struct Decoder(pub *mut raw::avifDecoder);
+
+impl Decoder {
+    pub fn new() -> Result<Decoder, String> {
+        #[expect(unsafe_code)]
+        let handle = unsafe { raw::avifDecoderCreate() };
+        match handle.is_null() {
+            true => Err("libavif would not allocate a decoder".to_string()),
+            false => Ok(Decoder(handle)),
+        }
+    }
+}
+
+impl Drop for Decoder {
+    fn drop(&mut self) {
+        // SAFETY: built by `avifDecoderCreate` in `new` and freed exactly once, here.
+        #[expect(unsafe_code)]
+        unsafe {
+            raw::avifDecoderDestroy(self.0);
+        }
+    }
+}
+
+/// One libavif image, freed when it leaves scope.
+pub struct Image(pub *mut raw::avifImage);
+
+impl Image {
+    /// The shape a decode fills in for itself.
+    pub fn empty() -> Result<Image, String> {
+        #[expect(unsafe_code)]
+        let handle = unsafe { raw::avifImageCreateEmpty() };
+        Image::owning(handle)
+    }
+
+    /// Room for a frame an encode is about to write.
+    pub fn sized(
+        width: u32,
+        height: u32,
+        depth: u32,
+        format: raw::avifPixelFormat,
+    ) -> Result<Image, String> {
+        #[expect(unsafe_code)]
+        let handle = unsafe { raw::avifImageCreate(width, height, depth, format) };
+        Image::owning(handle)
+    }
+
+    fn owning(handle: *mut raw::avifImage) -> Result<Image, String> {
+        match handle.is_null() {
+            true => Err("libavif would not allocate an image".to_string()),
+            false => Ok(Image(handle)),
+        }
+    }
+}
+
+impl Drop for Image {
+    fn drop(&mut self) {
+        // SAFETY: built by libavif in `empty` or `sized` and freed exactly once, here.
+        #[expect(unsafe_code)]
+        unsafe {
+            raw::avifImageDestroy(self.0);
+        }
+    }
+}
+
+/// libavif's encoder, freed when it leaves scope.
+pub struct Encoder(pub *mut raw::avifEncoder);
+
+impl Encoder {
+    pub fn new() -> Result<Encoder, String> {
+        #[expect(unsafe_code)]
+        let handle = unsafe { raw::avifEncoderCreate() };
+        match handle.is_null() {
+            true => Err("libavif would not allocate an encoder".to_string()),
+            false => Ok(Encoder(handle)),
+        }
+    }
+}
+
+impl Drop for Encoder {
+    fn drop(&mut self) {
+        // SAFETY: built by `avifEncoderCreate` in `new` and freed exactly once, here.
+        #[expect(unsafe_code)]
+        unsafe {
+            raw::avifEncoderDestroy(self.0);
+        }
+    }
+}
+
+/// The buffer libavif builds a file in.
+pub struct Output(pub raw::avifRWData);
+
+impl Output {
+    pub fn empty() -> Output {
+        // SAFETY: `avifRWData` is a pointer and a length, and all-zero is the empty one libavif
+        // documents as the starting state.
+        #[expect(unsafe_code)]
+        let zeroed = unsafe { std::mem::zeroed::<raw::avifRWData>() };
+        Output(zeroed)
+    }
+
+    /// What libavif wrote, copied out.
+    pub fn bytes(&self) -> Option<Vec<u8>> {
+        if self.0.data.is_null() {
+            return None;
+        }
+        // SAFETY: libavif filled `data` with `size` bytes and neither changes until it is freed.
+        #[expect(unsafe_code)]
+        let written = unsafe { std::slice::from_raw_parts(self.0.data, self.0.size) };
+        Some(written.to_vec())
+    }
+}
+
+impl Drop for Output {
+    fn drop(&mut self) {
+        // A write that failed part way has already allocated, and `avifRWDataFree` is defined on
+        // a zeroed struct, so this frees on every path without the caller deciding.
+        #[expect(unsafe_code)]
+        unsafe {
+            raw::avifRWDataFree(&mut self.0);
+        }
+    }
+}
+
+/// Decodes an AVIF back to interleaved 8-bit RGB.
+///
+/// Here because a rendition is stored as AVIF and a download asks for JPEG, so something has to
+/// read one. Doing it with libvips is what makes a photo server link libheif, ImageMagick and
+/// poppler; reading with the library that wrote the file also keeps a second AV1 implementation
+/// out of the process.
+///
+/// 8-bit RGB out of whatever depth is in the file: libavif scales during the YUV
+/// conversion. No tone mapping and no transfer applied - an SDR rendition is already sRGB,
+/// and a PQ still hands back its PQ code values, which is what libheif did too.
+///
+pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
+    let (data, width, height) = decode_at(bytes, 8)?;
+    Ok(Rgb {
+        width,
+        height,
+        data: data.iter().map(|v| *v as u8).collect(),
+    })
+}
+
+/// The EXIF block an AVIF carries, read off the container without decoding a pixel.
+pub fn exif(bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoder = Decoder::new().ok()?;
+    // SAFETY: the decoder is live for the block and reads `bytes`, which outlives it; the image it
+    // parses into is its own, and the EXIF is copied out before either is freed.
+    #[expect(unsafe_code)]
+    unsafe {
+        if raw::avifDecoderSetIOMemory(decoder.0, bytes.as_ptr(), bytes.len()) != AVIF_RESULT_OK
+            || raw::avifDecoderParse(decoder.0) != AVIF_RESULT_OK
+        {
+            return None;
+        }
+        let image = (*decoder.0).image;
+        if image.is_null() || (*image).exif.data.is_null() || (*image).exif.size == 0 {
+            return None;
+        }
+        Some(std::slice::from_raw_parts((*image).exif.data, (*image).exif.size).to_vec())
+    }
+}
+
+/// The same decode at whatever depth the caller can use, widened to one sample per `u16`.
+///
+/// 8 bits is a floor a measurement trips over: one 8-bit step of a PQ signal is four of the
+/// ten the file carries, which is larger than the coding error at any quantizer worth
+/// shipping, so a comparison run through it measures the readback instead.
+pub fn decode_at(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), String> {
+    decode_at_with_rotation(bytes, depth, true)
+}
+
+pub fn decode_at_unturned(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), String> {
+    decode_at_with_rotation(bytes, depth, false)
+}
+
+fn decode_at_with_rotation(
+    bytes: &[u8],
+    depth: u32,
+    rotate: bool,
+) -> Result<(Vec<u16>, usize, usize), String> {
+    let (samples, width, height, tags) = decoded(bytes, depth)?;
+    let angle = if rotate { tags.irot } else { 0 };
+    Ok(rotate_samples(samples, width, height, angle))
+}
+
+/// What a still's container says about its picture, beyond the samples.
+struct Tags {
+    cicp: Cicp,
+    range: raw::avifRange,
+    light: Option<crate::still::ContentLight>,
+    /// `irot`'s anticlockwise quarter turns, 0 where the file has none.
+    irot: u8,
+}
+
+impl Tags {
+    fn of(image: &raw::avifImage) -> Tags {
+        Tags {
+            cicp: Cicp {
+                primaries: image.colorPrimaries,
+                transfer: image.transferCharacteristics,
+                matrix: image.matrixCoefficients,
+            },
+            range: image.yuvRange,
+            light: (image.clli.maxCLL != 0).then_some(crate::still::ContentLight {
+                max_cll: image.clli.maxCLL,
+                max_fall: image.clli.maxPALL,
+            }),
+            irot: match image.transformFlags & AVIF_TRANSFORM_IROT != 0 {
+                true => image.irot.angle,
+                false => 0,
+            },
+        }
+    }
+
+    /// The clockwise turn `converted` takes to write this `irot` back.
+    fn rotate(&self) -> u16 {
+        u16::from((4 - self.irot % 4) % 4) * 90
+    }
+}
+
+fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), String> {
+    let decoder = Decoder::new()?;
+    let image = Image::empty()?;
+
+    // SAFETY: both handles are live for the block, and `source.pixels` points into `deep` or
+    // `shallow`, which outlive the conversion.
+    #[expect(unsafe_code)]
+    unsafe {
+        (*decoder.0).maxThreads = max_threads();
+        let status = raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
+        if status != AVIF_RESULT_OK {
+            return Err(format!("libavif could not decode: {}", message(status)));
+        }
+
+        let (width, height) = ((*image.0).width as usize, (*image.0).height as usize);
+        // libavif writes one byte per sample at 8 and a host-order `u16` above it, so a deep
+        // frame is written straight into its samples and only a shallow one is widened after.
+        let wide = depth > 8;
+        let count = width * height * 3;
+        let mut deep = vec![0u16; if wide { count } else { 0 }];
+        let mut shallow = vec![0u8; if wide { 0 } else { count }];
+        let mut source = std::mem::zeroed::<raw::avifRGBImage>();
+        raw::avifRGBImageSetDefaults(&mut source, image.0);
+        source.format = AVIF_RGB_FORMAT_RGB;
+        source.depth = depth;
+        source.pixels = match wide {
+            true => deep.as_mut_ptr().cast(),
+            false => shallow.as_mut_ptr(),
+        };
+        source.rowBytes = (width * 3 * if wide { 2 } else { 1 }) as u32;
+        // The direction libavif *will* thread, and the only one: the field on the encoder is
+        // documented as ignored for RGB to YUV, which is why that way round is banded by hand.
+        source.maxThreads = max_threads();
+
+        let status = raw::avifImageYUVToRGB(image.0, &mut source);
+        if status != AVIF_RESULT_OK {
+            return Err(format!(
+                "libavif could not convert to RGB: {}",
+                message(status)
+            ));
+        }
+        let samples = match wide {
+            true => deep,
+            false => shallow.iter().map(|v| u16::from(*v)).collect(),
+        };
+        Ok((samples, width, height, Tags::of(&*image.0)))
+    }
+}
+
+/// A PQ still's planes as its file codes them, for the viewer's stage to read
+/// (`render::grade::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
+pub struct Coded<'a> {
+    /// Luma, blue, red, little-endian `u16` samples, each `strides[at]` bytes a row.
+    pub planes: [&'a [u8]; 3],
+    pub strides: [usize; 3],
+    pub width: usize,
+    pub height: usize,
+    /// 10 or 12.
+    pub bits: u32,
+    /// 4:2:0 rather than 4:4:4.
+    pub subsampled: bool,
+    /// Clockwise, as the stage turns a picture onto its canvas.
+    pub rotation: u16,
+    /// The file's brightest pixel in nits, where it states one.
+    pub max_cll: Option<u16>,
+}
+
+/// `read` over the planes libavif decoded `bytes` into, which live only as long as the call. None
+/// for a file the stage does not read: anything but limited-range PQ at 10 or 12 bits, in 4:2:0 or
+/// 4:4:4, which is what the browser's stage reads too (`planar_layout.ts`).
+pub fn with_coded<T>(
+    bytes: &[u8],
+    read: impl FnOnce(&Coded<'_>) -> T,
+) -> Result<Option<T>, String> {
+    let decoder = Decoder::new()?;
+    let image = Image::empty()?;
+    // SAFETY: both handles are live for the block, and each plane is `rows * yuvRowBytes` long.
+    #[expect(unsafe_code)]
+    unsafe {
+        (*decoder.0).maxThreads = max_threads();
+        let status = raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
+        if status != AVIF_RESULT_OK {
+            return Err(format!("libavif could not decode: {}", message(status)));
+        }
+        let image = &*image.0;
+        let tags = Tags::of(image);
+        let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
+        if tags.cicp.transfer != PQ_TRANSFER
+            || tags.range != AVIF_RANGE_LIMITED
+            || !(image.depth == 10 || image.depth == 12)
+            || !(subsampled || image.yuvFormat == AVIF_PIXEL_FORMAT_YUV444)
+        {
+            return Ok(None);
+        }
+        let strides = image.yuvRowBytes.map(|stride| stride as usize);
+        let planes = [0, 1, 2].map(|at| {
+            let rows = match at > 0 && subsampled {
+                true => (image.height as usize).div_ceil(2),
+                false => image.height as usize,
+            };
+            std::slice::from_raw_parts(image.yuvPlanes[at], rows * strides[at])
+        });
+        Ok(Some(read(&Coded {
+            planes,
+            strides,
+            width: image.width as usize,
+            height: image.height as usize,
+            bits: image.depth,
+            subsampled,
+            rotation: tags.rotate(),
+            max_cll: tags.light.map(|light| light.max_cll),
+        })))
+    }
+}
+
+/// A decoded image's YUV planes, laid out one after another as `VideoFrame.copyTo` lays out a page's.
+///
+/// # Safety
+/// `image` is one libavif decoded, whose planes are each `rows * yuvRowBytes` long.
+#[cfg(test)]
+#[expect(unsafe_code)]
+unsafe fn yuv_planes(image: &raw::avifImage) -> (Vec<u8>, crate::planes::Layout) {
+    let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
+    let mut samples = Vec::new();
+    let planes = [0, 1, 2].map(|at| {
+        let rows = match at > 0 && subsampled {
+            true => (image.height as usize).div_ceil(2),
+            false => image.height as usize,
+        };
+        let stride = image.yuvRowBytes[at] as usize;
+        let offset = samples.len();
+        // SAFETY: the caller's.
+        samples.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(image.yuvPlanes[at], rows * stride)
+        });
+        crate::planes::Plane { offset, stride }
+    });
+    let layout = crate::planes::Layout {
+        width: image.width as usize,
+        height: image.height as usize,
+        bits: image.depth,
+        subsampled,
+        planes,
+    };
+    (samples, layout)
+}
+
+/// `bytes`, a high-bit-depth PQ still, re-encoded at the one AV1 shape Firefox composites as HDR
+/// video: 10-bit 4:2:0. A twelve-bit or 4:4:4 one plays there with no transfer applied, flat.
+///
+/// `matching` is how the platform shows the video's SDR range, so the copy sits where the still
+/// would in a browser.
+pub fn ten_bit_copy(
+    bytes: &[u8],
+    quantizer: i32,
+    speed: i32,
+    matching: colour::sdr_match::SdrMatch,
+) -> Result<Vec<u8>, String> {
+    let (samples, width, height, tags) = decoded(bytes, 16)?;
+    let (samples, light) = match matching {
+        colour::sdr_match::SdrMatch::Still => (samples, tags.light),
+        _ => {
+            let gpu = gpu::device().ok_or("no Vulkan adapter to rematch the copy on")?;
+            let rematched =
+                pollster::block_on(colour::pq_rematch::rematched(gpu, &samples, matching))
+                    .ok_or("the rematched copy did not read back")?;
+            let shown = |nits: u16| {
+                matching
+                    .of_still(units::light::Light::exactly(f64::from(nits)))
+                    .raw()
+            };
+            let light = tags.light.map(|light| crate::still::ContentLight {
+                max_cll: shown(light.max_cll).ceil() as u16,
+                max_fall: shown(light.max_fall).round() as u16,
+            });
+            (rematched, light)
+        }
+    };
+    encode_avif(
+        std::borrow::Cow::Owned(samples),
+        16,
+        tags.range,
+        width,
+        height,
+        10,
+        AVIF_PIXEL_FORMAT_YUV420,
+        &tags.cicp,
+        light,
+        quantizer,
+        speed,
+        tags.rotate(),
+        None,
+    )
+}
+
+fn rotate_samples(
+    samples: Vec<u16>,
+    width: usize,
+    height: usize,
+    angle: u8,
+) -> (Vec<u16>, usize, usize) {
+    if angle == 0 || angle > 3 {
+        return (samples, width, height);
+    }
+    let (out_width, out_height) = if angle % 2 == 0 {
+        (width, height)
+    } else {
+        (height, width)
+    };
+    let mut turned = vec![0; samples.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let (out_x, out_y) = match angle {
+                1 => (y, width - 1 - x),
+                2 => (width - 1 - x, height - 1 - y),
+                3 => (height - 1 - y, x),
+                _ => unreachable!(),
+            };
+            let from = (y * width + x) * 3;
+            let to = (out_y * out_width + out_x) * 3;
+            turned[to..to + 3].copy_from_slice(&samples[from..from + 3]);
+        }
+    }
+    (turned, out_width, out_height)
+}
+
+/// The gain map beside an AVIF's picture, decoded, with the terms that apply it.
+///
+/// **libavif reads it, which took the pinned build.** The API arrived in 1.1 behind a compile flag
+/// and settled in 1.2; Ubuntu's 1.0.4 and Debian's 1.1.1 have no gain map symbols at all, so
+/// `scripts/get-codecs.ts` builds the version this needs.
+///
+/// The terms come back in ISO 21496-1's own shape, which is the shape `linearise` applies, so
+/// nothing here re-derives them. None where the file carries no map, which is most AVIFs.
+pub fn gain_map(
+    bytes: &[u8],
+) -> Option<(Vec<u16>, usize, usize, u32, crate::gain_map::Reconstruction)> {
+    let decoder = Decoder::new().ok()?;
+    let image = Image::empty().ok()?;
+
+    // SAFETY: both handles are live for the block, and the gain map and its image belong to the
+    // decoded image, which outlives every read of them here.
+    #[expect(unsafe_code)]
+    unsafe {
+        (*decoder.0).maxThreads = max_threads();
+        // The gain map as well as the picture, which is off by default.
+        (*decoder.0).imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
+        if raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len())
+            != AVIF_RESULT_OK
+        {
+            return None;
+        }
+        let map = (*image.0).gainMap;
+        if map.is_null() || (*map).image.is_null() {
+            return None;
+        }
+        let coded = (*map).image;
+        let (width, height) = ((*coded).width as usize, (*coded).height as usize);
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        // Sixteen bits asked for whatever the map carries, as the picture arm asks: libavif
+        // rescales during the conversion, so the depth handed back is the one requested.
+        let mut data = vec![0u8; width * height * 3 * 2];
+        let mut source = std::mem::zeroed::<raw::avifRGBImage>();
+        raw::avifRGBImageSetDefaults(&mut source, coded);
+        source.format = AVIF_RGB_FORMAT_RGB;
+        source.depth = 16;
+        source.pixels = data.as_mut_ptr();
+        source.rowBytes = (width * 3 * 2) as u32;
+        source.maxThreads = max_threads();
+        if raw::avifImageYUVToRGB(coded, &mut source) != AVIF_RESULT_OK {
+            return None;
+        }
+        let samples = bytemuck::pod_collect_to_vec(&data);
+
+        let signed = |it: raw::avifSignedFraction| match it.d {
+            0 => 0.0,
+            d => it.n as f32 / d as f32,
+        };
+        let unsigned = |it: raw::avifUnsignedFraction| match it.d {
+            0 => 1.0,
+            d => it.n as f32 / d as f32,
+        };
+        let triple = |from: [raw::avifSignedFraction; 3]| from.map(signed);
+        Some((
+            samples,
+            width,
+            height,
+            16u32,
+            crate::gain_map::Reconstruction::Iso {
+                min: triple((*map).gainMapMin),
+                max: triple((*map).gainMapMax),
+                gamma: (*map).gainMapGamma.map(unsigned),
+                offset_base: triple((*map).baseOffset),
+                offset_alternate: triple((*map).alternateOffset),
+            },
+        ))
+    }
+}
+
+/// Encodes one frame as an AVIF still and hands back the file.
+///
+/// `pq` is interleaved 16-bit Rec.2020 RGB in the PQ transfer, as `frame.slang`'s `encode`
+/// leaves it. What comes out of that is what libavif's own converter takes to YCbCr, so
+/// the matrix and the limited-range quantisation stay libavif's rather than being
+/// written a second time here.
+///
+/// `Cow` rather than a slice, and that is the memory knob rather than a signature
+/// preference: an owned frame is handed straight to libavif and dropped as soon as the
+/// YUV conversion has read it.
+///
+/// Only one frame of this is left live by the time libaom runs, and libaom's own working
+/// set - ~700MB for a 24MP 4:4:4 all-intra frame, five times ours - is what actually sets
+/// the peak. It tracks pixel count rather than depth: on a 61MP frame the whole job peaks at
+/// 795MB fitted to 3840 and 2199MB at native, and twelve bits is 1-4% of that. Multiply by
+/// `processing_concurrency` on a machine that starts OOM-killing; DESIGN 10.7 has the rest.
+///
+/// Bytes rather than a path, for a caller that puts the still inside another file
+/// (`avif_gain_write`) or measures it. The frame is what costs; the encoded file is
+/// single-digit MB, so carrying it back through a `Vec` is not the copy worth avoiding.
+pub fn encode_still(
+    pq: std::borrow::Cow<'_, [u16]>,
+    width: usize,
+    height: usize,
+    options: &StillOptions,
+) -> Result<Vec<u8>, String> {
+    encode_still_rotated(pq, width, height, options, 0, None)
+}
+
+/// `exif` is a TIFF block (`crate::exif`).
+pub fn encode_still_rotated(
+    pq: std::borrow::Cow<'_, [u16]>,
+    width: usize,
+    height: usize,
+    options: &StillOptions,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    if pq.len() < width * height * 3 {
+        return Err(format!(
+            "frame is {} samples, expected {}",
+            pq.len(),
+            width * height * 3
+        ));
+    }
+    encode_avif(
+        pq,
+        16,
+        AVIF_RANGE_LIMITED,
+        width,
+        height,
+        AVIF_DEPTH,
+        options.format,
+        &options.cicp,
+        options.light,
+        options.quantizer,
+        options.speed,
+        rotate,
+        exif,
+    )
+}
+
+/// `encode_still` to a file, for the renditions.
+pub fn save_still(
+    pq: std::borrow::Cow<'_, [u16]>,
+    width: usize,
+    height: usize,
+    options: &StillOptions,
+    out_path: &str,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<(), String> {
+    let file = encode_still_rotated(pq, width, height, options, rotate, exif)?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
+/// [`save_still`] for a still that arrives as bands of whole rows (`encode_grid`), written as a grid
+/// of them.
+pub fn save_still_bands(
+    bands: Vec<Vec<u16>>,
+    width: usize,
+    options: &StillOptions,
+    out_path: &str,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<(), String> {
+    let file = encode_grid(
+        bands,
+        16,
+        AVIF_RANGE_LIMITED,
+        width,
+        AVIF_DEPTH,
+        options.format,
+        &options.cicp,
+        options.light,
+        options.quantizer,
+        options.speed,
+        rotate,
+        exif,
+    )?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
+/// [`encode_rendition_rotated`] for a rendition that arrives as bands of whole rows.
+#[allow(clippy::too_many_arguments)]
+pub fn save_rendition_bands(
+    bands: Vec<Vec<u8>>,
+    width: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+    out_path: &str,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<(), String> {
+    let format = match full_chroma {
+        true => AVIF_PIXEL_FORMAT_YUV444,
+        false => AVIF_PIXEL_FORMAT_YUV420,
+    };
+    let file = encode_grid(
+        bands,
+        8,
+        AVIF_RANGE_FULL,
+        width,
+        8,
+        format,
+        &SRGB,
+        None,
+        quantizer,
+        speed,
+        rotate,
+        exif,
+    )?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
+/// An 8-bit sRGB rendition, straight to disk.
+///
+/// Nothing to transfer and no gamut to convert: the 8-bit decode already produced sRGB,
+/// so the pixels go to libavif exactly as they arrive and only the YCbCr matrix is left.
+/// Tagged sRGB rather than left bare, since a file that says what it is costs nine bytes.
+///
+/// `full_chroma` is the `sdr_full_chroma` setting, 4:2:0 by default for the reasons
+/// DESIGN 10.1 measures. No even-dimension problem to go with it: libavif pads odd
+/// chroma itself.
+pub fn encode_rgb8(
+    rgb8: std::borrow::Cow<'_, [u8]>,
+    width: usize,
+    height: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+) -> Result<Vec<u8>, String> {
+    encode_rgb8_rotated(rgb8, width, height, quantizer, speed, full_chroma, 0, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rgb8_rotated(
+    rgb8: std::borrow::Cow<'_, [u8]>,
+    width: usize,
+    height: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    if rgb8.len() < width * height * 3 {
+        return Err(format!(
+            "frame is {} bytes, expected {}",
+            rgb8.len(),
+            width * height * 3
+        ));
+    }
+    let format = match full_chroma {
+        true => AVIF_PIXEL_FORMAT_YUV444,
+        false => AVIF_PIXEL_FORMAT_YUV420,
+    };
+    encode_avif(
+        rgb8,
+        8,
+        AVIF_RANGE_FULL,
+        width,
+        height,
+        8,
+        format,
+        &SRGB,
+        None,
+        quantizer,
+        speed,
+        rotate,
+        exif,
+    )
+}
+
+/// sRGB primaries, sRGB transfer, BT.601 matrix.
+const SRGB: Cicp = Cicp {
+    primaries: 1,
+    transfer: 13,
+    matrix: 6,
+};
+
+/// `encode_rgb8` to a file, for the renditions.
+pub fn encode_rendition(
+    rgb8: std::borrow::Cow<'_, [u8]>,
+    width: usize,
+    height: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+    out_path: &str,
+) -> Result<(), String> {
+    encode_rendition_rotated(
+        rgb8,
+        width,
+        height,
+        quantizer,
+        speed,
+        full_chroma,
+        out_path,
+        0,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rendition_rotated(
+    rgb8: std::borrow::Cow<'_, [u8]>,
+    width: usize,
+    height: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+    out_path: &str,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<(), String> {
+    let file = encode_rgb8_rotated(
+        rgb8,
+        width,
+        height,
+        quantizer,
+        speed,
+        full_chroma,
+        rotate,
+        exif,
+    )?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
+/// A raw pointer a rayon closure may carry, which one is not by default.
+///
+/// Every band writes a disjoint rectangle of the same planes and reads a disjoint run of the same
+/// source rows, so nothing is shared that is also written.
+#[derive(Clone, Copy)]
+struct Bands(*mut raw::avifImage, *const u8);
+
+// SAFETY: see `Bands`. The image outlives the scope the bands run in, and the rows one band touches
+// belong to no other.
+#[expect(unsafe_code)]
+unsafe impl Send for Bands {}
+#[expect(unsafe_code)]
+unsafe impl Sync for Bands {}
+
+/// `avifImageRGBToYUV` over row bands, in parallel.
+///
+/// **The one call in the encode libavif will not thread.** `avif.h` says of `maxThreads` that "this
+/// value is ignored for RGB to YUV conversion", and 16-bit RGB into a high-bit-depth YUV has no
+/// libyuv fast path either, so it runs the generic float loop on one core: measured at 92ms of a
+/// 164ms encode for a 3840x2560 still, against 9ms for the same dimensions at 8 bits.
+///
+/// A band is a view onto the parent's planes rather than a copy, so the conversion writes where it
+/// always did. **Bands start on even rows**, which is what keeps the result identical rather than
+/// merely close: 4:2:0 averages a 2x2 block, and a band boundary through the middle of one would
+/// change the chroma either side of it.
+#[expect(unsafe_code)]
+unsafe fn to_yuv_banded(
+    image: *mut raw::avifImage,
+    pixels: *const u8,
+    row_bytes: usize,
+    rgb_depth: u32,
+) -> Result<(), String> {
+    use rayon::prelude::*;
+
+    let height = unsafe { (*image).height } as usize;
+    let allocated = unsafe { raw::avifImageAllocatePlanes(image, AVIF_PLANES_YUV) };
+    if allocated != AVIF_RESULT_OK {
+        let why = unsafe { message(allocated) };
+        return Err(format!("libavif would not allocate planes: {why}"));
+    }
+
+    // Even, and at least two: an odd band start would split a chroma block, and a zero-row band is
+    // a rectangle libavif refuses.
+    let wanted = max_threads().max(1) as usize;
+    let rows = (height.div_ceil(wanted).max(1)).next_multiple_of(2);
+    let shared = Bands(image, pixels);
+
+    let failures: Vec<String> = (0..height.div_ceil(rows))
+        .into_par_iter()
+        .filter_map(|band| {
+            let top = band * rows;
+            let tall = rows.min(height - top);
+            unsafe { one_band(shared, top, tall, row_bytes, rgb_depth) }.err()
+        })
+        .collect();
+    match failures.into_iter().next() {
+        Some(why) => Err(why),
+        None => Ok(()),
+    }
+}
+
+/// One band's rows, through a view onto the parent's planes.
+#[expect(unsafe_code)]
+unsafe fn one_band(
+    shared: Bands,
+    top: usize,
+    tall: usize,
+    row_bytes: usize,
+    rgb_depth: u32,
+) -> Result<(), String> {
+    let Bands(image, pixels) = shared;
+    unsafe {
+        // **On the stack, and never destroyed.** `avifImageSetViewRect` copies the parent struct
+        // wholesale and then clears the two owns-planes flags, so a view owns nothing - not the
+        // planes, and not the ICC, Exif or XMP payloads whose pointers came across with the copy.
+        // Handing one to `avifImageDestroy` frees what the parent still holds, which is a double
+        // free at the end of the encode: `munmap_chunk(): invalid pointer`, reliably, on the second
+        // photograph of a run.
+        let mut view = std::mem::zeroed::<raw::avifImage>();
+        let rect = raw::avifCropRect {
+            x: 0,
+            y: top as u32,
+            width: (*image).width,
+            height: tall as u32,
+        };
+        if raw::avifImageSetViewRect(&mut view, image, &rect) != AVIF_RESULT_OK {
+            return Err("libavif refused a band's rectangle".to_string());
+        }
+        // Against the *view*, not the parent: it is what carries this band's height, and defaults
+        // taken from the parent would describe the whole frame.
+        let mut source = std::mem::zeroed::<raw::avifRGBImage>();
+        raw::avifRGBImageSetDefaults(&mut source, &view);
+        source.format = AVIF_RGB_FORMAT_RGB;
+        source.depth = rgb_depth;
+        source.pixels = pixels.add(top * row_bytes) as *mut u8;
+        source.rowBytes = row_bytes as u32;
+        source.chromaDownsampling = AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV;
+        // The view only, so the file keeps its own. Told PQ, libsharpyuv solves in linear light:
+        // 5x the time, and several times the p99.9 speckle it is here to remove (`aom_quality`).
+        view.transferCharacteristics = SHARP_YUV_TRANSFER;
+        match raw::avifImageRGBToYUV(&mut view, &source) {
+            AVIF_RESULT_OK => Ok(()),
+            status => Err(format!(
+                "libavif could not convert to YUV: {}",
+                message(status)
+            )),
+        }
+    }
+}
+
+/// Hands interleaved RGB to libavif and returns the file it builds.
+///
+/// Never copies the frame: `avifRGBImage.pixels` points into `rgb`.
+///
+/// `Cow` so an owned frame can be **dropped as soon as the YUV conversion has read
+/// it**, which is the peak that matters rather than a tidiness point. libaom allocates
+/// its own working set - measured at ~560MB for a 24MP 4:4:4 all-intra frame, near
+/// enough flat in the thread count and in the depth, so it is per-frame state rather than
+/// anything tiling can be traded against. Holding the RGB across `avifEncoderWrite`
+/// stacked a whole frame under that for no reader: 145MB at 24MP, 366MB at 61MP.
+#[allow(clippy::too_many_arguments)]
+fn encode_avif<T: Clone>(
+    rgb: std::borrow::Cow<'_, [T]>,
+    rgb_depth: u32,
+    range: raw::avifRange,
+    width: usize,
+    height: usize,
+    depth: u32,
+    format: raw::avifPixelFormat,
+    cicp: &Cicp,
+    light: Option<crate::still::ContentLight>,
+    quantizer: i32,
+    speed: i32,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    let image = converted(
+        rgb, rgb_depth, range, width, height, depth, format, cicp, light, rotate, exif,
+    )?;
+    let encoder = configured(quantizer, speed)?;
+    let mut output = Output::empty();
+    // SAFETY: both handles are live for the call, and `output` is libavif's to fill.
+    #[expect(unsafe_code)]
+    let status = unsafe { raw::avifEncoderWrite(encoder.0, image.0, &mut output.0) };
+    written(status, &output)
+}
+
+/// Whole-width bands, top to bottom, as one grid still. **Every band but the last the same height,
+/// at least 64 rows**, and even at 4:2:0 - the grid's own rules (MIAF 7.3.11.4.2), which libavif
+/// refuses the encode for breaking. At most 256 of them.
+#[allow(clippy::too_many_arguments)]
+fn encode_grid<T: Clone>(
+    bands: Vec<Vec<T>>,
+    rgb_depth: u32,
+    range: raw::avifRange,
+    width: usize,
+    depth: u32,
+    format: raw::avifPixelFormat,
+    cicp: &Cicp,
+    light: Option<crate::still::ContentLight>,
+    quantizer: i32,
+    speed: i32,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    let rows = u32::try_from(bands.len()).map_err(|_| "too many bands for a grid".to_string())?;
+    debug_assert!(
+        bands.split_last().is_some_and(|(last, rest)| {
+            rest.iter().all(|band| band.len() == bands[0].len()) && last.len() <= bands[0].len()
+        }),
+        "every band but the last is one height, and the last no taller",
+    );
+    let mut cells = Vec::with_capacity(bands.len());
+    for (index, band) in bands.into_iter().enumerate() {
+        let height = band.len() / (width * 3);
+        cells.push(converted(
+            std::borrow::Cow::Owned(band),
+            rgb_depth,
+            range,
+            width,
+            height,
+            depth,
+            format,
+            cicp,
+            light,
+            rotate,
+            // libavif writes the grid's metadata from its first cell.
+            exif.filter(|_| index == 0),
+        )?);
+    }
+    let encoder = configured(quantizer, speed)?;
+    let pointers: Vec<*const raw::avifImage> =
+        cells.iter().map(|cell| cell.0.cast_const()).collect();
+    let mut output = Output::empty();
+    // SAFETY: every cell outlives both calls, and `output` is libavif's to fill.
+    #[expect(unsafe_code)]
+    unsafe {
+        let status = raw::avifEncoderAddImageGrid(
+            encoder.0,
+            1,
+            rows,
+            pointers.as_ptr(),
+            // Each cell's encoder is freed as soon as the cell is written, not held to the end.
+            AVIF_ADD_IMAGE_FLAG_SINGLE,
+        );
+        if status != AVIF_RESULT_OK {
+            return Err(format!(
+                "libavif could not encode the grid: {}",
+                message(status)
+            ));
+        }
+        written(raw::avifEncoderFinish(encoder.0, &mut output.0), &output)
+    }
+}
+
+/// A frame in libavif's YUV, tagged for the file, with the RGB it came from dropped.
+#[allow(clippy::too_many_arguments)]
+fn converted<T: Clone>(
+    rgb: std::borrow::Cow<'_, [T]>,
+    rgb_depth: u32,
+    range: raw::avifRange,
+    width: usize,
+    height: usize,
+    depth: u32,
+    format: raw::avifPixelFormat,
+    cicp: &Cicp,
+    light: Option<crate::still::ContentLight>,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<Image, String> {
+    if rotate % 90 != 0 {
+        return Err(format!("rotation must be a quarter turn: {rotate}"));
+    }
+    let image = Image::sized(width as u32, height as u32, depth, format)?;
+
+    // SAFETY: every pointer below is either the handle above or points into `rgb` or `exif`, which
+    // outlive the calls that read them.
+    #[expect(unsafe_code)]
+    unsafe {
+        // Ahead of the turn: libavif sets `irot` from an Orientation tag it finds in the block.
+        if let Some(exif) = exif {
+            let status = raw::avifImageSetMetadataExif(image.0, exif.as_ptr(), exif.len());
+            if status != AVIF_RESULT_OK {
+                return Err(format!("libavif refused the EXIF: {}", message(status)));
+            }
+        }
+        (*image.0).yuvRange = range;
+        (*image.0).colorPrimaries = cicp.primaries;
+        (*image.0).transferCharacteristics = cicp.transfer;
+        (*image.0).matrixCoefficients = cicp.matrix;
+        if let Some(light) = light {
+            (*image.0).clli.maxCLL = light.max_cll;
+            (*image.0).clli.maxPALL = light.max_fall;
+        }
+        if rotate % 360 != 0 {
+            (*image.0).transformFlags |= AVIF_TRANSFORM_IROT;
+            (*image.0).irot.angle = ((360 - rotate % 360) / 90) as u8;
+        }
+
+        let row_bytes = width * 3 * (rgb_depth as usize / 8);
+        to_yuv_banded(image.0, rgb.as_ptr() as *const u8, row_bytes, rgb_depth)?;
+    }
+    // The planes hold everything now, and the encoder works off `image`. So the frame goes back
+    // before the encoder asks for its own, rather than sitting under it.
+    drop(rgb);
+    Ok(image)
+}
+
+/// The encoder every still is written with.
+fn configured(quantizer: i32, speed: i32) -> Result<Encoder, String> {
+    let encoder = Encoder::new()?;
+    // SAFETY: the handle is live, and these are plain fields libavif reads at the encode.
+    #[expect(unsafe_code)]
+    unsafe {
+        (*encoder.0).maxThreads = max_threads();
+        (*encoder.0).speed = speed;
+        // Both ends, not `--min 0 --max N`. libavif derives the encode's quality from the
+        // **midpoint** of the pair, so a floor of 0 quietly halved every quantizer this app
+        // asked for (DESIGN §10.7); and libaom takes the pair as the bounds of every block's
+        // own quantizer, so a range is a different encode from its midpoint besides.
+        (*encoder.0).minQuantizer = quantizer;
+        (*encoder.0).maxQuantizer = quantizer;
+        // libaom parallelises across tiles, so without them the threads idle.
+        (*encoder.0).autoTiling = 1;
+        // Named rather than left to libavif, whose default follows the aom it finds: a quantizer
+        // under IQ spends up to three quarters more bytes than under SSIM, and the quality anchors
+        // are IQ's. Not at 0, which libavif encodes lossless and libaom refuses IQ for.
+        if quantizer > 0 {
+            let status =
+                raw::avifEncoderSetCodecSpecificOption(encoder.0, c"tune".as_ptr(), c"iq".as_ptr());
+            if status != AVIF_RESULT_OK {
+                return Err(format!(
+                    "libavif would not set the tune: {}",
+                    message(status)
+                ));
+            }
+        }
+    }
+    Ok(encoder)
+}
+
+fn written(status: raw::avifResult, output: &Output) -> Result<Vec<u8>, String> {
+    if status != AVIF_RESULT_OK {
+        // SAFETY: `message` reads a static string libavif owns.
+        #[expect(unsafe_code)]
+        let why = unsafe { message(status) };
+        return Err(format!("libavif could not encode: {why}"));
+    }
+    output
+        .bytes()
+        .ok_or_else(|| "libavif returned no bytes".to_string())
+}
+
+/// libavif's own words for a failure, rather than a number.
+#[expect(unsafe_code)]
+pub unsafe fn message(status: raw::avifResult) -> String {
+    let text = unsafe { raw::avifResultToString(status) };
+    if text.is_null() {
+        return format!("result {}", status.0);
+    }
+    unsafe { std::ffi::CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file's YUV planes, laid out one after another as `VideoFrame.copyTo` lays out a page's.
+    fn yuv_planes(bytes: &[u8]) -> (Vec<u8>, crate::planes::Layout) {
+        let decoder = Decoder::new().expect("a decoder");
+        let image = Image::empty().expect("an image");
+        // SAFETY: both handles are live for the block, and the image is the one libavif decoded.
+        #[expect(unsafe_code)]
+        unsafe {
+            let status =
+                raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
+            assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the still");
+            super::yuv_planes(&*image.0)
+        }
+    }
+
+    /// `planes.slang` against libavif's own conversion, which the page's planes stand in for: the
+    /// mockup opens from one and the server's prepare from the other.
+    #[test]
+    fn planes_convert_to_the_codes_libavif_decodes() {
+        let Some(gpu) = gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the plane conversion was not run.");
+            return;
+        };
+        let frame =
+            |width: usize, height: usize, code: &dyn Fn(usize, usize) -> [u16; 3]| -> Vec<u16> {
+                (0..width * height)
+                    .flat_map(|at| code(at % width, at / width))
+                    .collect()
+            };
+        let colours = |x: usize, y: usize| {
+            [
+                20_000 + x as u16 * 300,
+                22_000 + y as u16 * 300,
+                30_000 - x as u16 * 150,
+            ]
+        };
+        // One ramp under all three channels, so the chroma is flat: libavif upsamples 4:2:0 chroma
+        // bilinear where the viewer reads it nearest, and on a flat plane the two cannot differ.
+        let shades = |x: usize, y: usize| {
+            let ramp = (x * 300 + y * 200) as u16;
+            [24_000 + ramp, 20_000 + ramp, 16_000 + ramp]
+        };
+        // Odd at 4:2:0, where the last chroma sample covers a single luma column and row.
+        let cases = [
+            (
+                AVIF_PIXEL_FORMAT_YUV444,
+                64usize,
+                48usize,
+                frame(64, 48, &colours),
+            ),
+            (AVIF_PIXEL_FORMAT_YUV420, 63, 47, frame(63, 47, &shades)),
+        ];
+        for (format, width, height, picture) in cases {
+            let options = StillOptions {
+                cicp: Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
+                format,
+                quantizer: 0,
+                speed: 10,
+                light: None,
+            };
+            let file =
+                encode_still(picture.into(), width, height, &options).expect("the still encodes");
+            let (libavif, ..) = decode_at_unturned(&file, 16).expect("libavif converts it");
+            let (samples, layout) = yuv_planes(&file);
+            let codes = crate::planes::codes(gpu, &samples, &layout).expect("the planes convert");
+            let ours = pollster::block_on(codes.into_host()).expect("the codes read back");
+            let worst = ours
+                .iter()
+                .zip(&libavif)
+                .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+                .max()
+                .unwrap_or(0);
+            // A twelve-bit step is sixteen codes.
+            assert!(
+                worst <= 16,
+                "{format:?}: a code {worst} away from libavif's"
+            );
+        }
+    }
+
+    /// The files `avif_planes` (Safari's viewer and editor) is held to, and libavif's planes of
+    /// them packed as it packs them. Its own test compares; it cannot link beside libavif's dav1d.
+    #[test]
+    fn libavif_decodes_the_browser_decoders_fixtures() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures");
+        let table = fixtures.join("tables/avif-planes.txt");
+        let files = fixtures.join("avif-planes");
+        let cases = browser_decoder_cases();
+        let write = std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1");
+        if write {
+            std::fs::create_dir_all(&files).expect("the fixture directory");
+            for (name, file) in &cases {
+                std::fs::write(files.join(format!("{name}.avif")), file).expect("the file writes");
+            }
+            let sdr = encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true)
+                .expect("the encode");
+            std::fs::write(files.join("sdr.avif"), sdr).expect("the file writes");
+        }
+        let mut shapes = String::new();
+        for (name, _) in cases {
+            let file = std::fs::read(files.join(format!("{name}.avif")))
+                .unwrap_or_else(|e| panic!("{name}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it"));
+            let (samples, layout) = yuv_planes(&file);
+            let mut packed = Vec::new();
+            for (plane, theirs) in layout.planes.iter().enumerate() {
+                let (row_length, rows) = match plane > 0 && layout.subsampled {
+                    true => (layout.width.div_ceil(2), layout.height.div_ceil(2)),
+                    false => (layout.width, layout.height),
+                };
+                for row in 0..rows {
+                    let at = theirs.offset + row * theirs.stride;
+                    packed.extend_from_slice(&samples[at..at + row_length * 2]);
+                }
+            }
+            shapes.push_str(&format!(
+                "{name} {} {} {} {}\n",
+                layout.width, layout.height, layout.bits, layout.subsampled
+            ));
+            let planes = files.join(format!("{name}.yuv"));
+            if write {
+                std::fs::write(&planes, packed).expect("the planes write");
+                continue;
+            }
+            assert!(
+                std::fs::read(&planes).expect("the planes") == packed,
+                "{name}: libavif's planes moved. BOWERBIRD_WRITE_FIXTURES=1 rewrites them"
+            );
+        }
+        if write {
+            std::fs::write(&table, shapes).expect("the table writes");
+            return;
+        }
+        assert_eq!(
+            std::fs::read_to_string(&table).expect("the table"),
+            shapes,
+            "BOWERBIRD_WRITE_FIXTURES=1 rewrites it"
+        );
+    }
+
+    /// A still each way and a grid each way, the last band shorter: the grid a still is saved as,
+    /// cropped.
+    fn browser_decoder_cases() -> [(&'static str, Vec<u8>); 4] {
+        let frame = |width: usize, height: usize| -> Vec<u16> {
+            (0..width * height)
+                .flat_map(|at| {
+                    let (x, y) = (at % width, at / width);
+                    [
+                        (20_000 + x * 300) as u16,
+                        (22_000 + y * 250) as u16,
+                        (30_000 - x * 90 - y * 70) as u16,
+                    ]
+                })
+                .collect()
+        };
+        let cicp = Cicp {
+            primaries: 9,
+            transfer: 16,
+            matrix: 9,
+        };
+        let still = |format, width, height| {
+            let options = StillOptions {
+                cicp: Cicp { ..cicp },
+                format,
+                quantizer: 20,
+                speed: 10,
+                light: None,
+            };
+            encode_still(frame(width, height).into(), width, height, &options)
+                .expect("the still encodes")
+        };
+        let bands = |format, width: usize, heights: &[usize]| {
+            let bands = heights.iter().map(|height| frame(width, *height)).collect();
+            encode_grid(
+                bands,
+                16,
+                AVIF_RANGE_LIMITED,
+                width,
+                AVIF_DEPTH,
+                format,
+                &cicp,
+                None,
+                20,
+                10,
+                0,
+                None,
+            )
+            .expect("the grid encodes")
+        };
+        [
+            ("444", still(AVIF_PIXEL_FORMAT_YUV444, 64, 48)),
+            ("odd-420", still(AVIF_PIXEL_FORMAT_YUV420, 63, 47)),
+            (
+                "420-grid",
+                bands(AVIF_PIXEL_FORMAT_YUV420, 96, &[64, 64, 64, 8]),
+            ),
+            (
+                "444-grid",
+                bands(AVIF_PIXEL_FORMAT_YUV444, 96, &[64, 64, 64, 8]),
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_firefox_copy_is_ten_bit_four_two_zero_and_keeps_the_stills_tags() {
+        let (width, height) = (63usize, 47usize);
+        // One ramp under all three channels, so 4:2:0 has no chroma detail to lose.
+        let picture: Vec<u16> = (0..width * height)
+            .flat_map(|at| {
+                let ramp = ((at % width) * 300 + (at / width) * 200) as u16;
+                [24_000 + ramp, 20_000 + ramp, 16_000 + ramp]
+            })
+            .collect();
+        let options = StillOptions {
+            cicp: Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
+            format: AVIF_PIXEL_FORMAT_YUV444,
+            quantizer: 0,
+            speed: 10,
+            light: Some(crate::still::ContentLight {
+                max_cll: 1000,
+                max_fall: 400,
+            }),
+        };
+        let still = encode_still_rotated(picture.into(), width, height, &options, 90, None)
+            .expect("encodes");
+        let copy = ten_bit_copy(&still, 0, 10, colour::sdr_match::SdrMatch::Still)
+            .expect("the copy encodes");
+
+        let decoder = Decoder::new().expect("a decoder");
+        let image = Image::empty().expect("an image");
+        // SAFETY: both handles are live for the block.
+        #[expect(unsafe_code)]
+        let (depth, format, cicp, range, clli, irot) = unsafe {
+            let status = raw::avifDecoderReadMemory(decoder.0, image.0, copy.as_ptr(), copy.len());
+            assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the copy");
+            let image = &*image.0;
+            (
+                image.depth,
+                image.yuvFormat,
+                (
+                    image.colorPrimaries,
+                    image.transferCharacteristics,
+                    image.matrixCoefficients,
+                ),
+                image.yuvRange,
+                (image.clli.maxCLL, image.clli.maxPALL),
+                (image.transformFlags & AVIF_TRANSFORM_IROT != 0).then_some(image.irot.angle),
+            )
+        };
+        assert_eq!(depth, 10);
+        assert_eq!(format, AVIF_PIXEL_FORMAT_YUV420);
+        assert_eq!(cicp, (9, 16, 9));
+        assert_eq!(range, AVIF_RANGE_LIMITED);
+        assert_eq!(clli, (1000, 400));
+        assert_eq!(irot, Some(3), "the 90 degree turn the still asked for");
+
+        let (before, ..) = decode_at_unturned(&still, 16).expect("the still decodes");
+        let (after, ..) = decode_at_unturned(&copy, 16).expect("the copy decodes");
+        let worst = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+            .max()
+            .unwrap_or(0);
+        // A limited-range 10-bit step is 75 sixteen-bit codes.
+        assert!(worst <= 150, "a sample {worst} codes from the still's");
+    }
+
+    /// A copy for macOS's PQ video carries the still's light as that platform shows it, across
+    /// SDR white from the bent shadows to the scaled highlights, its content light level with it.
+    #[test]
+    fn a_copy_for_macos_video_carries_the_stills_light_as_it_shows_it() {
+        let (width, height) = (16usize, 8usize);
+        let picture: Vec<u16> = (0..width * height)
+            .flat_map(|at| {
+                let level = (30_000 + at * 150) as u16;
+                [level, level, level]
+            })
+            .collect();
+        let options = StillOptions {
+            cicp: Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
+            format: AVIF_PIXEL_FORMAT_YUV444,
+            quantizer: 0,
+            speed: 10,
+            light: Some(crate::still::ContentLight {
+                max_cll: 1015,
+                max_fall: 406,
+            }),
+        };
+        let still = encode_still_rotated(picture.into(), width, height, &options, 0, None)
+            .expect("encodes");
+        let matching = colour::sdr_match::SdrMatch::MacVideo;
+        let copy = ten_bit_copy(&still, 0, 10, matching).expect("the copy encodes");
+
+        let (after, _, _, tags) = decoded(&copy, 16).expect("the copy decodes");
+        assert_eq!(
+            tags.light.map(|light| (light.max_cll, light.max_fall)),
+            Some((500, 200))
+        );
+
+        let nits = |code: u16| {
+            colour::tone::pq_inv::<units::light::DisplayNits>(units::light::Light::exactly(
+                f64::from(code) / 65535.0,
+            ))
+        };
+        let (before, ..) = decode_at_unturned(&still, 16).expect("the still decodes");
+        let (mut under, mut over) = (0, 0);
+        for (&was, &is) in before.iter().zip(&after).step_by(7) {
+            let want = matching.of_still(nits(was)).raw();
+            match nits(was).raw() < colour::sdr_match::CANVAS_WHITE_NITS {
+                true => under += 1,
+                false => over += 1,
+            }
+            assert!(
+                (nits(is).raw() / want - 1.0).abs() < 0.03,
+                "{} nits came back {}, wanted {want:.1}",
+                nits(was).raw(),
+                nits(is).raw()
+            );
+        }
+        assert!(under > 0 && over > 0, "the picture spans SDR white");
+    }
+
+    #[test]
+    fn rotation_is_container_metadata_and_decode_honours_it() {
+        let (width, height) = (8usize, 6usize);
+        let mut frame = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = (y * width + x) * 3;
+                frame[pixel] = (x * 23) as u8;
+                frame[pixel + 1] = (y * 31) as u8;
+                frame[pixel + 2] = (x * 17 + y * 11) as u8;
+            }
+        }
+        let encode = |rotate| {
+            encode_rgb8_rotated(
+                (&frame[..]).into(),
+                width,
+                height,
+                0,
+                10,
+                true,
+                rotate,
+                None,
+            )
+            .expect("AVIF encode")
+        };
+        let unturned = encode(0);
+        let (samples, _, _) = decode_at(&unturned, 8).expect("AVIF decode");
+        let stored = heif::read(&unturned).expect("AVIF container");
+        for (rotate, angle, turn) in [
+            (90, 3, rawler::decoders::Orientation::Rotate90),
+            (180, 2, rawler::decoders::Orientation::Rotate180),
+            (270, 1, rawler::decoders::Orientation::Rotate270),
+        ] {
+            let encoded = encode(rotate);
+            let picture = heif::read(&encoded)
+                .expect("rotated AVIF container")
+                .primary;
+            assert_eq!(
+                picture.tiles, stored.primary.tiles,
+                "coded pixels at {rotate}"
+            );
+            assert_eq!(
+                crate::orientation::of_heif(picture.turn),
+                turn,
+                "container orientation at {rotate}"
+            );
+            let rendered = crate::rendered::read(&encoded).expect("rendered AVIF decode");
+            let raw = decode_at_unturned(&encoded, 16).expect("unturned AVIF decode");
+            assert_eq!(
+                (rendered.codes, rendered.width, rendered.height),
+                raw,
+                "rendered-source pixels remain unturned at {rotate}"
+            );
+            assert_eq!(rendered.turn, turn);
+            assert_eq!(
+                decode_at_unturned(&encoded, 8).expect("raw AVIF decode"),
+                (samples.clone(), width, height)
+            );
+            assert_eq!(
+                decode_at(&encoded, 8).expect("rotated AVIF decode"),
+                rotate_samples(samples.clone(), width, height, angle)
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_smaller_than_it_claims_is_refused_rather_than_read_past() {
+        let options = StillOptions {
+            cicp: Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
+            format: AVIF_PIXEL_FORMAT_YUV444,
+            quantizer: 20,
+            speed: 8,
+            light: None,
+        };
+        let short = vec![0u16; 8 * 8 * 3 - 1];
+        assert!(encode_still(short.into(), 8, 8, &options).is_err());
+    }
+
+    /// The rendition path both ways: what `encode_rendition` writes is what a download
+    /// reads back, which is the only reason `decode` exists.
+    #[test]
+    fn a_rendition_decodes_back_to_the_pixels_it_was_written_from() {
+        let dir = std::env::temp_dir().join("bb-avif-round-trip");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("rendition.avif");
+        let (width, height) = (48usize, 32usize);
+        let mut frame = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                frame[i] = (x * 255 / width) as u8;
+                frame[i + 1] = (y * 255 / height) as u8;
+                frame[i + 2] = 96;
+            }
+        }
+
+        // Lossless-ish and full chroma, so what comes back is the encode's own error and
+        // not 4:2:0's. `decode` is what is under test, not libaom's rate control.
+        encode_rendition(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            0,
+            10,
+            true,
+            path.to_str().expect("a path"),
+        )
+        .expect("the encode");
+
+        let decoded = decode(&std::fs::read(&path).expect("the file")).expect("the decode");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((decoded.width, decoded.height), (width, height));
+        let worst = frame
+            .iter()
+            .zip(decoded.data.iter())
+            .map(|(wrote, read)| wrote.abs_diff(*read))
+            .max()
+            .expect("pixels");
+        assert!(
+            worst <= 4,
+            "the round trip moved a channel by {worst} of 255"
+        );
+    }
+
+    /// A still written as a grid of bands reads back as one picture, the bands in order: what lets
+    /// a picture too large for one frame be written at all. At 4:2:0, whose grid has the most rules.
+    #[test]
+    fn a_still_written_in_bands_reads_back_as_one_picture() {
+        let dir = std::env::temp_dir().join("bb-avif-bands");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("bands.avif");
+        let (width, height) = (96usize, 200usize);
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| {
+                let (pixel, channel) = (i / 3, i % 3);
+                let (x, y) = (pixel % width, pixel / width);
+                (20_000 + x * 100 + y * 100 + channel * 3000) as u16
+            })
+            .collect();
+        let bands: Vec<Vec<u16>> = frame.chunks(width * 64 * 3).map(<[u16]>::to_vec).collect();
+        assert_eq!(bands.len(), 4, "three whole bands and a short one");
+        let options = StillOptions {
+            cicp: Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
+            format: AVIF_PIXEL_FORMAT_YUV420,
+            quantizer: 0,
+            speed: 10,
+            light: Some(crate::still::ContentLight {
+                max_cll: 1480,
+                max_fall: 90,
+            }),
+        };
+        save_still_bands(
+            bands,
+            width,
+            &options,
+            path.to_str().expect("a path"),
+            0,
+            None,
+        )
+        .expect("the encode");
+        let file = std::fs::read(&path).expect("the file");
+        let (read, read_width, read_height) = decode_at(&file, 16).expect("the decode");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((read_width, read_height), (width, height));
+        let clli = file
+            .windows(4)
+            .position(|window| window == b"clli")
+            .expect("a clli")
+            + 4;
+        assert_eq!(
+            file[clli..clli + 4],
+            [1480u16.to_be_bytes(), 90u16.to_be_bytes()].concat()
+        );
+        let worst = frame
+            .iter()
+            .zip(&read)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .expect("pixels");
+        assert!(
+            worst <= 1024,
+            "the round trip moved a sample by {worst} of 65535"
+        );
+    }
+
+    /// A block with an Orientation tag in it, which libavif turns into `irot` if it is allowed to.
+    fn turned_exif() -> Vec<u8> {
+        let mut out = Vec::new();
+        let tiff = rawler::formats::tiff::writer::TiffWriter::new(std::io::Cursor::new(&mut out))
+            .expect("a writer");
+        let mut root = rawler::formats::tiff::writer::DirectoryWriter::new();
+        root.add_tag(rawler::tags::ExifTag::Model, "ILCE-7M4");
+        root.add_tag(rawler::tags::ExifTag::Orientation, 6u16);
+        tiff.build(root).expect("the block");
+        out
+    }
+
+    #[test]
+    fn a_still_carries_its_exif_and_keeps_its_own_turn() {
+        let exif = turned_exif();
+        let frame = vec![128u8; 16 * 8 * 3];
+        let bytes = encode_rgb8_rotated(frame.into(), 16, 8, 20, 10, true, 180, Some(&exif))
+            .expect("the encode");
+
+        assert_eq!(super::exif(&bytes).as_deref(), Some(&exif[..]));
+        let turn = heif::read(&bytes).expect("the container").primary.turn;
+        assert_eq!(turn, heif::Orientation::Rotate180);
+    }
+
+    #[test]
+    fn a_still_written_in_bands_carries_its_exif() {
+        let exif = turned_exif();
+        let bands = vec![vec![128u8; 64 * 64 * 3]; 2];
+        let dir = std::env::temp_dir().join(format!("bb-avif-bands-exif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("bands.avif");
+        save_rendition_bands(
+            bands,
+            64,
+            20,
+            10,
+            true,
+            path.to_str().expect("a path"),
+            0,
+            Some(&exif),
+        )
+        .expect("the encode");
+        let bytes = std::fs::read(&path).expect("the file");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(super::exif(&bytes).as_deref(), Some(&exif[..]));
+    }
+
+    #[test]
+    fn a_still_written_without_exif_reads_back_with_none() {
+        let bytes =
+            encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true).expect("the encode");
+        assert_eq!(super::exif(&bytes), None);
+    }
+
+    /// Every grid tile is 4:2:0, which is a different conversion inside libavif and the one this
+    /// file bands across threads - so the shape of the frame decides how it is cut up, and a shape
+    /// that produces a band libsharpyuv will not take is a rendition that cannot be written at all.
+    #[test]
+    fn a_subsampled_rendition_encodes_at_every_shape_a_tile_takes() {
+        // A tile of a 3:2 frame, of a panorama, and of the two-row and one-row edges the banding
+        // itself can produce.
+        for (width, height) in [
+            (48usize, 32usize),
+            (800, 533),
+            (800, 368),
+            (800, 345),
+            (64, 3),
+            (64, 2),
+        ] {
+            let frame = vec![128u8; width * height * 3];
+            let encoded = encode_rgb8(
+                std::borrow::Cow::Borrowed(&frame),
+                width,
+                height,
+                30,
+                10,
+                false,
+            );
+            assert!(encoded.is_ok(), "{width}x{height}: {:?}", encoded.err());
+        }
+    }
+
+    /// A saturated red with white sparkle over it, the hood 4:2:0 speckled (§10.7): green swings
+    /// per pixel from the floor, and the block's chroma has to hand red none of that swing.
+    #[test]
+    fn a_subsampled_still_keeps_a_saturated_colour_clean() {
+        let (width, height) = (128usize, 128usize);
+        let mut frame = vec![0u16; width * height * 3];
+        for (i, pixel) in frame.chunks_exact_mut(3).enumerate() {
+            let sparkle = (i.wrapping_mul(2_654_435_761) >> 7) % 5 == 0;
+            pixel.copy_from_slice(&match sparkle {
+                true => [44_000, 38_000, 36_000],
+                false => [40_000, 3_000, 9_000],
+            });
+        }
+
+        let bytes = encode_still(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            &StillOptions {
+                cicp: Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
+                format: AVIF_PIXEL_FORMAT_YUV420,
+                quantizer: 0,
+                speed: 10,
+                light: None,
+            },
+        )
+        .expect("the encode");
+        let (back, _, _) = decode_at(&bytes, 16).expect("the decode");
+
+        let mut worst: Vec<u16> = frame
+            .chunks_exact(3)
+            .zip(back.chunks_exact(3))
+            .map(|(wrote, read)| {
+                (0..3)
+                    .map(|c| wrote[c].abs_diff(read[c]))
+                    .max()
+                    .expect("3 channels")
+            })
+            .collect();
+        let at = worst.len() * 999 / 1000;
+        let (_, speckle, _) = worst.select_nth_unstable(at);
+        let steps = f64::from(*speckle) / 65535.0 * 1023.0;
+        // Solved under sRGB's curve this reads 202; under PQ's, 388.
+        assert!(steps < 300.0, "p99.9 worst channel {steps:.1} PQ steps off");
+    }
+
+    #[test]
+    fn bytes_that_are_not_an_avif_are_an_error_rather_than_a_panic() {
+        assert!(decode(b"").is_err());
+        assert!(decode(&[0u8; 64]).is_err());
+    }
+
+    /// The quantizer a caller names is the one the encoder works at: each step down spends more
+    /// bytes. A quantizer lost on the way to libaom - clamped, ignored, or read as the midpoint
+    /// of a range that starts at 0, which is how this app once encoded everything at half its
+    /// setting (§10.7) - comes out as two sizes out of order or the same.
+    #[test]
+    fn a_lower_quantizer_spends_more_bytes() {
+        // Something with detail to spend bits on: a flat frame encodes to the same few
+        // bytes at any quantizer and would pass this without meaning anything.
+        let (width, height) = (64usize, 64usize);
+        let mut frame = vec![0u16; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                frame[i] = ((x * 977 + y * 631) % 65536) as u16;
+                frame[i + 1] = ((x * 331 + y * 1181) % 65536) as u16;
+                frame[i + 2] = ((x * 1499 + y * 173) % 65536) as u16;
+            }
+        }
+
+        let bytes = |quantizer: i32| {
+            encode_avif(
+                std::borrow::Cow::Borrowed(&frame),
+                16,
+                AVIF_RANGE_LIMITED,
+                width,
+                height,
+                AVIF_DEPTH,
+                AVIF_PIXEL_FORMAT_YUV444,
+                &Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
+                None,
+                quantizer,
+                10,
+                0,
+                None,
+            )
+            .expect("the encode")
+            .len()
+        };
+
+        let sizes = [26, 13, 6].map(|quantizer| (quantizer, bytes(quantizer)));
+        assert!(
+            sizes.windows(2).all(|pair| pair[0].1 < pair[1].1),
+            "bytes by quantizer should rise as it falls: {sizes:?}"
+        );
+    }
+}

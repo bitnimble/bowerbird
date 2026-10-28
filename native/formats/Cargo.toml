@@ -1,0 +1,52 @@
+[package]
+name = "formats"
+version = "0.1.0"
+# 2024 so bindgen's generated `unsafe extern "C"` blocks parse as written. It also makes
+# `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
+edition = "2024"
+
+[features]
+# libavif, libjxl and libjpeg-turbo, linked on top through build.rs. Off, the crate links no C,
+# which is everything the editor's open needs.
+renditions = []
+# The host permutations and fixtures this crate's tests hold its formats to, for the crates above
+# it to hold theirs to the same ones.
+testing = []
+
+[dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }
+heif = { path = "../heif" }
+colour = { path = "../colour" }
+gpu = { path = "../gpu" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+# The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
+# callers sit inside their own parallelism.
+fast_image_resize = "6.1.0"
+# libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
+# pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
+# which is the wrong way round here: every decode is bounded to the fit grid or a preview.
+jpeg-decoder = { version = "0.3.2", default-features = false, features = ["rayon"] }
+jpeg-encoder = { version = "0.7.1", features = ["simd"] }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+pollster = "0.4"
+rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+png = "0.18.1"
+# `png` reads the `cICP` chunk that makes a PNG HDR and does not write one, so an HDR export
+# splices it in itself and needs the checksum every PNG chunk carries. Already in the tree
+# under `png`; named here because this crate calls it directly.
+crc32fast = "1.5.0"
+rust_h265 = "0.1.0"
+
+[build-dependencies]
+bindgen = "0.72"
+
+[dev-dependencies]
+shaders = { path = "../shaders", features = ["layout"] }
+# A second reader for what `tiff_write` writes, so the export is held against a decoder that is
+# not the writer's own.
+tiff = "0.11.3"

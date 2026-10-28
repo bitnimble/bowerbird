@@ -26,7 +26,7 @@ fn fit_only() {
         .skip(1)
         .filter(|a| !a.starts_with("--"))
         .collect();
-    let amounts = rawshim::galosh::Detail::at(50.0, 50.0);
+    let amounts = denoise::galosh::Detail::at(50.0, 50.0);
 
     println!(
         "{:>16}  {:>10}  {:>10}  {:>10}  {}",
@@ -54,7 +54,7 @@ fn fit_only() {
             continue;
         };
         let started = std::time::Instant::now();
-        let fit = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+        let fit = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
             .and_then(|frame| frame.noise);
         let Some(fit) = fit else { continue };
         println!(
@@ -74,7 +74,7 @@ fn main() {
         return;
     }
 
-    let amounts = rawshim::galosh::Detail::at(50.0, 50.0);
+    let amounts = denoise::galosh::Detail::at(50.0, 50.0);
     if std::env::args().any(|a| a == "--fit") {
         fit_only();
         return;
@@ -112,15 +112,14 @@ fn main() {
             if left + 512 >= frame.width || top + 512 >= frame.height {
                 continue;
             }
-            let view =
-                rawshim::view::View::whole(rawshim::px::Size::exact(frame.width, frame.height))
-                    .showing(rawshim::px::Rect::exact(left, top, 512, 512));
+            let view = decode::view::View::whole(units::px::Size::exact(frame.width, frame.height))
+                .showing(units::px::Rect::exact(left, top, 512, 512));
             let Some(cut) = rawshim::decode_tile(
                 &path,
                 view,
                 amounts,
-                rawshim::galosh::Fit::Measure,
-                rawshim::RENDITION_TILE_HALO,
+                denoise::galosh::Fit::Measure,
+                decode::RENDITION_TILE_HALO,
             ) else {
                 println!("{name:>16}  the tile at {left},{top} declined");
                 continue;

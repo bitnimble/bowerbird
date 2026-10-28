@@ -154,14 +154,14 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/docker-mounts
-          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
           restore-keys: docker-mounts-
       - name: The image's cache mounts, from last time
         if: env.SAVE_CACHES != 'true'
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/docker-mounts
-          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
           restore-keys: docker-mounts-
       # Outside the checkout, which is the build context and would otherwise send all of it.
       - uses: reproducible-containers/buildkit-cache-dance@v3.4.0
@@ -241,7 +241,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
           workspaces: |
-            native/rawshim
+            native
             native/avif_planes
             native/vp9_encode
       # bindgen for `vp9_encode`.
@@ -273,7 +273,7 @@ jobs:
           path: |
             /tmp/bunx-*-wasm-pack@*
             ~/.cache/.wasm-pack
-          key: wasm-tools-${{ hashFiles('scripts/build-wasm.ts', 'native/rawshim/Cargo.lock') }}
+          key: wasm-tools-${{ hashFiles('scripts/build-wasm.ts', 'native/Cargo.lock') }}
           restore-keys: wasm-tools-
       - run: bun run build:wasm
       - if: env.SAVE_CACHES == 'true' && steps.wasm-tools-cache.outputs.cache-hit != 'true'
@@ -316,7 +316,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
           workspaces: |
-            native/rawshim
+            native
             src-tauri
 
       # What the Dockerfile's `codecs` stage installs, which is what vcpkg does not fetch for
@@ -473,7 +473,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
           workspaces: |
-            native/rawshim
+            native
             src-tauri
       # The desktop job's, for the codecs' vcpkg build and bindgen.
       - name: Linux build dependencies

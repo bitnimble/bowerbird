@@ -16,7 +16,7 @@
 //! grain or strokes, and its mean per colour whether a colour's level moved. Each result is also
 //! written demosaiced as `<denoiser>.png`, beside `truth.png`.
 
-use rawshim::galosh::{Amounts, Detail};
+use denoise::galosh::{Amounts, Detail};
 
 /// Site detail, in deviations of the noise, under which ground counts as flat and over which it
 /// counts as textured.
@@ -42,11 +42,11 @@ fn main() {
     let denoisers: Vec<String> = args.collect();
     std::fs::create_dir_all(&out).expect("the output directory");
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
+    let gpu = gpu::device().expect("an adapter");
+    let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     let held = |path: &str| {
         let bytes = std::fs::read(path).expect("read the raw");
-        pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held")
+        pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held")
     };
 
     let clean = held(&clean_path);
@@ -65,7 +65,7 @@ fn main() {
     }
 
     let noisy_frame = held(&noisy_path);
-    let night = pollster::block_on(rawshim::galosh::fit(
+    let night = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         noisy_frame.device_mosaic(),
@@ -109,8 +109,8 @@ fn main() {
         counts[0], counts[1], counts[2]
     );
 
-    let window = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &window, &cfa, gains));
+    let window = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
+    let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, &window, &cfa, gains));
     assert!(
         fit.usable(),
         "the window is too small or too flat to fit: {fit:?}"
@@ -139,8 +139,8 @@ fn main() {
             other => {
                 assert_eq!(other, "galosh", "{other} is not a denoiser");
                 let amounts: Amounts = Detail::AUTO.amounts(Some(fit));
-                let mosaic = rawshim::condition::Mosaic::upload(gpu, &noisy, side, side);
-                pollster::block_on(rawshim::galosh::denoise_with(
+                let mosaic = mosaic::condition::Mosaic::upload(gpu, &noisy, side, side);
+                pollster::block_on(denoise::galosh::denoise_with(
                     gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
                 ));
                 pollster::block_on(mosaic.read(gpu)).expect("reads back")
@@ -323,16 +323,16 @@ fn median(values: &[f32]) -> f32 {
 }
 
 fn write_png(
-    gpu: &'static rawshim::gpu::Gpu,
-    cfa: &rawshim::cfa::Cfa,
+    gpu: &'static gpu::Gpu,
+    cfa: &mosaic::cfa::Cfa,
     samples: &[f32],
     side: usize,
     lift: f32,
     to: &str,
 ) {
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, side, side);
-    let rgb = pollster::block_on(rawshim::demosaic::demosaic_plane(
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, side, side);
+    let rgb = pollster::block_on(mosaic::demosaic::demosaic_plane(
         gpu,
         rcd,
         &uploaded,
@@ -349,7 +349,7 @@ fn write_png(
         .iter()
         .map(|channel| ((channel * lift).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8)
         .collect();
-    let png = rawshim::png_write::encode_sdr(&rgb8, side, side, None).expect("a png");
+    let png = formats::png_write::encode_sdr(&rgb8, side, side, None).expect("a png");
     std::fs::write(to, png).expect("wrote");
 }
 

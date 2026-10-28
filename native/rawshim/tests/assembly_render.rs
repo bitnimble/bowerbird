@@ -2,20 +2,20 @@
 //! from a recipe.
 mod support;
 
-use rawshim::assembly::Drawing;
-use rawshim::assembly_blend::{Banding, NOT_REACHED};
-use rawshim::assembly_render::{LAMBDA_SPLIT, Lowpass, lowpass};
-use rawshim::assembly_tiles::W_MAX;
-use rawshim::assembly_weight::{W_HIGH_PX, Weights, slots_of, weights};
-use rawshim::composite_tile::{
+use composite::assembly::Drawing;
+use composite::assembly::blend::{Banding, NOT_REACHED};
+use composite::assembly::lowpass::{LAMBDA_SPLIT, Lowpass, lowpass};
+use composite::assembly::tiles::W_MAX;
+use composite::assembly::weight::{W_HIGH_PX, Weights, slots_of, weights};
+use composite::tile::{
     Blending, CompositeRequest, From, Layer, Mask, SourceFile, Weight, layers_of,
 };
-use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
-use rawshim::galosh::Detail;
-use rawshim::image::Strengths;
-use rawshim::light::{Gain, Light, SceneNits};
-use rawshim::px::{Composite, Rect, Share, Span};
-use rawshim::tone;
+use composition::{Composition, LensSpec, Projection, SourceSpec};
+use denoise::galosh::Detail;
+use render::detail::Strengths;
+use units::light::{Gain, Light, SceneNits};
+use units::px::{Composite, Rect, Share, Span};
+use colour::tone;
 use support::{Rig, floats_of, rig, u32s_of, upload_f32};
 
 /// A drawing over `sources` identical frames of `size`, with one square tile in the middle picking
@@ -55,7 +55,7 @@ fn with_tile(drawing: &mut Drawing, corners: [[f32; 2]; 4], pick: usize, corrido
     drawing.corridor.push(corridor);
     drawing
         .warp
-        .push(rawshim::composition::no_warp().map(|at| at as f32));
+        .push(composition::no_warp().map(|at| at as f32));
     drawing.gain.push(Gain::ONE);
 }
 
@@ -80,7 +80,7 @@ const SIZE: (usize, usize) = (128, 128);
 fn the_distance_is_signed_by_which_union_holds_the_pixel() {
     let Some(rig) = rig() else { return };
     let recipe = one_tile(2, SIZE, 1, 0.1);
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, _) = read(&rig, &w);
     let at = |x: usize, y: usize, slot: usize| signed[(y * SIZE.0 + x) * w.slots + slot];
@@ -113,7 +113,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
     // source could have stood in for the shift alone.
     recipe.warp = vec![[1.0, 0.014, 0.0, 1.0, 6.0, -2.0]];
 
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     assert_eq!(w.slots, 2, "the base and the frame its one tile picked");
 
@@ -134,7 +134,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
     );
     assert_eq!(
         at(64, 64, base),
-        rawshim::assembly_weight::NO_TILE,
+        composite::assembly::weight::NO_TILE,
         "the base has no tile here, so it takes the ground's own geometry",
     );
 }
@@ -146,7 +146,7 @@ fn every_pixel_names_the_tile_its_source_is_read_through() {
 fn two_unions_meeting_sum_to_one_across_the_seam() {
     let Some(rig) = rig() else { return };
     let recipe = one_tile(2, SIZE, 1, 0.1);
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, width) = read(&rig, &w);
 
@@ -193,7 +193,7 @@ fn the_width_is_half_the_corridor_between_its_two_bounds() {
             feather,
             ..one_tile(2, WIDTH_SIZE, 1, corridor)
         };
-        let window = rawshim::px::Rect::exact(0, 0, WIDTH_SIZE.0, WIDTH_SIZE.1);
+        let window = units::px::Rect::exact(0, 0, WIDTH_SIZE.0, WIDTH_SIZE.1);
         let w = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
         let (_, width) = read(&rig, &w);
         // The middle of the tile's left edge, which is where the seam is.
@@ -220,7 +220,7 @@ fn a_later_tile_owns_the_ground_it_overlaps() {
         0.1,
     );
 
-    let window = rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
+    let window = units::px::Rect::exact(0, 0, SIZE.0, SIZE.1);
     let weights_ = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let (signed, _) = read(&rig, &weights_);
     let slots = weights_.slots;
@@ -255,13 +255,13 @@ fn a_window_reads_the_same_field_as_the_whole_canvas() {
     let whole = pollster::block_on(weights(
         rig.gpu,
         &recipe,
-        rawshim::px::Rect::exact(0, 0, SIZE.0, SIZE.1),
+        units::px::Rect::exact(0, 0, SIZE.0, SIZE.1),
         1.0,
     ));
     let part = pollster::block_on(weights(
         rig.gpu,
         &recipe,
-        rawshim::px::Rect::exact(left, top, side, side),
+        units::px::Rect::exact(left, top, side, side),
         1.0,
     ));
     let (a, _) = read(&rig, &whole);
@@ -287,7 +287,7 @@ fn a_window_reads_the_same_field_as_the_whole_canvas() {
 /// thing a pixel grid can hold at all.
 const BAND_SIZE: (usize, usize) = (1024, 1024);
 
-/// Writes a greyscale PNG `composite_tile` can decode as one source, gamma 1.0 so the codes this
+/// Writes a greyscale PNG `composite::tile` can decode as one source, gamma 1.0 so the codes this
 /// writes are read back as light directly rather than through sRGB's curve.
 fn write_png(
     dir: &std::path::Path,
@@ -330,8 +330,8 @@ fn next_scratch() -> usize {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// `composite_tile::prepared`'s own defaults for a source nothing has measured yet - no sharpen,
-/// no defringe, no dust - the same ones `composite_align`'s own composite test uses.
+/// `composite::tile::prepared`'s own defaults for a source nothing has measured yet - no sharpen,
+/// no defringe, no dust - the same ones `composite::align`'s own composite test uses.
 fn asking<'a>(
     _spec: &Composition,
     paths: &'a [String],
@@ -419,10 +419,10 @@ fn two_sources_narrower_than_the_canvas(size: (usize, usize)) -> (Composition, V
         focal: FOCAL,
         lens: LensSpec::none(),
         gain: 1.0,
-        warp: rawshim::composition::no_warp(),
+        warp: composition::no_warp(),
     };
     let spec = Composition {
-        version: rawshim::composition::VERSION,
+        version: composition::VERSION,
         sources: vec![source(), source()],
         projection: Projection::Rectilinear,
         canvas: [size.0, size.1],
@@ -503,7 +503,7 @@ fn fit_and_residual(row: &[(f32, f32)], wavelength: f32) -> (f32, f32) {
 /// A row of `(canvas x, light)` off one source's own layer, decoded at native resolution: the
 /// scale the fine wavelength is actually resolvable at, which the final grid is not.
 fn native_row(spec: &Composition, paths: &[String], size: (usize, usize)) -> Vec<(f32, f32)> {
-    let mut layer: Option<rawshim::resident::Resident> = None;
+    let mut layer: Option<colour::resident::Resident> = None;
     pollster::block_on(layers_of(
         spec,
         &asking(spec, paths, whole(size)),
@@ -669,7 +669,7 @@ fn weight_of(
     window: Rect<Composite>,
     source: usize,
 ) -> Vec<f32> {
-    let mut held: Option<rawshim::gpu::Buffer> = None;
+    let mut held: Option<gpu::Buffer> = None;
     pollster::block_on(layers_of(spec, request, |i, layer, _| {
         let Layer { rgb, weight } = layer;
         if i == source {
@@ -759,7 +759,7 @@ fn a_cylinder_of_two(size: (usize, usize)) -> (Composition, Vec<String>) {
         source.focal = size.0 as f64 / 2.0;
     }
     spec.sources[1].rotation =
-        rawshim::composition::from_axis_angle([0.0, std::f64::consts::FRAC_PI_4, 0.0]);
+        composition::from_axis_angle([0.0, std::f64::consts::FRAC_PI_4, 0.0]);
     (spec, paths)
 }
 
@@ -933,7 +933,7 @@ fn layer_light(
     size: (usize, usize),
     source: usize,
 ) -> Vec<f32> {
-    let mut held: Option<rawshim::resident::Resident> = None;
+    let mut held: Option<colour::resident::Resident> = None;
     pollster::block_on(layers_of(
         spec,
         &asking(spec, paths, whole(size)),
@@ -987,7 +987,7 @@ fn under_gain(spec: &Composition, paths: &[String], size: (usize, usize), gain: 
     recipe.gain[0] = gain;
     let request = asking(spec, paths, whole(size));
     let held = pollster::block_on(lowpass(&recipe, &request)).expect("a lowpass");
-    let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(&recipe, &held, &request))
+    let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(&recipe, &held, &request))
         .expect("a render");
     let codes = pollster::block_on(out.host()).expect("a readable window");
     (0..size.0 * size.1)
@@ -1272,7 +1272,7 @@ fn render_in_strips(
     while left < size.0 {
         let across = wide.min(size.0 - left);
         let window = Rect::exact(left, 0, across, size.1);
-        let (out, _) = pollster::block_on(rawshim::assembly_render::prepared(
+        let (out, _) = pollster::block_on(composite::assembly::lowpass::prepared(
             recipe,
             &held,
             &asking(spec, paths, window),
@@ -1539,11 +1539,11 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
     recipe.base = 1;
     recipe.spec.reference = 0;
 
-    let matched = rawshim::photo_analysis::PhotoAnalysis {
-        from_raw: rawshim::photo_analysis::FromRaw {
-            matched: Some(rawshim::hdr_fit::HdrMatch {
-                lens: rawshim::fit::Lens::none(),
-                colour: Some(rawshim::hdr_fit::HdrColour::identity()),
+    let matched = fit::photo_analysis::PhotoAnalysis {
+        from_raw: fit::photo_analysis::FromRaw {
+            matched: Some(fit::hdr::HdrMatch {
+                lens: geometry::lens::Lens::none(),
+                colour: Some(colour::matched::HdrColour::identity()),
             }),
             ..Default::default()
         },
@@ -1566,7 +1566,7 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
     };
     let held = pollster::block_on(lowpass(&recipe, &request)).expect("a lowpass");
     let (_, prepared) =
-        pollster::block_on(rawshim::assembly_render::prepared(&recipe, &held, &request))
+        pollster::block_on(composite::assembly::lowpass::prepared(&recipe, &held, &request))
             .expect("a window of the assembly");
     assert!(
         prepared.matched.is_some(),

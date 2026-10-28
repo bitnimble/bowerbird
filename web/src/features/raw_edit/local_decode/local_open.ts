@@ -325,7 +325,7 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     geometry: JsonSchema.nullable(),
     proof: ProofSchema.nullable(),
     print: PrintSceneSchema.nullable(),
-    /** The colour edit whose reach the stage shows, as `lattice::ColourNode` JSON, and how strongly. */
+    /** The colour edit whose reach the stage shows, as `colour::lattice::ColourNode` JSON, and how strongly. */
     reachMask: z.object({ node: z.string(), strength: z.number() }).nullable(),
     /** The ICC profile a print is proofed through, sent only when it changes: absent keeps the last. */
     printerProfile: BytesSchema.nullable().optional(),

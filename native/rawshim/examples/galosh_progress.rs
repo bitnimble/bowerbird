@@ -17,7 +17,7 @@
 //! reason `open_bench` gives: no phase of GALOSH branches on a sample value, so the dispatch shape
 //! is fixed by the frame's size alone and the timings transfer exactly.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
@@ -29,8 +29,8 @@ fn main() {
     let (width, height) = (prepared.header.width & !1, prepared.header.height & !1);
     drop(prepared);
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the denoise");
+    let gpu = gpu::device().expect("an adapter");
+    let kernels = denoise::galosh::device(gpu).expect("the denoise");
     let amounts = Amounts::from_sliders(50.0, 50.0);
 
     let mut state = 0x2545_f491_4f6c_dd1du64;
@@ -43,13 +43,13 @@ fn main() {
             (level + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.05).clamp(0.0, 1.0)
         })
         .collect();
-    let upload = |values: &[f32]| rawshim::condition::Mosaic::upload(gpu, values, width, height);
-    let read = |frame: &rawshim::condition::Mosaic| {
+    let upload = |values: &[f32]| mosaic::condition::Mosaic::upload(gpu, values, width, height);
+    let read = |frame: &mosaic::condition::Mosaic| {
         pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
     };
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
-    let gains = rawshim::galosh::UNGAINED;
-    let fit = pollster::block_on(rawshim::galosh::fit(
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+    let gains = denoise::galosh::UNGAINED;
+    let fit = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         &upload(&mosaic),
@@ -61,20 +61,20 @@ fn main() {
         width,
         height,
         (width * height) as f64 / 1e6,
-        rawshim::RENDITION_TILE_HALO,
+        decode::RENDITION_TILE_HALO,
     );
 
     let mut one = std::time::Duration::MAX;
     for _ in 0..3 {
         let scratch = upload(&mosaic);
         let began = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise_with(
+        pollster::block_on(denoise::galosh::denoise_with(
             gpu, kernels, &scratch, &cfa, gains, amounts, fit,
         ));
         one = one.min(began.elapsed());
     }
     let whole = upload(&mosaic);
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu, kernels, &whole, &cfa, gains, amounts, fit,
     ));
     let whole = read(&whole);
@@ -85,7 +85,7 @@ fn main() {
         let mut gaps: Vec<std::time::Duration> = Vec::new();
         let mut last = std::time::Instant::now();
         let began = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise_in_tiles(
+        pollster::block_on(denoise::galosh::denoise_in_tiles(
             gpu,
             kernels,
             &mut out,
@@ -150,10 +150,10 @@ fn main() {
         "-",
     );
     for tile in [4096usize, 2048, 1024, 512] {
-        let (out, mut taken, ticks, gap) = tiled(tile, rawshim::RENDITION_TILE_HALO);
+        let (out, mut taken, ticks, gap) = tiled(tile, decode::RENDITION_TILE_HALO);
         // Best of three, since a run this long picks up whatever else wanted the GPU.
         for _ in 0..2 {
-            taken = taken.min(tiled(tile, rawshim::RENDITION_TILE_HALO).1);
+            taken = taken.min(tiled(tile, decode::RENDITION_TILE_HALO).1);
         }
         println!(
             "  {tile:>5}  {ticks:>6}  {:>6}ms  {:>6}ms  {:>6.2}x  {:>11e}",
@@ -169,8 +169,8 @@ fn main() {
 fn request() -> rawshim::edit::EditRequest {
     rawshim::edit::EditRequest {
         long_edge: 0,
-        grade: rawshim::hdr::Grade {
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
+        grade: rawshim::hdr_args::Grade {
+            reference_white_nits: units::light::Light::exactly(203.0),
             white_quantile: 0.995,
         },
         defringe: 1.0,
@@ -184,7 +184,7 @@ fn request() -> rawshim::edit::EditRequest {
         // would be measuring a filtered frame filtered again.
         denoise_luminance: Some(0.0),
         denoise_colour: Some(0.0),
-        denoiser: rawshim::galosh::Denoiser::Galosh,
+        denoiser: denoise::galosh::Denoiser::Galosh,
         highlight_recovery: None,
     }
 }

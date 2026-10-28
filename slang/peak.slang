@@ -31,7 +31,7 @@ import light;
 [vk::binding(8, 0)] RWStructuredBuffer<Atomic<uint> > candidates;
 
 // The host needs the same two numbers to size the buffers, and
-// `the_shader_sizes_match_the_buffers_allocated_for_them` holds `gpu.rs` to these.
+// `the_shader_sizes_match_the_buffers_allocated_for_them` holds `grade.rs` to these.
 //
 // Folded rather than specialised, and load-bearing: WebKit refuses a pipeline handed a constant
 // its entry point does not statically reference, and of the four here `measure` never reads

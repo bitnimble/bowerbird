@@ -11,7 +11,7 @@
 //! Coordinates are the sensor's own; the window origin must align to the CFA period.
 //! `sigma_sq` replaces the fit's read noise, for telling a wrong fit from a wrong filter.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 fn pgm(path: &str, values: &[f32], width: usize, height: usize) {
     let mut bytes = format!("P5\n{width} {height}\n255\n").into_bytes();
@@ -45,9 +45,9 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let bytes = std::fs::read(&path).expect("read the raw");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
+    let gpu = gpu::device().expect("an adapter");
+    let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     let mosaic = held.device_mosaic();
     let stride = mosaic.width;
     // The window is in the sensor's coordinates and a render's crop is inside the readable area,
@@ -64,22 +64,22 @@ fn main() {
         "the window origin must align to the CFA period"
     );
     let gains = held.ceilings();
-    let mut fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
+    let mut fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
     eprintln!("fit: {fit:?}");
     if let Some(sigma_sq) = args.next() {
         fit.sigma_sq = sigma_sq.parse().expect("a number");
     }
-    let detail = rawshim::galosh::Detail {
+    let detail = denoise::galosh::Detail {
         luminance,
         colour,
-        ..rawshim::galosh::Detail::AUTO
+        ..denoise::galosh::Detail::AUTO
     };
     let (luminance, colour) = detail.resolved(Some(fit));
     eprintln!("luminance {luminance} colour {colour}");
 
     let noisy = pollster::block_on(mosaic.read(gpu)).expect("reads back");
     let filtered = mosaic.duplicate(gpu);
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu,
         kernels,
         &filtered,
@@ -146,10 +146,10 @@ fn main() {
 
     // The same windows through the demosaic, lifted, so what a render would show of them is
     // watchable side by side. The window's origin is even, so its CFA is the frame's.
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
+        pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,

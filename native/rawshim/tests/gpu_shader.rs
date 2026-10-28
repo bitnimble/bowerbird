@@ -13,20 +13,9 @@
 
 mod support;
 
-use rawshim::gpu::dispatch::Whole;
-use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
-use rawshim::lattice::LutAxes;
-
-/// The shaders as the crate was built with them, from where `build.rs` gathered them.
-///
-/// Read rather than vendored, so a change to the shader is a change to this test. A copy
-/// would pass forever against whatever it was copied from.
-fn read_wgsl(name: &str) -> String {
-    let path = std::path::Path::new(env!("OUT_DIR"))
-        .join("wgsl")
-        .join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
+use gpu::dispatch::Whole;
+use colour::matched::{HdrColour, TRUST_CEILING};
+use colour::lattice::LutAxes;
 
 /// A colour model with every stage off its identity, for a uniform shaped like a real match's.
 fn model() -> HdrColour {
@@ -54,7 +43,7 @@ fn model() -> HdrColour {
 
 /// `struct Edit`, field for field, in the order the shader declares them.
 ///
-/// Written here rather than taken from `gpu::Grade` because `peak_samples` is what the scan is
+/// Written here rather than taken from `render::grade::Grade` because `peak_samples` is what the scan is
 /// asked against, and a grade derives it from the frame rather than taking it.
 fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
@@ -152,7 +141,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
                 f_push(&mut words, value);
             }
         }
-        words.resize(words.len() + (rawshim::light::CURVE_MAX_POINTS - 2) * 4, 0);
+        words.resize(words.len() + (units::light::CURVE_MAX_POINTS - 2) * 4, 0);
     }
     f_push(&mut words, 0.0); // camera_exposure
     f_push(&mut words, 0.0); // camera_saturation
@@ -212,7 +201,7 @@ fn bin_centre(bin: u32) -> f32 {
 /// no decode and no browser can say anything about a scan over 8192 counts.
 #[test]
 fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the peak's scan was not run.");
         return;
     };
@@ -220,7 +209,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("peak"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("peak.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PEAK.source.into()),
     });
     // Derived from what `quantile` actually reads, which is the histogram, the peak, the
     // candidates and the uniform. An explicit layout would have to name every binding the
@@ -315,7 +304,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
         recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
         recording.submit();
 
-        let got = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+        let got = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
             f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
         }))
         .expect("the readback mapped");
@@ -341,7 +330,7 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
 /// to the bin, since every pixel is then clamped to what it says.
 #[test]
 fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so `bin_of` was not run.");
         return;
     };
@@ -349,7 +338,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("peak"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("probe_bins.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PROBE_BINS.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("probe_bins"),
@@ -406,7 +395,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
     recording.copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
     recording.submit();
 
-    let got: Vec<u32> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+    let got: Vec<u32> = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u32)
@@ -433,7 +422,7 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
 /// the driver's own conversion does: radv truncates, so a frame stored there read darker.
 #[test]
 fn the_half_conversion_rounds_alike_on_every_adapter() {
-    let Some(shipped) = rawshim::gpu::device() else {
+    let Some(shipped) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so `half_bits` was not run.");
         return;
     };
@@ -458,7 +447,7 @@ fn the_half_conversion_rounds_alike_on_every_adapter() {
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("halves"),
-        source: wgpu::ShaderSource::Wgsl(read_wgsl("probe_halves.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shaders::PROBE_HALVES.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("probe_halves"),
@@ -499,7 +488,7 @@ fn the_half_conversion_rounds_alike_on_every_adapter() {
     );
     recording.copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
     recording.submit();
-    let got: Vec<u16> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+    let got: Vec<u16> = pollster::block_on(gpu::read_back(shipped, &readback, |mapped| {
         mapped
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u16)

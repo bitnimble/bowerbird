@@ -1,9 +1,9 @@
 mod support;
 
-use rawshim::gpu::{Canvas, Grade};
-use rawshim::light::Light;
-use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::Size;
+use render::grade::{Canvas, Grade};
+use units::light::Light;
+use render::print::{Paper, Presentation, Scene};
+use units::px::Size;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), String> {
@@ -36,7 +36,7 @@ fn main() -> Result<(), String> {
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
-            denoiser: rawshim::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),
@@ -46,15 +46,15 @@ fn main() -> Result<(), String> {
         },
         support::STRENGTHS.sharpen,
     )?;
-    let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("source pyramid")?;
+    let gpu = gpu::device().ok_or("print requires Vulkan")?;
+    let base = render::base::device(gpu).ok_or("source pyramid")?;
     let header = &prepared.header;
     let analysis = header
         .photo_analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode);
+        .and_then(fit::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("source pyramid")?;
     let display = Scene {
         framed,
@@ -81,7 +81,7 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,
@@ -90,8 +90,8 @@ fn main() -> Result<(), String> {
             Light::exactly(1000.0),
         )
     };
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
     let target = gpu.own_texture(&wgpu::TextureDescriptor {
         label: Some("print motion timing"),

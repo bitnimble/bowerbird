@@ -14,11 +14,11 @@
 //!
 //!   BOWERBIRD_WRITE_FIXTURES=1 bun run test:native <name>
 
-use crate::condition::Mosaic;
-use crate::light::{DisplayNits, Light, Pq, SceneNits};
-use crate::px::{Pinned, Rect, Size, Span};
-use crate::resident::Resident;
-use crate::tone::Anchored;
+use colour::resident::Resident;
+use colour::tone::Anchored;
+use mosaic::condition::Mosaic;
+use units::light::{DisplayNits, Light, Pq, SceneNits};
+use units::px::{Pinned, Rect, Size, Span};
 
 /// The nits an SDR view of a PQ snapshot puts at its white, BT.2408's reference.
 const DISPLAY_WHITE: Light<DisplayNits> = Light::exactly(203.0);
@@ -100,7 +100,7 @@ impl Snapshot {
     pub fn whole(frame: Frame<'_>, long: Span<Pinned>) -> Snapshot {
         let resident = frame.resident();
         let gpu = resident.gpu();
-        let base = crate::base::device(gpu).expect("the base kernels");
+        let base = render::base::device(gpu).expect("the base kernels");
         let (width, height) = resident.size();
         let scale = long.raw() as f64 / width.max(height) as f64;
         let out = (
@@ -108,8 +108,8 @@ impl Snapshot {
             ((height as f64 * scale).round() as usize).max(1),
         );
         let resized = match frame {
-            Frame::Coded(_) => crate::base::resize(gpu, base, resident, out),
-            Frame::Scene(..) => crate::base::resize_scene(gpu, base, resident, out),
+            Frame::Coded(_) => render::base::resize(gpu, base, resident, out),
+            Frame::Scene(..) => render::base::resize_scene(gpu, base, resident, out),
         };
         let taken = resized.as_ref().unwrap_or(resident);
         let (width, height) = taken.size();
@@ -131,9 +131,9 @@ impl Snapshot {
 
     /// Rectangles of a mosaic at 1:1, each photosite drawn in its own filter's colour.
     pub fn mosaic<S>(
-        gpu: &'static crate::gpu::Gpu,
+        gpu: &'static gpu::Gpu,
         mosaic: &Mosaic,
-        cfa: &crate::cfa::Cfa,
+        cfa: &mosaic::cfa::Cfa,
         anchoring: Anchoring,
         crops: &[Rect<S>],
     ) -> Snapshot {
@@ -145,7 +145,7 @@ impl Snapshot {
                 .round()
                 .clamp(0.0, f32::from(u16::MAX));
             let mut pixel = [0u16; 3];
-            pixel[usize::from(cfa.colour_at(y, x))] = crate::resident::bits_of_level(level);
+            pixel[usize::from(cfa.colour_at(y, x))] = colour::resident::bits_of_level(level);
             pixel
         });
         let coded = code_scene(gpu, cut, anchoring);
@@ -169,7 +169,7 @@ impl Snapshot {
             .map(|level| {
                 let share = f64::from(level) / f64::from(u16::MAX);
                 let nits = Light::<DisplayNits>::measured(peak.raw() * share);
-                (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
+                (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
             })
             .collect();
         let samples: Vec<u16> = samples.iter().map(|&v| coded[usize::from(v)]).collect();
@@ -263,11 +263,11 @@ impl Snapshot {
     pub fn encode(&self) -> Vec<u8> {
         match self.coding {
             Coding::Pq => {
-                crate::png_write::encode_hdr(&self.samples, self.width, self.height, None)
+                formats::png_write::encode_hdr(&self.samples, self.width, self.height, None)
             }
             Coding::Srgb => {
                 let bytes: Vec<u8> = self.samples.iter().map(|&v| (v / 257) as u8).collect();
-                crate::png_write::encode_sdr(&bytes, self.width, self.height, None)
+                formats::png_write::encode_sdr(&bytes, self.width, self.height, None)
             }
         }
         .expect("the snapshot encodes")
@@ -287,8 +287,8 @@ impl Snapshot {
             (points.color_primaries, points.transfer_function),
             info.bit_depth,
         ) {
-            (crate::png_write::HDR, png::BitDepth::Sixteen) => Coding::Pq,
-            (crate::png_write::SDR, png::BitDepth::Eight) => Coding::Srgb,
+            (formats::png_write::HDR, png::BitDepth::Sixteen) => Coding::Pq,
+            (formats::png_write::SDR, png::BitDepth::Eight) => Coding::Srgb,
             other => return Err(format!("not a snapshot's coding: {other:?}")),
         };
         let mut buffer = vec![0u8; reader.output_buffer_size().ok_or("an oversized PNG")?];
@@ -332,13 +332,9 @@ impl Frame<'_> {
     }
 }
 
-fn code_scene(
-    gpu: &'static crate::gpu::Gpu,
-    mut samples: Vec<u16>,
-    anchoring: Anchoring,
-) -> Vec<u16> {
-    let base = crate::base::device(gpu).expect("the base kernels");
-    pollster::block_on(crate::base::encode_base(
+fn code_scene(gpu: &'static gpu::Gpu, mut samples: Vec<u16>, anchoring: Anchoring) -> Vec<u16> {
+    let base = render::base::device(gpu).expect("the base kernels");
+    pollster::block_on(render::base::encode_base(
         gpu,
         base,
         &mut samples,
@@ -409,7 +405,12 @@ pub fn scratch() -> std::path::PathBuf {
 }
 
 pub fn dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/snapshots")
+    // At run time, not `env!`: a compiled-in checkout path keeps the library from being shared
+    // across worktrees' build caches.
+    std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("snapshots are checked under cargo"),
+    )
+    .join("../../test/fixtures/snapshots")
 }
 
 /// An SDR PNG of before, after and where they differ, as columns, enlarged to be read: what an
@@ -434,7 +435,7 @@ pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> 
             .collect();
         levels.sort_unstable();
         let brightest = levels[levels.len() * 99 / 100];
-        let own = crate::tone::pq_inv::<DisplayNits>(Light::measured(
+        let own = colour::tone::pq_inv::<DisplayNits>(Light::measured(
             f64::from(brightest) / f64::from(u16::MAX),
         ));
         if own.raw() > 0.0 && own.raw() < DISPLAY_WHITE.raw() / 8.0 {
@@ -483,7 +484,7 @@ pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> 
             }
         }
     }
-    crate::png_write::encode_sdr(&out, out_w, out_h, None).expect("the side-by-side encodes")
+    formats::png_write::encode_sdr(&out, out_w, out_h, None).expect("the side-by-side encodes")
 }
 
 /// Eight-bit sRGB to show a snapshot as, with `white` at SDR white.
@@ -494,17 +495,17 @@ fn view(snapshot: &Snapshot, white: Light<DisplayNits>) -> Vec<u8> {
     let share: Vec<f64> = (0..=u16::MAX)
         .map(|code| {
             let signal = Light::<Pq>::measured(f64::from(code) / f64::from(u16::MAX));
-            crate::tone::pq_inv::<DisplayNits>(signal) / white
+            colour::tone::pq_inv::<DisplayNits>(signal) / white
         })
         .map(|gain| gain.raw())
         .collect();
-    let matrix = crate::hdr_fit::rec2020_to_srgb();
+    let matrix = colour::space::rec2020_to_srgb();
     let mut out = Vec::with_capacity(snapshot.samples.len());
     for pixel in snapshot.samples.chunks_exact(3) {
         let rgb = [0, 1, 2].map(|c| share[usize::from(pixel[c])]);
         for row in matrix {
             let linear = (row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]).clamp(0.0, 1.0);
-            out.push((crate::hdr_fit::srgb_oetf(linear) * 255.0).round() as u8);
+            out.push((colour::space::srgb_oetf(linear) * 255.0).round() as u8);
         }
     }
     out
@@ -647,8 +648,8 @@ mod tests {
     /// after is 500 nits, which the upper exposure clips to white and the lower does not.
     #[test]
     fn the_side_by_side_is_before_after_difference_over_two_exposures() {
-        let nits = Light::<crate::light::SceneNits>::exactly(500.0);
-        let code = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16;
+        let nits = Light::<units::light::SceneNits>::exactly(500.0);
+        let code = (colour::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16;
         let (width, height, pixels) = drawn(&side_by_side_png(
             Some(&flat(32, 16, 0)),
             &flat(32, 16, code),
@@ -717,7 +718,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_of_shadows_is_drawn_again_at_its_own_level() {
-        let dim = (crate::tone::pq(Light::<DisplayNits>::measured(2.0)).raw() * 65535.0) as u16;
+        let dim = (colour::tone::pq(Light::<DisplayNits>::measured(2.0)).raw() * 65535.0) as u16;
         let (_, height, pixels) = drawn(&side_by_side_png(None, &flat(32, 16, dim)));
         let zoom = (VIEW_LONG / 32).min(VIEW_MAX_ZOOM);
         assert_eq!(height, 3 * 16 * zoom + 2 * BAND_GAP);
@@ -749,7 +750,7 @@ mod tests {
         let peak = Light::<DisplayNits>::exactly(1000.0);
         let snapshot = Snapshot::signal(&[0, u16::MAX, 13107], Size::<Pinned>::exact(1, 1), peak);
         let code = |nits: f64| {
-            let pq = crate::tone::pq(Light::<DisplayNits>::measured(nits)).raw();
+            let pq = colour::tone::pq(Light::<DisplayNits>::measured(nits)).raw();
             (pq * f64::from(u16::MAX)).round() as u16
         };
         assert_eq!(snapshot.coding, Coding::Pq);
@@ -764,7 +765,7 @@ mod tests {
 
     #[test]
     fn frames_on_the_device_become_snapshots_of_the_asked_shape() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             eprintln!("SKIPPED: no adapter answered");
             return;
         };
@@ -788,7 +789,7 @@ mod tests {
             "a crop is 1:1"
         );
 
-        let levels = crate::tone::Levels {
+        let levels = colour::tone::Levels {
             white: Light::measured(20000.0),
             peak: Light::measured(60000.0),
             floor: Some(Light::measured(0.0)),
@@ -799,7 +800,7 @@ mod tests {
         };
         let values: Vec<f32> = (0..width * height).map(|i| (i % 7) as f32 / 7.0).collect();
         let mosaic = Mosaic::upload(gpu, &values, width, height);
-        let rggb = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+        let rggb = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
         let painted = Snapshot::mosaic(
             gpu,
             &mosaic,

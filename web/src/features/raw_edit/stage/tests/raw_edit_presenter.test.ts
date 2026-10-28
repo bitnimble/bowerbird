@@ -602,7 +602,7 @@ describe('a slider reaching the picture', () => {
     presenter.settleCrop({ left: 0.2, top: 0.1, right: 0.8, bottom: 0.9 });
     await drawn();
 
-    // `image::Geometry`'s own order, which is what `serde` reads it back as: left, top, right,
+    // `geometry::warp::Geometry`'s own order, which is what `serde` reads it back as: left, top, right,
     // bottom. A pair transposed here is a crop taken out of the wrong side of the picture.
     expect(decoder.geometry?.crop[0]).toBeCloseTo(0.2, 6);
     expect(decoder.geometry?.crop[1]).toBeCloseTo(0.1, 6);

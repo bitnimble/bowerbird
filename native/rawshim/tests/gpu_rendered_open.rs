@@ -1,7 +1,7 @@
 //! A finished picture through the whole editor open, which is the claim the feature actually
 //! makes: everything below the mosaic runs on one unchanged.
 //!
-//! `gpu_linearise.rs` pins the kernel and `rendered_decode.rs` pins the readers. What neither can
+//! `gpu_linearise.rs` pins the kernel and `native/formats/tests/rendered_decode.rs` pins the readers. What neither can
 //! say is whether the *chain* takes what they produce - the correction, the levels, the coding,
 //! the defringe, the gather and the sharpen are written against a frame a demosaic left, and a
 //! decode with no mosaic behind it reaches them with `noise` and `matrix` both absent.
@@ -48,7 +48,7 @@ fn png(width: usize, height: usize) -> Vec<u8> {
 
 #[test]
 fn a_png_opens_through_the_chain_a_raw_opens_through() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }
@@ -64,7 +64,7 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
     assert!(!header.matched);
     assert_eq!(
         header.as_shot,
-        Some(rawshim::white_balance::RENDERED_WHITE)
+        Some(colour::white_balance::RENDERED_WHITE)
     );
     assert!(
         !header.mosaic,
@@ -116,37 +116,37 @@ fn grey_jpeg(width: usize, height: usize) -> Vec<u8> {
 
 fn graded(
     opened: &rawshim::edit::Prepared,
-    as_shot: Option<rawshim::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     temperature: Option<f64>,
     tint: Option<f64>,
 ) -> Vec<u16> {
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let header = &opened.header;
-    let grade = rawshim::gpu::Grade {
-        adjust: rawshim::gpu::Adjust {
+    let grade = render::grade::Grade {
+        adjust: render::grade::Adjust {
             temperature,
             tint,
-            ..rawshim::gpu::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         as_shot,
-        ..rawshim::gpu::Grade::new(
+        ..render::grade::Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,
             },
             header.grade.reference_white_nits,
-            rawshim::gpu::Output::Pq.mastered(header.grade.reference_white_nits),
+            render::grade::Output::Pq.mastered(header.grade.reference_white_nits),
         )
     };
-    gpu.encode(&opened.samples, &grade)
+    render::grade::device(gpu).encode(&opened.samples, &grade)
 }
 
 #[test]
 fn a_jpegs_white_balance_moves_away_from_the_picture_as_it_was_rendered() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }
@@ -217,7 +217,7 @@ fn a_jpegs_white_balance_moves_away_from_the_picture_as_it_was_rendered() {
 /// a demosaiced frame would also do.
 #[test]
 fn the_detail_sliders_do_nothing_to_a_picture_with_no_mosaic() {
-    if rawshim::gpu::device().is_none() {
+    if gpu::device().is_none() {
         eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
         return;
     }

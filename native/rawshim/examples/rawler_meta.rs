@@ -29,7 +29,7 @@ fn main() {
         println!("   blacklevel  {:?}", image.blacklevel);
         println!("   whitelevel  {:?}", image.whitelevel);
         // `xyz_to_cam` is deprecated in rawler and reads all zeros for every body here, which
-        // `decode_rawler::xyz_to_cam_of` says and works around. Printed anyway, because a reader
+        // `decode::raw::xyz_to_cam_of` says and works around. Printed anyway, because a reader
         // comparing this against another tool's output needs to see that it is empty rather than
         // wonder whether it was read.
         println!(
@@ -47,7 +47,7 @@ fn main() {
         }
         // What the demosaic actually multiplies by: the camera matrix above, normalised through
         // sRGB as dcraw's `cam_xyz_coeff` does, inverted, and taken to Rec.2020's primaries.
-        match rawshim::decode_rawler::camera_to_rec2020(&image) {
+        match decode::raw::camera_to_rec2020(&image) {
             Some(rows) => {
                 for (name, row) in ["R", "G", "B"].iter().zip(rows) {
                     println!(
@@ -81,7 +81,7 @@ fn main() {
             //
             // The level the decode will divide by, not the file's figure: asking the file reports a
             // frame as clipping where the pipeline is about to give it headroom.
-            let ceiling = rawshim::decode_rawler::saturation_of(&image) as u16;
+            let ceiling = decode::raw::saturation_of(&image) as u16;
             let over = samples[..n].iter().filter(|s| **s > ceiling).count();
             println!(
                 "   above white {over} of {n} ({:.4}%)  whole frame",

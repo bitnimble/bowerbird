@@ -7,7 +7,6 @@
 // library still owns and, where it produces an image, hands back another one. JS
 // passes a path in and gets a path or a handle out; the samples stay on this side.
 
-use crate::fit;
 use crate::job;
 use std::ffi::{CStr, c_char};
 
@@ -92,7 +91,7 @@ pub unsafe extern "C" fn bb_run_job(
 
     let result = match parsed {
         Err(error) => Err(format!("could not read the job: {error}")),
-        Ok(parsed) => crate::progress::counted(parsed.progress_id, || {
+        Ok(parsed) => trace::progress::counted(parsed.progress_id, || {
             crate::guard("bb_run_job", Err("panicked".to_string()), || {
                 job::run(&parsed)
             })
@@ -123,13 +122,13 @@ pub unsafe extern "C" fn bb_describe_jpeg(
     let jpeg = unsafe { std::slice::from_raw_parts(jpeg, len) };
     let out = unsafe { std::slice::from_raw_parts_mut(out, cap) };
     crate::guard("bb_describe_jpeg", -1, || {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return -1;
         };
-        let Ok(rgb) = crate::jpeg::decode_tile(jpeg, 0) else {
+        let Ok(rgb) = formats::jpeg::decode_tile(jpeg, 0) else {
             return -1;
         };
-        match crate::stacks::describe(gpu, rgb.as_ref()) {
+        match stacks::describe(gpu, rgb.as_ref()) {
             Some(descriptor) if descriptor.len() <= out.len() => {
                 out[..descriptor.len()].copy_from_slice(&descriptor);
                 descriptor.len() as i64
@@ -149,7 +148,7 @@ pub unsafe extern "C" fn bb_upscalable(path: *const c_char) -> i32 {
     let Some(path) = (unsafe { as_str(path) }) else {
         return 0;
     };
-    i32::from(crate::decode_rawler::upscalable_at(path))
+    i32::from(decode::raw::upscalable_at(path))
 }
 
 /// Renders with the upscaler model the app downloaded, at these two paths, from the next frame on
@@ -171,7 +170,7 @@ pub unsafe extern "C" fn bb_hold_upscaler_model(
     else {
         return -2;
     };
-    crate::upscale::hold_model(manifest, weights);
+    denoise::upscale::hold_model(manifest, weights);
     0
 }
 
@@ -195,10 +194,10 @@ pub unsafe extern "C" fn bb_hold_dereflect_model(
     else {
         return -2;
     };
-    match crate::dereflect::hold_model(&manifest, &weights) {
+    match dereflect::hold_model(&manifest, &weights) {
         Ok(()) => 0,
         Err(why) => {
-            crate::warn(&format!("rawshim: the reflection model was refused: {why}"));
+            trace::warn(&format!("rawshim: the reflection model was refused: {why}"));
             -3
         }
     }
@@ -267,7 +266,7 @@ unsafe fn replied(result: Result<job::Outcome, String>, out: *mut u8, out_cap: u
 /// Read once by the caller ([`bb_prepare_header_cap`]) so the two sides cannot disagree about
 /// where the samples start. The header is a few hundred bytes plus the analysis blob, as JSON of up
 /// to four characters a byte, and the blob is bounded by the largest lattice a stored one may hold.
-pub const PREPARE_HEADER_CAP: usize = 256 * 1024 + 4 * 2 * crate::photo_analysis::MAX_KERNEL_WORDS;
+pub const PREPARE_HEADER_CAP: usize = 256 * 1024 + 4 * 2 * fit::photo_analysis::MAX_KERNEL_WORDS;
 
 /// One picture of a recipe, coded, for a client that will grade it itself.
 ///
@@ -302,7 +301,7 @@ pub unsafe extern "C" fn bb_prepare_picture(
         Err(error) => Err(format!("could not read the prepare: {error}")),
         Ok(command) => crate::guard("bb_prepare_picture", Err("panicked".to_string()), || {
             let rect = |[left, top, width, height]: [usize; 4]| {
-                crate::px::Rect::exact(left, top, width, height)
+                units::px::Rect::exact(left, top, width, height)
             };
             let window = command.window.map(rect);
             let parts: Vec<_> = command.parts.iter().copied().map(rect).collect();
@@ -352,7 +351,7 @@ struct PrepareCommand {
     /// **An L of tiles costs what the L covers, not what its box does.** Each source is decoded
     /// for the box bounding *its own* parts, and a source no part reaches is not decoded at all -
     /// where the box bounding an L holds a corner nobody asked about, which widens every
-    /// footprint and can pull in a source on its own (`composite_tile::CompositeRequest::parts`).
+    /// footprint and can pull in a source on its own (`composite::tile::CompositeRequest::parts`).
     #[serde(default)]
     parts: Vec<[usize; 4]>,
 }
@@ -464,10 +463,10 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     };
     let encoded = crate::guard("bb_transcode_jpeg", None, || {
         let bytes = std::fs::read(path).ok()?;
-        let decoded = crate::image::decode(&bytes, long_edge as usize).ok()?;
-        let jpeg = crate::jpeg::encode(decoded.as_ref(), quality).ok()?;
-        match crate::avif::exif(&bytes) {
-            Some(exif) => crate::jpeg::with_exif(&jpeg, &exif),
+        let decoded = formats::resize::decode(&bytes, long_edge as usize).ok()?;
+        let jpeg = formats::jpeg::encode(decoded.as_ref(), quality).ok()?;
+        match formats::avif::exif(&bytes) {
+            Some(exif) => formats::jpeg::with_exif(&jpeg, &exif),
             None => Some(jpeg),
         }
     });
@@ -514,8 +513,8 @@ pub unsafe extern "C" fn bb_write_gain_map(
         let base = std::fs::read(base).ok()?;
         let alternate = std::fs::read(alternate).ok()?;
         match format {
-            "avif" => crate::avif_gain_write::combine(&base, &alternate, quality, speed).ok(),
-            "jpeg" => crate::jpeg_gain_write::combine(&base, &alternate, quality).ok(),
+            "avif" => formats::avif_gain_write::combine(&base, &alternate, quality, speed).ok(),
+            "jpeg" => formats::jpeg_gain_write::combine(&base, &alternate, quality).ok(),
             _ => None,
         }
     });
@@ -552,22 +551,22 @@ pub unsafe extern "C" fn bb_export_still(
     };
     let encoded = crate::guard("bb_export_still", None, || {
         let bytes = std::fs::read(path).ok()?;
-        let exif = crate::avif::exif(&bytes);
+        let exif = formats::avif::exif(&bytes);
         let exif = exif.as_deref();
         match format {
             // Twelve bits of PQ into a sixteen-bit container, which is the whole point: the
             // samples are the ones the AVIF holds rather than a tone map of them.
             "png-hdr" => {
-                let (samples, width, height) = crate::avif::decode_at(&bytes, 16).ok()?;
-                crate::png_write::encode_hdr(&samples, width, height, exif).ok()
+                let (samples, width, height) = formats::avif::decode_at(&bytes, 16).ok()?;
+                formats::png_write::encode_hdr(&samples, width, height, exif).ok()
             }
             "jxl-hdr" => {
-                let (samples, width, height) = crate::avif::decode_at(&bytes, 16).ok()?;
-                crate::jxl_write::encode_hdr(&samples, width, height, quality, exif).ok()
+                let (samples, width, height) = formats::avif::decode_at(&bytes, 16).ok()?;
+                formats::jxl_write::encode_hdr(&samples, width, height, quality, exif).ok()
             }
             "png" => {
-                let decoded = crate::image::decode(&bytes, 0).ok()?;
-                crate::png_write::encode_sdr(
+                let decoded = formats::resize::decode(&bytes, 0).ok()?;
+                formats::png_write::encode_sdr(
                     decoded.as_ref().data,
                     decoded.as_ref().width,
                     decoded.as_ref().height,
@@ -576,14 +575,14 @@ pub unsafe extern "C" fn bb_export_still(
                 .ok()
             }
             "jxl" => {
-                let decoded = crate::image::decode(&bytes, 0).ok()?;
+                let decoded = formats::resize::decode(&bytes, 0).ok()?;
                 let frame = decoded.as_ref();
-                crate::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality, exif)
+                formats::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality, exif)
                     .ok()
             }
             "tiff" => {
-                let decoded = crate::image::decode(&bytes, 0).ok()?;
-                crate::tiff_write::encode(
+                let decoded = formats::resize::decode(&bytes, 0).ok()?;
+                formats::tiff_write::encode(
                     decoded.as_ref().data,
                     decoded.as_ref().width,
                     decoded.as_ref().height,
@@ -623,17 +622,17 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
         return -1;
     };
     let written = crate::guard("bb_write_ten_bit_copy", Err("panicked".to_string()), || {
-        let matching = crate::sdr_match::SdrMatch::named(matching)
+        let matching = colour::sdr_match::SdrMatch::named(matching)
             .ok_or_else(|| format!("no SDR match is named {matching}"))?;
         let bytes = std::fs::read(source).map_err(|e| format!("could not read {source}: {e}"))?;
-        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed, matching)?;
+        let copy = formats::avif::ten_bit_copy(&bytes, quantizer, speed, matching)?;
         std::fs::write(out, copy).map_err(|e| format!("could not write {out}: {e}"))
     });
     crate::release_freed_memory();
     match written {
         Ok(()) => 0,
         Err(why) => {
-            crate::warn(&format!("rawshim: no 10-bit copy of {source}: {why}"));
+            trace::warn(&format!("rawshim: no 10-bit copy of {source}: {why}"));
             -1
         }
     }
@@ -658,7 +657,7 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_gpu_adapter(out: *mut u8, out_cap: usize) -> isize {
-    let Some(gpu) = crate::guard("bb_gpu_adapter", None, crate::gpu::device) else {
+    let Some(gpu) = crate::guard("bb_gpu_adapter", None, gpu::device) else {
         return -1;
     };
     unsafe { reply(gpu.adapter.as_bytes(), out, out_cap) }
@@ -782,156 +781,6 @@ pub unsafe extern "C" fn bb_extract_embedded(
         unsafe { reply(&bytes, out, out_cap) }
     })
 }
-/// How much of a RAW the spline parser is given before it is given all of it.
-///
-/// Not "the first few kilobytes", which is what this was assumed to be until it was
-/// measured: over 1000 files sampled across the whole catalogue, a 128KB window
-/// missed the spline on 971 of them and 256KB missed none. The tag is early, its
-/// data is not - it lands past the previews IFD0 points at. So this is double what
-/// was needed, and still two orders of magnitude below a whole frame.
-const SPLINE_WINDOW: u64 = 512 * 1024;
-
-/// The spline, from as little of the file as will yield it.
-///
-/// Reading it whole was a page-cache hit in `bb_fit` - the decode had just pulled
-/// the same file through - but it still allocated and copied 25-60MB per photo.
-///
-/// The whole file is still read when the window comes back empty, and that is
-/// load-bearing rather than belt-and-braces: TIFF offsets are absolute, and the
-/// parser answers a pointer past the end of its buffer with `None`, which is the
-/// same answer as a body that recorded nothing. A window one byte too small would
-/// not fail, it would silently drop the frame onto the fitted fallback - slower and
-/// a worse grade, with nothing to say so.
-/// `Err` is a file that could not be read, which the callers report separately from
-/// a file that simply records no correction.
-/// The spline the body recorded for this shot, or None where it recorded none.
-///
-/// `geometry_for` reads this itself; this exists so the fixture test can hold the
-/// parser against a real ARW, which `lens.rs`'s synthetic TIFFs cannot do.
-#[cfg(all(test, feature = "fixtures"))]
-pub fn _for_testing_distortion_spline(path: &str) -> Option<Vec<f64>> {
-    distortion_of(path).ok()?.spline
-}
-
-fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
-    use std::io::Read;
-
-    let mut window = SPLINE_WINDOW;
-    loop {
-        let mut head = Vec::new();
-        std::fs::File::open(path)?
-            .take(window)
-            .read_to_end(&mut head)?;
-        let found = crate::lens::read_distortion(&head);
-        if found.spline.is_some() {
-            return Ok(found);
-        }
-        // A short read means that was the whole file, so there is nothing further on.
-        if (head.len() as u64) < window {
-            return Ok(found);
-        }
-        // The one reason a larger buffer could answer differently is a pointer this walk could
-        // not follow, and `needed` is the furthest of those - so no pointer left the window
-        // means the file records no spline, whatever its size. That is every CR2, and every
-        // CR3, whose byte order mark fails at offset 0 and reaches past nothing at all.
-        let Some(reach) = found.needed.filter(|reach| *reach as u64 > window) else {
-            return Ok(found);
-        };
-        // Never less than double, so a file naming its next pointer a page further on each
-        // time costs a handful of reads rather than one per page.
-        window = (reach as u64).max(window * 2);
-    }
-}
-
-/// Which geometry tier this file falls into, from the file alone - no pixels decoded.
-///
-/// None is a file that could not be read, which the callers report separately from a
-/// file that simply records no correction.
-pub fn geometry_for(path: &str) -> Option<fit::Geometry> {
-    let Ok(found) = distortion_of(path) else {
-        return None;
-    };
-    // The body's own word that it corrected nothing, which saves searching for a
-    // correction that is not there (`fit.rs`). Only Sony states it; everything else
-    // reads as unstated and falls through.
-    Some(match (found.applied, found.spline) {
-        (Some(false), _) => fit::Geometry::Uncorrected,
-        (_, Some(knots)) => fit::Geometry::Recorded(knots),
-        // Nothing in the file, so ask the database. The header read this needs is a
-        // second open of the same file, which is why it is here rather than above:
-        // a body that recorded its own spline never pays for it.
-        (_, None) => lensfun_geometry(path).unwrap_or(fit::Geometry::Unstated),
-    })
-}
-
-/// The lateral aberration the body recorded for this shot, where it recorded one.
-///
-/// Preferred over measuring it, on the same grounds the distortion cascade prefers a
-/// recorded spline: it is written per shot rather than per lens, so it tracks focal
-/// length and focus distance that a database entry averages over. Only Sony writes it;
-/// everything else reads as None and is measured off the frame.
-///
-/// Applied at face value (`tca::supplied_curve`), shape and magnitude both: refitting the
-/// strength here measured worse than trusting it, and what makes trusting it safe is not a fit
-/// but `tca::improves`, which drops the curve if the frame disagrees.
-pub(crate) fn recorded_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
-    distortion_of(path).ok()?.lateral
-}
-
-/// The database's lateral aberration for whatever lens this file names, where it has
-/// one.
-///
-/// Separate from `geometry_for` because the tiers are independent: lensfun's TCA
-/// coverage is far thinner than its distortion coverage, so a lens routinely supplies
-/// one and not the other.
-///
-/// Not on the fit's path - see `tca::supplied_curve` for the measurements that decided
-/// that - so this is reached only by the test that keeps the reader honest.
-#[cfg(all(test, feature = "fixtures"))]
-pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
-    let header = crate::header::read_path(path)?;
-    let [red, blue] = lensdb::tca_knots(
-        crate::header::name(&header.camera_make),
-        crate::header::name(&header.camera_model),
-        crate::header::name(&header.lens_model),
-        header.focal,
-        header.aperture,
-        header.crop(),
-        header.width as usize,
-        header.height as usize,
-    )?;
-    Some([in_spline_units(red), in_spline_units(blue)])
-}
-
-/// A radial offset as `lensdb` reports it - a fraction of the radius - into the unit a camera's
-/// own spline is carried in, which is what the fit compares the two tiers in.
-fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
-    knots
-        .into_iter()
-        .map(|it| it * crate::image::SPLINE_UNIT)
-        .collect()
-}
-
-/// The database's profile for whatever lens this file names.
-///
-/// None when the file names no lens, when nothing plausible matches, or when the
-/// match carries no distortion data - each of which leaves the geometry to be
-/// fitted, as it was before lensfun was here.
-fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
-    let header = crate::header::read_path(path)?;
-    let knots = lensdb::distortion_knots(
-        crate::header::name(&header.camera_make),
-        crate::header::name(&header.camera_model),
-        crate::header::name(&header.lens_model),
-        header.focal,
-        header.aperture,
-        header.crop(),
-        header.width as usize,
-        header.height as usize,
-    )?;
-    Some(fit::Geometry::Profiled(in_spline_units(knots)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,8 +796,8 @@ mod tests {
         let path = dir.join("rendition.avif");
         let (width, height) = (64usize, 48usize);
         let frame: Vec<u8> = (0..width * height * 3).map(|i| (i % 251) as u8).collect();
-        let exif = crate::exif::tests::block();
-        crate::avif::encode_rendition_rotated(
+        let exif = formats::exif::tests::block();
+        formats::avif::encode_rendition_rotated(
             std::borrow::Cow::Borrowed(&frame),
             width,
             height,
@@ -976,9 +825,9 @@ mod tests {
         assert_eq!(written, needed);
         assert_eq!(&out[..2], &[0xFF, 0xD8], "the reply is a JPEG");
 
-        let decoded = crate::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
+        let decoded = formats::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
         assert_eq!((decoded.width, decoded.height), (width, height));
-        let probe = crate::decode_rendered::probe(&out).expect("the JPEG's header");
+        let probe = formats::rendered::probe(&out).expect("the JPEG's header");
         assert_eq!(probe.exif, Some(exif), "the rendition's EXIF rides across");
     }
 
@@ -988,8 +837,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bb-export-still-exif-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let path = dir.join("rendition.avif");
-        let exif = crate::exif::tests::block();
-        crate::avif::encode_rendition_rotated(
+        let exif = formats::exif::tests::block();
+        formats::avif::encode_rendition_rotated(
             vec![128u8; 16 * 8 * 3].into(),
             16,
             8,
@@ -1021,8 +870,8 @@ mod tests {
 
             let carried = match format {
                 // The file's own directories rather than a block inside it, so read back as tags.
-                "tiff" => crate::exif::Recorded::parse(&out)
-                    .and_then(|recorded| recorded.block(crate::exif::NON_IDENTIFYING)),
+                "tiff" => formats::exif::Recorded::parse(&out)
+                    .and_then(|recorded| recorded.block(formats::exif::NON_IDENTIFYING)),
                 _ => out
                     .windows(exif.len())
                     .any(|window| window == exif)
@@ -1034,7 +883,7 @@ mod tests {
     }
 
     /// The bound is honoured whichever format the file is, which is the half of
-    /// `image::decode` a JPEG never exercises.
+    /// `formats::resize::decode` a JPEG never exercises.
     #[test]
     fn transcoding_a_rendition_honours_the_long_edge() {
         let dir = std::env::temp_dir().join("bb-transcode-bounded");
@@ -1042,7 +891,7 @@ mod tests {
         let path = dir.join("rendition.avif");
         let (width, height) = (64usize, 48usize);
         let frame = vec![128u8; width * height * 3];
-        crate::avif::encode_rendition(
+        formats::avif::encode_rendition(
             std::borrow::Cow::Borrowed(&frame),
             width,
             height,
@@ -1061,7 +910,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(written > 0, "a bounded transcode should produce a JPEG");
 
-        let decoded = crate::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
+        let decoded = formats::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
         assert_eq!((decoded.width, decoded.height), (32, 24));
     }
 }

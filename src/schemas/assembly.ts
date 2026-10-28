@@ -5,7 +5,7 @@ export const MOST_TILES = 256;
 export const MOST_VERTICES = 8192;
 export const MOST_SOURCES = 12;
 
-/** `assembly_weight::FEATHER`: a recipe's feather where it names none. */
+/** `composite::assembly::weight::FEATHER`: a recipe's feather where it names none. */
 export const DEFAULT_FEATHER = 0.0025;
 /** The widest feather the page offers. */
 export const MOST_FEATHER = 0.015;
@@ -68,7 +68,7 @@ export const AssemblyRecipeSchema = CompositionSchema.extend({
   // The widest §5.2's feather may be, as a share of the long edge: the reader's to set.
   feather: z.number().min(0).max(MOST_STORED_FEATHER).optional(),
   // Where the picked frames actually meet, solved for `pick` and `base` over the carve's volume
-  // (`assembly_seams`). Absent, the tiles are the seams.
+  // (`composite::assembly::seams`). Absent, the tiles are the seams.
   seams: SeamsSchema.optional(),
   // The layer key the carve's seam volume was written under, which a re-solve reads.
   seamVolume: z

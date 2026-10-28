@@ -11,8 +11,8 @@
 //! document's strokes, and writes the reflection the stage takes out of it, linear, at full size.
 //! `DEREFLECT_CELLS=half` holds the network in `half` cells (`shader-f16`).
 
-use rawshim::dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
-use rawshim::gpu::{Buffer, Gpu};
+use dereflect::{Cells, HINTS, MULTIPLE, Remover, Stroke};
+use gpu::{Buffer, Gpu};
 
 const TIMED_RUNS: usize = 5;
 
@@ -78,21 +78,21 @@ fn frame(args: &[String]) {
     assert_eq!(planar.len(), 3 * w * h, "planar f32 of {w}x{h}");
     let strokes: Vec<Stroke> =
         serde_json::from_slice(&std::fs::read(strokes).expect("the strokes")).expect("strokes");
-    let full_scale = rawshim::resident::FULL_SCALE;
-    let samples = rawshim::resident::samples_of_levels(
+    let full_scale = colour::resident::FULL_SCALE;
+    let samples = colour::resident::samples_of_levels(
         (0..w * h)
             .flat_map(|p| (0..3).map(move |c| (c, p)))
             .map(|(c, p)| planar[c * w * h + p] * full_scale),
     );
     let (gpu, remover) = opened(bundle);
-    let resident = rawshim::resident::Resident::upload(gpu, &samples, w, h);
-    let full = rawshim::px::Size::exact(w, h);
-    let looked = rawshim::dereflect::looked(gpu, &resident).expect("the shrink");
-    let layer = remover.layer(gpu, &looked, full, &strokes, &rawshim::fit::Lens::none());
+    let resident = colour::resident::Resident::upload(gpu, &samples, w, h);
+    let full = units::px::Size::exact(w, h);
+    let looked = dereflect::looked(gpu, &resident).expect("the shrink");
+    let layer = remover.layer(gpu, &looked, full, &strokes, &geometry::lens::Lens::none());
     let before = resident.duplicate();
-    layer.take_out(gpu, &resident, rawshim::px::At::ORIGIN, full, 1.0);
-    let levels = |frame: &rawshim::resident::Resident| {
-        rawshim::resident::levels_of(&pollster::block_on(frame.host()).expect("reads back"))
+    layer.take_out(gpu, &resident, units::px::At::ORIGIN, full, 1.0);
+    let levels = |frame: &colour::resident::Resident| {
+        colour::resident::levels_of(&pollster::block_on(frame.host()).expect("reads back"))
     };
     let (before, after) = (levels(&before), levels(&resident));
     let mut taken = vec![0f32; 3 * w * h];
@@ -117,7 +117,7 @@ fn opened(bundle: &str) -> (&'static Gpu, Remover) {
         std::fs::read(&path).unwrap_or_else(|error| panic!("{path}: {error}"))
     };
     let manifest = String::from_utf8(read("weights.json")).expect("weights.json is text");
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let cells = match std::env::var("DEREFLECT_CELLS").as_deref() {
         Ok("half") => Cells::Half,
         Ok("float") | Err(_) => Cells::Float,
@@ -138,5 +138,5 @@ fn read(gpu: &'static Gpu, buffer: &Buffer, size: usize) -> Vec<u8> {
     let mut recording = gpu.record();
     recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
     recording.submit();
-    pollster::block_on(rawshim::gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("reads back")
+    pollster::block_on(gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("reads back")
 }

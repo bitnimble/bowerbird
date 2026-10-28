@@ -623,7 +623,7 @@ These are this repository's answers, recorded here so the shader and its caller 
   light in either gives one - no correction - rather than a zero that would take the estimate with
   it. Every other denominator in §11 is a sum of `ε`-floored gradients or energies and holds for any
   sign of input.
-- **`whitelevel` is a scalar** for this purpose, and `decode_rawler::saturation_of` is the only place
+- **`whitelevel` is a scalar** for this purpose, and `decode::raw::saturation_of` is the only place
   that decides which one. It sets the scale at which `ε` means what §2.1 intends, and it is what a
   channel is clipped against, so it decides which pixels reach `assemble.slang` reading as blown.
 - **Bayer only.** A non-Bayer CFA is refused rather than approximated. `denoise_mosaic` already

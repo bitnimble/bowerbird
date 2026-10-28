@@ -2,7 +2,7 @@
 //
 // Same grid and same indices as the prefiltered planes it replaces, so every stage that reads a pair
 // keeps reading it the same way. What changes is that pixel `p` now holds two views of one point in
-// the *scene* rather than two views of one coordinate; `hdr_fit::registered` has why that is worth a
+// the *scene* rather than two views of one coordinate; `fit::hdr::registered` has why that is worth a
 // pass of its own.
 //
 // A position the search could not act on is left alone, the caller having filled both planes with
@@ -33,7 +33,7 @@ struct Params {
 [vk::binding(1, 0)] StructuredBuffer<float> theirs;
 /// Four floats a grid position: dx, dy, peak, and which of the three outcomes the search reached.
 [vk::binding(2, 0)] StructuredBuffer<float> found;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(3, 0)] StructuredBuffer<float> gains;
 [vk::binding(4, 0)] RWStructuredBuffer<float> render;
 [vk::binding(5, 0)] RWStructuredBuffer<float> jpeg;

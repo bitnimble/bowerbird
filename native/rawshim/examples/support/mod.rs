@@ -3,11 +3,11 @@
 //! before the camera match, which moves the match.
 #![allow(dead_code)]
 
-use rawshim::galosh::Detail;
-use rawshim::hdr::Grade;
+use denoise::galosh::Detail;
 use rawshim::hdr_args::EncodeOptions;
-use rawshim::image::Strengths;
-use rawshim::light::Light;
+use rawshim::hdr_args::Grade;
+use render::detail::Strengths;
+use units::light::Light;
 
 /// `hdr_reference_white_nits` and `hdr_white_quantile` in `src/schemas/settings.ts`.
 pub const GRADE: Grade = Grade {
@@ -35,19 +35,19 @@ pub struct Open<'a> {
     pub strengths: Strengths,
     /// The pair to defringe by, in place of the one this frame measures.
     pub defocus: Option<(f32, f32)>,
-    pub dust: rawshim::dust::Wanted<'a>,
+    pub dust: denoise::dust::Wanted<'a>,
     /// Edits the decode's half-float samples before anything measures them, as a stage between the
     /// decode and the open would.
     pub edit: Option<&'a dyn Fn(&mut [u16])>,
     /// The camera match to apply in place of one fitted here. An `edit` needs the unedited frame's:
     /// the embedded JPEG still shows what the edit took out, and a fit to it puts that back.
-    pub matched: Option<rawshim::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
 }
 
 pub struct Opened {
     /// Read back to the host. A RAW is already defringed and `measured.defringe` is `Done`; a
     /// rendered file is not, and carries `Measure` or `Take`.
-    pub frame: rawshim::frame::Frame,
+    pub frame: decode::frame::Frame,
     pub measured: rawshim::open::Measured,
 }
 
@@ -60,28 +60,28 @@ impl<'a> Open<'a> {
             detail: Detail::AUTO,
             strengths: STRENGTHS,
             defocus: None,
-            dust: rawshim::dust::Settings::default().wanted(None),
+            dust: denoise::dust::Settings::default().wanted(None),
             edit: None,
             matched: None,
         }
     }
 
     pub fn run(self) -> Option<Opened> {
-        let mut frame = rawshim::decode::frame_from_path(
+        let mut frame = decode::frame_from_path(
             self.path,
             self.detail,
             self.floor,
             false,
-            rawshim::galosh::wanted(None, self.detail),
+            denoise::galosh::wanted(None, self.detail),
             self.dust,
         )?;
         if let Some(edit) = self.edit {
             frame = pollster::block_on(frame.to_host())?;
             let mut samples = frame.samples16()?.to_vec();
             edit(&mut samples);
-            let gpu = rawshim::gpu::device()?;
+            let gpu = gpu::device()?;
             // Back on the device, since the measure below defringes the frame it is given in place.
-            frame.pixels = rawshim::frame::Pixels::Resident(rawshim::resident::Resident::upload(
+            frame.pixels = decode::frame::Pixels::Resident(colour::resident::Resident::upload(
                 gpu,
                 &samples,
                 frame.width,
@@ -90,11 +90,11 @@ impl<'a> Open<'a> {
         }
         // Handed over as a stored pair, which `open::measure` applies ahead of the fit.
         let long_edge = frame.width.max(frame.height);
-        let stored = rawshim::photo_analysis::PhotoAnalysis {
-            from_render: rawshim::photo_analysis::FromRender {
+        let stored = fit::photo_analysis::PhotoAnalysis {
+            from_render: fit::photo_analysis::FromRender {
                 defocus: self
                     .defocus
-                    .map(|(red, blue)| rawshim::photo_analysis::MeasuredDefocus {
+                    .map(|(red, blue)| fit::photo_analysis::MeasuredDefocus {
                         red,
                         blue,
                         defringe: self.strengths.defringe,
@@ -102,7 +102,7 @@ impl<'a> Open<'a> {
                     }),
                 ..Default::default()
             },
-            from_raw: rawshim::photo_analysis::FromRaw {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: self.matched,
                 ..Default::default()
             },
@@ -112,11 +112,11 @@ impl<'a> Open<'a> {
             grade: GRADE,
             strengths: self.strengths,
             stored: &stored,
-            fitting: match rawshim::decode_rendered::is_rendered(self.path) {
+            fitting: match formats::rendered::is_rendered(self.path) {
                 true => rawshim::open::Fitting::None,
                 false => rawshim::open::Fitting::Profiled(self.path),
             },
-            camera_match: rawshim::hdr_fit::CameraMatch::LensAndColour,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             noise: frame.noise,
             matrix: frame.matrix,
             as_shot: frame.as_shot,
@@ -137,28 +137,28 @@ impl<'a> Open<'a> {
 pub fn graded(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::gpu::Output,
+    output: render::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
-    graded_under(opened, options, output, rawshim::gpu::Intent::default())
+    graded_under(opened, options, output, render::grade::Intent::default())
 }
 
 pub fn graded_under(
     opened: &Opened,
     options: &EncodeOptions,
-    output: rawshim::gpu::Output,
-    intent: rawshim::gpu::Intent,
+    output: render::grade::Output,
+    intent: render::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let matched = opened.measured.matched.as_ref();
     let mut cutting = cut(opened, options, matched.map(|m| &m.lens));
-    let scene = rawshim::tone::SceneGrade::new(
+    let scene = render::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         opened.measured.levels.anchored(),
         options.grade.reference_white_nits,
         None,
-        rawshim::gpu::Adjust {
+        render::grade::Adjust {
             camera_balance: true,
-            ..rawshim::gpu::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         opened.frame.as_shot,
     );
@@ -166,7 +166,7 @@ pub fn graded_under(
     let coded = rawshim::hdr::encode_cut(
         gpu,
         &cutting.cut,
-        &rawshim::gpu::Grade {
+        &render::grade::Grade {
             intent,
             ..scene.gpu_grade(width, height, output)
         },
@@ -179,7 +179,7 @@ pub struct Cutting {
     pub cut: rawshim::hdr::Cut,
     /// The open's measured blur, in the sensor's pixels.
     pub capture_sigma: Option<f32>,
-    pub sigma: rawshim::image::SharpenSigma,
+    pub sigma: render::detail::SharpenSigma,
 }
 
 /// `job::Base::build`'s coding, then the fit to size, warp and sharpen a rendition takes.
@@ -188,10 +188,14 @@ pub struct Cutting {
 /// downscales the rest from it.
 ///
 /// `options.sharpen_sigma` fixes the deconvolution's sigma in place of the measured one.
-pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit::Lens>) -> Cutting {
+pub fn cut(
+    opened: &Opened,
+    options: &EncodeOptions,
+    lens: Option<&geometry::lens::Lens>,
+) -> Cutting {
     let frame = &opened.frame;
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
-    let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
+    let gpu = gpu::device().expect("a Vulkan adapter, since the grade is a shader");
+    let base = render::base::device(gpu).expect("the device the pipelines were built on");
     let levels = opened.measured.levels.anchored();
     let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, options);
     let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
@@ -200,14 +204,14 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         .blur
         .map(|blur| blur * frame.reduced.max(1) as f32);
     let sigma = match options.sharpen_sigma {
-        Some(fixed) => rawshim::image::SharpenSigma::fixed(fixed),
-        None => rawshim::image::deconvolve_split(
+        Some(fixed) => render::detail::SharpenSigma::fixed(fixed),
+        None => render::detail::deconvolve_split(
             capture_sigma,
             sensor_long,
             size.width.max(size.height) as usize,
         ),
     };
-    let sharpen_noise = rawshim::base::sharpen_noise(
+    let sharpen_noise = render::base::sharpen_noise(
         levels,
         options.grade.reference_white_nits,
         frame.noise,
@@ -217,28 +221,28 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         frame.reduced,
     )
     .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
-    let resident = rawshim::resident::Resident::upload(
+    let resident = colour::resident::Resident::upload(
         gpu,
         frame.samples16().expect("16-bit"),
         frame.width,
         frame.height,
     );
     // No lens: a rendition warps per target, in `Cut::from_base`.
-    let (prepared, _) = pollster::block_on(rawshim::base::prepare(
+    let (prepared, _) = pollster::block_on(render::base::prepare(
         gpu,
         base,
         resident,
-        rawshim::base::Gather::frame(rawshim::px::Size::exact(frame.width, frame.height)),
+        render::base::Gather::frame(units::px::Size::exact(frame.width, frame.height)),
         levels,
         options.grade.reference_white_nits,
         // Sharpen held back for `Cut::from_base`, after the warp.
         options.strengths.before_the_fit(),
-        rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-        rawshim::image::SharpenNoise::NONE,
-        &rawshim::fit::Lens::none(),
+        render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+        render::detail::SharpenNoise::NONE,
+        &geometry::lens::Lens::none(),
         opened.measured.defringe,
         frame.noise,
         frame.matrix,

@@ -15,8 +15,9 @@
 
 mod support;
 
-use rawshim::gpu::Intent;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use render::grade::Intent;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 
 /// How close to grey the camera has to render a pixel for it to count, as a fraction of its
@@ -172,14 +173,14 @@ struct Report {
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
-    exposure: rawshim::light::Stops,
+    exposure: units::light::Stops,
     curve: Vec<[f64; 2]>,
     curve_error: f64,
 }
 
 fn measure(path: &str) -> Option<Report> {
     let opened = support::Open::shipped(path, VIEWED_EDGE).run()?;
-    let gpu = rawshim::gpu::device()?;
+    let gpu = gpu::device()?;
     let matched = opened.measured.matched.as_ref()?;
 
     let options = EncodeOptions {
@@ -214,7 +215,7 @@ fn measure(path: &str) -> Option<Report> {
         drift_br: perceptual.drift_br,
         exposure: matched.colour.as_ref()?.exposure,
         curve: matched.colour.as_ref()?.curve.clone(),
-        curve_error: pollster::block_on(rawshim::hdr_fit::camera_curve_error(
+        curve_error: pollster::block_on(fit::hdr::camera_curve_error(
             gpu,
             matched.colour.as_ref()?,
         ))
@@ -235,14 +236,14 @@ struct Rendered {
 fn against_camera(
     opened: &support::Opened,
     options: &EncodeOptions,
-    camera: &rawshim::rgb::Rgb,
+    camera: &units::rgb::Rgb,
     intent: Intent,
 ) -> Option<Rendered> {
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
     let (coded, width, height) =
-        support::graded_under(opened, options, rawshim::gpu::Output::Srgb, intent);
-    let gpu = rawshim::gpu::device()?;
+        support::graded_under(opened, options, render::grade::Output::Srgb, intent);
+    let gpu = gpu::device()?;
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and
@@ -258,7 +259,7 @@ fn against_camera(
     // both bodies' grain and sharpening, which no colour fit reproduces, and on a frame of dark
     // rock that texture outweighs the colour.
     let (mut ours_linear, mut camera_linear) = (Vec::new(), Vec::new());
-    let linear = |v: [f64; 3]| [0, 1, 2].map(|c| rawshim::hdr_fit::srgb_eotf(v[c] as u8));
+    let linear = |v: [f64; 3]| [0, 1, 2].map(|c| colour::space::srgb_eotf(v[c] as u8));
     let cell_mean = |data: &[u8], wide: usize, x: [usize; 2], y: [usize; 2]| -> [f64; 3] {
         let mut sum = [0.0f64; 3];
         for row in y[0]..y[1] {
@@ -323,18 +324,18 @@ fn against_camera(
 
     // Both sides already in sRGB, so the objective's own primaries matrix is the identity.
     let shown = camera_linear.len();
-    let scoring = rawshim::fit_score::Scoring::new(
+    let scoring = fit::score::Scoring::new(
         gpu,
-        rawshim::fit_score::below_buffer(gpu, &ours_linear),
+        fit::score::below_buffer(gpu, &ours_linear),
         &camera_linear,
         &vec![1.0; shown],
         &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         256,
         1,
     );
-    let neutral = [rawshim::fit_score::Probe::neutral()];
+    let neutral = [fit::score::Probe::neutral()];
     let blocks =
-        pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
+        pollster::block_on(scoring.partials(&fit::score::Shape::Saturation, &neutral))?
             .remove(0);
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
     let plain = blocks.iter().map(|b| b.plain).sum::<f64>() / shown.max(1) as f64;

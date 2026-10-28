@@ -8,7 +8,7 @@
 //! parallel threads: a second test allocating inside this one's before-and-after window reads as a
 //! leak, or hides one. Measured at three failures in ten before these were folded together.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 const WIDTH: usize = 256;
 const HEIGHT: usize = 192;
@@ -35,12 +35,12 @@ fn textured() -> Vec<f32> {
 ///
 /// A warm-up first, and then the measured runs: anything a stage builds on its first call and keeps
 /// for the life of the process is a hold rather than a leak, and would otherwise be indexed as one.
-fn gives_it_back(gpu: &rawshim::gpu::Gpu, what: &str, mut once: impl FnMut()) {
+fn gives_it_back(gpu: &gpu::Gpu, what: &str, mut once: impl FnMut()) {
     // Counted once the device is idle: a dispatch's timestamps are read back after its recording
     // drops, and their buffer is held until that read lands.
     let settled = || {
         gpu.block_until_done();
-        rawshim::gpu::live_bytes()
+        gpu::live_bytes()
     };
     once();
     let before = settled();
@@ -58,7 +58,7 @@ fn gives_it_back(gpu: &rawshim::gpu::Gpu, what: &str, mut once: impl FnMut()) {
 
 #[test]
 fn every_stage_hands_its_working_planes_back() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so nothing here was run.");
         return;
     };
@@ -66,31 +66,31 @@ fn every_stage_hands_its_working_planes_back() {
 
     // GALOSH takes about five frames of working planes - the GAT frame and the pyramid's levels -
     // and none of it may outlive the call.
-    match rawshim::galosh::device(gpu) {
+    match denoise::galosh::device(gpu) {
         None => eprintln!("SKIPPED: this adapter has no room for the noise fit's workgroup."),
         Some(kernels) => gives_it_back(gpu, "denoise", || {
-            let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
-            pollster::block_on(rawshim::galosh::denoise(
+            let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
+            pollster::block_on(denoise::galosh::denoise(
                 gpu,
                 kernels,
                 &mosaic,
-                &rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
-                rawshim::galosh::UNGAINED,
+                &mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern"),
+                denoise::galosh::UNGAINED,
                 Amounts::from_sliders(50.0, 50.0),
             ));
         }),
     }
 
     // RCD's nine planes, which the tiled walk takes per tile rather than once.
-    match rawshim::demosaic::device(gpu) {
+    match mosaic::demosaic::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build RCD."),
         Some(rcd) => gives_it_back(gpu, "demosaic", || {
-            let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
-            pollster::block_on(rawshim::demosaic::demosaic_plane(
+            let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, WIDTH, HEIGHT);
+            pollster::block_on(mosaic::demosaic::demosaic_plane(
                 gpu,
                 rcd,
                 &mosaic,
-                &rawshim::cfa::Cfa::bayer(CFA).unwrap(),
+                &mosaic::cfa::Cfa::bayer(CFA).unwrap(),
                 |plane| plane.len(),
             ));
         }),
@@ -101,16 +101,16 @@ fn every_stage_hands_its_working_planes_back() {
     let frame: Vec<u16> = (0..WIDTH * HEIGHT * 3)
         .map(|at| (at % 4096) as u16)
         .collect();
-    match rawshim::base::device(gpu) {
+    match render::base::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build the base pipelines."),
         Some(base) => {
             gives_it_back(gpu, "defringe", || {
-                let resident = rawshim::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
-                pollster::block_on(rawshim::base::correct(
+                let resident = colour::resident::Resident::upload(gpu, &frame, WIDTH, HEIGHT);
+                pollster::block_on(render::base::correct(
                     gpu,
                     base,
                     &resident,
-                    rawshim::image::Strengths {
+                    render::detail::Strengths {
                         sharpen: 0.0,
                         defringe: 0.5,
                     },
@@ -124,7 +124,7 @@ fn every_stage_hands_its_working_planes_back() {
             });
             gives_it_back(gpu, "sharpen", || {
                 let mut samples = frame.clone();
-                pollster::block_on(rawshim::base::sharpen_base(
+                pollster::block_on(render::base::sharpen_base(
                     gpu,
                     base,
                     &mut samples,
@@ -140,41 +140,41 @@ fn every_stage_hands_its_working_planes_back() {
     // What the editor pays per band sweep: `refresh_detail` replaces the whole `Uploaded`, and what
     // it holds is the blur, the chroma smoothing, the lattice, the curves and - once anything
     // encodes - a frame each of counts and readback.
-    let level = rawshim::light::Light::measured;
-    let levels = rawshim::tone::Levels {
+    let level = units::light::Light::measured;
+    let levels = colour::tone::Levels {
         white: level(4095.0),
         peak: level(4095.0),
         floor: None,
     }
     .anchored();
-    let grade = rawshim::gpu::Grade::new(
+    let grade = render::grade::Grade::new(
         WIDTH,
         HEIGHT,
         *levels,
-        rawshim::light::Light::exactly(203.0),
-        rawshim::light::Light::exactly(1000.0),
+        units::light::Light::exactly(203.0),
+        units::light::Light::exactly(1000.0),
     );
-    let peak = gpu.scene_peak();
+    let peak = render::grade::device(gpu).scene_peak();
     gives_it_back(gpu, "upload", || {
-        let uploaded = gpu.upload(&frame, &grade, &peak);
+        let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
         // Encoded as well as uploaded: the counts and the readback are built on the first `encode`,
         // and they are per-`Uploaded` rather than per-device, so they have to go with this one.
         let _ = uploaded.encode(&grade);
     });
 
-    let uploaded = gpu.upload(&frame, &grade, &peak);
+    let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
     let mut dragged = grade.clone();
     let mut tick = 0.0;
     let mut drag = || {
         for _ in 0..20 {
             tick += 1.0;
-            dragged.adjust.colour_nodes = vec![rawshim::lattice::ColourNode {
+            dragged.adjust.colour_nodes = vec![colour::lattice::ColourNode {
                 hue: 200.0 + tick,
                 chroma: 8.0,
                 lightness: None,
                 target_hue: 120.0,
                 target_chroma: 30.0,
-                target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+                target_lightness: colour::lattice::ANY_LIGHTNESS_AT,
                 hue_reach: 30.0,
                 chroma_reach: 6.0,
                 lightness_reach: 0.0,

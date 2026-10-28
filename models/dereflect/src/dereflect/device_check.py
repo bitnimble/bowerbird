@@ -1,4 +1,4 @@
-"""The device's reflection remover (`native/rawshim/src/dereflect.rs`, `slang/dereflect.slang`,
+"""The device's reflection remover (`native/dereflect/src/lib.rs`, `slang/dereflect.slang`,
 `slang/dereflect_frame.slang`) held against torch on one cached frame, brushed: the network alone,
 then the whole stage over a frame twice the network's size, in `float` and `half` cells.
 
@@ -23,7 +23,7 @@ from training.metrics import psnr
 from training.mosaic import stabilise, unstabilise
 from training.pmrid import REPOSITORY, example_environment
 
-EXAMPLE = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "dereflect"
+EXAMPLE = REPOSITORY / "native" / "target" / "quick" / "examples" / "dereflect"
 BUILD = "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml --example dereflect"
 AGREEMENT_DB = 80.0
 STAGE_AGREEMENT_DB = 60.0

@@ -41,11 +41,11 @@ fn main() {
         return;
     }
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no GPU adapter");
         return;
     };
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         eprintln!("the demosaic would not build");
         return;
     };
@@ -69,7 +69,7 @@ fn main() {
                 eprintln!("{path}: unreadable");
                 continue;
             };
-            let Ok(decoded) = rawshim::image::decode(&bytes, 0) else {
+            let Ok(decoded) = formats::resize::decode(&bytes, 0) else {
                 eprintln!("{path}: would not decode");
                 continue;
             };
@@ -93,7 +93,7 @@ fn main() {
         // RGGB, which is what the majority of the library's sensors use. The algorithm is
         // phase-agnostic, so the choice only decides which samples survive.
         let quad = [0u32, 1, 1, 2];
-        let cfa = rawshim::cfa::Cfa::bayer(quad).expect("RGGB is a pattern");
+        let cfa = mosaic::cfa::Cfa::bayer(quad).expect("RGGB is a pattern");
         let colour_at = |r: usize, c: usize| usize::from(cfa.colour_at(r, c));
 
         // Poisson-Gaussian noise on the mosaic, at the shape `galosh::NoiseModel` describes: the
@@ -133,9 +133,9 @@ fn main() {
             }
         }
 
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &mosaic, w, h);
         let started = std::time::Instant::now();
-        let Some(out) = pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let Some(out) = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,
@@ -163,20 +163,20 @@ fn main() {
                 .iter()
                 .map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
                 .collect();
-            let image = rawshim::rgb::RgbRef {
+            let image = units::rgb::RgbRef {
                 width: w,
                 height: h,
                 data: &bytes,
             };
-            let jpeg = rawshim::jpeg::encode(image, 95).expect("the reconstruction encodes");
+            let jpeg = formats::jpeg::encode(image, 95).expect("the reconstruction encodes");
             std::fs::write(format!("{into}-{name}.jpg"), jpeg).expect("it writes");
             let flat: Vec<u8> = truth.data.clone();
-            let image = rawshim::rgb::RgbRef {
+            let image = units::rgb::RgbRef {
                 width: truth.width,
                 height: truth.height,
                 data: &flat,
             };
-            let jpeg = rawshim::jpeg::encode(image, 95).expect("the truth encodes");
+            let jpeg = formats::jpeg::encode(image, 95).expect("the truth encodes");
             std::fs::write(format!("{into}-{name}-truth.jpg"), jpeg).expect("it writes");
         }
         let db = psnr(&truth, &out, w, h);
@@ -218,7 +218,7 @@ fn main() {
 /// covers everything from flat to beyond the sampling limit. Grey, deliberately - every channel
 /// carries the same signal, so any colour in the reconstruction is an artefact of the demosaic and
 /// nothing else.
-fn chirp(side: usize) -> rawshim::rgb::Rgb {
+fn chirp(side: usize) -> units::rgb::Rgb {
     let mut data = vec![0u8; side * side * 3];
     let centre = side as f64 / 2.0;
     for r in 0..side {
@@ -234,7 +234,7 @@ fn chirp(side: usize) -> rawshim::rgb::Rgb {
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: side,
         height: side,
         data,
@@ -242,7 +242,7 @@ fn chirp(side: usize) -> rawshim::rgb::Rgb {
 }
 
 /// Box-downsamples by two. See the call site for why the measurement depends on it.
-fn halve(image: &rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
+fn halve(image: &units::rgb::Rgb) -> units::rgb::Rgb {
     let (w, h) = (image.width / 2, image.height / 2);
     let mut data = vec![0u8; w * h * 3];
     for r in 0..h {
@@ -260,7 +260,7 @@ fn halve(image: &rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w,
         height: h,
         data,
@@ -304,7 +304,7 @@ fn bilinear(mosaic: &[f32], w: usize, h: usize, cfa: [u32; 4]) -> Vec<f32> {
 }
 
 /// Per-channel and overall PSNR against the ground truth, over the interior only.
-fn psnr(truth: &rawshim::rgb::Rgb, got: &[f32], w: usize, h: usize) -> [f64; 4] {
+fn psnr(truth: &units::rgb::Rgb, got: &[f32], w: usize, h: usize) -> [f64; 4] {
     let mut sse = [0f64; 3];
     let mut count = 0u64;
     for r in EDGE..h.saturating_sub(EDGE) {

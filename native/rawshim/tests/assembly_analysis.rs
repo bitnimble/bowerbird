@@ -2,16 +2,16 @@
 
 mod support;
 
-use rawshim::assembly_analysis::{Refused, analysis_of, corridor_share, intersection_crop};
-use rawshim::assembly_levels::seam_field;
-use rawshim::assembly_planes::Plane;
-use rawshim::assembly_seam::{NEIGHBOURS, SHRINK, SeamField, along_an_edge};
-use rawshim::assembly_tiles::{
+use composite::assembly::analysis::{Refused, analysis_of, corridor_share, intersection_crop};
+use composite::assembly::levels::seam_field;
+use composite::assembly::planes::Plane;
+use composite::assembly::seam::{NEIGHBOURS, SHRINK, SeamField, along_an_edge};
+use composite::assembly::tiles::{
     Cell, MIN_LOBE_AREA, Subdivision, crosses, enclosing, lobes, simplify, subdivide,
     tolerance_for, trace,
 };
-use rawshim::composition::{self, Composition, LensSpec};
-use rawshim::resident::Resident;
+use composition::{self, Composition, LensSpec};
+use colour::resident::Resident;
 use support::{
     Patch, Rig, at, centre, code_of_light, codes_of, floats_of, ground, noise, rig, sigma_at,
     synthetic, synthetic_gained, u32s_of, upload_f32, upload_u32,
@@ -20,8 +20,8 @@ use support::{
 const SIZE: (usize, usize) = (64, 64);
 
 /// A distance on the shrunk mask, for the tests below that state one as a plain number.
-fn deep(at: f64) -> rawshim::px::Extent<rawshim::px::Shrunk> {
-    rawshim::px::Extent::exactly(at)
+fn deep(at: f64) -> units::px::Extent<units::px::Shrunk> {
+    units::px::Extent::exactly(at)
 }
 
 /// The ground a frame is built on is the ground `support::ground` describes, once it has crossed
@@ -100,7 +100,7 @@ fn a_noiseless_set_does_not_divide_by_zero() {
     let size = (64, 64);
     let mut planes = planes_of(synthetic(&rig, &[Patch::None; 3], size));
     for plane in &mut planes {
-        plane.noise = rawshim::galosh::NoiseModel {
+        plane.noise = denoise::galosh::NoiseModel {
             alpha: 0.0,
             sigma_sq: 0.0,
         };

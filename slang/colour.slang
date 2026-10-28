@@ -46,7 +46,7 @@ import kernel_reach;
 /// The reader's colour edits, baked as the match's lattice is (`lattice::ChromaMap::of_nodes`).
 [vk::binding(11, 0)] Texture3D<float4> nodes;
 [vk::binding(15, 0)] Texture3D<float4> nodes_luma;
-// The frame's own light at arm's length (`hdr_fit::NeighbourhoodThumb`), spanning the whole
+// The frame's own light at arm's length (`colour::matched::NeighbourhoodThumb`), spanning the whole
 // photograph, which is what the lattice's neighbourhood axis reads.
 [vk::binding(17, 0)] Texture2D<float> neighbourhood_map;
 // The frame's nits at the fit's own footprint, two halves a block (`mean_frame.slang`), where
@@ -308,7 +308,7 @@ float2 photo_at(float2 at)
 }
 
 /// The neighbourhood's brightness at a place in the frame, from the photograph's own
-/// thumb (`hdr_fit::NeighbourhoodThumb`), in the same scene-linear units the fit read it in.
+/// thumb (`colour::matched::NeighbourhoodThumb`), in the same scene-linear units the fit read it in.
 public float neighbourhood_of(float2 at)
 {
     if (edit.has_neighbourhood == 0) { return 0.0; }
@@ -406,7 +406,7 @@ static const float TURNED_HALF_AT = 5.0;
 /// stage's draw to darken by after the grade: read there, the peak pass never sees the mask.
 public static float reach_kept = 1.0;
 
-/// The reader's colour edits (`lattice::ColourNode`) on `m`, keyed on `m` itself.
+/// The reader's colour edits (`colour::lattice::ColourNode`) on `m`, keyed on `m` itself.
 public Colour<Rendered> moved_by_reader(Colour<Rendered> m)
 {
     if (edit.has_nodes == 0) { return m; }

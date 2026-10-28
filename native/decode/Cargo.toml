@@ -1,0 +1,33 @@
+[package]
+name = "decode"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The decodes a page never makes: rendered files read off a path, and the embedded preview's tile.
+renditions = ["formats/renditions"]
+
+[dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }
+burst = { path = "../burst" }
+colour = { path = "../colour" }
+composition = { path = "../composition" }
+denoise = { path = "../denoise" }
+fit = { path = "../fit" }
+formats = { path = "../formats" }
+geometry = { path = "../geometry" }
+gpu = { path = "../gpu" }
+mosaic = { path = "../mosaic" }
+render = { path = "../render" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+pollster = "0.4"
+rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+formats = { path = "../formats", features = ["testing"] }
+shaders = { path = "../shaders", features = ["layout"] }

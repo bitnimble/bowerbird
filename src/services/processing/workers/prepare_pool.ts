@@ -42,7 +42,7 @@ export interface Missing {
    * **What makes an L cost an L.** The library decodes each source for the box bounding *that
    * source's* own squares and never opens a source no square reaches, where the box bounding an L
    * holds a corner nobody asked about - which widens every footprint and can pull in a source on
-   * its own (`composite_tile::CompositeRequest::parts`).
+   * its own (`composite::tile::CompositeRequest::parts`).
    */
   tiles: [number, number, number, number][];
 }

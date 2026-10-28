@@ -2,11 +2,11 @@
 //! "the noise it sits in" mean the same thing in every test that says them.
 #![allow(dead_code)]
 
-use rawshim::gpu::{self, Gpu};
-use rawshim::lattice::{ChromaMap, Kernel, generator_of};
-use rawshim::light::{Light, SceneNits};
-use rawshim::resident::Resident;
-use rawshim::tone;
+use colour::lattice::{ChromaMap, Kernel, generator_of};
+use colour::resident::Resident;
+use colour::tone;
+use gpu::{self, Gpu};
+use units::light::{Light, SceneNits};
 
 /// What a synthetic frame has in it. Every frame is the same textured ground so that "agrees" and
 /// "differs" both have something to measure; a patch is laid over it.
@@ -19,7 +19,7 @@ pub enum Patch {
 
 pub struct Rig {
     pub gpu: &'static Gpu,
-    pub base: &'static rawshim::base::Base,
+    pub base: &'static render::base::Base,
 }
 
 /// The device, or none where no adapter answered - said aloud, since a test that quietly passes
@@ -29,7 +29,7 @@ pub fn rig() -> Option<Rig> {
         eprintln!("SKIPPED: no adapter answered, so the analysis fixtures were not built.");
         return None;
     };
-    let base = rawshim::base::device(gpu).expect("the shipped kernels");
+    let base = render::base::device(gpu).expect("the shipped kernels");
     Some(Rig { gpu, base })
 }
 
@@ -53,8 +53,8 @@ pub fn ground(x: usize, y: usize) -> f32 {
 ///
 /// The frames below code that signal as light directly - a plane whose `full_scale_light` is 1 -
 /// so here the two normalisations coincide and a stage reading `light_of_code` reads this model.
-pub fn noise() -> rawshim::galosh::NoiseModel {
-    rawshim::galosh::NoiseModel {
+pub fn noise() -> denoise::galosh::NoiseModel {
+    denoise::galosh::NoiseModel {
         alpha: 2e-4,
         sigma_sq: 1e-6,
     }

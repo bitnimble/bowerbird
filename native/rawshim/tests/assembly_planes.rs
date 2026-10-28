@@ -2,9 +2,9 @@
 #![cfg(feature = "fixtures")]
 mod support;
 
-use rawshim::assembly_planes::{ANALYSIS_LONG, analysis_planes};
-use rawshim::composite_tile::SourceFile;
-use rawshim::composition::{Composition, LensSpec, SourceSpec, from_axis_angle, normalise};
+use composite::assembly::planes::{ANALYSIS_LONG, analysis_planes};
+use composite::tile::SourceFile;
+use composition::{Composition, LensSpec, SourceSpec, from_axis_angle, normalise};
 use rawshim::snapshot::{Frame, Snapshot};
 use support::*;
 
@@ -22,7 +22,7 @@ fn one_source_recipe(name: &str) -> (Composition, String) {
         path.display(),
     );
     let path = path.to_str().expect("a printable path").to_string();
-    let header = rawshim::header::read_path(&path).expect("the fixture's header");
+    let header = formats::header::read_path(&path).expect("the fixture's header");
     let size = [header.width as usize, header.height as usize];
     (Composition::of_one(size, LensSpec::none()), path)
 }
@@ -59,7 +59,7 @@ fn the_plane_matches_its_snapshot() {
         analysis: None,
     }];
     let planes = pollster::block_on(analysis_planes(&spec, &sources)).unwrap();
-    let crop = rawshim::px::Rect::<rawshim::px::Analysis>::exact(1400, 900, 128, 128);
+    let crop = units::px::Rect::<units::px::Analysis>::exact(1400, 900, 128, 128);
     // Measured against radv: 5 codes at worst, nothing on average.
     let tolerance = rawshim::snapshot::Tolerance {
         worst: 64,

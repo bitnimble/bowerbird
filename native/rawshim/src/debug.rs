@@ -16,7 +16,7 @@
 // the frame is mostly picture and a bar barely moves a mean, but which is four
 // triples and so a summary like any other (`PixelsAt`). No samples leave this side.
 
-use crate::frame::{Frame, Pixels};
+use decode::frame::{Frame, Pixels};
 use serde::{Deserialize, Serialize};
 
 /// Per-channel range and average, which is what a "did the grade move" assertion
@@ -46,7 +46,7 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
                     .step_by(3)
                     .for_each(|v| visit(u32::from(*v))),
                 Pixels::Sixteen(data) => data.iter().skip(c).step_by(3).for_each(|&bits| {
-                    visit(crate::resident::level_of_bits(bits).round().max(0.0) as u32)
+                    visit(colour::resident::level_of_bits(bits).round().max(0.0) as u32)
                 }),
                 Pixels::Resident(_) => panic!("{ON_THE_DEVICE}"),
             }
@@ -357,7 +357,7 @@ pub enum Command {
 pub struct GradeSpec {
     #[serde(default)]
     pub output_path: String,
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    pub reference_white_nits: units::light::Light<units::light::SceneNits>,
     pub white_quantile: f64,
     pub crf: i32,
     pub preset: i32,
@@ -377,15 +377,15 @@ pub struct GradeSpec {
 }
 
 impl GradeSpec {
-    fn strengths(&self) -> crate::image::Strengths {
-        crate::image::Strengths {
+    fn strengths(&self) -> render::detail::Strengths {
+        render::detail::Strengths {
             sharpen: self.sharpen,
             defringe: self.defringe,
         }
     }
 
-    fn grade(&self) -> crate::hdr::Grade {
-        crate::hdr::Grade {
+    fn grade(&self) -> crate::hdr_args::Grade {
+        crate::hdr_args::Grade {
             reference_white_nits: self.reference_white_nits,
             white_quantile: self.white_quantile,
         }
@@ -394,8 +394,8 @@ impl GradeSpec {
     fn options(&self) -> crate::hdr_args::EncodeOptions {
         crate::hdr_args::EncodeOptions {
             still_chroma: match self.still_full_chroma {
-                true => crate::hdr_args::Chroma::Yuv444,
-                false => crate::hdr_args::Chroma::Yuv420,
+                true => formats::still::Chroma::Yuv444,
+                false => formats::still::Chroma::Yuv420,
             },
             output_path: self.output_path.clone(),
             grade: self.grade(),
@@ -468,8 +468,8 @@ fn hdr_match(
     path: &str,
     linear: &Frame,
     spec: &GradeSpec,
-) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
-    let gpu = crate::gpu::device().ok_or("the fit needs an adapter")?;
+) -> Result<Option<fit::hdr::HdrMatch>, String> {
+    let gpu = gpu::device().ok_or("the fit needs an adapter")?;
     let frame = linear.on_device(gpu).ok_or("the frame could not be read")?;
     Ok(crate::fit_hdr_for(
         &frame,
@@ -487,9 +487,9 @@ fn hdr_match(
 #[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn luma_quantiles(
     samples: &[u16],
-    peak_nits: crate::light::Light<crate::light::DisplayNits>,
+    peak_nits: units::light::Light<units::light::DisplayNits>,
     wanted: &[f64],
-) -> Vec<crate::light::Light<crate::light::DisplayNits>> {
+) -> Vec<units::light::Light<units::light::DisplayNits>> {
     if wanted.is_empty() {
         return Vec::new();
     }
@@ -507,8 +507,8 @@ pub(crate) fn luma_quantiles(
     wanted
         .iter()
         .map(|q| match luma.is_empty() {
-            true => crate::light::Light::ZERO,
-            false => crate::light::Light::measured(
+            true => units::light::Light::ZERO,
+            false => units::light::Light::measured(
                 luma[((q * (luma.len() - 1) as f64).floor() as usize).min(luma.len() - 1)],
             ),
         })
@@ -565,12 +565,12 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             image_paths,
             raw_path,
         } => {
-            let images: Vec<crate::rgb::Rgb> = image_paths
+            let images: Vec<units::rgb::Rgb> = image_paths
                 .iter()
                 .map(|path| {
                     let encoded =
                         std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-                    crate::image::decode(&encoded, 0)
+                    formats::resize::decode(&encoded, 0)
                         .map_err(|e| format!("could not decode {path}: {e}"))
                 })
                 .collect::<Result<_, String>>()?;
@@ -586,7 +586,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             // not the same shape: the preview is distortion-cropped, so at an 800px long
             // edge it comes out a pixel narrower than the render and a shared index
             // would slide a pixel per row.
-            let linear = |v: [f64; 3]| [0, 1, 2].map(|c| crate::hdr_fit::srgb_eotf(v[c] as u8));
+            let linear = |v: [f64; 3]| [0, 1, 2].map(|c| colour::space::srgb_eotf(v[c] as u8));
             let counted = 4000usize;
             let mut targets = Vec::with_capacity(counted);
             let mut ours: Vec<Vec<([f64; 3], f64)>> =
@@ -599,13 +599,13 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     below.push((linear(sample(image.as_ref(), u, v)), 0.0));
                 }
             }
-            let gpu = crate::gpu::device().ok_or("the colour distance is a shader")?;
+            let gpu = gpu::device().ok_or("the colour distance is a shader")?;
             let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
             let mut mean_delta_e = Vec::with_capacity(images.len());
             for below in &ours {
-                let scoring = crate::fit_score::Scoring::new(
+                let scoring = fit::score::Scoring::new(
                     gpu,
-                    crate::fit_score::below_buffer(gpu, below),
+                    fit::score::below_buffer(gpu, below),
                     &targets,
                     &vec![1.0; counted],
                     &identity,
@@ -613,8 +613,8 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     1,
                 );
                 let blocks = pollster::block_on(scoring.partials(
-                    &crate::fit_score::Shape::Saturation,
-                    &[crate::fit_score::Probe::neutral()],
+                    &fit::score::Shape::Saturation,
+                    &[fit::score::Probe::neutral()],
                 ))
                 .ok_or("the colour distance could not be read back")?
                 .remove(0);
@@ -664,11 +664,12 @@ fn tile_crops(
     window: usize,
     scale: usize,
 ) -> Result<Reply, String> {
-    let images: Vec<crate::rgb::Rgb> = image_paths
+    let images: Vec<units::rgb::Rgb> = image_paths
         .iter()
         .map(|path| {
             let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-            crate::image::decode(&encoded, 0).map_err(|e| format!("could not decode {path}: {e}"))
+            formats::resize::decode(&encoded, 0)
+                .map_err(|e| format!("could not decode {path}: {e}"))
         })
         .collect::<Result<_, String>>()?;
     let first = images.first().ok_or("no images to tile")?;
@@ -719,7 +720,7 @@ fn tile_crops(
             }
         }
     }
-    crate::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Owned(out),
         width,
         side,
@@ -733,7 +734,7 @@ fn tile_crops(
 }
 
 /// The pixel at a fractional position, so images of different shapes compare.
-fn sample(image: crate::rgb::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
+fn sample(image: units::rgb::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
     let x = ((u * image.width as f64) as usize).min(image.width.saturating_sub(1));
     let y = ((v * image.height as f64) as usize).min(image.height.saturating_sub(1));
     let i = (y * image.width + x) * 3;

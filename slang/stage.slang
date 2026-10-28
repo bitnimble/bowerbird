@@ -1,7 +1,7 @@
 // The viewer's stage: a decoded frame painted onto an extended-range canvas.
 //
 // A browser draws it over planes `VideoFrame.copyTo` handed back; an Android TV, whose WebView
-// shows no HDR, draws it natively into a window behind the page (`gpu/surface_stage.rs`). What it
+// shows no HDR, draws it natively into a window behind the page (`grade/surface_stage.rs`). What it
 // shares with the rest of `slang/` is the arithmetic: the transfer, the roll-off, BT.2020's weights
 // and a gain map's reconstruction, each written once.
 //

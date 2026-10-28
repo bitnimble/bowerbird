@@ -411,7 +411,7 @@ pub fn scrubbed(file: &[u8]) -> Option<Vec<u8>> {
 mod fixtures {
     use super::*;
     use crate::fixture_tests::{canon, fuji, sony};
-    use crate::header::{name, read_bytes};
+    use formats::header::{name, read_bytes};
 
     /// One of each container this has to recognise: a TIFF, a BMFF, and Fuji's own wrapper.
     fn all() -> [std::path::PathBuf; 3] {

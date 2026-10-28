@@ -55,28 +55,28 @@ fn main() {
     // The frame's own noise, which every tile below is then denoised at. `Fit::Only` stops after
     // the statistics, so this is the cheap half of a decode rather than another whole one.
     let bytes = std::fs::read(&path).expect("the RAW reads");
-    let frame = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+    let frame = rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
         .expect("the frame decodes");
     let fit = frame.noise.expect("the frame fitted its noise");
     let photograph = (frame.width, frame.height);
     drop(frame);
-    let amounts = rawshim::galosh::Detail::at(sliders.0, sliders.1);
+    let amounts = denoise::galosh::Detail::at(sliders.0, sliders.1);
     eprintln!(
         "fit alpha {:.3e} sigma_sq {:.3e}, denoising at {},{}",
         fit.alpha, fit.sigma_sq, sliders.0, sliders.1,
     );
 
     let cut = |left: usize, top: usize, width: usize, height: usize| -> Vec<u8> {
-        let view = rawshim::view::View::whole(rawshim::px::Size::exact(photograph.0, photograph.1))
-            .showing(rawshim::px::Rect::exact(left, top, width, height));
+        let view = decode::view::View::whole(units::px::Size::exact(photograph.0, photograph.1))
+            .showing(units::px::Rect::exact(left, top, width, height));
         // Whatever is passed here is overridden by `set_tile_halo` for the whole sweep, which is
         // the point of the harness; the constant only names what a caller would have asked for.
         let frame = rawshim::decode_tile(
             &path,
             view,
             amounts,
-            rawshim::galosh::Fit::Given(fit),
-            rawshim::RENDITION_TILE_HALO,
+            denoise::galosh::Fit::Given(fit),
+            decode::RENDITION_TILE_HALO,
         )
         .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
         assert_eq!(
@@ -90,9 +90,9 @@ fn main() {
             .expect("a 16-bit tile")
             .iter()
             .map(|&bits| {
-                let level = f64::from(rawshim::resident::level_of_bits(bits));
+                let level = f64::from(colour::resident::level_of_bits(bits));
                 let lit = (level / 65535.0 * scale).clamp(0.0, 1.0);
-                (rawshim::hdr_fit::srgb_oetf(lit) * 255.0).round() as u8
+                (colour::space::srgb_oetf(lit) * 255.0).round() as u8
             })
             .collect()
     };
@@ -105,7 +105,7 @@ fn main() {
     //
     // A tile keeps every other thing about the path identical, so the halo is the only variable.
     const REFERENCE_HALO: usize = 512;
-    rawshim::set_tile_halo(REFERENCE_HALO);
+    decode::set_tile_halo(REFERENCE_HALO);
     let reference = cut(x, y, side, side);
     let half = side / 2;
     // Both seams cross at the region's middle, so one square centred there shows each of them at
@@ -137,7 +137,7 @@ fn main() {
         "halo", "V excess", "H excess", "baseline", "band avg", "away avg",
     );
     for halo in &halos {
-        rawshim::set_tile_halo(*halo);
+        decode::set_tile_halo(*halo);
         // Four quarters, reassembled. The seams are the region's own middle row and column.
         let mut assembled = vec![0u8; side * side * 3];
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -171,7 +171,7 @@ fn main() {
         write(&format!("{out}/diff-halo{halo}"), &diff, window, window);
         strip.push(panel(&assembled));
     }
-    rawshim::set_tile_halo(usize::MAX);
+    decode::set_tile_halo(usize::MAX);
 
     // The reference and every halo in one row, so they are judged against each other rather than
     // against a memory of the last one - which is the whole difficulty with a difference this
@@ -327,11 +327,11 @@ fn triple(text: &str) -> Option<(usize, usize, usize)> {
 /// Both forms, because these exist to be looked at and neither opens everywhere.
 ///
 /// Lossless enough to judge a seam by in each case: the AVIF is quantizer 0 with no chroma
-/// subsampling, the JPEG is quality 100 and `crate::jpeg` is 4:4:4 already, so what survives is
+/// subsampling, the JPEG is quality 100 and `formats::jpeg` is 4:4:4 already, so what survives is
 /// the 8-bit YCbCr rounding rather than anything either encoder chose to discard. A seam that only
 /// one of them shows is the encoder rather than the halo, which is worth being able to check.
 fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
-    rawshim::avif::encode_rendition(
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(rgb),
         width,
         height,
@@ -342,11 +342,11 @@ fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
     )
     .expect("the crop encodes");
 
-    let image = rawshim::rgb::RgbRef {
+    let image = units::rgb::RgbRef {
         width,
         height,
         data: rgb,
     };
-    let jpeg = rawshim::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
+    let jpeg = formats::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
     std::fs::write(format!("{stem}.jpg"), jpeg).expect("the JPEG writes");
 }

@@ -21,7 +21,7 @@ fn whole(job: &Job) -> Result<(usize, usize), String> {
         let canvas = recipe.composition().canvas;
         return Ok((canvas[0], canvas[1]));
     }
-    let header = crate::header::read_path(&job.raw_file_path)
+    let header = formats::header::read_path(&job.raw_file_path)
         .ok_or_else(|| format!("{} could not be read", job.raw_file_path))?;
     Ok((header.width as usize, header.height as usize))
 }
@@ -29,18 +29,18 @@ fn whole(job: &Job) -> Result<(usize, usize), String> {
 /// The picture at `level`, coded, with everything the grade needs beside it.
 ///
 /// `level` is a halving of the recipe's own long edge, and `window` a rectangle of that level in
-/// its own pixels - None for the whole of it. [`crate::composition::coarsest_level`] is the level to
+/// its own pixels - None for the whole of it. [`composition::coarsest_level`] is the level to
 /// ask for the whole picture at: below it the picture is larger than an adapter will hold a texture
 /// of, which is the whole reason a canvas has levels, and a window is how a reader reaches past it.
 pub fn prepared(
     job: &Job,
     level: u32,
-    window: Option<crate::px::Rect<crate::px::Composite>>,
+    window: Option<units::px::Rect<units::px::Composite>>,
     // The parts of `window` the caller is actually short of, or empty for the whole of it. An L of
     // tiles is decoded per source for the box bounding *its own* parts rather than for the box
     // bounding all of them, which holds a corner nobody asked about
-    // (`composite_tile::CompositeRequest::parts`).
-    parts: &[crate::px::Rect<crate::px::Composite>],
+    // (`composite::tile::CompositeRequest::parts`).
+    parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<crate::edit::Prepared, String> {
     let picture = whole(job)?;
     let long = picture.0.max(picture.1);
@@ -74,7 +74,7 @@ pub fn prepared(
         } else {
             size
         };
-    let scale = crate::view::Scale::for_long_edge(picture, decode_size);
+    let scale = decode::view::Scale::for_long_edge(picture, decode_size);
     if let Some(window) = window.filter(|_| {
         job.composite.is_none()
             && scale.of(picture.0) * scale.of(picture.1) > crate::job::BANDED_PIXELS
@@ -120,7 +120,7 @@ pub fn prepared(
             } else {
                 shape
             };
-            let size = crate::hdr_args::Size {
+            let size = formats::still::Size {
                 width: width as u32,
                 height: height as u32,
             };
@@ -132,10 +132,10 @@ pub fn prepared(
                 Some(_) => photograph.0.max(photograph.1),
                 None => (size.width as usize).max(size.height as usize),
             };
-            let sigma = crate::image::deconvolve_split(capture_sigma, sensor_long, scaled_long);
+            let sigma = render::detail::deconvolve_split(capture_sigma, sensor_long, scaled_long);
             let noise = sharpen_noise.at(
-                crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-                crate::px::Span::<crate::px::Drawn>::exact(scaled_long),
+                units::px::Span::<units::px::Sensor>::exact(sensor_long),
+                units::px::Span::<units::px::Drawn>::exact(scaled_long),
             );
             // No repairs: the client draws them over whatever level and tiles it holds
             // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
@@ -148,24 +148,24 @@ pub fn prepared(
             .resident()
             .ok_or("the prepared picture is not on the GPU")?;
         let gpu = source.gpu();
-        let cropped = crate::resident::Resident::empty(gpu, width, height);
+        let cropped = colour::resident::Resident::empty(gpu, width, height);
         let mut recording = gpu.record();
         // Crop after filtering so window boundaries keep the whole picture's neighbours.
-        crate::retouched_frame::copy(
+        composite::retouched_frame::copy(
             &mut recording,
-            (source, crate::px::At::exact(x, y)),
-            (&cropped, crate::px::At::exact(0, 0)),
-            crate::px::Size::exact(width, height),
+            (source, units::px::At::exact(x, y)),
+            (&cropped, units::px::At::exact(0, 0)),
+            units::px::Size::exact(width, height),
         );
         recording.submit();
-        placed = Some(crate::gpu::Window {
-            photograph: crate::px::Size::exact(cut.width, cut.height),
-            origin: crate::px::At::exact(x, y),
+        placed = Some(render::grade::Window {
+            photograph: units::px::Size::exact(cut.width, cut.height),
+            origin: units::px::At::exact(x, y),
         });
         cut.release();
         cut = crate::hdr::Cut::device(cropped, width, height);
     }
-    if let Some(gpu) = crate::gpu::device() {
+    if let Some(gpu) = gpu::device() {
         gpu.settle();
     }
 
@@ -185,7 +185,7 @@ pub fn prepared(
         .from_render
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
-    let keep = crate::photo_analysis::encode(&filled);
+    let keep = fit::photo_analysis::encode(&filled);
     let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
 
@@ -202,8 +202,7 @@ pub fn prepared(
             matched: matched.is_some(),
             // A client moving a Detail or dust setting asks for a new prepare at it, so a RAW's
             // panels stay open though its mosaic stayed here. A composite's assembly takes no dust.
-            mosaic: job.composite.is_none()
-                && !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            mosaic: job.composite.is_none() && !formats::rendered::is_rendered(&job.raw_file_path),
             as_shot,
             detail: job.detail().resolved(noise_fit),
             camera_curve,
@@ -230,9 +229,9 @@ pub fn prepared(
 fn windowed(
     job: &Job,
     level: u32,
-    window: crate::px::Rect<crate::px::Composite>,
+    window: units::px::Rect<units::px::Composite>,
 ) -> Result<crate::edit::Prepared, String> {
-    let held = pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?;
+    let held = pollster::block_on(decode::hold_path(&job.raw_file_path))?;
     let picture = held.size().raw();
     let shape = crate::composite_job::level_shape(&[picture.0, picture.1], level);
     let known = known(job)?;
@@ -252,9 +251,9 @@ fn windowed(
         noise_fit: None,
         capture_sigma: None,
         sensor_long: None,
-        defocus: crate::base::Defringe::Measure,
-        photo_analysis: Some(crate::photo_analysis::encode(&known)),
-        scale: crate::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
+        defocus: render::base::Defringe::Measure,
+        photo_analysis: Some(fit::photo_analysis::encode(&known)),
+        scale: decode::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
         // No repairs: the client draws them over whatever level and tiles it holds
         // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
         repairs: Vec::new(),
@@ -286,7 +285,7 @@ fn windowed(
             strengths: job.strengths(),
             camera_match: job.camera_match,
             matched: prepared.matched.is_some(),
-            mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            mosaic: !formats::rendered::is_rendered(&job.raw_file_path),
             as_shot: prepared.as_shot,
             detail: job.detail().resolved(noise_fit),
             camera_curve,
@@ -295,7 +294,7 @@ fn windowed(
             camera_balance,
             noise_fit,
             defocus,
-            photo_analysis: Some(crate::photo_analysis::encode(&known)),
+            photo_analysis: Some(fit::photo_analysis::encode(&known)),
             window: Some(crate::edit::PreparedWindow {
                 canvas: shape,
                 origin: (x, y),
@@ -310,7 +309,7 @@ fn windowed(
 
 /// What a window of this photograph is corrected and graded against, which a window cannot measure:
 /// what the job was handed, or else what a small render of the whole photograph measures.
-fn known(job: &Job) -> Result<crate::photo_analysis::PhotoAnalysis, String> {
+fn known(job: &Job) -> Result<fit::photo_analysis::PhotoAnalysis, String> {
     let stored = job.stored();
     let complete = stored
         .from_render
@@ -351,7 +350,7 @@ mod tests {
         for level in [0, 1] {
             let whole = prepared(&job, level, None, &[]).expect("the whole picture prepares");
             job.photo_analysis = whole.header.photo_analysis.clone();
-            let rectangle = crate::px::Rect::exact(1024, 800, 400, 300);
+            let rectangle = units::px::Rect::exact(1024, 800, 400, 300);
             let cut = windowed(&job, level, rectangle).expect("the window prepares");
             assert_eq!((cut.header.width, cut.header.height), (400, 300));
             assert_eq!(

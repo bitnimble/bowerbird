@@ -1,9 +1,9 @@
 mod support;
 
-use rawshim::gpu::{Canvas, Grade, Intent};
-use rawshim::light::Light;
-use rawshim::print::{Environment, Paper, Presentation, Scene};
-use rawshim::px::Size;
+use render::grade::{Canvas, Grade, Intent};
+use units::light::Light;
+use render::print::{Environment, Paper, Presentation, Scene};
+use units::px::Size;
 use rawshim::snapshot::Snapshot;
 
 fn main() -> Result<(), String> {
@@ -100,7 +100,7 @@ fn main() -> Result<(), String> {
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
-            denoiser: rawshim::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),
@@ -110,8 +110,8 @@ fn main() -> Result<(), String> {
         },
         support::STRENGTHS.sharpen,
     )?;
-    let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
-    let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
+    let gpu = gpu::device().ok_or("print requires Vulkan")?;
+    let base = render::base::device(gpu).ok_or("the source pyramid")?;
     let header = &prepared.header;
     let display = Scene {
         framed: framed && surface,
@@ -130,9 +130,9 @@ fn main() -> Result<(), String> {
     let analysis = header
         .photo_analysis
         .as_deref()
-        .and_then(rawshim::photo_analysis::decode);
+        .and_then(fit::photo_analysis::decode);
     let pyramid =
-        rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+        render::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("the source pyramid")?;
     let grade = Grade {
         colour: analysis
@@ -149,7 +149,7 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: header.white,
                 peak: header.peak,
                 floor: header.floor,
@@ -162,14 +162,14 @@ fn main() -> Result<(), String> {
             },
         )
     };
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
     if let Some(path) = profile {
         let icc = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
         let started = std::time::Instant::now();
-        let adaptation = number("adaptation", rawshim::printer_gamut::PAPER_ADAPTATION)?;
-        let printer = rawshim::printer_gamut::PrinterGamut::adapted(&icc, adaptation)?;
+        let adaptation = number("adaptation", render::printer_gamut::PAPER_ADAPTATION)?;
+        let printer = render::printer_gamut::PrinterGamut::adapted(&icc, adaptation)?;
         println!(
             "{path}: gamut read in {:.1} ms",
             started.elapsed().as_secs_f64() * 1000.0
@@ -205,7 +205,7 @@ fn main() -> Result<(), String> {
             );
             let snapshot = Snapshot::pq(
                 &samples,
-                Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             );
             std::fs::write(
                 output.join(format!("pitch{pitch}.preview.png")),
@@ -268,7 +268,7 @@ fn main() -> Result<(), String> {
         for (view, scene) in views {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             let brightest = samples.iter().copied().max().unwrap_or(0);
-            let nits = rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(
+            let nits = colour::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
                 f64::from(brightest) / 65535.0,
             ))
             .raw();
@@ -285,7 +285,7 @@ fn main() -> Result<(), String> {
             );
             let snapshot = Snapshot::pq(
                 &samples,
-                Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1),
+                Size::<units::px::Canvas>::measured(canvas.0, canvas.1),
             );
             std::fs::write(output.join(format!("{name}-{view}.png")), snapshot.encode())
                 .map_err(|error| error.to_string())?;
@@ -355,7 +355,7 @@ fn sheet_levels(
     canvas: (usize, usize),
 ) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let nits = |code: u16| {
-        rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(
+        colour::tone::pq_inv::<units::light::DisplayNits>(Light::measured(
             f64::from(code) / 65535.0,
         ))
         .raw()

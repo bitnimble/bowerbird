@@ -9,8 +9,8 @@
 //! fitted inside 512px and re-encoded by `vips` at two qualities, bracketing what MediaProvider
 //! keeps. Frames are taken in capture order.
 
-use rawshim::decode_rawler::{Preview, upright_preview_jpeg};
-use rawshim::stacks::{describe, group, similarity};
+use decode::raw::{Preview, upright_preview_jpeg};
+use stacks::{describe, group, similarity};
 
 const TILE: usize = 800;
 const THUMBNAIL: usize = 512;
@@ -26,7 +26,7 @@ struct Frame {
 }
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let scratch = std::env::temp_dir().join("bb-thumbnail-descriptors");
     std::fs::create_dir_all(&scratch).expect("scratch dir");
     let mut paths = Vec::new();
@@ -146,12 +146,12 @@ fn raws_under(path: &std::path::Path, out: &mut Vec<String>) {
     }
 }
 
-fn frame(gpu: &'static rawshim::gpu::Gpu, scratch: &std::path::Path, path: &str) -> Option<Frame> {
+fn frame(gpu: &'static gpu::Gpu, scratch: &std::path::Path, path: &str) -> Option<Frame> {
     let name = std::path::Path::new(path)
         .file_name()?
         .to_string_lossy()
         .into_owned();
-    let timestamp = rawshim::header::read_path(path)?.timestamp;
+    let timestamp = formats::header::read_path(path)?.timestamp;
     let original = upright_preview_jpeg(path, Preview::Largest)?;
     let tile = describe_jpeg(gpu, &original, TILE)?;
     let source = scratch.join(format!("{name}.jpg"));
@@ -181,12 +181,8 @@ fn frame(gpu: &'static rawshim::gpu::Gpu, scratch: &std::path::Path, path: &str)
     })
 }
 
-fn describe_jpeg(
-    gpu: &'static rawshim::gpu::Gpu,
-    jpeg: &[u8],
-    long_edge: usize,
-) -> Option<Vec<u8>> {
-    let rgb = rawshim::jpeg::decode_tile(jpeg, long_edge).ok()?;
+fn describe_jpeg(gpu: &'static gpu::Gpu, jpeg: &[u8], long_edge: usize) -> Option<Vec<u8>> {
+    let rgb = formats::jpeg::decode_tile(jpeg, long_edge).ok()?;
     describe(gpu, rgb.as_ref())
 }
 

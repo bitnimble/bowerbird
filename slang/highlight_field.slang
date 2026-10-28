@@ -17,7 +17,7 @@ struct Field {
     uint site;
     /// Sites a side in a level-0 cell.
     uint cell_sites;
-    /// Each channel's ceiling in `xyz` (`decode_rawler::channel_ceilings`); `w` is unused.
+    /// Each channel's ceiling in `xyz` (`decode::raw::channel_ceilings`); `w` is unused.
     float4 ceiling;
 };
 

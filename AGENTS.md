@@ -26,7 +26,7 @@ forces it for tests; other processes use
 `VK_ADD_DRIVER_FILES=native/rawshim/.swiftshader/vk_swiftshader_icd.json`. Docker installs it
 and deletes lavapipe's manifest.
 
-CPU-only algorithms remain valid: solvers (`fit.rs`, `hdr_fit.rs`, `tca.rs`: least squares,
+CPU-only algorithms remain valid: solvers (`fit::profile`, `fit::hdr`, `fit::tca`: least squares,
 golden section), shader input tables, dust blob flood fill (`dust.rs`, surrounded by
 `slang/dust_find.slang`). Restriction covers pixel arithmetic.
 
@@ -61,11 +61,12 @@ In Rust and Slang:
 - **Lights need domains.** Ratios use domain-free `Stops` or `Gain`. Decode before weighting;
   never sum coded values as light.
 - **Cross planes through `Share`**, never an ad hoc ratio.
-- **Declare shared constants once.** Use `prelude::LUMA` and `LUMA709` luma weights.
+- **Declare shared constants once.** Use `prelude::LUMA` and `LUMA709` luma weights
+  (`colour::space::LUMA`, `LUMA709` in Rust).
 
 These modules are opt-in: `(usize, usize)` and `f32` boundaries compile without them.
-Audit new files for `px`/`light` imports and named spaces/domains, including the `assembly_*`
-family's ten Rust modules and eight shaders. Compilation does not prove unit safety.
+Audit new files for `px`/`light` imports and named spaces/domains, including `composite::assembly`'s
+thirteen modules and the `assembly_*` shaders. Compilation does not prove unit safety.
 
 Before adding a shader constant, classify it in `px.slang`'s header: picture share, absolute
 mosaic distance, scale-exact fixed working plane, intentional output pixel, or non-pixel unit.
@@ -73,9 +74,10 @@ Declare each light's domain; ratios use `Stops`.
 
 ## The shaders are Slang
 
-Edit `slang/`, never generated WGSL. `native/rawshim/build.rs` compiles every `.slang` except
-a `module` with `slangc` into `$OUT_DIR/wgsl/<name>.wgsl`; `include_str!` and runtime shader
-tests read there. No generated files are committed; no `wgsl/` source directory exists.
+Edit `slang/`, never generated WGSL. `native/shaders/build.rs` compiles every `.slang` except
+a `module` with `slangc` into `$OUT_DIR/wgsl/<name>.wgsl` and names each as a constant:
+`shaders::FRAME.source`, `shaders::galosh::PYR_PACK`, `shaders::ALL` for tests over every one.
+No generated files are committed; no `wgsl/` source directory exists.
 
 Browser builds cannot access cargo's `$OUT_DIR`. `scripts/build-web-shaders.ts` uses the same
 pinned compiler, emits gitignored `web/src/features/photos/generated/`, imported with `?raw`.
@@ -135,12 +137,13 @@ a build carries: a running app downloads newer ones from Hugging Face itself (`M
 `NOT_IMPLEMENTED` for every 4:2:0 encode, including grid tiles.
 
 Trees live in recipe-named directories under `~/.cache/bowerbird/<name>/`, reached through
-`native/rawshim/.<name>` symlinks. Worktrees share matching builds; different pins coexist.
+`native/rawshim/.<name>` symlinks, which the other crates reach by relative path
+(`../rawshim/.upscaler`). Worktrees share matching builds; different pins coexist.
 Run getters in each worktree to create symlinks. `XDG_CACHE_HOME` moves cache;
 `BOWERBIRD_SLANGC` still selects an external compiler.
 
 - `static const` folds into use sites; tests pinning shader constants read `.slang`.
-- Names are mangled: `Params_std140_0`, `FROM_FRAME_0`. `wgsl_layout.rs` matches block prefixes;
+- Names are mangled: `Params_std140_0`, `FROM_FRAME_0`. `shaders::layout` matches block prefixes;
   draw constants use `[vk::constant_id(0)]` IDs.
 - **A place or count in a plane is a `px` `Wide`, and `wide * 3` its first value or sample count**
   (`wide_at<S>(x, y, width)`, `wide<S>(n)`). Adreno truncates `x` to 24 bits in a multiply by a
@@ -179,7 +182,8 @@ then do other work or wait for completion. **Never poll output files**: output p
 `tail` stays empty until completion.
 
 `test:native` requires a name filter, `--test <file>`, or `--lib`; no selection exits 2.
-Real RAW tests require `--features fixtures`. It covers **only `native/rawshim`**.
+Real RAW tests require `--features fixtures`. It covers **only the `native/Cargo.toml` workspace**
+(rawshim and the crates it is split into).
 Run sibling crates through `bun run scripts/cargo.ts test --manifest-path native/updater/Cargo.toml`,
 substituting `native/lensdb/Cargo.toml`, `native/heif/Cargo.toml` or `native/avif_planes/Cargo.toml`
 as needed. `lensdb` tests pin scored search against C results (DESIGN §10.8).
@@ -221,7 +225,7 @@ Sweeping changes (shared types/shaders, FFI constants, cross-module renames, reb
 `bun run test:native
 --lib`, each affected `--test <file>`, and **`bun run build:wasm`**. Host cargo, even
 `--all-targets`, cannot compile `wasm.rs` under `#[cfg(target_arch = "wasm32")]`.
-Changes to `gpu::Grade`, `tone::Levels`, `PreparedHeader` can therefore pass host checks
+Changes to `grade::Grade`, `tone::Levels`, `PreparedHeader` can therefore pass host checks
 and break the browser.
 
 **Use `scripts/cargo.ts` for cargo.** It removes superseded artefacts; bare `cargo` leaves
@@ -319,7 +323,7 @@ in about five seconds.
   fit, quantile 0.9) and grade with `support::graded` or `support::cut` (`job::Base::build`'s
   chain). Never `decode_frame`/`fit_hdr_for`, which skip all three and move the camera match, nor
   `hdr::graded_as`, which skips the defringe and sharpens at a fixed sigma with no noise table.
-- `gpu.rs` supplies editor passes; `wasm.rs` calls `gpu::present`.
+- `grade.rs` supplies editor passes; `wasm.rs` calls `grade::present`.
   `gpu.encode(frame, grade)` needs an **already coded and warped** frame.
   `graded_as` codes for itself: passing a prepared frame codes twice, lifting/flattening the image.
 - Only denoise is `galosh.rs`, on the mosaic.
@@ -338,15 +342,15 @@ which reads `document` during import. Never preload DOM: shared server tests ass
 ## Rendering must agree between the editor and a rendition
 
 Same [photo, edits, rendition settings] must produce identical pixels. Browser `wasm.rs`
-calls `gpu::present`, sharing the rendition's WGSL and passes. Page chooses what to draw.
+calls `grade::present`, sharing the rendition's WGSL and passes. Page chooses what to draw.
 Where logic exists twice, pin agreement:
 
 - `the_draw_places_a_pixel_where_the_gather_does`: every output pixel across geometries,
-  `image::Plan::at` versus `geometry.slang`.
+  `geometry::warp::Plan::at` versus `geometry.slang`.
 - `module-json.json`: three worker-boundary shapes, decoded by `module_json.rs`, rebuilt by
   `module_json.test.ts`. One-sided renames yield `missing
 field` and a black stage.
-- `display-size.txt`: `hdr::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
+- `display-size.txt`: `geometry::warp::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
 - `avif-planes.txt`: libavif's planes of `test/fixtures/avif-planes/`, which `avif_planes` must
   hand back (Safari's decoder). rawshim's `libavif_decodes_the_browser_decoders_fixtures` writes
   the files, planes and table.

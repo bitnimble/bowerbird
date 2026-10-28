@@ -13,9 +13,10 @@
 
 mod support;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::light::{DisplayNits, Gain, Light};
+use formats::avif;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
+use units::light::{DisplayNits, Gain, Light};
 
 fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
@@ -73,7 +74,7 @@ fn sdr_to_pq(code: u16, full: f64) -> f64 {
         false => ((v + 0.055) / 1.055).powf(2.4),
     };
     // An SDR file's 1.0 is diffuse white, which is where its codes land on the absolute curve.
-    rawshim::tone::pq(Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear)).raw()
+    colour::tone::pq(Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear)).raw()
 }
 
 /// The blacks a comparison is run at, in nits, below which it treats the picture as one level.
@@ -92,7 +93,7 @@ const BLACK_NITS: [f64; 5] = [0.1, 0.5, 1.0, 2.0, 5.0];
 const TARGET_SDR: i32 = 10;
 
 fn rmse_in_pq(a: &[u16], b: &[u16], full: f64, sdr: bool, black: f64) -> f64 {
-    let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(black)).raw();
+    let floor = colour::tone::pq(Light::<DisplayNits>::measured(black)).raw();
     let signal = |c: u16| {
         match sdr {
             true => sdr_to_pq(c, full),
@@ -117,10 +118,10 @@ fn main() {
             e.parse().expect("a number")
         });
     let mut number = || args.next().map(|v| v.parse::<f64>().expect("a number"));
-    let detail = rawshim::galosh::Detail {
+    let detail = denoise::galosh::Detail {
         luminance: number(),
         colour: number(),
-        ..rawshim::galosh::Detail::AUTO
+        ..denoise::galosh::Detail::AUTO
     };
 
     let opened = support::Open {
@@ -129,15 +130,15 @@ fn main() {
     }
     .run()
     .expect("decode");
-    let (pq, w, h) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Pq);
-    let (srgb, _, _) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
+    let (pq, w, h) = support::graded(&opened, &options(edge), render::grade::Output::Pq);
+    let (srgb, _, _) = support::graded(&opened, &options(edge), render::grade::Output::Srgb);
     let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
 
     println!("{w}x{h}");
     println!("  pq   {}", span(&pq, 65535.0));
     println!("  srgb {}", span(&srgb, 255.0));
 
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     let still = |q: i32, chroma: Chroma| {
         avif::encode_still(
             std::borrow::Cow::Borrowed(&pq),

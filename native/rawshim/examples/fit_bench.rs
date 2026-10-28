@@ -35,7 +35,7 @@ fn main() {
 
 fn measure(path: &str) {
     let quantile = support::GRADE.white_quantile;
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("fit_bench: no adapter");
         std::process::exit(2);
     };
@@ -69,7 +69,7 @@ fn measure(path: &str) {
     for _ in 0..REPEATS {
         // Re-fetched per round rather than cloned: `Geometry` is not `Clone`, and reading it is a
         // lensfun lookup rather than anything this is trying to time.
-        let Some(geometry) = rawshim::ffi::geometry_for(path) else {
+        let Some(geometry) = rawshim::lens_geometry::geometry_for(path) else {
             eprintln!("{path}: no geometry");
             return;
         };
@@ -80,7 +80,7 @@ fn measure(path: &str) {
             &resident,
             quantile,
             geometry,
-            rawshim::hdr_fit::CameraMatch::LensAndColour,
+            fit::hdr::CameraMatch::LensAndColour,
             opened.frame.as_shot,
         ));
         taken.push(began.elapsed().as_secs_f64() * 1000.0);
@@ -117,8 +117,8 @@ fn measure(path: &str) {
             // The whole match as the sidecar would store it, hashed: the lattice is too large to
             // print, and this is the form every later render reads.
             let encoded =
-                rawshim::photo_analysis::encode(&rawshim::photo_analysis::PhotoAnalysis {
-                    from_raw: rawshim::photo_analysis::FromRaw {
+                fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         matched: Some(matched.clone()),
                         ..Default::default()
                     },

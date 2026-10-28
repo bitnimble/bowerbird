@@ -6,13 +6,13 @@
 //! warp and the sharpen have to be one implementation rather than two that agree today.
 //!
 //! What is *not* here is the grade. That is a dispatch over the same WGSL on either host, from a
-//! uniform each builds for itself, and the tile's half of that uniform is `gpu::uniform_words` -
+//! uniform each builds for itself, and the tile's half of that uniform is `render::grade::uniform_words` -
 //! so a tab grades its tile through the shaders it grades everything else with rather than through
 //! a second copy of the rule.
 
-use crate::image::Strengths;
-use crate::px::{At, Drawn, Photograph, Place, Rect, Size, Span};
+use render::detail::Strengths;
 use serde::Deserialize;
+use units::px::{At, Drawn, Photograph, Place, Rect, Size, Span};
 
 /// What a tile needs that its own rectangle cannot tell it.
 ///
@@ -28,7 +28,7 @@ pub struct TileRequest {
     pub tile: [usize; 4],
     /// The photograph the rectangle is a piece of.
     pub frame: [usize; 2],
-    pub grade: crate::hdr::Grade,
+    pub grade: crate::hdr_args::Grade,
     pub strengths: Strengths,
     /// The Detail panel's two sliders, 0 to 100, which drive the denoise on the mosaic.
     ///
@@ -42,28 +42,28 @@ pub struct TileRequest {
     /// Which filter those two positions drive, which a window has to match the frame on or a loupe
     /// would predict an export it does not resemble.
     #[serde(default)]
-    pub denoiser: crate::galosh::Denoiser,
+    pub denoiser: denoise::galosh::Denoiser,
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic beside the denoise.
     ///
     /// The particles themselves are not here: they are in `photo_analysis`, because they are the
     /// photograph's rather than the reader's, and a window must never look for its own
-    /// (`crate::dust::Wanted`).
+    /// (`denoise::dust::Wanted`).
     #[serde(default)]
-    pub dust: crate::dust::Settings,
+    pub dust: denoise::dust::Settings,
     /// The reader's sliders. Only the presence three are read here, for how far past the tile the
     /// guided filter reaches; the grade reads the rest.
     #[serde(default)]
-    pub adjust: crate::gpu::Adjust,
+    pub adjust: render::grade::Adjust,
     /// The photograph's own diffuse white and scene peak, measured at the open.
     #[serde(default)]
-    pub levels: Option<crate::tone::Levels>,
+    pub levels: Option<colour::tone::Levels>,
     /// The photograph's mosaic noise, measured at the open.
     #[serde(default)]
-    pub noise_fit: Option<crate::galosh::NoiseFit>,
+    pub noise_fit: Option<denoise::galosh::NoiseFit>,
     /// The capture's blur sigma in sensor pixels, measured at the open
-    /// (`crate::galosh::NoiseFit` rides beside it for the same reason). Absent, the sharpen
+    /// (`denoise::galosh::NoiseFit` rides beside it for the same reason). Absent, the sharpen
     /// deconvolves its fixed default.
     #[serde(default)]
     pub capture_sigma: Option<f32>,
@@ -81,11 +81,11 @@ pub struct TileRequest {
     /// the picture. Absent fits this window's own, which is what a caller with no open behind it -
     /// a rendition's loupe, over HTTP - has to do.
     #[serde(default)]
-    pub defocus: crate::base::Defringe,
-    /// What is already known about the photograph, so a tile fits none of it (`crate::photo_analysis`).
+    pub defocus: render::base::Defringe,
+    /// What is already known about the photograph, so a tile fits none of it (`fit::photo_analysis`).
     #[serde(default)]
     pub photo_analysis: Option<Vec<u8>>,
-    /// How much of the sensor's resolution this render wants (`crate::view::Scale`).
+    /// How much of the sensor's resolution this render wants (`decode::view::Scale`).
     ///
     /// **The photograph's answer, handed down.** A loupe is showing the reader the export's own
     /// pixels and always wants all of it; a rendition small enough that the sensor is worth halving
@@ -93,11 +93,11 @@ pub struct TileRequest {
     /// been. Working it out from the window's own dimensions is how two pieces of one picture end
     /// up demosaiced two different ways.
     #[serde(default)]
-    pub scale: crate::view::Scale,
+    pub scale: decode::view::Scale,
     /// The reader's repairs, which a window grows to hold the fill of wherever one reaches it
-    /// (`crate::repair::reaching`).
+    /// (`composite::repair::reaching`).
     #[serde(default)]
-    pub repairs: Vec<crate::repair::Repair>,
+    pub repairs: Vec<composite::repair::Repair>,
     /// The photograph drawn at `[width, height]`, and then **`tile` is in that drawing's pixels**
     /// rather than the photograph's: a band of a render too large to hold whole (`job::bands`), or a
     /// window of one level of a picture (`picture::prepared`). Where `scale` decodes some other
@@ -107,12 +107,12 @@ pub struct TileRequest {
     pub drawn: Option<[usize; 2]>,
     /// The photograph's reflection, found over the whole frame, which a window only takes out.
     #[serde(skip)]
-    pub removal: Option<crate::dereflect::Removal>,
+    pub removal: Option<dereflect::Removal>,
 }
 
 impl TileRequest {
-    pub(crate) fn detail(&self) -> crate::galosh::Detail {
-        crate::galosh::Detail {
+    pub(crate) fn detail(&self) -> denoise::galosh::Detail {
+        denoise::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
@@ -121,82 +121,11 @@ impl TileRequest {
     }
 
     /// What is already known about the photograph, as far as this build can read it.
-    fn stored(&self) -> crate::photo_analysis::PhotoAnalysis {
+    fn stored(&self) -> fit::photo_analysis::PhotoAnalysis {
         self.photo_analysis
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default()
-    }
-}
-
-/// The window a tile was built in, ready for the grade.
-pub struct Prepared {
-    /// Normalised PQ Rec.2020 ([`crate::tone::encode_base`]), the window and its margin.
-    pub samples: Vec<u16>,
-    pub width: usize,
-    pub height: usize,
-    /// `[left, top, width, height]` of the rectangle actually asked for, inside that window.
-    pub keep: [usize; 4],
-    /// The levels the samples above were coded against, which the grade anchors to.
-    pub levels: crate::tone::Anchored,
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
-    /// The camera's own multipliers, which a composite files as its balance
-    /// (`photo_analysis::FromRaw::balance`).
-    ///
-    /// **A composite's are the reference source's**, the frame a composite is graded as. None where
-    /// no source of this window carried any - the case a synthetic fixture and a finished picture
-    /// both are.
-    pub wb_gains: Option<[f32; 3]>,
-    /// The mosaic noise the window was denoised and is sharpened against: a composite's is its
-    /// reference source's.
-    pub noise: Option<crate::galosh::NoiseFit>,
-    /// The photograph the window is a piece of, which is the scale the presence sliders read at.
-    pub photograph: (usize, usize),
-    /// Where the window starts in that photograph, which is where the grade reads the
-    /// neighbourhood thumb.
-    pub origin: (usize, usize),
-    /// The longitudinal aberration the defringe took off, measured here where the caller had none
-    /// to hand. Whole-frame, so what a window is *given* it must hand on rather than refit.
-    pub defocus: (f32, f32),
-    /// The library's reference white, which the coding above already used.
-    pub(crate) reference_nits: crate::light::Light<crate::light::SceneNits>,
-}
-
-impl Prepared {
-    /// The scene this window is graded as part of: the photograph's colour and levels, with the
-    /// reader's own exposure and sliders.
-    pub fn scene(
-        &self,
-        exposure: Option<crate::light::Stops>,
-        adjust: crate::gpu::Adjust,
-    ) -> crate::tone::SceneGrade<'_> {
-        crate::tone::SceneGrade::new(
-            self.matched.as_ref().and_then(|m| m.colour.as_ref()),
-            self.levels,
-            self.reference_nits,
-            exposure,
-            adjust,
-            self.as_shot,
-        )
-    }
-
-    /// That scene over this window, which differs from a whole frame's in one word.
-    pub fn grade<'a>(
-        &self,
-        scene: &'a crate::tone::SceneGrade<'a>,
-        peak_nits: crate::light::Light<crate::light::DisplayNits>,
-        output: crate::gpu::Output,
-    ) -> crate::gpu::Grade<'a> {
-        crate::gpu::Grade {
-            peak_nits,
-            ..scene.gpu_grade(self.width, self.height, output)
-        }
-        .within(self.photograph)
-        .neighbourhood_windowed(
-            Size::exact(self.photograph.0, self.photograph.1),
-            At::exact(self.origin.0, self.origin.1),
-        )
     }
 }
 
@@ -209,24 +138,27 @@ impl Prepared {
 pub enum Source<'a> {
     Path(&'a str),
     Bytes(&'a [u8]),
-    Held(&'a crate::decode::Held),
+    Held(&'a decode::Held),
     /// A scene-linear frame the caller already has, which is the editor's open.
     ///
     /// **The open cannot decode twice.** It reads the frame once because the camera match is fitted
     /// against *scene-linear* samples, before any coding - so by the time it wants the rest of the
     /// chain it is holding the pixels, not a path. Only a whole view may arrive this way: a window
     /// restricts what is read off the disk, and there is nothing left to restrict here.
-    Frame(crate::frame::Frame),
+    Frame(decode::frame::Frame),
 }
 
 /// The window, decoded and filtered, with the turn already taken.
-pub fn prepared(source: Source<'_>, request: &TileRequest) -> Result<Prepared, String> {
+pub fn prepared(source: Source<'_>, request: &TileRequest) -> Result<decode::Prepared, String> {
     pollster::block_on(prepared_async(source, request))
 }
 
 /// The same, awaited: the readback below cannot be blocked for in a tab
-/// ([`crate::gpu::read_back`] says why).
-pub async fn prepared_async(source: Source<'_>, request: &TileRequest) -> Result<Prepared, String> {
+/// ([`gpu::read_back`] says why).
+pub async fn prepared_async(
+    source: Source<'_>,
+    request: &TileRequest,
+) -> Result<decode::Prepared, String> {
     let (frame, mut prepared) = prepared_on_device(source, request).await?;
     prepared.samples = frame
         .into_frame()
@@ -243,12 +175,12 @@ pub async fn prepared_async(source: Source<'_>, request: &TileRequest) -> Result
 /// up for every photograph opened - and the browser cannot even do that within one device, a
 /// `GPUDevice` being a thing a worker boundary does not carry.
 ///
-/// The `Prepared` that comes back is everything about the window *except* its pixels: `samples` is
+/// The `decode::Prepared` that comes back is everything about the window *except* its pixels: `samples` is
 /// empty, and the buffer beside it holds them, with what its repairs were drawn over.
 pub async fn prepared_on_device(
     source: Source<'_>,
     request: &TileRequest,
-) -> Result<(crate::retouched_frame::RetouchedFrame, Prepared), String> {
+) -> Result<(composite::retouched_frame::RetouchedFrame, decode::Prepared), String> {
     let grown = grown(request)?;
     let detail = request.detail();
     let stored = request.stored();
@@ -260,13 +192,13 @@ pub async fn prepared_on_device(
     // photograph, for the caller with no open behind it to have measured one.
     let noise = request
         .noise_fit
-        .filter(crate::galosh::NoiseFit::usable)
+        .filter(denoise::galosh::NoiseFit::usable)
         .or(stored.from_raw.noise);
-    let fit = noise.map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
+    let fit = noise.map_or(denoise::galosh::Fit::Measure, denoise::galosh::Fit::Given);
     // The rendition's halo, not the editor's, though a loupe is an editor feature: what it is for
     // is showing what the export will be, and a magnifier denoised to a different standard from
     // the export is one that lies.
-    let halo = crate::RENDITION_TILE_HALO;
+    let halo = decode::RENDITION_TILE_HALO;
     // The region to read, in the photograph's own pixels, at the scale this render wants. Both come
     // off the request rather than off the rectangle: whether the sensor is worth halving is a
     // question about the picture, and a window asked of its own dimensions answers differently for
@@ -277,7 +209,7 @@ pub async fn prepared_on_device(
     // looking would read the frame's own texture floor over a few hundred thousand photosites and
     // find a different set from its neighbours and from the export it exists to predict. Absent is
     // an empty list - correct nothing - which is why this takes a slice and not an option.
-    let spots: &[crate::dust::Spot] = stored.from_raw.dust.as_deref().unwrap_or(&[]);
+    let spots: &[denoise::dust::Spot] = stored.from_raw.dust.as_deref().unwrap_or(&[]);
     let dust = request.dust.known(spots);
     let frame = match source {
         Source::Frame(frame) => Some(frame),
@@ -292,19 +224,11 @@ pub async fn prepared_on_device(
         // rendition worker's hot path is fifty megabytes a photograph that the kernel was paging
         // in for free.
         Source::Path(path) => {
-            crate::decode::tile_from(
-                crate::decode::Source::Path(path),
-                reading,
-                detail,
-                fit,
-                halo,
-                dust,
-            )
-            .await
+            decode::tile_from(decode::Source::Path(path), reading, detail, fit, halo, dust).await
         }
         Source::Bytes(bytes) => {
-            crate::decode::tile_from(
-                crate::decode::Source::Bytes(bytes),
+            decode::tile_from(
+                decode::Source::Bytes(bytes),
                 reading,
                 detail,
                 fit,
@@ -334,12 +258,12 @@ pub async fn prepared_on_device(
 
     let as_shot = frame.as_shot;
     let refused = || {
-        crate::base::without_a_device("the coding, the defringe, the lens gather and the sharpen")
+        render::base::without_a_device("the coding, the defringe, the lens gather and the sharpen")
     };
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
-    let base = crate::base::device(gpu).ok_or_else(refused)?;
+    let gpu = gpu::device().ok_or_else(refused)?;
+    let base = render::base::device(gpu).ok_or_else(refused)?;
     // This crop's own, and the photograph's by construction: the matrix is built from the file's
-    // illuminant and colour matrix (`decode_rawler::camera_to_rec2020`) rather than from any pixel,
+    // illuminant and colour matrix (`decode::raw::camera_to_rec2020`) rather than from any pixel,
     // so a window decodes the same one the whole frame would. Unlike the noise fit beside it, there
     // is nothing here for a window to get wrong and nothing stored for it to fall back to.
     let matrix = frame.matrix;
@@ -355,11 +279,11 @@ pub async fn prepared_on_device(
     // Where the decode left it, which is on the device: the coding, the defringe and the gather are
     // all shaders, so a window that came out of `decode_tile_source` never crosses the bus at all.
     let resident = match frame.pixels {
-        crate::frame::Pixels::Resident(resident) => resident,
-        crate::frame::Pixels::Sixteen(samples) => {
-            crate::resident::Resident::upload(gpu, &samples, width, height)
+        decode::frame::Pixels::Resident(resident) => resident,
+        decode::frame::Pixels::Sixteen(samples) => {
+            colour::resident::Resident::upload(gpu, &samples, width, height)
         }
-        crate::frame::Pixels::Eight(_) => {
+        decode::frame::Pixels::Eight(_) => {
             return Err("a tile needs a 16-bit scene-linear decode".to_string());
         }
     };
@@ -372,7 +296,7 @@ pub async fn prepared_on_device(
     // which lifts the crop to reference white.
     let known = request
         .levels
-        .filter(crate::tone::Levels::usable)
+        .filter(colour::tone::Levels::usable)
         .or_else(|| {
             stored
                 .from_render
@@ -381,7 +305,7 @@ pub async fn prepared_on_device(
         });
     let levels = match known {
         Some(levels) => levels,
-        None => crate::fit_source::levels(gpu, &resident, request.grade.white_quantile)
+        None => fit::source::levels(gpu, &resident, request.grade.white_quantile)
             .await
             .ok_or("the frame's levels could not be measured")?,
     }
@@ -400,22 +324,25 @@ pub async fn prepared_on_device(
         None => grown.frame.0.max(grown.frame.1),
     };
     let defocus = match request.defocus {
-        crate::base::Defringe::Measure => stored
+        render::base::Defringe::Measure => stored
             .from_render
             .defocus
             .and_then(|d| d.pair_for(strengths.defringe, defringed_long))
-            .map_or(crate::base::Defringe::Measure, crate::base::Defringe::Take),
+            .map_or(
+                render::base::Defringe::Measure,
+                render::base::Defringe::Take,
+            ),
         given => given,
     };
     // **The coding, the defringe and the frame's own gather over this window, in one chain.** The
     // gather is the photograph's, restricted to what this window writes (`base::Gather::window`) -
     // a crop corrected as though it were the whole picture bends at the wrong radius. The reader's
     // geometry is not applied, because a tile is named in coordinates that already carry it.
-    let none = crate::fit::Lens::none();
+    let none = geometry::lens::Lens::none();
     // Every rectangle here is the buffer's, which is what `grown` hands back and what the frame in
     // hand actually is - the decode's own region is the one thing named in the photograph's pixels,
     // and it is `reading`'s business rather than the gather's.
-    let gather = crate::base::Gather::window(
+    let gather = render::base::Gather::window(
         Size::exact(grown.frame.0, grown.frame.1),
         Rect::exact(
             grown.window.0,
@@ -436,12 +363,12 @@ pub async fn prepared_on_device(
         .sensor_long
         .unwrap_or_else(|| grown.photograph.0.max(grown.photograph.1));
     let drawn_long = grown.frame.0.max(grown.frame.1);
-    let sigma = crate::image::deconvolve_split(
+    let sigma = render::detail::deconvolve_split(
         request.capture_sigma.or(stored.from_raw.capture_sigma),
         sensor_long,
         drawn_long,
     );
-    let sharpen_noise = crate::base::sharpen_noise(
+    let sharpen_noise = render::base::sharpen_noise(
         levels,
         request.grade.reference_white_nits,
         noise,
@@ -451,12 +378,12 @@ pub async fn prepared_on_device(
         frame.reduced,
     )
     .at(
-        crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-        crate::px::Span::<crate::px::Drawn>::exact(drawn_long),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(drawn_long),
     );
     let chained = match &grown.resize {
         None => {
-            crate::base::prepare(
+            render::base::prepare(
                 gpu,
                 base,
                 resident,
@@ -479,16 +406,16 @@ pub async fn prepared_on_device(
         // `Base::build`'s coding and defringe, `Cut::from_base`'s resize, gather and sharpen: the
         // whole frame's chain, over the window.
         Some(resize) => {
-            let coded = crate::base::prepare(
+            let coded = render::base::prepare(
                 gpu,
                 base,
                 resident,
-                crate::base::Gather::frame(Size::exact(width, height)),
+                render::base::Gather::frame(Size::exact(width, height)),
                 levels,
                 request.grade.reference_white_nits,
                 strengths,
-                crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
-                crate::image::SharpenNoise::NONE,
+                render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+                render::detail::SharpenNoise::NONE,
                 &none,
                 defocus,
                 noise,
@@ -496,7 +423,7 @@ pub async fn prepared_on_device(
             )
             .await;
             coded.map(|(coded, took_off)| {
-                let drawn = crate::base::resize_window(
+                let drawn = render::base::resize_window(
                     gpu,
                     base,
                     &coded,
@@ -507,11 +434,11 @@ pub async fn prepared_on_device(
                 );
                 coded.reclaim();
                 let (left, top, width, height) = grown.window;
-                let gathered = crate::base::gather_and_sharpen(
+                let gathered = render::base::gather_and_sharpen(
                     gpu,
                     base,
                     drawn,
-                    crate::base::Gather::window(
+                    render::base::Gather::window(
                         Size::exact(grown.frame.0, grown.frame.1),
                         Rect::exact(left, top, width, height),
                         resize.out,
@@ -528,7 +455,7 @@ pub async fn prepared_on_device(
     let Some((frame, took_off)) = chained else {
         return Err(refused());
     };
-    let frame = crate::retouched_frame::RetouchedFrame::drawn(
+    let frame = composite::retouched_frame::RetouchedFrame::drawn(
         frame,
         Size::exact(grown.frame.0, grown.frame.1),
         At::exact(grown.window.0, grown.window.1),
@@ -537,7 +464,7 @@ pub async fn prepared_on_device(
 
     Ok((
         frame,
-        Prepared {
+        decode::Prepared {
             // The caller's to fill from the buffer beside it, and empty for one that draws instead.
             samples: Vec::new(),
             width: grown.window.2,
@@ -561,16 +488,16 @@ pub async fn prepared_on_device(
 ///
 /// **Two coordinate spaces meet here, and only one of them leaves.** A request names its rectangle
 /// in the photograph's own pixels, because that is what a reader points at; a decode asked for
-/// [`crate::view::Scale::Half`] hands back a buffer half that size, and every stage below - the
+/// [`decode::view::Scale::Half`] hands back a buffer half that size, and every stage below - the
 /// gather, the sharpen, the cut - reads the buffer. So `grown` converts once, at the top, and
 /// everything it returns except [`Grown::decode`] is in the buffer's pixels. `decode` is what the
 /// sensor is asked for, so it stays in the photograph's.
 struct Grown {
     /// The part of the *uncorrected* frame to decode, which the lens decides. **In the photograph's
     /// pixels**, at the scale below.
-    decode: crate::Tile,
+    decode: formats::orientation::Tile,
     /// What the decode is asked to produce, which is what makes `decode` and the rest differ.
-    scale: crate::view::Scale,
+    scale: decode::view::Scale,
     /// The window of the corrected frame to produce: `(left, top, width, height)` in the *buffer's*
     /// pixels.
     window: (usize, usize, usize, usize),
@@ -582,9 +509,9 @@ struct Grown {
     photograph: (usize, usize),
     /// Its match, decoded once here so the footprint, the gather and the grade cannot disagree
     /// about whether there is a lens.
-    matched: Option<crate::hdr_fit::HdrMatch>,
+    matched: Option<fit::hdr::HdrMatch>,
     /// Its lens, where that match carries one worth applying.
-    lens: Option<crate::fit::Lens>,
+    lens: Option<geometry::lens::Lens>,
     /// Where the decode is resized between the coding and the lens, for a request with a `drawn`
     /// size.
     resize: Option<Resize>,
@@ -592,21 +519,21 @@ struct Grown {
 
 struct Resize {
     /// The whole photograph as the decode produces it, which is what the resize's ratio is of.
-    decoded: Size<crate::px::Decoded>,
-    region_at: At<crate::px::Decoded>,
+    decoded: Size<units::px::Decoded>,
+    region_at: At<units::px::Decoded>,
     /// The rectangle of the resized, uncorrected frame that region becomes: what the gather reads.
     out: Rect<Drawn>,
 }
 
 /// How far the defringe reads past the pixel it writes: `defringe.slang`'s Laplacian of luma.
-const DEFRINGE_REACH: Span<crate::px::Decoded> = Span::exact(1);
+const DEFRINGE_REACH: Span<units::px::Decoded> = Span::exact(1);
 
 impl Grown {
     /// The region to read, and at what resolution: what `decode_tile_source` takes.
-    fn reading(&self) -> crate::view::View {
-        crate::view::View {
-            photograph: crate::px::Size::exact(self.photograph.0, self.photograph.1),
-            window: crate::px::Rect::exact(
+    fn reading(&self) -> decode::view::View {
+        decode::view::View {
+            photograph: units::px::Size::exact(self.photograph.0, self.photograph.1),
+            window: units::px::Rect::exact(
                 self.decode.left,
                 self.decode.top,
                 self.decode.width,
@@ -629,23 +556,23 @@ impl Grown {
 /// same: the working texture is sized off what the filter reads, so a reach measured against the
 /// photograph would be twice what a halved frame wants.
 ///
-/// Asked of [`crate::gpu::Adjust::reads_the_neighbourhood`] rather than of a list here, so the
+/// Asked of [`render::grade::Adjust::reads_the_neighbourhood`] rather than of a list here, so the
 /// blur's reach and the decision to build a blur at all cannot disagree: Highlights and Shadows
 /// are weighted by how bright the region around a pixel is, so they read the same texture Clarity
 /// does.
 ///
 /// Zero where none of them is asked for, which is what most tiles are: this is four times the
 /// decode for a 400px tile, and it buys nothing at all when the sliders are at rest.
-fn presence_reach(adjust: &crate::gpu::Adjust, frame: Size<Drawn>) -> Span<Drawn> {
+fn presence_reach(adjust: &render::grade::Adjust, frame: Size<Drawn>) -> Span<Drawn> {
     if !adjust.reads_the_neighbourhood() {
         return Span::ZERO;
     }
     let long = frame.long().raw();
-    let working = crate::gpu::detail_long(long);
+    let working = render::grade::detail_long(long);
     // Texels of the working texture, then back into the frame's own pixels at the rate that
     // texture shrinks it by - rounded up, because a reach one pixel short is a filtered edge. The
     // multiplication is the conversion, and the `raw` is where the texel stops being one.
-    let texels = crate::gpu::detail_reach_texels(working);
+    let texels = render::grade::detail_reach_texels(working);
     Span::exact(texels.raw() * long.div_ceil(working.max(1) as usize))
 }
 
@@ -655,7 +582,7 @@ fn presence_reach(adjust: &crate::gpu::Adjust, frame: Size<Drawn>) -> Span<Drawn
 /// names - its frame is `edit::open`'s, with the lens already materialised into it - and what a
 /// rendition would write there. Two things follow, and neither was true before:
 ///
-/// - The gather has to be the *frame's*, over this window ([`crate::base::Gather::window`]).
+/// - The gather has to be the *frame's*, over this window ([`render::base::Gather::window`]).
 ///   A crop warped as though it were the photograph corrects at the wrong radius and lifts its own
 ///   corners as if they were the frame's.
 /// - What to decode is then whatever that window gathers *from*, which the warp itself answers.
@@ -663,7 +590,7 @@ fn presence_reach(adjust: &crate::gpu::Adjust, frame: Size<Drawn>) -> Span<Drawn
 ///   window and cannot be assumed to be.
 ///
 /// On top of that the window is grown by the reach of everything that runs after the gather. **A
-/// deconvolution reads past what it writes**, by `image::Strengths::halo`: the decode's
+/// deconvolution reads past what it writes**, by `render::detail::Strengths::halo`: the decode's
 /// own halo is eaten by the demosaic and the mosaic denoise long before the sharpen, so a tile
 /// built at exactly the rectangle asked for rings along all four edges - and the loupe's tile is
 /// only half again its glass, so at high magnification that ringing is inside what the reader is
@@ -783,14 +710,14 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
             // out of it because another one currently reaches further is a stage nobody will
             // think of when the other one moves.
             true => Span::exact(
-                crate::gpu::chroma_smooth_reach(crate::px::Span::measured(frame.long().raw()))
+                render::grade::chroma_smooth_reach(units::px::Span::measured(frame.long().raw()))
                     .raw()
-                    + crate::gpu::mean_block(frame.long().raw()) as usize,
+                    + render::grade::mean_block(frame.long().raw()) as usize,
             ),
             false => Span::ZERO,
         };
     // Down to a whole texel of the blur's working texture, which is what lets that texture be the
-    // photograph's own texels rather than a set of its own between them (`gpu::detail_step`).
+    // photograph's own texels rather than a set of its own between them (`render::grade::detail_step`).
     //
     // **An even number of them, which costs at most one texel of margin and is what lets a window
     // be copied back into the frame it came from.** A row is `width * 3` samples and two samples
@@ -798,11 +725,12 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     // rectangle an odd number of rows inside its window then starts where
     // `copy_buffer_to_buffer` will not begin (`wasm::HeldRaw::band_into`). Doubling the grid
     // keeps every alignment it had, being a multiple of the step either way.
-    let step: Span<Drawn> = Span::exact(crate::gpu::detail_step(frame.long().raw()) as usize * 2);
+    let step: Span<Drawn> =
+        Span::exact(render::grade::detail_step(frame.long().raw()) as usize * 2);
     let start = |place: Place<Drawn>| (place - reach).floor_to(step);
     // What the window has to hold before its margin: the rectangle, and wherever the fill of a
     // repair reaching it is read from.
-    let held = crate::repair::reaching(&request.repairs, frame, kept, reach);
+    let held = composite::repair::reaching(&request.repairs, frame, kept, reach);
     let (window_left, window_top) = (start(held.at.x), start(held.at.y));
     let window: Rect<Drawn> = Rect {
         at: At {
@@ -831,7 +759,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     let decode = match lens
         .as_ref()
         .filter(|_| window != whole)
-        .and_then(|lens| crate::image::lens_footprint(frame, window, lens))
+        .and_then(|lens| geometry::warp::lens_footprint(frame, window, lens))
     {
         Some(read) => Rect::<Drawn>::exact(read.0, read.1, read.2, read.3),
         // Nothing to correct, or nothing to restrict: a window that is already the whole picture
@@ -866,11 +794,11 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
         // the decode holds every pixel that rectangle's footprints reach, and what the defringe
         // reads past those.
         Some(_) => {
-            let reads = crate::base::resize_footprint(decoded, decode, frame);
-            let near = |at: Place<crate::px::Decoded>| {
+            let reads = render::base::resize_footprint(decoded, decode, frame);
+            let near = |at: Place<units::px::Decoded>| {
                 at.max(Place::ORIGIN + DEFRINGE_REACH) - DEFRINGE_REACH
             };
-            let far = |at: Place<crate::px::Decoded>, whole: Span<crate::px::Decoded>| {
+            let far = |at: Place<units::px::Decoded>, whole: Span<units::px::Decoded>| {
                 (at + DEFRINGE_REACH).min(Place::ORIGIN + whole)
             };
             let region_at = At {
@@ -912,7 +840,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     let decode = decode.raw();
 
     Ok(Grown {
-        decode: crate::Tile {
+        decode: formats::orientation::Tile {
             left: decode.0,
             top: decode.1,
             width: decode.2,
@@ -933,12 +861,27 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
 mod tests {
     use super::*;
 
+    /// The sharpen's reach, against the halo the tiling is grown by: a stencil wider than the halo
+    /// is a seam down every tile boundary.
+    #[test]
+    fn the_sharpen_reads_within_the_tile_halo() {
+        let halo = render::detail::Strengths {
+            sharpen: 1.0,
+            defringe: 0.0,
+        }
+        .halo();
+        assert!(
+            halo <= decode::RENDITION_TILE_HALO,
+            "the sharpen reads past the tile's halo"
+        );
+    }
+
     fn asking(tile: [usize; 4]) -> TileRequest {
         TileRequest {
             tile,
             frame: [6000, 4000],
-            grade: crate::hdr::Grade {
-                reference_white_nits: crate::light::Light::exactly(203.0),
+            grade: crate::hdr_args::Grade {
+                reference_white_nits: units::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
             strengths: Strengths {
@@ -947,17 +890,17 @@ mod tests {
             },
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
-            denoiser: crate::galosh::Denoiser::Galosh,
+            denoiser: denoise::galosh::Denoiser::Galosh,
             highlight_recovery: None,
             dust: Default::default(),
-            adjust: crate::gpu::Adjust::none(),
+            adjust: render::grade::Adjust::none(),
             levels: None,
             noise_fit: None,
             capture_sigma: None,
             sensor_long: None,
-            defocus: crate::base::Defringe::Measure,
+            defocus: render::base::Defringe::Measure,
             photo_analysis: None,
-            scale: crate::view::Scale::Full,
+            scale: decode::view::Scale::Full,
             repairs: Vec::new(),
             drawn: None,
             removal: None,
@@ -1055,12 +998,12 @@ mod tests {
             sharpen: 0.0,
             defringe: 0.0,
         };
-        request.photo_analysis = Some(crate::photo_analysis::encode(
-            &crate::photo_analysis::PhotoAnalysis {
-                from_raw: crate::photo_analysis::FromRaw {
-                    matched: Some(crate::hdr_fit::HdrMatch {
-                        colour: Some(crate::hdr_fit::HdrColour::identity()),
-                        lens: crate::fit::Lens::none(),
+        request.photo_analysis = Some(fit::photo_analysis::encode(
+            &fit::photo_analysis::PhotoAnalysis {
+                from_raw: fit::photo_analysis::FromRaw {
+                    matched: Some(fit::hdr::HdrMatch {
+                        colour: Some(colour::matched::HdrColour::identity()),
+                        lens: geometry::lens::Lens::none(),
                     }),
                     ..Default::default()
                 },
@@ -1069,8 +1012,8 @@ mod tests {
         ));
         let grown = grown(&request).expect("a rectangle inside the photograph");
         let long = request.frame[0];
-        let block = crate::gpu::mean_block(long) as usize;
-        let smoothing = crate::gpu::chroma_smooth_reach(crate::px::Span::measured(long)).raw();
+        let block = render::grade::mean_block(long) as usize;
+        let smoothing = render::grade::chroma_smooth_reach(units::px::Span::measured(long)).raw();
         // **The sum, not an inequality.** The smoothing alone reaches eight times a block at any
         // size, so "the margin covers a block" holds with this term deleted and would be asserting
         // nothing. What can only be true with it is that the window carries *both* stages.
@@ -1141,7 +1084,7 @@ mod tests {
         // Every slider `Adjust::reads_the_neighbourhood` names, each on its own: the blur they
         // read is built for any one of them, so a window grown for only three of the five is a
         // Shadows slider filtering against an edge the picture does not have.
-        let each: [(&str, fn(&mut crate::gpu::Adjust)); 5] = [
+        let each: [(&str, fn(&mut render::grade::Adjust)); 5] = [
             ("clarity", |a| a.clarity = 60.0),
             ("texture", |a| a.texture = 60.0),
             ("dehaze", |a| a.dehaze = 25.0),
@@ -1150,7 +1093,7 @@ mod tests {
         ];
         for (what, set) in each {
             let mut wants = asking(asked);
-            let mut adjust = crate::gpu::Adjust::none();
+            let mut adjust = render::grade::Adjust::none();
             set(&mut adjust);
             wants.adjust = adjust;
             let grew = grown(&wants).expect("a tile");
@@ -1169,9 +1112,9 @@ mod tests {
 
         // And a slider that does not read one leaves the window where it was.
         let mut flat = asking(asked);
-        flat.adjust = crate::gpu::Adjust {
+        flat.adjust = render::grade::Adjust {
             contrast: 50.0,
-            ..crate::gpu::Adjust::none()
+            ..render::grade::Adjust::none()
         };
         assert_eq!(grown(&flat).expect("a tile").window.2, quiet.window.2);
     }

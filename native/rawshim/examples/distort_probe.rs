@@ -8,8 +8,7 @@
 
 mod support;
 
-use rawshim::image::resize;
-use rawshim::{fit, hdr_fit};
+use formats::resize::resize;
 
 const BINS: usize = 8;
 const POINTS: usize = 6000;
@@ -27,7 +26,7 @@ fn probe(path: &str) -> Result<(), String> {
     let opened = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()
         .ok_or("the decode declined it")?;
-    let gpu = rawshim::gpu::device().ok_or("an adapter")?;
+    let gpu = gpu::device().ok_or("an adapter")?;
     let resident = opened
         .frame
         .on_device(gpu)
@@ -35,21 +34,21 @@ fn probe(path: &str) -> Result<(), String> {
     let matched = opened.measured.matched.ok_or("no fit")?;
 
     let preview = rawshim::hdr::match_preview(path).ok_or("no preview")?;
-    let (wide, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (wide, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
     let quantile = support::GRADE.white_quantile;
-    let prepared = pollster::block_on(rawshim::fit_source::prepared(
+    let prepared = pollster::block_on(fit::source::prepared(
         gpu, &resident, wide, quantile,
     ))
     .ok_or("no plane")?;
-    let render = pollster::block_on(rawshim::fit_source::read_render(gpu, &prepared.rendered))
+    let render = pollster::block_on(fit::source::read_render(gpu, &prepared.rendered))
         .ok_or("no render")?;
     let (_, searched) =
-        pollster::block_on(hdr_fit::preview_planes(gpu, &preview)).ok_or("no preview planes")?;
+        pollster::block_on(fit::hdr::preview_planes(gpu, &preview)).ok_or("no preview planes")?;
     let sampled = resize(render.as_ref(), searched.width, searched.height);
 
-    let header = rawshim::header::read_path(path);
+    let header = formats::header::read_path(path);
     let lens = header.as_ref().map_or(String::new(), |h| {
-        rawshim::header::name(&h.lens_model).to_string()
+        formats::header::name(&h.lens_model).to_string()
     });
     let focal = header.as_ref().map_or(0.0, |h| h.focal);
     println!("== {path}");
@@ -60,25 +59,25 @@ fn probe(path: &str) -> Result<(), String> {
 
     // The lateral correction is per channel and this is luma, so the geometry is asked
     // about on its own.
-    let shipped = fit::Lens {
+    let shipped = geometry::lens::Lens {
         tca: None,
         ..matched.lens
     };
-    report("uncorrected", &sampled, &searched, &fit::Lens::none());
+    report("uncorrected", &sampled, &searched, &geometry::lens::Lens::none());
     report("as shipped", &sampled, &searched, &shipped);
     Ok(())
 }
 
-fn report(label: &str, render: &rawshim::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
+fn report(label: &str, render: &units::rgb::Rgb, preview: &fit::hdr::Source, lens: &geometry::lens::Lens) {
     let stride = (((preview.width * preview.height) as f64 / POINTS as f64).sqrt() as usize).max(1);
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let ours = hdr_fit::Source {
-        buffer: hdr_fit::levelled_source(gpu, render.as_ref()),
+    let gpu = gpu::device().expect("an adapter");
+    let ours = fit::hdr::Source {
+        buffer: fit::hdr::levelled_source(gpu, render.as_ref()),
         width: render.width,
         height: render.height,
     };
-    let settling = hdr_fit::Settling::new(gpu, &ours, preview, stride);
-    let Some(measured) = pollster::block_on(hdr_fit::registration(gpu, &settling, lens, BINS))
+    let settling = fit::hdr::Settling::new(gpu, &ours, preview, stride);
+    let Some(measured) = pollster::block_on(fit::hdr::registration(gpu, &settling, lens, BINS))
     else {
         println!("   {label:<14} nothing registered");
         return;

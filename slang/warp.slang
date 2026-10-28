@@ -39,11 +39,11 @@ struct Params {
     /// *photograph*. Everything below is then one arithmetic, and a tile is corrected at the radius
     /// the frame would have corrected it at rather than as though it were the whole picture.
     float2 bias;
-    /// `fit::Lens::axis` in output pixels: where the lens is radial about, relative to the centre.
+    /// `geometry::lens::Lens::axis` in output pixels: where the lens is radial about, relative to the centre.
     float2 axis;
     /// `1 / half^2` of the photograph, which the falloff is radial over.
     float inv_half2;
-    /// `1 / reach^2` of `fit::Lens::reach` in output pixels: the table is indexed by r^2 about the
+    /// `1 / reach^2` of `geometry::lens::Lens::reach` in output pixels: the table is indexed by r^2 about the
     /// axis and never needs r.
     float inv_reach2;
     float2 pad2;

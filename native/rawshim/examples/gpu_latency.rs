@@ -21,7 +21,7 @@
 //! before the host can branch on it.
 
 fn main() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("gpu_latency: no adapter");
         std::process::exit(2);
     };
@@ -68,7 +68,7 @@ fn main() {
                 let mut round = gpu.record();
                 round.clear_buffer(&scratch, 0, Some(4));
                 round.submit();
-                pollster::block_on(rawshim::gpu::finished(gpu));
+                pollster::block_on(gpu::finished(gpu));
                 began.elapsed().as_secs_f64() * 1000.0
             })
             .collect(),
@@ -81,7 +81,7 @@ fn main() {
                 let mut round = gpu.record();
                 round.copy_buffer_to_buffer(&scratch, 0, &staging, 0, 256);
                 round.submit();
-                pollster::block_on(rawshim::gpu::read_back(gpu, &staging, |bytes| bytes.len()));
+                pollster::block_on(gpu::read_back(gpu, &staging, |bytes| bytes.len()));
                 began.elapsed().as_secs_f64() * 1000.0
             })
             .collect(),

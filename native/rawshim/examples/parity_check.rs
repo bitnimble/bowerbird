@@ -35,7 +35,7 @@ fn main() {
         let bytes = std::fs::read(&path).ok();
         let from_bytes = bytes
             .as_ref()
-            .and_then(|b| rawshim::decode_frame_bytes(b, 0, rawshim::galosh::Fit::Measure))
+            .and_then(|b| rawshim::decode_frame_bytes(b, 0, denoise::galosh::Fit::Measure))
             .map(|f| (f.width, f.height));
 
         let from_path =

@@ -1,15 +1,13 @@
-use rawshim::gpu::{Grade, ToneCurve};
-use rawshim::hdr_fit::HdrColour;
-use rawshim::light::{CurveCode, Gain, Light, Stops, same_curve};
+use colour::matched::HdrColour;
+use render::grade::{Grade, ToneCurve};
+use units::light::{CurveCode, Gain, Light, Stops, same_curve};
 
 fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> {
-    let gpu = rawshim::gpu::device().expect("Vulkan adapter");
+    let gpu = gpu::device().expect("Vulkan adapter");
     let device = gpu.describing();
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tone probe"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/tone_probe.wgsl")).into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(shaders::TONE_PROBE.source.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,
@@ -36,7 +34,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
         wgpu::BufferUsages::STORAGE,
     );
     let identity = HdrColour::identity();
-    let words = rawshim::gpu::uniform_words(grade, grade.colour.unwrap_or(&identity));
+    let words = render::grade::uniform_words(grade, grade.colour.unwrap_or(&identity));
     let edits = init(
         &words
             .iter()
@@ -74,7 +72,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
     });
     recording.dispatch(
         [samples.len().div_ceil(64) as u32, 1, 1],
-        rawshim::gpu::dispatch::Whole::Fixed,
+        gpu::dispatch::Whole::Fixed,
         |pass| {
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -82,7 +80,7 @@ fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> 
     );
     recording.copy_buffer_to_buffer(&out, 0, &readback, 0, (samples.len() * 16) as u64);
     recording.submit();
-    pollster::block_on(rawshim::gpu::read_back(gpu, &readback, |bytes| {
+    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
         bytes
             .chunks_exact(16)
             .map(|pixel| {
@@ -99,7 +97,7 @@ fn probe_grade(count: usize) -> Grade<'static> {
     Grade::new(
         count,
         1,
-        rawshim::tone::Levels {
+        colour::tone::Levels {
             white: Light::measured(1.0),
             peak: Light::measured(8.0),
             floor: Some(Light::measured(0.01)),
@@ -147,10 +145,10 @@ fn shader_curve_matches_the_shared_host_table() {
             points: case.points.clone(),
         });
         let results = probe("curve_draw", &inputs, &grade);
-        let tangents = rawshim::light::curve_tangents(&case.points);
+        let tangents = units::light::curve_tangents(&case.points);
         for (input, output) in inputs.iter().zip(results) {
             let code = CurveCode::of_white_ratio(Gain::of_ratio(f64::from(input[0])));
-            let expected = rawshim::light::curve_at(&case.points, &tangents, code)
+            let expected = units::light::curve_at(&case.points, &tangents, code)
                 .white_ratio()
                 .raw();
             assert!(
@@ -193,8 +191,8 @@ fn subfloor_edits_keep_colour_and_exposed_grey_is_the_contrast_pivot() {
         assert!((after[0] / after[1] - before[0] / before[1]).abs() < 1e-5);
         assert!((after[2] / after[1] - before[2] / before[1]).abs() < 1e-5);
     }
-    colour.curve = rawshim::light::IDENTITY_CURVE.to_vec();
-    let grey = (rawshim::light::PIVOT * Gain::of(colour.exposure)).raw() as f32;
+    colour.curve = units::light::IDENTITY_CURVE.to_vec();
+    let grey = (units::light::PIVOT * Gain::of(colour.exposure)).raw() as f32;
     for contrast in [-100.0, 100.0] {
         let mut grade = probe_grade(1);
         grade.colour = Some(&colour);

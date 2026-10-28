@@ -81,7 +81,7 @@ ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.gradle \
     --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
-    --mount=type=cache,target=/app/native/rawshim/target \
+    --mount=type=cache,target=/app/native/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
   && bun run get:tauri \
@@ -119,7 +119,7 @@ ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
-    --mount=type=cache,target=/app/native/rawshim/target \
+    --mount=type=cache,target=/app/native/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
   && bun run get:tauri \
@@ -149,7 +149,7 @@ ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
     --mount=type=cache,target=/root/.cache/cargo-xwin \
-    --mount=type=cache,target=/app/native/rawshim/target \
+    --mount=type=cache,target=/app/native/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
   && bun run get:tauri \

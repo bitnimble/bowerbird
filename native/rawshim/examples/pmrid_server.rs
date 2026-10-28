@@ -61,8 +61,8 @@ use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
-use rawshim::galosh::{Denoiser, Detail, NoiseFit};
-use rawshim::light::Light;
+use denoise::galosh::{Denoiser, Detail, NoiseFit};
+use units::light::Light;
 
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
@@ -152,7 +152,7 @@ enum Shown {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct Measured {
     matrix: [[f32; 3]; 3],
-    levels: rawshim::tone::Levels,
+    levels: colour::tone::Levels,
     /// Gaussian sigma in the sensor's pixels.
     capture_blur: Option<f32>,
     sensor_long: usize,
@@ -184,9 +184,9 @@ const DETAIL: Detail = Detail::AUTO.using(Denoiser::Pmrid);
 static PANICKED: Mutex<Option<String>> = Mutex::new(None);
 
 fn main() {
-    let gpu = rawshim::gpu::device().expect("an adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels built");
-    let network = rawshim::pmrid::device(gpu).expect("the network built");
+    let gpu = gpu::device().expect("an adapter");
+    let kernels = denoise::galosh::device(gpu).expect("the GALOSH kernels built");
+    let network = denoise::pmrid::device(gpu).expect("the network built");
     let report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let message = info
@@ -249,7 +249,7 @@ fn main() {
                     ))))
                 }),
             Ok(Request::Header { header }) => catch_unwind(AssertUnwindSafe(|| {
-                rawshim::header::read_path(&header)
+                formats::header::read_path(&header)
                     .map(|read| {
                         serde_json::json!({
                             "iso": read.iso,
@@ -277,9 +277,9 @@ fn panicked(doing: &str) -> String {
 }
 
 fn opened(
-    gpu: &'static rawshim::gpu::Gpu,
-    kernels: &rawshim::galosh::Galosh,
-    network: &rawshim::pmrid::Pmrid,
+    gpu: &'static gpu::Gpu,
+    kernels: &denoise::galosh::Galosh,
+    network: &denoise::pmrid::Pmrid,
     path: &str,
     out: &str,
     noisy: bool,
@@ -288,12 +288,12 @@ fn opened(
         .map_err(|why| Failed::Error(format!("could not read {path}: {why}")))?;
     // rawler panics on corrupt files under overflow checks: the file's fault, unlike a panic later.
     let decoded = catch_unwind(AssertUnwindSafe(|| {
-        pollster::block_on(rawshim::decode_rawler::open_bytes(&bytes))
+        pollster::block_on(decode::raw::open_bytes(&bytes))
     }))
     .map_err(|_| Failed::Unreadable(panicked(&format!("decoding {path}"))))?;
     let held = match decoded {
-        Ok(rawshim::decode::Held::Mosaic(held)) => held,
-        Ok(rawshim::decode::Held::Rendered(_)) => {
+        Ok(decode::Held::Mosaic(held)) => held,
+        Ok(decode::Held::Rendered(_)) => {
             return Err(Failed::Unreadable(format!("{path} has no mosaic")));
         }
         Err(why) => return Err(Failed::Unreadable(format!("{path}: {why}"))),
@@ -310,9 +310,9 @@ fn opened(
             "{path}'s picture area falls outside its mosaic"
         )));
     }
-    let dust = rawshim::dust::Settings::default().wanted(None);
-    pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
-    let fit = pollster::block_on(rawshim::galosh::fit(
+    let dust = denoise::dust::Settings::default().wanted(None);
+    pollster::block_on(denoise::dust::run(gpu, &mosaic, &held.glass(), &dust));
+    let fit = pollster::block_on(denoise::galosh::fit(
         gpu,
         kernels,
         &mosaic,
@@ -337,13 +337,13 @@ fn opened(
 }
 
 fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Failed> {
-    let frame = rawshim::decode::frame_from_path(
+    let frame = decode::frame_from_path(
         path,
         Detail::AUTO,
         floor,
         false,
-        rawshim::galosh::wanted(None, Detail::AUTO),
-        rawshim::dust::Settings::default().wanted(None),
+        denoise::galosh::wanted(None, Detail::AUTO),
+        denoise::dust::Settings::default().wanted(None),
     )
     .ok_or_else(|| Failed::Unreadable(format!("{path} did not decode")))?;
     let matrix = frame
@@ -365,7 +365,7 @@ fn decoded(path: &str, out: &str, floor: u32) -> Result<serde_json::Value, Faile
 }
 
 fn developed(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     request: &Develop,
 ) -> Result<serde_json::Value, Failed> {
     let (width, height) = (request.width, request.height);
@@ -376,13 +376,13 @@ fn developed(
             request.develop
         )));
     }
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, width, height);
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
-    let colour = rawshim::demosaic::Colour {
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &samples, width, height);
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let colour = mosaic::demosaic::Colour {
         matrix: request.matrix,
         ceiling: request.ceilings,
     };
-    let built = pollster::block_on(rawshim::decode_rawler::demosaic_as_decoded(
+    let built = pollster::block_on(decode::raw::demosaic_as_decoded(
         &mosaic, &cfa, colour, 2,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
@@ -400,7 +400,7 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         (Some(_), None) => vec![1.0],
     };
     let options = rawshim::hdr_args::EncodeOptions {
-        still_chroma: rawshim::hdr_args::Chroma::Yuv444,
+        still_chroma: formats::still::Chroma::Yuv444,
         output_path: String::new(),
         grade: support::GRADE,
         crf: 26,
@@ -411,8 +411,8 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         content_light: None,
     };
     let output = match request.output {
-        Coding::Pq => rawshim::gpu::Output::Pq,
-        Coding::Srgb => rawshim::gpu::Output::Srgb,
+        Coding::Pq => render::grade::Output::Pq,
+        Coding::Srgb => render::grade::Output::Srgb,
     };
     let unopened = || Failed::Unreadable(format!("{} did not open", request.grade));
     let matched = match taken {
@@ -456,7 +456,7 @@ fn graded(request: &Grade) -> Result<serde_json::Value, Failed> {
         }
         if let (Some(taken), true) = (&taken, request.alone) {
             // In place of the opened photo, under the grade the photo measured.
-            opened.frame.pixels = rawshim::frame::Pixels::Sixteen(
+            opened.frame.pixels = decode::frame::Pixels::Sixteen(
                 taken
                     .iter()
                     .map(|light| half::f16::from_f32((gain * light).max(0.0)).to_bits())
@@ -479,12 +479,12 @@ fn full_scale(bits: &[u16]) -> Vec<f32> {
 }
 
 fn denoised(
-    gpu: &'static rawshim::gpu::Gpu,
-    network: &rawshim::pmrid::Pmrid,
+    gpu: &'static gpu::Gpu,
+    network: &denoise::pmrid::Pmrid,
     request: &Denoise,
 ) -> Result<serde_json::Value, Failed> {
-    let cfa = rawshim::cfa::Cfa::bayer(request.cfa)
-        .filter(rawshim::cfa::Cfa::is_bayer)
+    let cfa = mosaic::cfa::Cfa::bayer(request.cfa)
+        .filter(mosaic::cfa::Cfa::is_bayer)
         .ok_or_else(|| Failed::Error("not a Bayer pattern".into()))?;
     if !request
         .gains
@@ -508,7 +508,7 @@ fn denoised(
     let mut filtered = Vec::with_capacity(samples.len());
     for one in samples.chunks_exact(size) {
         let mut mosaic =
-            rawshim::condition::Mosaic::upload(gpu, one, request.width, request.height);
+            mosaic::condition::Mosaic::upload(gpu, one, request.width, request.height);
         filter(gpu, network, &mut mosaic, &cfa, request.gains, request.fit);
         let read = pollster::block_on(mosaic.read(gpu))
             .ok_or_else(|| Failed::Error("a mosaic did not read back".into()))?;
@@ -519,7 +519,7 @@ fn denoised(
 }
 
 fn sharpened(
-    gpu: &'static rawshim::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     request: &Sharpen,
 ) -> Result<serde_json::Value, Failed> {
     let (width, height) = (request.width, request.height);
@@ -535,8 +535,8 @@ fn sharpened(
         Some(given) => given,
         None => &measured(&request.sharpen)?,
     };
-    let base = rawshim::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
-    let rcd = rawshim::demosaic::device(gpu)
+    let base = render::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
+    let rcd = mosaic::demosaic::device(gpu)
         .ok_or_else(|| Failed::Error("no demosaic kernels".into()))?;
     let matrix = measured.matrix;
     let levels = measured.levels.anchored();
@@ -546,8 +546,8 @@ fn sharpened(
     let scale = request.scale.unwrap_or(1);
     let sensor_long = measured.sensor_long * scale;
     let capture_blur = measured.capture_blur.map(|blur| blur * scale as f32);
-    let sigma = rawshim::image::deconvolve_split(capture_blur, sensor_long, sensor_long);
-    let noise = rawshim::base::sharpen_noise(
+    let sigma = render::detail::deconvolve_split(capture_blur, sensor_long, sensor_long);
+    let noise = render::base::sharpen_noise(
         levels,
         white,
         measured.noise,
@@ -557,14 +557,14 @@ fn sharpened(
         measured.reduced,
     )
     .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(sensor_long),
+        units::px::Span::<units::px::Sensor>::exact(sensor_long),
+        units::px::Span::<units::px::Drawn>::exact(sensor_long),
     );
     let defringe = measured.defringe.map_or(
-        rawshim::base::Defringe::Measure,
-        rawshim::base::Defringe::Take,
+        render::base::Defringe::Measure,
+        render::base::Defringe::Take,
     );
-    let plain = (rawshim::base::Defringe::Take((0.0, 0.0)), 0.0);
+    let plain = (render::base::Defringe::Take((0.0, 0.0)), 0.0);
     let shipped = (
         defringe,
         request.amount.unwrap_or(support::STRENGTHS.sharpen),
@@ -575,15 +575,15 @@ fn sharpened(
         .map(|(_, variant)| variant)
         .collect();
 
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let halving = request
         .supersampled
-        .then(|| rawshim::upscale::Halving::new(gpu));
+        .then(|| denoise::upscale::Halving::new(gpu));
     let (out_width, out_height) = match halving {
         Some(_) => (width / 2, height / 2),
         None => (width, height),
     };
-    let colour = rawshim::demosaic::Colour {
+    let colour = mosaic::demosaic::Colour {
         matrix,
         ceiling: request.gains,
     };
@@ -595,31 +595,31 @@ fn sharpened(
         };
         let (width, height) = (out_width, out_height);
         for &(defringe, amount) in &variants {
-            let resident = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
-            let (prepared, _) = pollster::block_on(rawshim::base::prepare(
+            let resident = colour::resident::Resident::upload(gpu, &demosaiced, width, height);
+            let (prepared, _) = pollster::block_on(render::base::prepare(
                 gpu,
                 base,
                 resident,
-                rawshim::base::Gather::frame(rawshim::px::Size::exact(width, height)),
+                render::base::Gather::frame(units::px::Size::exact(width, height)),
                 levels,
                 white,
                 support::STRENGTHS.before_the_fit(),
-                rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-                rawshim::image::SharpenNoise::NONE,
-                &rawshim::fit::Lens::none(),
+                render::detail::SharpenSigma::fixed(render::detail::DECONVOLVE_SIGMA),
+                render::detail::SharpenNoise::NONE,
+                &geometry::lens::Lens::none(),
                 defringe,
                 measured.noise,
                 Some(matrix),
             ))
             .ok_or_else(|| Failed::Error("the coding did not run".into()))?;
-            let size = rawshim::hdr_args::Size {
+            let size = formats::still::Size {
                 width: width as u32,
                 height: height as u32,
             };
             let coded = rawshim::hdr::Cut::from_base(prepared, None, size, amount, sigma, noise)
                 .into_samples();
             light.extend(coded[..width * height * 3].iter().map(|&code| {
-                let nits = rawshim::tone::pq_inv::<rawshim::light::SceneNits>(Light::measured(
+                let nits = colour::tone::pq_inv::<units::light::SceneNits>(Light::measured(
                     f64::from(code) / f64::from(u16::MAX),
                 ));
                 (nits.raw() / white.raw()) as f32
@@ -648,8 +648,8 @@ fn measured(path: &str) -> Result<Measured, Failed> {
         reduced: frame.reduced,
         defringe: match opened.measured.defringe {
             // `Done` means the open's own frame; mosaics sharpened later are demosaiced afresh.
-            rawshim::base::Defringe::Done(pair) | rawshim::base::Defringe::Take(pair) => Some(pair),
-            rawshim::base::Defringe::Measure => None,
+            render::base::Defringe::Done(pair) | render::base::Defringe::Take(pair) => Some(pair),
+            render::base::Defringe::Measure => None,
         },
     })
 }
@@ -657,25 +657,25 @@ fn measured(path: &str) -> Result<Measured, Failed> {
 /// An upscale demosaiced in the product's order: RCD at its size, halved before the colour pass.
 #[allow(clippy::too_many_arguments)]
 fn halved(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
-    halving: &rawshim::upscale::Halving,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
+    halving: &denoise::upscale::Halving,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
-    colour: rawshim::demosaic::Colour,
+    colour: mosaic::demosaic::Colour,
 ) -> Result<Vec<u16>, Failed> {
-    let upscaled = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let upscaled = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
     let (out_width, out_height) = (width / 2, height / 2);
     // No photo-sized mosaic crosses, so no photosite reads as clipped for the colour pass's fills.
-    let native = rawshim::condition::Mosaic::plane(gpu, out_width, out_height);
+    let native = mosaic::condition::Mosaic::plane(gpu, out_width, out_height);
     let at = whole(out_width, out_height);
-    let into = rawshim::demosaic::frame_buffer(gpu, out_width * out_height);
-    let (_held, upscaled_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &upscaled, 0);
-    let (_held, native_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &native, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, out_width * out_height);
+    let (_held, upscaled_shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &upscaled, 0);
+    let (_held, native_shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &native, 0);
     let field = highlight_field(gpu, &native, cfa, colour)?;
-    pollster::block_on(rawshim::demosaic::demosaic_halved_into(
+    pollster::block_on(mosaic::demosaic::demosaic_halved_into(
         gpu,
         rcd,
         &upscaled,
@@ -689,7 +689,7 @@ fn halved(
         |recording, plane| halving.halve(gpu, recording, plane, (width, height)),
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
-    pollster::block_on(rawshim::demosaic::read_frame(
+    pollster::block_on(mosaic::demosaic::read_frame(
         gpu,
         &into,
         out_width * out_height,
@@ -697,32 +697,32 @@ fn halved(
     .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
 }
 
-fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
-    rawshim::demosaic::Placement {
-        stride: rawshim::px::Span::exact(width),
-        crop: rawshim::px::Rect::exact(0, 0, width, height),
-        dest: rawshim::px::At::ORIGIN,
-        frame: rawshim::px::Size::exact(width, height),
+fn whole(width: usize, height: usize) -> mosaic::demosaic::Placement {
+    mosaic::demosaic::Placement {
+        stride: units::px::Span::exact(width),
+        crop: units::px::Rect::exact(0, 0, width, height),
+        dest: units::px::At::ORIGIN,
+        frame: units::px::Size::exact(width, height),
         orientation: 0,
         reduce: 1,
     }
 }
 
 fn demosaic(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
-    colour: rawshim::demosaic::Colour,
+    colour: mosaic::demosaic::Colour,
 ) -> Result<Vec<u16>, Failed> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
     let at = whole(width, height);
-    let into = rawshim::demosaic::frame_buffer(gpu, width * height);
-    let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, width * height);
+    let (_held, shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
     let field = highlight_field(gpu, &uploaded, cfa, colour)?;
-    pollster::block_on(rawshim::demosaic::demosaic_into(
+    pollster::block_on(mosaic::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
@@ -734,17 +734,17 @@ fn demosaic(
         &shape,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
-    pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))
+    pollster::block_on(mosaic::demosaic::read_frame(gpu, &into, width * height))
         .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
 }
 
 fn highlight_field(
-    gpu: &'static rawshim::gpu::Gpu,
-    mosaic: &rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
-    colour: rawshim::demosaic::Colour,
-) -> Result<rawshim::highlight::Field, Failed> {
-    rawshim::highlight::measure(gpu, mosaic, cfa, colour.ceiling)
+    gpu: &'static gpu::Gpu,
+    mosaic: &mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
+    colour: mosaic::demosaic::Colour,
+) -> Result<mosaic::highlight::Field, Failed> {
+    mosaic::highlight::measure(gpu, mosaic, cfa, colour.ceiling)
         .ok_or_else(|| Failed::Error("the highlight field was not measured".into()))
 }
 
@@ -753,27 +753,27 @@ struct Arenas;
 
 impl Arenas {
     fn held() -> Self {
-        rawshim::pmrid::hold_arenas();
+        denoise::pmrid::hold_arenas();
         Arenas
     }
 }
 
 impl Drop for Arenas {
     fn drop(&mut self) {
-        rawshim::pmrid::release_arenas();
+        denoise::pmrid::release_arenas();
     }
 }
 
 fn filter(
-    gpu: &'static rawshim::gpu::Gpu,
-    network: &rawshim::pmrid::Pmrid,
-    mosaic: &mut rawshim::condition::Mosaic,
-    cfa: &rawshim::cfa::Cfa,
+    gpu: &'static gpu::Gpu,
+    network: &denoise::pmrid::Pmrid,
+    mosaic: &mut mosaic::condition::Mosaic,
+    cfa: &mosaic::cfa::Cfa,
     gains: [f32; 3],
     fit: NoiseFit,
 ) {
     if DETAIL.amounts(Some(fit)).does_anything() {
-        rawshim::pmrid::denoise(gpu, network, mosaic, cfa, gains, DETAIL, fit);
+        denoise::pmrid::denoise(gpu, network, mosaic, cfa, gains, DETAIL, fit);
     }
 }
 

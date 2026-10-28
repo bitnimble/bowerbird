@@ -1,21 +1,21 @@
 // Transfer functions and the roll-off, shared by every module that grades.
 //
-// The constants and the names are `native/rawshim`'s, deliberately: this is a second
+// The constants and the names are `native/colour`'s and `native/units`', deliberately: this is a second
 // implementation of one picture, which is the divergence DESIGN §21.1 warns about, so
 // where a number appears here it appears with the name it has over there.
 module prelude;
 
 import light;
 
-/// `hdr_fit::LUMA` and `tone::LUMA`, which are BT.2020's weights for a Rec.2020 frame.
+/// `colour::space::LUMA`, BT.2020's weights for a Rec.2020 frame.
 ///
-/// Not `image::LUMA`. That one is BT.709 and belongs to the denoise, which is measuring
+/// Not `colour::space::LUMA709`. That one is BT.709 and belongs to the denoise, which is measuring
 /// where detail is rather than what a colour weighs, and never meets this. Taking it here
 /// put the wrong weights under `finish_chroma`'s grey axis, the chroma map's level axis and
 /// its reconstructed middle channel, so every matched photograph was graded around the wrong luma.
 public static const float3 LUMA = float3(0.2627, 0.678, 0.0593);
 
-/// BT.709's weights, which `image::luma709` is the host's statement of.
+/// BT.709's weights, which `colour::space::luma709` is the host's statement of.
 ///
 /// **Beside `LUMA` rather than instead of it, and the pair is the point.** Which one a stage wants
 /// follows from what it is weighing: `LUMA` for a Rec.2020 frame, this for the camera's own sRGB
@@ -63,7 +63,7 @@ public Light<D> luma_of<D : ILinear>(Colour<D> colour)
     return measured<D>(dot(LUMA, colour.v));
 }
 
-/// The sRGB transfer, IEC 61966-2-1, on a value already in range. `hdr_fit::srgb_oetf`.
+/// The sRGB transfer, IEC 61966-2-1, on a value already in range. `colour::space::srgb_oetf`.
 ///
 /// **Four stages code against the camera's own JPEG and they have to agree exactly.** The
 /// geometry search compares a render to the preview through it, the colour fit's objective
@@ -82,7 +82,7 @@ public float3 srgb_oetf_signed(float3 value)
     return sign(value) * float3(srgb_oetf(abs(value.r)), srgb_oetf(abs(value.g)), srgb_oetf(abs(value.b)));
 }
 
-/// The same curve back, for the stages that read a level the camera wrote. `hdr_fit::srgb_eotf`.
+/// The same curve back, for the stages that read a level the camera wrote. `colour::space::srgb_eotf`.
 public float srgb_eotf(float level)
 {
     return level <= 0.04045 ? level / 12.92 : pow((level + 0.055) / 1.055, 2.4);
@@ -249,7 +249,7 @@ public Colour<D> in_gamut<D : ILinear>(Colour<D> colour)
     return measured<D>(pulled * (luma / max(achieved, 1e-12)));
 }
 
-/// Where `in_gamut` holds the lowest channel, as a fraction of the colour's luma. `hdr_fit.rs`
+/// Where `in_gamut` holds the lowest channel, as a fraction of the colour's luma. `fit::hdr`
 /// states the same number for the fit's objective, and a test holds the two together.
 public static const float GAMUT_FLOOR = 0.02;
 

@@ -1,7 +1,7 @@
 #![cfg(feature = "renditions")]
 
 use rawshim::job::Job;
-use rawshim::px::Rect;
+use units::px::Rect;
 
 fn job(path: &str) -> Job {
     serde_json::from_value(serde_json::json!({
@@ -131,23 +131,28 @@ fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
         rawshim::edit::prepare_bytes(&file, &request(true), 0.0).expect("the rendition opens");
 
     let shown = |prepared: &rawshim::edit::Prepared| -> Vec<u8> {
-        let gpu = rawshim::gpu::device().expect("an adapter");
+        let gpu = gpu::device().expect("an adapter");
         let header = &prepared.header;
-        let grade = rawshim::gpu::Grade {
-            output: rawshim::gpu::Output::Srgb,
-            ..rawshim::gpu::Grade::new(
+        let grade = render::grade::Grade {
+            output: render::grade::Output::Srgb,
+            ..render::grade::Grade::new(
                 header.width,
                 header.height,
-                rawshim::tone::Levels {
+                colour::tone::Levels {
                     white: header.white,
                     peak: header.peak,
                     floor: header.floor,
                 },
                 header.grade.reference_white_nits,
-                rawshim::light::Light::at_diffuse_white(header.grade.reference_white_nits),
+                units::light::Light::at_diffuse_white(header.grade.reference_white_nits),
             )
         };
-        gpu.upload(&prepared.samples, &grade, &gpu.scene_peak())
+        render::grade::device(gpu)
+            .upload(
+                &prepared.samples,
+                &grade,
+                &render::grade::device(gpu).scene_peak(),
+            )
             .encode_bytes(&grade)
     };
     let worst = |got: &[u8]| -> u8 {

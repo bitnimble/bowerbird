@@ -122,7 +122,7 @@ test(
   'the worker applies the denoise and the sharpen the job asks for',
   async () => {
     // The assertion is only that the pixels moved. What the filters do to them is
-    // measured in `image.rs` against constructed inputs, where it can be measured
+    // measured in `render/src/detail.rs` against constructed inputs, where it can be measured
     // properly; what cannot be checked there is whether anything calls them.
     const [plain, processed] = await Promise.all([
       render(false, 'unprocessed'),

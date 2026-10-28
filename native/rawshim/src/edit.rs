@@ -2,15 +2,15 @@
 //
 // Everything before the first slider tick - decode, prepare, fit the camera match,
 // materialise the lens warp, denoise and sharpen - with none of the per-tick half, which is
-// `gpu.rs` (`docs/gpu-editor.md`). What comes out is `Opened`: the coded frame the grade
+// `grade.rs` (`docs/gpu-editor.md`). What comes out is `Opened`: the coded frame the grade
 // reads (`tone::encode_base`), left on the device, plus the numbers the grade needs and cannot
 // re-derive from pixels.
 //
 // This half is where the threads are worth having - measured at 3.2x between one and
 // twelve - against a tick that is entirely the GPU's.
 
-use crate::hdr;
-use crate::image::Strengths;
+use crate::hdr_args;
+use render::detail::Strengths;
 use serde::{Deserialize, Serialize};
 
 /// What the client has to be told to open a RAW, which is the library's settings and
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct EditRequest {
     /// Longest edge the decode is fitted to, which is the size every tick then grades.
     pub long_edge: u32,
-    pub grade: hdr::Grade,
+    pub grade: hdr_args::Grade,
     /// The library's defringe strength, which is the only filter this request decides.
     ///
     /// The sharpen is an argument to [`from_frame`] instead. It belongs to the Detail panel with
@@ -32,7 +32,7 @@ pub struct EditRequest {
     /// The camera match is half a second, the noise fit a quarter of one, and neither depends on
     /// anything the reader can move - so an open that is handed them skips both. A blob this build
     /// cannot read is ignored and everything is measured as it always was
-    /// (`crate::photo_analysis`).
+    /// (`fit::photo_analysis`).
     #[serde(default)]
     pub photo_analysis: Option<Vec<u8>>,
     /// The Detail sliders, which the open denoises the mosaic at exactly as a rendition does.
@@ -50,7 +50,7 @@ pub struct EditRequest {
     /// Which filter those two positions drive. Absent is the one every document had before there
     /// was a choice.
     #[serde(default)]
-    pub denoiser: crate::galosh::Denoiser,
+    pub denoiser: denoise::galosh::Denoiser,
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic where the denoise does.
@@ -58,15 +58,15 @@ pub struct EditRequest {
     /// Here for the same reason the Detail pair is: the shadow is one number per photosite while the
     /// frame is still a mosaic, and three that disagree once RCD has interpolated between them.
     #[serde(default)]
-    pub dust: crate::dust::Settings,
+    pub dust: denoise::dust::Settings,
     /// The reader's repairs, which the open applies after the chain as every window does.
     #[serde(default)]
-    pub repairs: Vec<crate::repair::Repair>,
+    pub repairs: Vec<composite::repair::Repair>,
     #[serde(default)]
-    pub reflection: crate::dereflect::Settings,
+    pub reflection: dereflect::Settings,
     /// The layer an earlier open found for these same strokes, taken out rather than found again.
     #[serde(skip)]
-    pub found: Option<std::sync::Arc<crate::dereflect::Layer>>,
+    pub found: Option<std::sync::Arc<dereflect::Layer>>,
     /// Diffuse white where a finished picture states it rather than where its histogram puts it:
     /// a rendition shown as it was encoded.
     #[serde(default)]
@@ -75,8 +75,8 @@ pub struct EditRequest {
 
 impl EditRequest {
     /// The Detail sliders as this document holds them, spelled as `job::Job::detail` spells it.
-    pub fn detail(&self) -> crate::galosh::Detail {
-        crate::galosh::Detail {
+    pub fn detail(&self) -> denoise::galosh::Detail {
+        denoise::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
@@ -85,10 +85,10 @@ impl EditRequest {
     }
 
     /// What the caller already knows about this photograph, as far as this build can read it.
-    pub fn stored(&self) -> crate::photo_analysis::PhotoAnalysis {
+    pub fn stored(&self) -> fit::photo_analysis::PhotoAnalysis {
         self.photo_analysis
             .as_deref()
-            .and_then(crate::photo_analysis::decode)
+            .and_then(fit::photo_analysis::decode)
             .unwrap_or_default()
     }
 }
@@ -105,14 +105,14 @@ pub struct PreparedHeader {
     pub width: usize,
     pub height: usize,
     /// `tone::Levels`: the frame's own diffuse white, peak and floor, in input levels.
-    pub white: crate::light::Light<crate::light::Level>,
-    pub peak: crate::light::Light<crate::light::Level>,
+    pub white: units::light::Light<units::light::Level>,
+    pub peak: units::light::Light<units::light::Level>,
     /// Absent where the picture was prepared without a histogram walk behind it, and then a loupe
-    /// tile handing these back is refused and measures its own ([`crate::tone::Levels::usable`]).
-    pub floor: Option<crate::light::Light<crate::light::Level>>,
-    pub grade: hdr::Grade,
+    /// tile handing these back is refused and measures its own ([`colour::tone::Levels::usable`]).
+    pub floor: Option<units::light::Light<units::light::Level>>,
+    pub grade: hdr_args::Grade,
     pub strengths: Strengths,
-    pub camera_match: crate::hdr_fit::CameraMatch,
+    pub camera_match: fit::hdr::CameraMatch,
     /// False where the file embeds no preview or the fit found too few pairs, in which
     /// case the client grades the neutral arm exactly as a rendition does.
     pub matched: bool,
@@ -130,7 +130,7 @@ pub struct PreparedHeader {
     ///
     /// For the *panel*, which shows the reader where the sliders start. The grade reads it out
     /// of `tick` below rather than from here, so no arithmetic depends on this field.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// The two Detail positions this frame was actually filtered at, 0 to 100.
     ///
     /// **What the panel shows where the document has left a slider unset.** The ramp that turns a
@@ -139,19 +139,19 @@ pub struct PreparedHeader {
     /// page reads a number rather than deriving one.
     pub detail: (f64, f64),
     /// The camera match's tone curve. None where no colour match applies.
-    pub camera_curve: Option<crate::gpu::ToneCurve>,
-    pub camera_exposure: Option<crate::light::Stops>,
+    pub camera_curve: Option<render::grade::ToneCurve>,
+    pub camera_exposure: Option<units::light::Stops>,
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
     /// The white balance the camera match sets (`HdrColour::illuminant`).
-    pub camera_balance: Option<crate::white_balance::Illuminant>,
+    pub camera_balance: Option<colour::white_balance::Illuminant>,
     /// The mosaic's noise, handed back on every loupe tile and every band of a re-prepare - so a
     /// crop is denoised at the strength its own export would use rather than at whatever its few
     /// hundred thousand photosites happen to imply.
     ///
     /// Absent where the decode had no adapter, which is the same case as a tile fitting its own.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub noise_fit: Option<crate::galosh::NoiseFit>,
+    pub noise_fit: Option<denoise::galosh::NoiseFit>,
     /// The longitudinal aberration the defringe took off, handed back for the same reason as the
     /// fit above: it is read over the whole frame, so a loupe tile fitting its own is corrected by
     /// whatever its window's edges say, and neighbouring tiles by different amounts.
@@ -276,7 +276,7 @@ pub fn prepare_bytes(
 /// too. A permit count would let that through; nothing today has two.
 fn admit() -> Turn {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let asked = crate::clock::Mark::now();
+    let asked = trace::clock::Mark::now();
     // A poisoned lock means a previous open panicked. That was reported to its own caller and
     // left nothing shared behind - the guard owns no data - so refusing every open after it
     // would turn one failure into a permanent one.
@@ -289,7 +289,7 @@ fn admit() -> Turn {
     // somebody else's decode is the queue working, where a reader waiting alone is the decode
     // being slow. Only mentioned when it actually waited, so an idle server stays quiet.
     if waited > std::time::Duration::from_millis(50) {
-        crate::info(&format!(
+        trace::info(&format!(
             "rawshim: an open waited {}ms for the one before it",
             waited.as_millis()
         ));
@@ -305,9 +305,9 @@ fn admit() -> Turn {
 /// `Instant` cannot be shared as a number, and a wall clock can step backwards. This only has
 /// to order events inside one process.
 fn elapsed_micros() -> u64 {
-    static START: std::sync::OnceLock<crate::clock::Mark> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<trace::clock::Mark> = std::sync::OnceLock::new();
     START
-        .get_or_init(crate::clock::Mark::now)
+        .get_or_init(trace::clock::Mark::now)
         .elapsed()
         .as_micros() as u64
 }
@@ -351,11 +351,11 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
     //
     // Denoised on the mosaic at the reader's own Detail, which is `job::Base::build`'s call: what
     // the editor shows and what the export ships are one pipeline because they are one line.
-    let frame = crate::decode::frame_from_bytes(
+    let frame = decode::frame_from_bytes(
         bytes,
         request.detail(),
         request.long_edge,
-        crate::galosh::wanted(stored.from_raw.noise, request.detail()),
+        denoise::galosh::wanted(stored.from_raw.noise, request.detail()),
         // Detected here where the caller has never had this photograph looked at, and taken off the
         // sidecar where it has - a whole-frame read is most of a second, and nothing about which
         // particles are on the glass depends on anything a reader can move.
@@ -366,10 +366,10 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
     from_frame(
         frame,
         bytes,
-        !crate::decode_rendered::is_rendered_bytes(bytes),
+        !formats::rendered::is_rendered_bytes(bytes),
         request,
         sharpen,
-        &crate::open_stage::quiet,
+        &decode::open_stage::quiet,
     )
     .await
 }
@@ -377,7 +377,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
 /// Everything an open does once it has a frame, which is everything a Detail amount cannot move.
 ///
 /// **Split out so a caller holding a mosaic can re-run the pipeline without re-reading a file.**
-/// The editor keeps a `decode_rawler::Held` for as long as a photograph is open and re-denoises a
+/// The editor keeps a `decode::raw::Held` for as long as a photograph is open and re-denoises a
 /// copy of it when a slider moves; this is the half below that, and it is the same half a fresh
 /// open runs, so the two cannot drift.
 /// `mosaic` is whether the photograph has a sensor behind it, and `bytes` its file - which a
@@ -386,21 +386,21 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
 /// here: deriving it from the buffer is the same fact twice, and the second derivation is wrong
 /// the moment a caller stops carrying the buffer.
 pub async fn from_frame(
-    frame: crate::frame::Frame,
+    frame: decode::frame::Frame,
     bytes: &[u8],
     mosaic: bool,
     request: &EditRequest,
     sharpen: f64,
-    report: crate::open_stage::Report<'_>,
+    report: decode::open_stage::Report<'_>,
 ) -> Result<Opened, String> {
     let strengths = Strengths {
         sharpen,
         defringe: request.defringe,
     };
     {
-        // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
+        // The same switch and the same shape as `decode::raw::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
-        let mut lap = crate::clock::laps("  open ");
+        let mut lap = trace::clock::laps("  open ");
         let noise_fit = frame.noise;
         let stored = request.stored();
         let as_shot = frame.as_shot;
@@ -424,16 +424,16 @@ pub async fn from_frame(
         // Shrunk before the open defringes the frame in place, as `job::Base::built` shrinks it.
         let looked = match (reflection.takes_out(), &request.found) {
             (true, None) => {
-                let gpu = crate::gpu::device()
-                    .ok_or_else(|| crate::base::without_a_device("the reflection removal"))?;
-                crate::dereflect::ready(gpu)
-                    .then(|| crate::dereflect::looked(gpu, resident))
+                let gpu = gpu::device()
+                    .ok_or_else(|| render::base::without_a_device("the reflection removal"))?;
+                dereflect::ready(gpu)
+                    .then(|| dereflect::looked(gpu, resident))
                     .flatten()
             }
             _ => None,
         };
         let opening = crate::open::Opening {
-            camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             grade: request.grade,
             strengths,
             stored: &stored,
@@ -450,7 +450,7 @@ pub async fn from_frame(
             neutral_ceiling: frame.neutral_ceiling,
         };
         if mosaic {
-            report(crate::open_stage::Stage::Matching);
+            report(decode::open_stage::Stage::Matching);
         }
         let crate::open::Measured {
             matched,
@@ -459,15 +459,15 @@ pub async fn from_frame(
             blur,
         } = crate::open::measure(resident, &opening).await?;
         lap("defringe, camera match, levels");
-        let removal = match (&request.found, crate::gpu::device()) {
+        let removal = match (&request.found, gpu::device()) {
             _ if !reflection.takes_out() => None,
-            (Some(layer), _) => Some(crate::dereflect::Removal {
+            (Some(layer), _) => Some(dereflect::Removal {
                 layer: layer.clone(),
                 strength: reflection.strength,
             }),
             (None, Some(gpu)) => looked.and_then(|looked| {
-                let full = crate::px::Size::exact(width, height);
-                crate::dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
+                let full = units::px::Size::exact(width, height);
+                dereflect::removal(gpu, &looked, full, reflection, matched.as_ref())
             }),
             (None, None) => None,
         };
@@ -491,7 +491,7 @@ pub async fn from_frame(
         // would get is `level / 0` rolling every pixel to display peak and `0 / 0` leaving
         // the black ones indeterminate - a flat white canvas reporting itself live. Better
         // to say so.
-        if levels.white <= crate::light::Light::ZERO {
+        if levels.white <= units::light::Light::ZERO {
             return Err("this frame is too dark to read an exposure from".to_string());
         }
         // Coded before anything reads it, exactly as `job::Base::build` codes it: what crosses
@@ -514,8 +514,8 @@ pub async fn from_frame(
         // The match this open may have just fitted travels down as the analysis, because that is
         // where the window reads its lens from - handing it separately would be the same value
         // arriving two ways.
-        let handed = crate::photo_analysis::encode(&crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        let handed = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 noise: noise_fit,
                 dust: dust.clone(),
@@ -527,7 +527,7 @@ pub async fn from_frame(
             ..Default::default()
         });
         if mosaic {
-            report(crate::open_stage::Stage::Correcting);
+            report(decode::open_stage::Stage::Correcting);
         }
         let (resident, window) = crate::tile::prepared_on_device(
             crate::tile::Source::Frame(frame),
@@ -544,13 +544,13 @@ pub async fn from_frame(
                 // corrected, so asking again would divide every shadow out twice and leave a bright
                 // disc where a dark one was. Spelled rather than defaulted, because the default is
                 // the *reader's* starting position and that one is on.
-                dust: crate::dust::Settings {
+                dust: denoise::dust::Settings {
                     enabled: false,
                     ..Default::default()
                 },
                 // At rest: the reader's sliders are the tick's, and what they would widen here is
                 // the window, which is already the whole picture.
-                adjust: crate::gpu::Adjust::none(),
+                adjust: render::grade::Adjust::none(),
                 levels: Some(levels),
                 noise_fit,
                 capture_sigma,
@@ -565,7 +565,7 @@ pub async fn from_frame(
                 // host decoded are the only copy of it there is.
                 // The editor is handed the photograph at the size it asked the decode for, and the
                 // decode has already halved it if it was going to.
-                scale: crate::view::Scale::Full,
+                scale: decode::view::Scale::Full,
                 repairs: request.repairs.clone(),
                 drawn: None,
                 removal: removal.clone(),
@@ -611,14 +611,14 @@ pub async fn from_frame(
 /// grade had to be given the samples, which is a `GPUDevice` boundary a frame cannot cross except
 /// as bytes.
 pub struct Opened {
-    pub frame: crate::retouched_frame::RetouchedFrame,
+    pub frame: composite::retouched_frame::RetouchedFrame,
     pub header: PreparedHeader,
     /// What the frame was coded against, which the tick's uniform anchors to.
-    pub levels: crate::tone::Levels,
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub levels: colour::tone::Levels,
+    pub matched: Option<fit::hdr::HdrMatch>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
     /// What the open took out, kept by a host that opens this photograph again.
-    pub removal: Option<crate::dereflect::Removal>,
+    pub removal: Option<dereflect::Removal>,
 }
 
 impl Opened {
@@ -643,19 +643,19 @@ impl Opened {
 /// [`PreparedHeader`]'s `camera_curve`, `camera_exposure`, `camera_saturation` and
 /// `camera_balance`.
 pub(crate) fn camera_defaults(
-    colour: Option<&crate::hdr_fit::HdrColour>,
+    colour: Option<&colour::matched::HdrColour>,
 ) -> (
-    Option<crate::gpu::ToneCurve>,
-    Option<crate::light::Stops>,
+    Option<render::grade::ToneCurve>,
+    Option<units::light::Stops>,
     Option<f64>,
-    Option<crate::white_balance::Illuminant>,
+    Option<colour::white_balance::Illuminant>,
 ) {
     (
-        colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 {
+        colour.map(|c| render::grade::ToneCurve::PchipCbrt3 {
             points: c.curve.clone(),
         }),
         colour.map(|c| c.exposure),
-        colour.map(crate::hdr_fit::HdrColour::saturation_slider),
+        colour.map(colour::matched::HdrColour::saturation_slider),
         colour.and_then(|c| c.illuminant),
     )
 }
@@ -664,28 +664,28 @@ pub(crate) fn camera_defaults(
 struct Framed {
     width: usize,
     height: usize,
-    levels: crate::tone::Levels,
+    levels: colour::tone::Levels,
 }
 
 async fn payload(
     prepared: Framed,
-    matched: Option<&crate::hdr_fit::HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    matched: Option<&fit::hdr::HdrMatch>,
+    as_shot: Option<colour::white_balance::Illuminant>,
     request: &EditRequest,
     // What the frame was actually filtered at, which the request only half decides.
     strengths: Strengths,
     // What the request arrived carrying, so what this open measured can be reported as new.
-    stored: &crate::photo_analysis::PhotoAnalysis,
-    noise_fit: Option<crate::galosh::NoiseFit>,
+    stored: &fit::photo_analysis::PhotoAnalysis,
+    noise_fit: Option<denoise::galosh::NoiseFit>,
     capture_sigma: Option<f32>,
     defocus: (f32, f32),
-    dust: Option<Vec<crate::dust::Spot>>,
+    dust: Option<Vec<denoise::dust::Spot>>,
     mosaic: bool,
 ) -> PreparedHeader {
     // Everything this open now knows, against everything it was told. Reported only where it says
     // something new, so its presence means "keep this" rather than "here is what you gave me".
-    let measured = crate::photo_analysis::PhotoAnalysis {
-        from_raw: crate::photo_analysis::FromRaw {
+    let measured = fit::photo_analysis::PhotoAnalysis {
+        from_raw: fit::photo_analysis::FromRaw {
             matched: matched.cloned(),
             noise: noise_fit,
             dust,
@@ -694,8 +694,8 @@ async fn payload(
             // filing it would be storing what this side already has.
             balance: None,
         },
-        from_render: crate::photo_analysis::FromRender {
-            levels: Some(crate::photo_analysis::MeasuredLevels {
+        from_render: fit::photo_analysis::FromRender {
+            levels: Some(fit::photo_analysis::MeasuredLevels {
                 levels: prepared.levels,
                 white_quantile: request.grade.white_quantile,
             }),
@@ -703,7 +703,7 @@ async fn payload(
             // `peak.slang` over the frame below and keeps the candidates a tick remeasures. What it
             // finds comes back through the API rather than out of this call.
             scene_peak: None,
-            defocus: Some(crate::photo_analysis::MeasuredDefocus {
+            defocus: Some(fit::photo_analysis::MeasuredDefocus {
                 red: defocus.0,
                 blue: defocus.1,
                 defringe: request.defringe,
@@ -714,7 +714,7 @@ async fn payload(
         },
     };
     let photo_analysis = match measured.adds_to(stored) {
-        true => Some(crate::photo_analysis::encode(&measured.filled_from(stored))),
+        true => Some(fit::photo_analysis::encode(&measured.filled_from(stored))),
         false => None,
     };
 
@@ -728,7 +728,7 @@ async fn payload(
         floor: prepared.levels.floor,
         grade: request.grade,
         strengths,
-        camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
+        camera_match: fit::hdr::CameraMatch::LensAndColour,
         matched: matched.is_some(),
         mosaic,
         as_shot,

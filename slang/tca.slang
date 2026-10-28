@@ -57,7 +57,7 @@ struct Params {
     int stride;
     /// Knots in each of `tca_halo`'s two curves, or zero to read the frame as it stands.
     int knots;
-    /// `image::SPLINE_UNIT`, which a knot is carried in.
+    /// `geometry::lens::SPLINE_UNIT`, which a knot is carried in.
     float spline_unit;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
@@ -122,7 +122,7 @@ float half_of()
     return max(sqrt(cx * cx + cy * cy), 1.0);
 }
 
-/// A spline read at a radius, as the fraction it displaces by - `image::spline_at`, on the knots
+/// A spline read at a radius, as the fraction it displaces by - `geometry::lens::spline_at`, on the knots
 /// laid into `curves` after the gains. Zero where the curve is empty, which reads the frame as it
 /// stands.
 float spline_at(int slot, float radius)

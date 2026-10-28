@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 // The synthetic views a panorama is composed out of, written where a library can index them.
 //
-// **By the crate rather than here.** The scene and the rig are `composite_scene`'s, and
-// `composite_align`'s own suite aligns the same six views - so a panorama on screen and a panorama
+// **By the crate rather than here.** The scene and the rig are `composite::scene`'s, and
+// `composite::align`'s own suite aligns the same six views - so a panorama on screen and a panorama
 // under test are looking at the same world, and there is no second implementation of the
 // projection to drift from the one it is a fixture for.
 //
@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 // this - through Node, where `dir` is undefined and every path built from it resolves to nothing.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** What `composite_scene::rig` writes, in the order it writes them. */
+/** What `composite::scene::rig` writes, in the order it writes them. */
 export const PANORAMA_VIEW_NAMES = [
   'view0.png',
   'view1.png',

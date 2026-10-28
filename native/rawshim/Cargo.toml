@@ -5,10 +5,6 @@ version = "0.1.0"
 # `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
 edition = "2024"
 
-# cdylib so Bun can dlopen it. rlib so the grade microbench example can link the same crate.
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [features]
 default = ["renditions"]
 
@@ -19,7 +15,7 @@ default = ["renditions"]
 # than the database, and the display transform is the client's GPU rather than an AVIF encoder.
 # That is what lets the desktop and mobile shells ship without a native library to resolve at
 # all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
-renditions = ["dep:lensdb"]
+renditions = ["dep:lensdb", "dep:stacks", "composite/renditions", "decode/renditions", "formats/renditions", "render/renditions"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -179,15 +175,26 @@ rawler = { path = "../vendor/dnglab/rawler" }
 # so the Android and wasm builds link neither it nor its ~3.6MB of XML.
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
-fast_image_resize = "6.1.0"
+colour = { path = "../colour" }
+composite = { path = "../composite" }
+denoise = { path = "../denoise" }
+dereflect = { path = "../dereflect" }
+burst = { path = "../burst" }
+composition = { path = "../composition" }
+decode = { path = "../decode" }
+fit = { path = "../fit" }
+formats = { path = "../formats" }
+geometry = { path = "../geometry" }
+gpu = { path = "../gpu" }
+mosaic = { path = "../mosaic" }
+render = { path = "../render" }
+shaders = { path = "../shaders" }
+stacks = { path = "../stacks", optional = true }
+trace = { path = "../trace" }
+units = { path = "../units" }
 # The f16 the detail and neighbourhood textures and the jacobian readback are held in. Conversion
 # only - no feature of it is wanted.
 half = { version = "2.7.1", default-features = false }
-# libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
-# pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
-# which is the wrong way round here: every decode is bounded to the fit grid or a preview.
-jpeg-decoder = { version = "0.3.2", default-features = false, features = ["rayon"] }
-jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 # The grade runs here, on the same WGSL the editor runs, so there is one implementation of
 # it rather than two that must be held in agreement (DESIGN 21.1). That costs the server an
 # adapter; where there is no hardware one, `gpu::device` falls back to whatever software
@@ -207,59 +214,6 @@ rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 png = "0.18.1"
-# `png` reads the `cICP` chunk that makes a PNG HDR and does not write one, so an HDR export
-# splices it in itself and needs the checksum every PNG chunk carries. Already in the tree
-# under `png`; named here because this crate calls it directly.
-crc32fast = "1.5.0"
-rust_h265 = "0.1.0"
-moxcms = "0.9.1"
-
-# The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
-# callers sit inside their own parallelism. libavif and libjxl are linked on top, through
-# build.rs, and only for a `renditions` build.
-
-# An index product that wraps is a picture that comes out wrong rather than a crash, and
-# these run over tens of millions of samples. Keep that failure loud in release.
-#
-# Applies when this crate is the root - the server's `build:native` and `cargo test`. The
-# shells set their own, because cargo reads profiles from the top-level package only.
-[profile.release]
-overflow-checks = true
-# Cargo defaults to per-crate optimisation in sixteen independent units. The decode's hot
-# loops cross crate boundaries into `rawler` and `fast_image_resize`, which is exactly what
-# those defaults leave on the table: on the shells the same change took the Windows binary
-# from 26MB of `.text` to 7.
-lto = "fat"
-codegen-units = 1
-
-# What every build that is not being shipped uses: the tests and any local `build:native`.
-#
-# **Same optimisation and the same overflow checks; the whole-program link is dropped and the
-# codegen is cached.** Fat LTO into one codegen unit is worth 25% of the library's size and,
-# measured here, nothing at all in speed: a 61MP decode ran 1635-1666ms under `release` and 1687ms
-# under this, and the grade 1485-1664ms against 1481ms. What it costs is the build - 43s against
-# 19s, and almost all of it serial, since one codegen unit and a whole-program link leave nothing
-# to run in parallel. That is the wrong trade to pay on every edit and the right one to pay once,
-# on the artefact a user installs.
-#
-# `opt-level` and `overflow-checks` are deliberately not relaxed. A debug decode is six times
-# slower - measured, 229s of fixture suite against 36s - and the overflow checks are the
-# reason a wrapping index over tens of millions of samples is a loud failure rather than a
-# quietly wrong picture, which is exactly what the tests are for.
-#
-# **`incremental`, and so no LTO at all.** A crate is rustc's compilation unit, so an edit anywhere
-# in this one recompiles all of it: there is no per-module cache to hit, and the only thing that
-# reuses work across edits is incremental's own codegen units. The two settings go together rather
-# than being two choices - cargo disables incremental when LTO is on, and says so - and this is the
-# profile nothing ships from, so what is being traded away is a link nobody measures.
-#
-# **Not the benchmark's profile.** `scripts/bench.ts` builds `--release`, which is what
-# `test/fixtures/bench.budget.json` is recorded against, so nothing here can move a budget.
-[profile.quick]
-inherits = "release"
-lto = false
-codegen-units = 16
-incremental = true
 
 # Vulkan without wgpu in the way, for the one thing WGSL cannot say: the cooperative matrices a
 # tensor core is reached through. Already in the tree - it is what wgpu's own Vulkan backend calls -
@@ -283,25 +237,20 @@ uuid = { version = "1", features = ["js"] }
 # same link makes that a different crate's `JsValue` than the one this crate can return.
 wasm-bindgen = "0.2.108"
 # The canvas the editor draws on, taken from the page as an `OffscreenCanvas` and turned into a
-# surface (`gpu::Canvas`). wgpu's own version and its own feature, so this unifies to the copy
+# surface (`grade::Canvas`). wgpu's own version and its own feature, so this unifies to the copy
 # already in the tree rather than adding one - the same argument as `wasm-bindgen` above.
 web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 # What an exported `async fn` expands into: the adapter request cannot block a browser's thread,
 # so `openGpuDevice` is a promise.
 wasm-bindgen-futures = "0.4.58"
 
-[build-dependencies]
-bindgen = "0.72"
-
 [dev-dependencies]
-# The WGSL front end wgpu already carries, taken directly so `wgsl_call_shapes.rs` can walk the
-# parsed IR rather than grep the text. Pinned to wgpu's own naga, so nothing new enters the tree.
-naga = { version = "30.0", features = ["wgsl-in"] }
+fit = { path = "../fit", features = ["testing"] }
+formats = { path = "../formats", features = ["testing"] }
+jpeg-encoder = { version = "0.7.1", features = ["simd"] }
+moxcms = "0.9.1"
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,
-# and a synthetic burst with no embedded JPEG is a burst `composite_align` cannot open at all -
+# and a synthetic burst with no embedded JPEG is a burst `composite::align` cannot open at all -
 # `upright_preview_rgb` reads `preview_jpegs` and has no other way in. Pinned to the version rawler
 # already builds, so this declares what is in the tree rather than adding to it.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
-# A second reader for what `tiff_write` writes, so the export is held against a decoder that is
-# not the writer's own.
-tiff = "0.11.3"

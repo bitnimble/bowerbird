@@ -253,7 +253,7 @@ const RENDITION_PUSHED: u32 = (std::mem::size_of::<Pushed>() + 6 * 4) as u32;
 /// multiplies of this shape, and the two 3x3 dense layers at the full plane are a hundredth of the
 /// work; what this measures is the two thirds that is.
 fn multiplies(packed: usize) -> Vec<Multiply> {
-    rawshim::pmrid::pointwise(packed)
+    denoise::pmrid::pointwise(packed)
         .into_iter()
         .map(|layer| {
             // The depth loop steps a fragment at a time whatever shape the arm is, so a layer whose
@@ -498,10 +498,7 @@ fn registers(gpu: &Gpu, entry_points: &[String]) {
             std::fs::read(path).expect("the SPIR-V file"),
             &entry_points[1..],
         ),
-        None => (
-            include_bytes!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.spv")).to_vec(),
-            entry_points,
-        ),
+        None => (shaders::passthrough::PMRID_COOP_SPV.to_vec(), entry_points),
     };
     let words = ash::util::read_spv(&mut std::io::Cursor::new(&spirv[..])).expect("the SPIR-V");
     let module = unsafe {
@@ -1002,7 +999,7 @@ impl Run {
         }
         .expect("a pipeline layout");
 
-        let spirv = include_bytes!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.spv"));
+        let spirv = shaders::passthrough::PMRID_COOP_SPV;
         let words = ash::util::read_spv(&mut std::io::Cursor::new(&spirv[..])).expect("the SPIR-V");
         let module = unsafe {
             device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)

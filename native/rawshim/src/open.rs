@@ -13,8 +13,8 @@
 //! sources ([`Fitting`]), and a job brings its own strengths. Everything else - which stages run,
 //! what is measured, what is skipped because it was handed over - is the same code for both.
 
-use crate::hdr_fit::CameraMatch;
-use crate::resident::Resident;
+use colour::resident::Resident;
+use fit::hdr::CameraMatch;
 
 /// Where a camera match comes from, and whether one is wanted.
 ///
@@ -43,30 +43,30 @@ impl Fitting<'_> {
 
 /// What a caller brings to an open that is not the photograph.
 pub struct Opening<'a> {
-    pub grade: crate::hdr::Grade,
-    pub strengths: crate::image::Strengths,
+    pub grade: crate::hdr_args::Grade,
+    pub strengths: render::detail::Strengths,
     /// What is already known about this photograph, so an open measures only what it must.
-    pub stored: &'a crate::photo_analysis::PhotoAnalysis,
+    pub stored: &'a fit::photo_analysis::PhotoAnalysis,
     pub fitting: Fitting<'a>,
     pub camera_match: CameraMatch,
     /// The mosaic's own noise, as the decode fitted it. What bounds the defringe's per-channel
     /// estimate, which is a median over a demosaiced frame and so cannot tell texture from grain.
-    pub noise: Option<crate::galosh::NoiseFit>,
+    pub noise: Option<denoise::galosh::NoiseFit>,
     /// The matrix the demosaic multiplied the samples by, which the same estimate propagates its
     /// channel correlations through.
     pub matrix: Option<[[f32; 3]; 3]>,
     /// The illuminant the decode balanced against, which the camera match's own white balance is
     /// fitted relative to.
-    pub as_shot: Option<crate::white_balance::Illuminant>,
-    /// `crate::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
+    pub as_shot: Option<colour::white_balance::Illuminant>,
+    /// `decode::frame::Frame::neutral_ceiling`, the clip a DNG's own rendering anchors its white to.
     pub neutral_ceiling: f32,
 }
 
 /// Everything an open measured, in the units the stages below it read.
 pub struct Measured {
-    pub matched: Option<crate::hdr_fit::HdrMatch>,
+    pub matched: Option<fit::hdr::HdrMatch>,
     /// Unfloored, as the photograph's own: `anchored()` is what the coding takes.
-    pub levels: crate::tone::Levels,
+    pub levels: colour::tone::Levels,
     /// What the chain below is to do about longitudinal aberration, decided here so that both
     /// callers do the same thing with the same stored analysis.
     ///
@@ -74,7 +74,7 @@ pub struct Measured {
     /// did not and the photograph's pair is on file, or neither and the chain reads its own. Left to
     /// the callers, one of them consulted the stored pair and the other measured a fresh one - which
     /// is a rendition and the tab that predicts it defringing by different amounts.
-    pub defringe: crate::base::Defringe,
+    pub defringe: render::base::Defringe,
     /// The blur this frame carries, as a Gaussian sigma in *this frame's* pixels - so a caller
     /// whose decode halved doubles it to reach the sensor's. None where the photograph already
     /// had one on file, or where the frame offered too few edges to read one off.
@@ -93,7 +93,7 @@ pub struct Measured {
 /// compares our render against a JPEG the camera has already defringed, so a fringe left on is a
 /// difference between the two that has nothing to do with the colour being fitted.
 pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, String> {
-    let mut lap = crate::clock::laps("  open ");
+    let mut lap = trace::clock::laps("  open ");
     let (width, height) = frame.size();
     let strengths = how.strengths.before_the_fit();
     let stored = how.stored;
@@ -112,10 +112,10 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let defocus = match needs_fit {
         false => None,
         true => {
-            let refused = || crate::base::without_a_device("the defringe before the camera match");
-            let gpu = crate::gpu::device().ok_or_else(refused)?;
-            let base = crate::base::device(gpu).ok_or_else(refused)?;
-            crate::base::correct(
+            let refused = || render::base::without_a_device("the defringe before the camera match");
+            let gpu = gpu::device().ok_or_else(refused)?;
+            let base = render::base::device(gpu).ok_or_else(refused)?;
+            render::base::correct(
                 gpu,
                 base,
                 frame,
@@ -132,8 +132,11 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     // What the chain is to do, decided once. `correct` ran over this buffer, or the photograph's
     // pair is on file, or neither and the chain reads its own off the frame it is given.
     let defringe = match defocus {
-        Some(pair) => crate::base::Defringe::Done(pair),
-        None => known_defocus.map_or(crate::base::Defringe::Measure, crate::base::Defringe::Take),
+        Some(pair) => render::base::Defringe::Done(pair),
+        None => known_defocus.map_or(
+            render::base::Defringe::Measure,
+            render::base::Defringe::Take,
+        ),
     };
 
     // **The blur the sharpen will be asked to invert, read off the frame that carries it.** Here
@@ -148,11 +151,12 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let blur = match stored.from_raw.capture_sigma.is_none() {
         false => None,
         true => {
-            let gpu = crate::gpu::device();
-            let base = gpu.and_then(crate::base::device);
+            let gpu = gpu::device();
+            let base = gpu.and_then(render::base::device);
             match (gpu, base) {
                 (Some(gpu), Some(base)) => {
-                    crate::base::measure_edge_spread(gpu, base, frame.buffer(), width, height).await
+                    render::base::measure_edge_spread(gpu, base, frame.buffer(), width, height)
+                        .await
                 }
                 _ => None,
             }
@@ -183,7 +187,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
             || (Some(matched.clone()), None),
             |(matched, levels)| (Some(matched), Some(levels)),
         ),
-        (Fitting::Preview(bytes), None) => match crate::gpu::device() {
+        (Fitting::Preview(bytes), None) => match gpu::device() {
             Some(gpu) => {
                 fit_from_preview(
                     gpu,
@@ -217,9 +221,9 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let levels = match known_levels.or(fitted_levels) {
         Some(levels) => levels,
         None => {
-            let refused = || crate::base::without_a_device("the frame's own levels");
-            let gpu = crate::gpu::device().ok_or_else(refused)?;
-            crate::fit_source::levels(gpu, frame, how.grade.white_quantile)
+            let refused = || render::base::without_a_device("the frame's own levels");
+            let gpu = gpu::device().ok_or_else(refused)?;
+            fit::source::levels(gpu, frame, how.grade.white_quantile)
                 .await
                 .ok_or("the frame's levels could not be measured")?
         }
@@ -244,9 +248,9 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
 /// A DNG's own rendering and lens correction, for one with no camera JPEG to match.
 async fn stated_match(
     fitting: &Fitting<'_>,
-    levels: &crate::tone::Levels,
+    levels: &colour::tone::Levels,
     neutral_ceiling: f32,
-) -> Option<crate::hdr_fit::HdrMatch> {
+) -> Option<fit::hdr::HdrMatch> {
     let source = match fitting {
         Fitting::None => return None,
         Fitting::Preview(bytes) => rawler::rawsource::RawSource::new_from_slice(bytes),
@@ -255,7 +259,7 @@ async fn stated_match(
             rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?
         }
     };
-    let stated = crate::dng_rendering::Stated::of_source(&source)?;
+    let stated = decode::dng_rendering::Stated::of_source(&source)?;
     // An editor stage too narrow to pair against the preview fits no match either, and a stored
     // stated colour would keep every later open from fitting the real one.
     let previewed = match fitting {
@@ -268,10 +272,10 @@ async fn stated_match(
         return None;
     }
     let colour = stated
-        .colour(crate::gpu::device()?, levels, neutral_ceiling)
+        .colour(gpu::device()?, levels, neutral_ceiling)
         .await?;
-    Some(crate::hdr_fit::HdrMatch {
-        lens: crate::decode_rawler::stated_lens(&source).unwrap_or_else(crate::fit::Lens::none),
+    Some(fit::hdr::HdrMatch {
+        lens: decode::raw::stated_lens(&source).unwrap_or_else(geometry::lens::Lens::none),
         colour: Some(colour),
     })
 }
@@ -280,10 +284,10 @@ async fn complete_colour(
     fitting: &Fitting<'_>,
     frame: &Resident,
     quantile: f64,
-    matched: &crate::hdr_fit::HdrMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
-    let gpu = crate::gpu::device()?;
+    matched: &fit::hdr::HdrMatch,
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
+    let gpu = gpu::device()?;
     let preview = match fitting {
         Fitting::None => return None,
         Fitting::Preview(bytes) => crate::hdr::match_preview_from_bytes(bytes)?,
@@ -306,28 +310,28 @@ async fn complete_colour(
 /// Declining is not an error: `hdr::fit_all_from_preview` returns None for a file with no embedded
 /// preview and for one whose fit found too few usable pairs.
 async fn fit_from_preview(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw: &[u8],
     frame: &Resident,
     quantile: f64,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
-    // A decode narrower than the preview cannot be paired against it: `fit_source::plane_size`
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
+    // A decode narrower than the preview cannot be paired against it: `fit::source::plane_size`
     // clamps its target to the frame's own width, so the two grids come out different sizes and
     // `pairs` asserts on it. Renditions never reach this because they decode at thousands of
     // pixels; the editor can, because the client asks for the size its stage can show
     // (`docs/raw-edit-gpu.md` §4.1).
     let (width, height) = frame.size();
-    if width.max(height) < crate::hdr_fit::sample_long_edge() {
+    if width.max(height) < colour::matched::sample_long_edge() {
         return None;
     }
     let preview = crate::hdr::match_preview_from_bytes(raw)?;
-    let recorded = crate::lens::read_distortion(raw);
+    let recorded = decode::lens::read_distortion(raw);
     let geometry = match (recorded.applied, recorded.spline) {
-        (Some(false), _) => crate::fit::Geometry::Uncorrected,
-        (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
-        (_, None) => crate::fit::Geometry::Unstated,
+        (Some(false), _) => fit::profile::Geometry::Uncorrected,
+        (_, Some(knots)) => fit::profile::Geometry::Recorded(knots),
+        (_, None) => fit::profile::Geometry::Unstated,
     };
     crate::hdr::fit_all_from_preview(
         gpu,

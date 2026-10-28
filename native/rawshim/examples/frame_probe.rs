@@ -49,7 +49,7 @@ fn main() {
             for x in wx..(wx + ww).min(frame.width) {
                 let at = (y * frame.width + x) * 3;
                 for c in 0..3 {
-                    sum[c] += f64::from(rawshim::resident::level_of_bits(samples[at + c]));
+                    sum[c] += f64::from(colour::resident::level_of_bits(samples[at + c]));
                 }
                 seen += 1.0;
             }

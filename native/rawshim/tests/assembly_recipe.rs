@@ -9,7 +9,7 @@
 //! if both sides were wrong in the same way. `src/schemas/tests/assembly_recipe.test.ts` parses the
 //! same file and asserts its half.
 
-use rawshim::assembly::{Assembly, Takes};
+use composite::assembly::{Assembly, Takes};
 
 fn fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -116,7 +116,10 @@ fn a_recipe_naming_no_feather_reads_as_the_one_the_page_assumes() {
         .and_then(|rest| rest.trim_end_matches(';').parse().ok())
         .expect("the schema's DEFAULT_FEATHER");
     assert_eq!(read.feather, page);
-    assert_eq!(read.feather, rawshim::assembly_weight::FEATHER.raw() as f32);
+    assert_eq!(
+        read.feather,
+        composite::assembly::weight::FEATHER.raw() as f32
+    );
 }
 
 #[test]

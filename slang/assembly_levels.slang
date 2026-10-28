@@ -24,7 +24,7 @@ struct Params {
     uint sources;
     /// Which frame `assembly_stack` and `assembly_tint` are reading; ignored by `assembly_level`.
     uint slot;
-    /// The side of the block a cell averages, `assembly_seam::SHRINK`.
+    /// The side of the block a cell averages, `composite::assembly::seam::SHRINK`.
     uint shrink;
     uint pad0;
     uint2 pad;
@@ -37,7 +37,7 @@ struct Params {
 /// One bit a frame a pixel.
 [vk::binding(3, 0)] RWStructuredBuffer<uint> clipped;
 /// `sources * 2`: alpha, sigma_sq, **carried into this plane's own light** by
-/// `assembly_levels::noise_in_plane_units` rather than as the mosaic fit states them.
+/// `composite::assembly::levels::noise_in_plane_units` rather than as the mosaic fit states them.
 [vk::binding(4, 0)] StructuredBuffer<float> noise;
 /// The frame's coding undone: light, normalised so that the largest code is one, per code.
 [vk::binding(5, 0)] StructuredBuffer<float> light_of_code;
@@ -70,7 +70,7 @@ uint cells()
 /// is taken over lights. `prelude::LUMA` and not three literals: Rec.2020's coefficients, these
 /// planes being in Rec.2020 primaries all the way to the encoder.
 ///
-/// **No per-source gain here.** `composite_tile::taken` codes each source against the reference's
+/// **No per-source gain here.** `composite::tile::taken` codes each source against the reference's
 /// white divided by that source's gain, so the plane arrives gain-matched; applying it again
 /// squares it.
 float level_at(uint pixel)

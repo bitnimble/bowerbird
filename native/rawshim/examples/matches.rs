@@ -9,7 +9,7 @@
 
 mod support;
 
-use rawshim::image::resize;
+use formats::resize::resize;
 use std::env;
 
 /// Half-width of a tile, in wide-plane pixels. Wide enough to see what the patch sat on,
@@ -28,7 +28,7 @@ fn main() {
     let opened = support::Open::shipped(&path, support::FULL_RENDITION_SIZE)
         .run()
         .expect("decode");
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let resident = opened
         .frame
         .on_device(gpu)
@@ -36,17 +36,17 @@ fn main() {
     let lens = opened.measured.matched.expect("a fit").lens;
 
     let preview = rawshim::hdr::match_preview(&path).expect("a preview");
-    let (plane_width, _) = rawshim::hdr_fit::fitted_preview_size(preview.width, preview.height);
-    let prepared = pollster::block_on(rawshim::fit_source::prepared(
+    let (plane_width, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
+    let prepared = pollster::block_on(fit::source::prepared(
         gpu,
         &resident,
         plane_width,
         support::GRADE.white_quantile,
     ))
     .expect("a plane");
-    let render = pollster::block_on(rawshim::fit_source::read_render(gpu, &prepared.rendered))
+    let render = pollster::block_on(fit::source::read_render(gpu, &prepared.rendered))
         .expect("the render");
-    let (_, preview) = pollster::block_on(rawshim::hdr_fit::preview_planes(gpu, &preview))
+    let (_, preview) = pollster::block_on(fit::hdr::preview_planes(gpu, &preview))
         .expect("preview planes");
     let sampled = resize(render.as_ref(), preview.width, preview.height);
 
@@ -73,7 +73,7 @@ fn main() {
         points.push((p % wide, p / wide));
     }
 
-    let (ours, theirs, found) = pollster::block_on(rawshim::hdr_fit::correspondence_at(
+    let (ours, theirs, found) = pollster::block_on(fit::hdr::correspondence_at(
         gpu, &sampled, &preview, &lens, &points,
     ))
     .expect("the device builds the fit's planes");
@@ -99,7 +99,7 @@ fn main() {
         shown += 1;
         // The search lands between pixels; a tile is drawn out of whole ones.
         let (dx, dy) = (what.dx.round() as isize, what.dy.round() as isize);
-        let at = |p: &rawshim::hdr_fit::Plane, ox: isize, oy: isize| {
+        let at = |p: &fit::hdr::Plane, ox: isize, oy: isize| {
             let i = ((*y as isize + oy) as usize * p.width + (*x as isize + ox) as usize) * 3;
             format!(
                 "{:.0}/{:.0}/{:.0}",
@@ -112,12 +112,12 @@ fn main() {
             "  ours {} camera {} (ceiling {:.0}, camera clip {:.0})",
             at(&ours, 0, 0),
             at(&theirs, dx, dy),
-            rawshim::hdr_fit::TRUST_CEILING * 255.0,
+            colour::matched::TRUST_CEILING * 255.0,
             0.94 * 255.0,
         );
         let tile = tile(&ours, &theirs, *x, *y, dx, dy);
         let name = format!("{out}/match-{x}-{y}-peak{:.2}-d{dx}_{dy}.avif", what.peak);
-        rawshim::avif::encode_rendition(
+        formats::avif::encode_rendition(
             std::borrow::Cow::Borrowed(tile.as_ref().data),
             tile.width,
             tile.height,
@@ -137,13 +137,13 @@ fn main() {
 
 /// Ours, the camera unshifted, and the camera at the found offset - in that order.
 fn tile(
-    ours: &rawshim::hdr_fit::Plane,
-    theirs: &rawshim::hdr_fit::Plane,
+    ours: &fit::hdr::Plane,
+    theirs: &fit::hdr::Plane,
     x: usize,
     y: usize,
     dx: isize,
     dy: isize,
-) -> rawshim::rgb::Rgb {
+) -> units::rgb::Rgb {
     let side = HALF * 2 * ZOOM;
     let gap = 8;
     let width = side * 3 + gap * 2;
@@ -181,7 +181,7 @@ fn tile(
             outline(&mut data, width, left, half, ink);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height: side,
         data,

@@ -18,9 +18,10 @@ use std::time::Instant;
 
 mod support;
 
-use rawshim::avif;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::light::{DisplayNits, Gain, Light};
+use formats::avif;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
+use units::light::{DisplayNits, Gain, Light};
 
 const HDR_QUANTIZERS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 26, 32, 40];
 const SDR_QUANTIZERS: [i32; 15] = [0, 2, 4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 40, 50, 63];
@@ -83,7 +84,7 @@ fn ssim(a: &[f64], b: &[f64], width: usize, height: usize) -> f64 {
 
 /// RMS error in 10-bit PQ steps, with everything below half a nit taken as one level (`hdrq`).
 fn rmse_in_pq(a: &[u16], b: &[u16]) -> f64 {
-    let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(0.5)).raw();
+    let floor = colour::tone::pq(Light::<DisplayNits>::measured(0.5)).raw();
     let signal = |c: u16| (f64::from(c) / 65535.0).max(floor);
     let sum: f64 = a
         .iter()
@@ -112,7 +113,7 @@ fn speckle(a: &[u16], b: &[u16]) -> f64 {
 }
 
 fn still(pq: &[u16], w: usize, h: usize, q: i32) -> (Vec<u8>, f64) {
-    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let (primaries, transfer, matrix) = formats::still::cicp();
     let started = Instant::now();
     let bytes = avif::encode_still(
         Cow::Borrowed(pq),
@@ -186,7 +187,7 @@ fn sky() {
             let tint = [0.80, 0.92, 1.0];
             for (c, gain) in tint.iter().enumerate() {
                 let code =
-                    rawshim::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain))
+                    colour::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain))
                         .raw();
                 pq[(y * w + x) * 3 + c] = (code * 65535.0).round() as u16;
             }
@@ -227,14 +228,14 @@ fn main() {
         let (pq, w, h) = support::graded(
             &opened,
             &options(support::FULL_RENDITION_SIZE as usize),
-            rawshim::gpu::Output::Pq,
+            render::grade::Output::Pq,
         );
         hdr_rows(&name, &pq, w, h);
         if std::env::var("AOMQ_HDR_ONLY").is_ok() {
             continue;
         }
         for (edge, label) in [(3840, "sdr3840"), (800, "sdr800")] {
-            let (srgb, w, h) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
+            let (srgb, w, h) = support::graded(&opened, &options(edge), render::grade::Output::Srgb);
             let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
             sdr_rows(&name, label, &srgb8, w, h);
         }

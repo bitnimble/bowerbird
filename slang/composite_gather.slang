@@ -42,7 +42,7 @@ struct Params {
     float inv_half2;
     uint projection;
     uint through;
-    /// Where the weight comes from: `WEIGHED_FEATHER` or `WEIGHED_MASK` (`composite_tile::Weighed`).
+    /// Where the weight comes from: `WEIGHED_FEATHER` or `WEIGHED_MASK` (`composite::tile::Weighed`).
     uint weighting;
     /// How many floats `mask` strides by, and which of them is this source's.
     uint mask_stride;
@@ -50,17 +50,17 @@ struct Params {
     /// Half the source's full-resolution corrected frame, which the feather measures against.
     float2 half_size;
     /// §3.7a's canvas warp, `(a, b, c, d)` of `[a b; c d]`, already carried into the centre-relative
-    /// frame `canvas` is in (`composite_tile::params`). The identity for every panorama.
+    /// frame `canvas` is in (`composite::tile::params`). The identity for every panorama.
     float4 warp_m;
     /// That warp's translation in the same frame, which the identity makes exactly zero.
     float2 warp_t;
-    /// `fit::Lens::axis` in the source's full-resolution pixels.
+    /// `geometry::lens::Lens::axis` in the source's full-resolution pixels.
     float2 axis;
-    /// `1 / reach^2` of `fit::Lens::reach` in those pixels, which the ratio table is indexed over.
+    /// `1 / reach^2` of `geometry::lens::Lens::reach` in those pixels, which the ratio table is indexed over.
     float inv_reach2;
 };
 
-/// One tile's §3.7a correction. `assembly_weight::TileWarp`.
+/// One tile's §3.7a correction. `composite::assembly::weight::TileWarp`.
 struct TileWarp {
     float4 m;
     float2 t;
@@ -71,7 +71,7 @@ struct TileWarp {
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> frame;
 [vk::binding(2, 0)] RWStructuredBuffer<uint> out_;
-/// Three of `image::channel_ratio_table` end to end, red then green then blue.
+/// Three of `lens::channel_ratio_table` end to end, red then green then blue.
 [vk::binding(3, 0)] StructuredBuffer<float> ratios;
 /// `tone::gain_in_y` per radius bucket, 1.0 where the falloff cannot move a 16-bit code.
 [vk::binding(4, 0)] StructuredBuffer<float> lifts;

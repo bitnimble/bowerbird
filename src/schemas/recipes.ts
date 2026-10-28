@@ -69,7 +69,7 @@ export function fileRecipe(path: string): Recipe {
  * second way to trim a picture that only some of the renderers know about.
  *
  * No straighten beside it: the solve levels the rotations themselves, so what is framed is
- * already upright (`composite_solve::straighten`).
+ * already upright (`composite::solve::straighten`).
  */
 export function framingEdits(recipe: Composition | AssemblyRecipe): EditDoc {
   const [cropLeft, cropTop, cropRight, cropBottom] = recipe.crop;

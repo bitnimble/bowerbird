@@ -137,9 +137,10 @@ test('the least ramp is twice the render least half-width', () => {
       '..',
       '..',
       'native',
-      'rawshim',
+      'composite',
       'src',
-      'assembly_weight.rs',
+      'assembly',
+      'weight.rs',
     ),
     'utf8',
   );

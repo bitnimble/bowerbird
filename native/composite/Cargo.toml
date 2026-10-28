@@ -1,0 +1,37 @@
+[package]
+name = "composite"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The decodes a page never makes, which a composite of rendered files or embedded previews reads.
+renditions = ["decode/renditions", "formats/renditions"]
+
+[dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }
+burst = { path = "../burst" }
+colour = { path = "../colour" }
+composition = { path = "../composition" }
+decode = { path = "../decode" }
+denoise = { path = "../denoise" }
+fit = { path = "../fit" }
+formats = { path = "../formats" }
+geometry = { path = "../geometry" }
+gpu = { path = "../gpu" }
+linalg = { path = "../linalg" }
+mosaic = { path = "../mosaic" }
+render = { path = "../render" }
+shaders = { path = "../shaders" }
+trace = { path = "../trace" }
+units = { path = "../units" }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
+png = "0.18.1"
+pollster = "0.4"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+burst = { path = "../burst", features = ["testing"] }
+fit = { path = "../fit", features = ["testing"] }
+serde_json = "1.0.151"
+shaders = { path = "../shaders", features = ["layout"] }

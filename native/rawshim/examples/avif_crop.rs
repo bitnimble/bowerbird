@@ -15,7 +15,7 @@
 //! `sdr-*` clips above diffuse white rather than rolling: the roll is `colour.slang`'s and a second
 //! answer to it here would be a second tone map to keep in agreement with the first.
 
-use rawshim::light::{DisplayNits, Light, Pq};
+use units::light::{DisplayNits, Light, Pq};
 
 const DIFFUSE_WHITE_NITS: f64 = 203.0;
 
@@ -46,7 +46,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     let bytes = std::fs::read(&path).expect("the avif");
-    let (codes, width, height) = rawshim::avif::decode_at(&bytes, 16).expect("decodes");
+    let (codes, width, height) = formats::avif::decode_at(&bytes, 16).expect("decodes");
     eprintln!("{width}x{height}");
 
     for (x, y, side) in crops {
@@ -75,16 +75,16 @@ fn main() {
         let pq: Vec<u8> = cut.iter().map(|v| (v >> 8) as u8).collect();
         let share = |v: &u16| {
             let signal = Light::<Pq>::measured(f64::from(*v) / f64::from(u16::MAX));
-            (rawshim::tone::pq_inv::<DisplayNits>(signal).raw() / DIFFUSE_WHITE_NITS).min(1.0)
+            (colour::tone::pq_inv::<DisplayNits>(signal).raw() / DIFFUSE_WHITE_NITS).min(1.0)
         };
         let linear: Vec<u8> = cut.iter().map(|v| (share(v) * 255.0) as u8).collect();
         let sdr: Vec<u8> = cut
             .iter()
-            .map(|v| (rawshim::hdr_fit::srgb_oetf(share(v)) * 255.0) as u8)
+            .map(|v| (colour::space::srgb_oetf(share(v)) * 255.0) as u8)
             .collect();
         for (name, data) in [("pq", pq), ("linear", linear), ("sdr", sdr)] {
             let image = magnify(
-                rawshim::rgb::Rgb {
+                units::rgb::Rgb {
                     width: side,
                     height: side,
                     data,
@@ -92,7 +92,7 @@ fn main() {
                 zoom,
             );
             let file = format!("{out}/{name}-{x}-{y}.jpg");
-            let encoded = rawshim::jpeg::encode(image.as_ref(), 95).expect("encodes");
+            let encoded = formats::jpeg::encode(image.as_ref(), 95).expect("encodes");
             std::fs::write(&file, encoded).expect("writes");
             eprintln!("    wrote {file}");
         }
@@ -138,7 +138,7 @@ fn channel_roughness(cut: &[u16], side: usize) -> [Stats; 3] {
     })
 }
 
-fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
+fn magnify(image: units::rgb::Rgb, by: usize) -> units::rgb::Rgb {
     if by <= 1 {
         return image;
     }
@@ -150,7 +150,7 @@ fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
             out[(y * w * by + x) * 3..][..3].copy_from_slice(&image.data[from..from + 3]);
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w * by,
         height: h * by,
         data: out,

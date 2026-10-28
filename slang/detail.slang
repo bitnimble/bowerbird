@@ -55,7 +55,7 @@ import px;
 ///
 /// The host allocates the texture, and one sized differently would filter at a different fraction
 /// of the picture - the editor's clarity and the rendition's would not be the same picture, which
-/// is the divergence DESIGN 21.1 is about. Declared here and pinned against `gpu.rs` by
+/// is the divergence DESIGN 21.1 is about. Declared here and pinned against `grade.rs` by
 /// `the_shader_sizes_match_the_buffers_allocated_for_them`.
 ///
 /// 512 rather than something nearer a sensor: nothing below is a detail operator - the finest
@@ -206,7 +206,7 @@ void shrink(uint3 dispatched : SV_DispatchThreadID)
     // **A fixed number of pixels per texel rather than the frame divided by the texture**, which
     // is what makes the partition translation-invariant: a frame that is a *window* on a
     // photograph gets the photograph's own texel boundaries, provided its origin is a whole
-    // number of them (`job::grown` snaps it). Dividing instead put the window's texels between
+    // number of them (`tile::grown` snaps it). Dividing instead put the window's texels between
     // the frame's, so a loupe tile averaged different pixels into every one of them and its
     // Clarity was fitted from a picture the export never sees.
     let step = max(edit.detail_step, 1);

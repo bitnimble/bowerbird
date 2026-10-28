@@ -2,7 +2,7 @@
 //
 // One layout for all of them so a pass can be added without a second uniform to keep in
 // step. `std140`-ish by hand: everything is 4 bytes and the two-component members are
-// placed where 8-byte alignment already holds. `gpu::uniform_words` writes it, field for field,
+// placed where 8-byte alignment already holds. `grade::uniform_words` writes it, field for field,
 // in this order, and `the_uniform_matches_the_shader_struct` parses this struct to hold it there.
 // Named apart from the uniform it declares: a module and a variable of one name are ambiguous
 // wherever both are in scope, and it is the variable every importer spells.
@@ -29,7 +29,7 @@ public struct Edit {
     /// Which transfer `encode` writes: 0 is PQ at 16 bits, 1 is sRGB at 8.
     ///
     /// This is the whole of what SDR means to the pipeline. The grade is the same either way
-    /// - `gpu::Output::mastered` puts an SDR target's peak at diffuse white, so its highlights roll
+    /// - `grade::Output::mastered` puts an SDR target's peak at diffuse white, so its highlights roll
     /// into white through the same BT.2390 curve rather than clipping - and the two diverge
     /// only here, at the primaries and the transfer. A second entry point would have been a
     /// second copy of the grade to keep in step.
@@ -127,7 +127,7 @@ public struct Edit {
     public uint rotate;
     /// The size of the picture this produces, which is what the region is a window on.
     ///
-    /// Sent rather than derived: it is `displaySize` on the client and `hdr::cropped_size`
+    /// Sent rather than derived: it is `displaySize` on the client and `geometry::warp::cropped_size`
     /// natively, and the turn's own arithmetic reads the *output* grid's dimensions - so a
     /// shader computing them again would be a third answer to a question two hosts already
     /// agree on.
@@ -202,7 +202,7 @@ public struct Edit {
     /// Whether a `mean_frame` was built beside the frame, so the lattice can be read at
     /// the neighbourhood the fit taught. Clear only for the probes, which have no frame.
     public uint has_mean;
-    /// This frame's pixels to a texel of `mean_frame`, from `gpu::mean_block` - the fit's own
+    /// This frame's pixels to a texel of `mean_frame`, from `grade::mean_block` - the fit's own
     /// supervision footprint, which is a share of the photograph and so travels like
     /// `chroma_shrink` below rather than being a constant.
     ///
@@ -213,14 +213,14 @@ public struct Edit {
     /// `matched_nits` to take its chroma from. Clear for the pass that builds it, and for
     /// the probes.
     public uint has_smoothed;
-    /// This frame's pixels to a texel of `chroma_smoothed`, from `gpu::chroma_shrink`.
+    /// This frame's pixels to a texel of `chroma_smoothed`, from `grade::chroma_shrink`.
     ///
     /// Carried rather than a constant because it is a share of the *photograph* and this frame
     /// is a rendition of one: four pixels of a 3840 render and ten of the same photograph at a
     /// 61MP sensor's own size are the same colour footprint, and a fixed four would be the same
     /// footprint only at one output size.
     public uint chroma_shrink;
-    /// `hdr_fit::HdrColour::anchor`: where `curves_at` reads a highlight's colour.
+    /// `colour::matched::HdrColour::anchor`: where `curves_at` reads a highlight's colour.
     public float tone_anchor;
 
     /// The picture's own darkest end, as a fraction of diffuse white - `tone::Levels::floor`
@@ -262,7 +262,7 @@ public struct Edit {
     public float node_level_scale;
     public float node_neighbourhood_scale;
     /// How far the stage's draw takes what one colour edit does not reach towards black, from 0
-    /// to 1, and that edit's kernel (`lattice::ColourNode::kernel`) with `lattice::NODE_FEATHER`.
+    /// to 1, and that edit's kernel (`colour::lattice::ColourNode::kernel`) with `colour::lattice::NODE_FEATHER`.
     public float reach_mask;
     public float mask_centre_0;
     public float mask_centre_1;

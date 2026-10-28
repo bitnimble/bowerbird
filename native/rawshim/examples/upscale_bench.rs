@@ -10,8 +10,8 @@
 //! noise fit given. `time` upscales a 24MP and a 61MP frame and prints each arm's milliseconds, the
 //! answer's allocation and the upload left out.
 
-use rawshim::galosh::NoiseModel;
-use rawshim::upscale::{Arm, Placement, Upscaler, answer_bytes};
+use denoise::galosh::NoiseModel;
+use denoise::upscale::{Arm, Placement, Upscaler, answer_bytes};
 
 /// What `time` stabilises under: a middling photo's, which costs what any other does.
 const TIMED_GAINS: [f32; 3] = [0.5, 1.0, 0.7];
@@ -30,11 +30,11 @@ fn main() {
         eprintln!("{usage}");
         std::process::exit(2);
     };
-    let gpu = rawshim::gpu::device().expect("a GPU adapter");
+    let gpu = gpu::device().expect("a GPU adapter");
     let folder = std::path::Path::new(weights);
     let manifest = std::fs::read_to_string(folder.join("weights.json")).expect("weights.json");
     let bytes = std::fs::read(folder.join("weights.bin")).expect("weights.bin");
-    let rggb = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let rggb = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     // One at a time: each holds its tile's tensors, and every arm's at once exceeds a 10GB card.
     let arms = || {
         Arm::ALL.iter().filter_map(|&arm| {
@@ -139,7 +139,7 @@ fn floats<const N: usize>(text: &str) -> [f32; N] {
         .unwrap_or_else(|_| panic!("{N} comma-separated numbers"))
 }
 
-fn upload(gpu: &rawshim::gpu::Gpu, bytes: &[u8]) -> rawshim::gpu::Buffer {
+fn upload(gpu: &gpu::Gpu, bytes: &[u8]) -> gpu::Buffer {
     let mut recording = gpu.record();
     let buffer = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("mosaic"),
@@ -150,7 +150,7 @@ fn upload(gpu: &rawshim::gpu::Gpu, bytes: &[u8]) -> rawshim::gpu::Buffer {
     buffer
 }
 
-fn answer(gpu: &rawshim::gpu::Gpu, width: usize, height: usize) -> rawshim::gpu::Buffer {
+fn answer(gpu: &gpu::Gpu, width: usize, height: usize) -> gpu::Buffer {
     let mut recording = gpu.record();
     recording.buffer(&wgpu::BufferDescriptor {
         label: Some("upscaled"),
@@ -160,7 +160,7 @@ fn answer(gpu: &rawshim::gpu::Gpu, width: usize, height: usize) -> rawshim::gpu:
     })
 }
 
-fn read(gpu: &rawshim::gpu::Gpu, buffer: &rawshim::gpu::Buffer) -> Vec<u8> {
+fn read(gpu: &gpu::Gpu, buffer: &gpu::Buffer) -> Vec<u8> {
     let mut recording = gpu.record();
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("read"),
@@ -170,5 +170,5 @@ fn read(gpu: &rawshim::gpu::Gpu, buffer: &rawshim::gpu::Buffer) -> Vec<u8> {
     });
     recording.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
     recording.submit();
-    pollster::block_on(rawshim::gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("a read")
+    pollster::block_on(gpu::read_back(gpu, &staging, <[u8]>::to_vec)).expect("a read")
 }

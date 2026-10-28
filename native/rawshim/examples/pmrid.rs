@@ -13,10 +13,10 @@
 //! a copy of an earlier run's - says how far this one moved from it, which is how a change to the
 //! network's arithmetic is held against the picture it used to make.
 //!
-//! The network itself is `crate::pmrid`, which is what a rendition and the editor both dispatch;
+//! The network itself is `denoise::pmrid`, which is what a rendition and the editor both dispatch;
 //! nothing here describes it a second time.
 
-use rawshim::galosh::{Amounts, Detail};
+use denoise::galosh::{Amounts, Detail};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -42,27 +42,27 @@ fn main() {
     );
     std::fs::create_dir_all(&out).expect("the output directory");
 
-    let gpu = rawshim::gpu::device().expect("an adapter");
+    let gpu = gpu::device().expect("an adapter");
     let bytes = std::fs::read(&path).expect("read the raw");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("held");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("held");
     let cfa = held.cfa();
     let mosaic = held.device_mosaic();
     let stride = mosaic.width;
-    let kernels = rawshim::galosh::device(gpu).expect("the kernels built");
+    let kernels = denoise::galosh::device(gpu).expect("the kernels built");
     // The conditioning divided every photosite by the largest white balance coefficient and
     // multiplied it by its own, and the network wants what the sensor read.
     let gains = held.ceilings();
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
+    let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, mosaic, &cfa, gains));
     let model = fit.model();
     eprintln!(
         "fit alpha {:.3e} sigma_sq {:.3e}",
         model.alpha, model.sigma_sq
     );
 
-    let network = rawshim::pmrid::device(gpu).expect("the network built");
-    let filter = |window: &mut rawshim::condition::Mosaic| {
+    let network = denoise::pmrid::device(gpu).expect("the network built");
+    let filter = |window: &mut mosaic::condition::Mosaic| {
         let started = std::time::Instant::now();
-        rawshim::pmrid::denoise(
+        denoise::pmrid::denoise(
             gpu,
             network,
             window,
@@ -121,7 +121,7 @@ fn main() {
 
     let samples = pollster::block_on(mosaic.read(gpu)).expect("reads back");
     let filtered = mosaic.duplicate(gpu);
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu,
         kernels,
         &filtered,
@@ -142,14 +142,14 @@ fn main() {
     };
     let (noisy, galosh) = (cut(&samples), cut(&galosh));
 
-    let mut window = rawshim::condition::Mosaic::upload(gpu, &noisy, w, h);
+    let mut window = mosaic::condition::Mosaic::upload(gpu, &noisy, w, h);
     eprintln!("the window denoised in {:?}", filter(&mut window));
     let pmrid = pollster::block_on(window.read(gpu)).expect("reads back");
 
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, samples, w, h);
+        pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,
@@ -168,7 +168,7 @@ fn main() {
             .iter()
             .map(|channel| ((channel * lift).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8)
             .collect();
-        let png = rawshim::png_write::encode_sdr(&rgb8, w, h, None).expect("a png");
+        let png = formats::png_write::encode_sdr(&rgb8, w, h, None).expect("a png");
         let at = format!("{out}/{name}.png");
         std::fs::write(&at, png).expect("wrote");
         eprintln!("wrote {at}");

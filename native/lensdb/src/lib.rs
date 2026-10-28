@@ -22,7 +22,7 @@ use lensfun::{Camera, Database, FuzzyStrCmp, Lens, Modifier};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
 
-/// Matches what a camera's spline carries, so both reach `image::sample_radius` at the same
+/// Matches what a camera's spline carries, so both reach `geometry::lens::sample_radius` at the same
 /// resolution and neither is resampled to suit the other.
 const KNOTS: usize = 16;
 

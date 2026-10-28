@@ -1,6 +1,6 @@
 // Light that knows which domain it is a quantity in, and whether it is a quantity or a ratio.
 //
-// `native/rawshim/src/light.rs` on this side of the boundary, and for the same reason: a
+// `native/units/src/light.rs` on this side of the boundary, and for the same reason: a
 // photograph crosses eleven domains between the sensor and the canvas - scene-linear counts, the
 // assemble stage's fraction of full scale, nits against its own diffuse white, the scene at white
 // 1, the camera's own rendering, nits at the display, the display's
@@ -89,7 +89,7 @@ public struct Illuminance : ILinear, IStandard {}
 
 /// `DisplayNits` over that peak, in 0..1, still Rec.2020 and still linear.
 ///
-/// **Not `IStandard`: this is where SDR and HDR part.** `gpu::Output::mastered` gives an sRGB target
+/// **Not `IStandard`: this is where SDR and HDR part.** `grade::Output::mastered` gives an sRGB target
 /// its peak at diffuse white and a PQ target PQ's ceiling, so 1.0 here is 203 nits or 10000.
 public struct Signal : ILinear {}
 

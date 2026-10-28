@@ -1,9 +1,9 @@
-use rawshim::gpu::{Canvas, Grade, Intent, Output};
-use rawshim::hdr_fit::HdrColour;
-use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
-use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::Size;
-use rawshim::transfer::Primaries;
+use colour::matched::HdrColour;
+use colour::transfer::Primaries;
+use render::grade::{Canvas, Grade, Intent, Output};
+use render::print::{Paper, Presentation, Scene};
+use units::light::{DisplayNits, Gain, Light, SceneNits};
+use units::px::Size;
 
 #[test]
 fn warm_highlight_detail_survives_diffuse_light_and_glare() {
@@ -575,7 +575,7 @@ fn a_flat_print_is_the_paper_under_diffuse_white() {
 fn a_printer_profile_lays_down_its_own_paper() {
     let icc = ideal_printer(0.5);
     let printer = std::sync::Arc::new(
-        rawshim::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"),
+        render::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"),
     );
     let nits = |source: f64| {
         let scene = Scene {
@@ -704,7 +704,7 @@ fn linear(coded: f32) -> f64 {
 enum Shown {
     Print(Scene),
     /// A print laid down by a printer profile's printer.
-    Printed(Scene, std::sync::Arc<rawshim::printer_gamut::PrinterGamut>),
+    Printed(Scene, std::sync::Arc<render::printer_gamut::PrinterGamut>),
     /// An sRGB soft proof, brought inside the file's gamut by the intent given.
     Srgb(Intent),
 }
@@ -718,8 +718,8 @@ fn drawn_as(
     over_white: f64,
     colour: Option<&HdrColour>,
 ) -> Vec<f32> {
-    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
-    let base = rawshim::base::device(gpu).expect("source pyramid");
+    let gpu = gpu::device().expect("print requires Vulkan");
+    let base = render::base::device(gpu).expect("source pyramid");
     let (output, peak_nits, intent) = match shown {
         Shown::Print(_) | Shown::Printed(..) => {
             (Output::Pq, Light::exactly(1000.0), Intent::Perceptual)
@@ -738,7 +738,7 @@ fn drawn_as(
         ..Grade::new(
             size,
             size,
-            rawshim::tone::Levels {
+            colour::tone::Levels {
                 white: Light::measured(10000.0),
                 peak: Light::measured(10000.0 * over_white),
                 floor: None,
@@ -748,22 +748,22 @@ fn drawn_as(
         )
     };
     let coded = |colour: [f64; 3]| {
-        rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+        colour::space::srgb_to_rec2020().map(|row| {
             let value = row
                 .into_iter()
                 .zip(colour)
                 .map(|(weight, value)| weight * value)
                 .sum::<f64>();
-            (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+            (colour::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
                 as u16
         })
     };
     let frame: Vec<u16> = (0..size * size)
         .flat_map(|at| coded(source(at % size)))
         .collect();
-    let pyramid = rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
-    let peak = gpu.scene_peak();
-    let uploaded = gpu.upload(&frame, &grade, &peak);
+    let pyramid = render::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
+    let peak = render::grade::device(gpu).scene_peak();
+    let uploaded = render::grade::device(gpu).upload(&frame, &grade, &peak);
     match shown {
         Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
         Shown::Printed(scene, printer) => {

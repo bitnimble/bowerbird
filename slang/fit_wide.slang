@@ -1,7 +1,7 @@
 // The wide pass's two walks over the sharp planes: which pixels it will teach the lattice from, and
 // what the pair at each of them actually is.
 //
-// `hdr_fit::wide_samples` has why the pass exists - a small saturated object is mostly edge at the
+// `fit::hdr::wide_samples` has why the pass exists - a small saturated object is mostly edge at the
 // pair grid's width and mostly interior at this one - and why the gates sit where they do. What is
 // here is only the arithmetic over pixels; the tiling between the two walks, and the search it
 // batches, stay on the host, which is index bookkeeping over a few thousand probes rather than work
@@ -51,7 +51,7 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float> ours;
 /// The camera's preview, linearised, at the same grid.
 [vk::binding(1, 0)] StructuredBuffer<float> theirs;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(2, 0)] StructuredBuffer<float> gains;
 /// Four floats a gathered position: dx, dy, peak, and which outcome the search reached.
 [vk::binding(3, 0)] StructuredBuffer<float> found;
@@ -104,7 +104,7 @@ bool flat_about(StructuredBuffer<float> plane, int stride, int x, int y)
 }
 
 /// Whether the camera's pixel measured anything: clipped says nothing. A dark one says a little,
-/// and the lattice weighs it by how little (`hdr_fit::trust`).
+/// and the lattice weighs it by how little (`fit::hdr::trust`).
 bool readable(float3 t)
 {
     return max(t.x, max(t.y, t.z)) < pc.camera_clipping;

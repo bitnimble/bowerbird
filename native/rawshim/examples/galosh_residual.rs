@@ -11,7 +11,7 @@
 //! and by autocorrelation at the periods the kernels are built on, so a lattice names its own
 //! scale rather than being eyeballed off a crop.
 
-use rawshim::galosh::Amounts;
+use denoise::galosh::Amounts;
 
 fn main() {
     let mut side = 1792usize;
@@ -30,20 +30,20 @@ fn main() {
         }
     }
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels");
+    let gpu = gpu::device().expect("a Vulkan adapter");
+    let kernels = denoise::galosh::device(gpu).expect("the GALOSH kernels");
     let before = frame(side, side, noise);
-    let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, side, side);
+    let mosaic = mosaic::condition::Mosaic::upload(gpu, &before, side, side);
     // The pattern `frame` lays down: red, green, green, blue by 2x2 parity.
-    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
-    let gains = rawshim::galosh::UNGAINED;
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa, gains));
+    let cfa = mosaic::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
+    let gains = denoise::galosh::UNGAINED;
+    let fit = pollster::block_on(denoise::galosh::fit(gpu, kernels, &mosaic, &cfa, gains));
     let amounts = Amounts::from_sliders(luma, colour);
     eprintln!(
         "sliders luma {luma} colour {colour} -> amounts {amounts:?}; fit {:?}",
         fit.model()
     );
-    pollster::block_on(rawshim::galosh::denoise_with(
+    pollster::block_on(denoise::galosh::denoise_with(
         gpu, kernels, &mosaic, &cfa, gains, amounts, fit,
     ));
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");

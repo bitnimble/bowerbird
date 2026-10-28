@@ -160,7 +160,7 @@ fn args() -> Args {
             // nothing here embeds a preview in the DNG, and the search has no other way in.
             "--preview" => parsed.preview = Some(value),
             // Four frames of one scene into a directory, each with its own camera and its own
-            // movers, and each carrying an embedded JPEG so `composite_align` can open it.
+            // movers, and each carrying an embedded JPEG so `composite::align` can open it.
             "--burst" => parsed.burst = Some(value),
             // How many, for a question that is about the count itself: what a carve does to the
             // picture as the set grows.
@@ -206,7 +206,7 @@ fn main() {
 
 /// Four frames of one field into a directory, each with the camera and the movers this frame has.
 ///
-/// **Each carries an embedded JPEG**, which is not a convenience: `composite_align` opens a source
+/// **Each carries an embedded JPEG**, which is not a convenience: `composite::align` opens a source
 /// through `upright_preview_rgb`, which reads `preview_jpegs` and has no other way in, so a burst
 /// written without one is a burst the align refuses before §3 begins.
 fn burst(args: &Args, dir: &str) {
@@ -313,7 +313,7 @@ fn write_dng(to: &str, mosaic: &[u16], size: (usize, usize), preview: Option<&[[
     .expect("the mosaic writes");
     raw.finalize().expect("the subframe closes");
     // A subframe of its own, as `rawler`'s own converter writes one: this is what
-    // `decoder.preview_jpegs` finds, and so the only way `composite_align` can open the file.
+    // `decoder.preview_jpegs` finds, and so the only way `composite::align` can open the file.
     if let Some(scene) = preview {
         let coded: Vec<u8> = scene.iter().flat_map(|rgb| (*rgb).map(srgb8)).collect();
         let buffer = image::RgbImage::from_raw(width as u32, height as u32, coded)
@@ -329,7 +329,7 @@ fn write_dng(to: &str, mosaic: &[u16], size: (usize, usize), preview: Option<&[[
 
 /// sRGB's transfer over the scene's own light, diffuse white at 1.0.
 fn srgb8(v: f32) -> u8 {
-    (rawshim::hdr_fit::srgb_oetf(f64::from(v)) * 255.0).round() as u8
+    (colour::space::srgb_oetf(f64::from(v)) * 255.0).round() as u8
 }
 
 /// A camera that is a straight window onto the scene: linear sRGB primaries, no black pedestal, no
@@ -823,7 +823,7 @@ fn mover_motion(which: usize, frame: usize) -> Affine {
 ///
 /// **A burst is not shot at one exposure.** Metering drifts frame to frame under any auto mode, and
 /// nothing in the file says by how much: the header states what the *camera asked for*, which is
-/// what `composite_solve::gains` reads, and what came out is a different number. That gap is a step
+/// what `composite::solve::gains` reads, and what came out is a different number. That gap is a step
 /// at a seam, so a fixture with every frame at one exposure cannot show one.
 ///
 /// A twelfth of a stop a frame, which is small enough to be invisible in the residual and plainly
@@ -957,7 +957,7 @@ fn crowd_frame(size: (usize, usize), frame: usize) -> Vec<[f32; 3]> {
     }
     // Last, over everything: the meter is the camera's, so it moves the whole frame including the
     // ground the figures stand on. Applied to the scene rather than to a header, because a header
-    // that said so is exactly what `composite_solve::gains` would have taken out already.
+    // that said so is exactly what `composite::solve::gains` would have taken out already.
     let stop = metering(frame);
     for pixel in &mut out {
         for channel in pixel {
@@ -1019,12 +1019,12 @@ fn draw(out: &mut [[f32; 3]], size: (usize, usize), at: Affine, colour: [f32; 3]
 /// The scene as the camera's own rendering of it, which is the plane an alignment searches.
 fn write_preview(scene: &[[f32; 3]], width: usize, height: usize, to: &str) {
     let data: Vec<u8> = scene.iter().flat_map(|rgb| (*rgb).map(srgb8)).collect();
-    let picture = rawshim::rgb::RgbRef {
+    let picture = units::rgb::RgbRef {
         width,
         height,
         data: &data,
     };
-    let jpeg = rawshim::jpeg::encode(picture, 95).expect("the preview encodes");
+    let jpeg = formats::jpeg::encode(picture, 95).expect("the preview encodes");
     std::fs::write(to, jpeg).expect("a writable path");
     eprintln!("wrote {to}");
 }

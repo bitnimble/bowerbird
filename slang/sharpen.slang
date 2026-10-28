@@ -10,7 +10,7 @@
 // Luma only: the blur being undone is achromatic, so the estimate is a luma plane and the
 // apply pass translates each pixel's chroma differences to the new luma unchanged. The host
 // drives one iteration as four dispatches (blur H, blur V + ratio, blur H, blur V + multiply)
-// over ping-pong planes; the iteration count is the host's `image::DECONVOLVE_ITERATIONS`.
+// over ping-pong planes; the iteration count is the host's `detail::DECONVOLVE_ITERATIONS`.
 import band;
 import lanes;
 import light;
@@ -22,7 +22,7 @@ struct Params {
     uint height;
     /// How much of the deconvolution to blend in, 1.0 being it exactly as computed.
     ///
-    /// The host has already taken the reader's slider through `image::SHARPEN_GAIN`, so this
+    /// The host has already taken the reader's slider through `detail::SHARPEN_GAIN`, so this
     /// arrives above 1 for the top half of that track and the blend is an extrapolation past the
     /// estimate rather than towards it, bounded by `limited`.
     float amount;
@@ -30,7 +30,7 @@ struct Params {
     float full;
     /// Normalised Gaussian half-kernel for the sigma this frame wants, centre outwards.
     ///
-    /// Built by the host (`image::gaussian`) so both hosts hand the same three numbers to the
+    /// Built by the host (`detail::gaussian`) so both hosts hand the same three numbers to the
     /// same file; the sigma varies per photograph now that it is estimated rather than assumed.
     ///
     /// `capture` and `resample` sit in the two `float3` tails rather than after them - the
@@ -39,12 +39,12 @@ struct Params {
     /// The capture blur at this frame's scale before the warp stretched it; with `resample`,
     /// the pair the per-pixel sigma is composed from when `spatial` is on.
     float capture;
-    /// `image::LUMA` - BT.709, the frame-side rule, not `prelude.slang`'s BT.2020 grading one.
+    /// `colour::space::LUMA709` - BT.709, the frame-side rule, not `prelude.slang`'s BT.2020 grading one.
     float3 luma;
     float resample;
     /// Whether the warp handed over a Jacobian to vary the sigma by; off, `taps` rule alone.
     uint spatial;
-    /// `image::SHARPEN_OVERSHOOT`.
+    /// `detail::SHARPEN_OVERSHOOT`.
     float overshoot;
 };
 
@@ -68,8 +68,8 @@ static const float FLOOR = 1e-4;
 ///
 /// **Taps and not pixels**, which is the distinction the unit is carrying: this is how many
 /// samples the stencil reads, and what decides how much picture they span is the sigma, which
-/// `image::deconvolve_split` composes per scale and clamps to what five taps are honest for.
-/// `image::DECONVOLVE_RADIUS`'s value; a test holds the two together.
+/// `detail::deconvolve_split` composes per scale and clamps to what five taps are honest for.
+/// `detail::DECONVOLVE_RADIUS`'s value; a test holds the two together.
 static const Span<Tap> RADIUS = { 2 };
 static const float SUPPORT_SIGMAS = 6.0;
 static const uint NOISE_SENSITIVITY = 0;
@@ -110,7 +110,7 @@ uint4 column_taps(uint x, uint y)
         min(y + 2, params.height - 1) * params.width + x);
 }
 
-/// `image::gaussian` for radius 2, at whatever variance this pixel composed: the outer tap's
+/// `detail::gaussian` for radius 2, at whatever variance this pixel composed: the outer tap's
 /// exponent is four times the inner's, so one `exp` serves both.
 float3 taps_for(float variance)
 {

@@ -34,7 +34,7 @@ import packed;
 import px;
 import times;
 
-/// `image::DEFOCUS_BINS`, `DEFOCUS_STRIDE` and `NOISE_BINS`. The host asserts all three, because a
+/// `detail::DEFOCUS_BINS`, `DEFOCUS_STRIDE` and `NOISE_BINS`. The host asserts all three, because a
 /// frame binned one way and fitted another has no error that shows.
 static const uint BINS = 6;
 static const uint STRIDE = 3;
@@ -57,7 +57,7 @@ struct Params {
     float cx;
     float cy;
     float half_squared;
-    /// `image::LUMA`, and `noise_max` lands in the padding `vec3f` leaves behind - the same layout
+    /// `colour::space::LUMA709`, and `noise_max` lands in the padding `vec3f` leaves behind - the same layout
     /// the host writes, and not a coincidence worth relying on silently.
     float3 luma;
     float noise_max;
@@ -75,8 +75,8 @@ float sample_at(uint at)
     return level_of(half_of(frame[at / 2], at));
 }
 
-/// `image::luma_of`, normalised the same way round: the weights sum first and the divide comes
-/// after, or the response and the regressor round differently from the CPU's.
+/// Luma with the weights summed first and the divide after, or the response and the regressor
+/// round differently.
 float luma_at(uint x, uint y)
 {
     let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;

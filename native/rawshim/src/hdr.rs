@@ -13,15 +13,14 @@
 // the one that composites HDR (§10.7.2).
 
 use crate::hdr_args::{self, EncodeOptions};
-use crate::hdr_fit::{self, CameraMatch, HdrMatch};
-use crate::image;
-use crate::tone;
-use serde::{Deserialize, Serialize};
+use colour::tone;
+use fit::hdr::{CameraMatch, HdrMatch};
+use render::detail;
 
 /// The long edge the camera match decodes its preview to, which is all of it (`jpeg::decode`
 /// reads 0 as whole).
 ///
-/// Whole rather than the fit's own grid, because `hdr_fit::preview_planes` averages it down in
+/// Whole rather than the fit's own grid, because `fit::hdr::preview_planes` averages it down in
 /// linear light and anything here is a coded-domain filter underneath that. Measured on the
 /// Canon fixture: stopping at the coarsest DCT scale that still covers the grid saves 90ms of
 /// the decode and costs every crop against the camera's own rendering - 2.62 to 3.26 counts of
@@ -29,11 +28,11 @@ use serde::{Deserialize, Serialize};
 const MATCH_PREVIEW: usize = 0;
 
 /// The preview the camera match is fitted against, by path.
-pub fn match_preview(raw_path: &str) -> Option<crate::rgb::Rgb> {
-    crate::decode_rawler::upright_preview_rgb(
+pub fn match_preview(raw_path: &str) -> Option<units::rgb::Rgb> {
+    decode::raw::upright_preview_rgb(
         raw_path,
         MATCH_PREVIEW,
-        crate::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     )
 }
 
@@ -43,27 +42,10 @@ pub fn match_preview(raw_path: &str) -> Option<crate::rgb::Rgb> {
 /// `match_preview` honours the preview's own tag and turns the pixels after; a preview with a
 /// tag of its own would come out differently through the two, and
 /// `both_hosts_take_the_same_preview_pixels` is what holds them to one answer.
-pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<crate::rgb::Rgb> {
-    let jpeg = crate::decode_rawler::upright_preview_jpeg_bytes(
-        bytes,
-        crate::decode_rawler::Preview::for_the_match(),
-    )?;
-    crate::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
-}
-
-/// How a scene-linear decode is anchored to a display (DESIGN 10.7).
-///
-/// One value rather than three loose numbers because the three are only meaningful
-/// together: the quantile picks the sample diffuse white is read from, and the two nits
-/// figures say where that sample and the highlights above it land. A rendition and a
-/// slider tick that disagreed on any one of them would be grading different pictures.
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Grade {
-    /// Nits diffuse white maps to (BT.2408 HDR Reference White).
-    pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
-    /// Quantile of the frame taken as diffuse white.
-    pub white_quantile: f64,
+pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
+    let jpeg =
+        decode::raw::upright_preview_jpeg_bytes(bytes, decode::raw::Preview::for_the_match())?;
+    formats::jpeg::decode(&jpeg, MATCH_PREVIEW).ok()
 }
 
 /// A frame and its dimensions: the scene-linear decode where a caller has just decoded, and
@@ -72,7 +54,7 @@ pub struct Source<'a> {
     pub samples: &'a [u16],
     pub width: usize,
     pub height: usize,
-    pub as_shot: Option<crate::white_balance::Illuminant>,
+    pub as_shot: Option<colour::white_balance::Illuminant>,
 }
 
 /// Fits the camera's colour for the HDR grade, for a lens the caller already holds.
@@ -84,33 +66,33 @@ pub struct Source<'a> {
 /// them off the frame once.
 #[cfg(feature = "renditions")]
 pub async fn fit_match(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw_path: &str,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
-    lens: crate::fit::Lens,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    lens: geometry::lens::Lens,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let preview = match_preview(raw_path)?;
     fit_match_from(gpu, frame, quantile, &preview, lens, as_shot).await
 }
 
 pub async fn fit_match_from(
-    gpu: &'static crate::gpu::Gpu,
-    frame: &crate::resident::Resident,
+    gpu: &'static gpu::Gpu,
+    frame: &colour::resident::Resident,
     quantile: f64,
-    preview: &crate::rgb::Rgb,
-    lens: crate::fit::Lens,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    preview: &units::rgb::Rgb,
+    lens: geometry::lens::Lens,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
-    let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (tw, th) = fit::hdr::fitted_preview_size(preview.width, preview.height);
     let (width, height) = frame.size();
     if width < tw || height < th {
         return None;
     }
-    let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
-    let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
-    let matched = hdr_fit::fit(
+    let quantile = colour::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
+    let prepared = fit::source::prepared(gpu, frame, tw, quantile).await?;
+    let matched = fit::hdr::fit(
         gpu,
         &prepared.plane,
         prepared.levels,
@@ -127,7 +109,7 @@ pub async fn fit_match_from(
 ///
 /// Both halves want the same three things: the frame's levels, the camera's preview, and
 /// the decode box-averaged to the width the preview is fitted at
-/// (`hdr_fit::fitted_preview_size`). Asked for as two calls they each measured the levels,
+/// (`fit::hdr::fitted_preview_size`). Asked for as two calls they each measured the levels,
 /// each pulled the 5-14MB preview back out of the file, and each walked the whole frame to
 /// build the same average.
 ///
@@ -150,33 +132,33 @@ pub async fn fit_match_from(
 /// The colour half still reads `plane`, which is scene-linear and cannot be finished in the
 /// same way: the denoise takes a difference against a blur, and a difference taken in
 /// linear light follows absolute luminance rather than what the eye reads. What makes that
-/// tolerable is `fit_source::prepared` itself - it box-averages the
-/// decode down to the width the preview is fitted at (`hdr_fit::fitted_preview_size`),
+/// tolerable is `fit::source::prepared` itself - it box-averages the
+/// decode down to the width the preview is fitted at (`fit::hdr::fitted_preview_size`),
 /// which already removes most of the chroma noise a denoise would have.
 ///
 /// None when the file embeds no preview, when the fit found nothing worth applying, or
 /// when there were too few usable pairs - in each case the caller grades neutrally.
 #[cfg(feature = "renditions")]
 pub async fn fit_all(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     raw_path: &str,
-    frame: &crate::resident::Resident,
+    frame: &colour::resident::Resident,
     quantile: f64,
-    geometry: crate::fit::Geometry,
+    geometry: fit::profile::Geometry,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(fit::profile::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
     }
     // One decode, read by both halves: the geometry fit takes it below and the colour fit
     // takes it again for the plane.
-    let mut lap = crate::clock::laps("  match ");
+    let mut lap = trace::clock::laps("  match ");
     let preview = match_preview(raw_path)?;
-    if crate::clock::watched() {
+    if trace::clock::watched() {
         eprintln!("  match preview {}x{}", preview.width, preview.height);
     }
-    let lateral = crate::ffi::recorded_lateral(raw_path);
+    let lateral = crate::lens_geometry::recorded_lateral(raw_path);
     lap("preview decode");
     fit_all_from_preview(
         gpu,
@@ -193,41 +175,41 @@ pub async fn fit_all(
 
 /// `fit_all` off a preview the caller decoded, with the levels the match was fitted against.
 pub async fn fit_all_from_preview(
-    gpu: &'static crate::gpu::Gpu,
-    frame: &crate::resident::Resident,
+    gpu: &'static gpu::Gpu,
+    frame: &colour::resident::Resident,
     quantile: f64,
-    geometry: crate::fit::Geometry,
-    preview: &crate::rgb::Rgb,
+    geometry: fit::profile::Geometry,
+    preview: &units::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
     camera_match: CameraMatch,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(fit::profile::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
     }
-    let mut lap = crate::clock::laps("  match ");
-    let (tw, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let mut lap = trace::clock::laps("  match ");
+    let (tw, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
     // The body's own anchor where its rendering carries one, and the caller's quantile where it
     // does not. Here rather than at the callers because this is the one place holding both the
     // frame and the picture the body made of it, and both arms of `open::measure` reach it.
-    let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
-    if crate::clock::watched() {
+    let quantile = colour::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
+    if trace::clock::watched() {
         eprintln!("  match anchor at quantile {quantile:.5}");
     }
-    let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
+    let prepared = fit::source::prepared(gpu, frame, tw, quantile).await?;
     let (plane, rendered, levels) = (prepared.plane, prepared.rendered, prepared.levels);
     lap("plane, levels, render");
-    if !(levels.white > crate::light::Light::ZERO) {
+    if !(levels.white > units::light::Light::ZERO) {
         return None;
     }
-    let (wide_jpeg, searched) = hdr_fit::preview_planes(gpu, preview).await?;
+    let (wide_jpeg, searched) = fit::hdr::preview_planes(gpu, preview).await?;
     lap("planes");
-    let mut profile = crate::fit::fit_from_preview(gpu, &rendered, &searched, geometry)
+    let mut profile = fit::profile::fit_from_preview(gpu, &rendered, &searched, geometry)
         .await
         .ok()
         .flatten()?;
     lap("geometry");
-    crate::fit::with_lateral(gpu, &mut profile, &rendered, lateral).await;
+    fit::profile::with_lateral(gpu, &mut profile, &rendered, lateral).await;
     lap("lateral");
     if camera_match == CameraMatch::Lens {
         let matched = HdrMatch {
@@ -236,7 +218,7 @@ pub async fn fit_all_from_preview(
         };
         return Some((profile, matched, levels));
     }
-    let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens(), as_shot)
+    let matched = fit::hdr::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens(), as_shot)
         .await
         .unwrap_or_else(|| HdrMatch {
             lens: profile.lens(),
@@ -261,51 +243,24 @@ pub struct Prepared {
 
 /// The downscale of a coded frame, on the device the pipeline requires anyway (DESIGN 2.1).
 fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Option<Vec<u16>> {
-    let gpu = crate::gpu::device()?;
-    let base = crate::base::device(gpu)?;
-    let frame = crate::resident::Resident::upload(gpu, samples, source.0, source.1);
-    let smaller = crate::base::resize(gpu, base, &frame, out);
+    let gpu = gpu::device()?;
+    let base = render::base::device(gpu)?;
+    let frame = colour::resident::Resident::upload(gpu, samples, source.0, source.1);
+    let smaller = render::base::resize(gpu, base, &frame, out);
     frame.reclaim();
     pollster::block_on(smaller?.into_host())
 }
 
-/// The coding, on the same device and for the same reason: `base.slang`'s `encode_base` is the only
-/// one there is.
-///
-/// Panics rather than returning, because a caller of this has nothing to do with the answer: these
-/// are the pins and the debug entry points, and a frame that reached here uncoded would be graded
-/// as though sensor levels were PQ.
-pub fn code_base(
-    samples: &mut [u16],
-    levels: tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
-) {
-    let coded = crate::gpu::device()
-        .and_then(crate::base::device)
-        .and_then(|base| {
-            let gpu = crate::gpu::device()?;
-            pollster::block_on(crate::base::encode_base(
-                gpu,
-                base,
-                samples,
-                levels,
-                reference_white_nits,
-            ))
-        })
-        .is_some();
-    assert!(coded, "{}", crate::base::without_a_device("the coding"));
-}
-
 /// The frame's levels, for a caller holding samples on the host.
 pub fn levels_of(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     samples: &[u16],
     width: usize,
     height: usize,
     quantile: f64,
 ) -> Option<tone::Levels> {
-    let frame = crate::resident::Resident::upload(gpu, samples, width, height);
-    let levels = pollster::block_on(crate::fit_source::levels(gpu, &frame, quantile));
+    let frame = colour::resident::Resident::upload(gpu, samples, width, height);
+    let levels = pollster::block_on(fit::source::levels(gpu, &frame, quantile));
     frame.reclaim();
     levels
 }
@@ -319,7 +274,7 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
-    graded_as(source, options, matched, crate::gpu::Output::Rolled)
+    graded_as(source, options, matched, render::grade::Output::Rolled)
 }
 
 /// [`graded`] in whichever coding the caller wants out.
@@ -340,14 +295,14 @@ pub fn graded_as(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::gpu::Output,
+    output: render::grade::Output,
 ) -> (Vec<u16>, usize, usize) {
     graded_under(
         source,
         options,
         matched,
         output,
-        crate::gpu::Intent::default(),
+        render::grade::Intent::default(),
     )
 }
 
@@ -356,10 +311,10 @@ pub fn graded_under(
     source: &Source<'_>,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    output: crate::gpu::Output,
-    intent: crate::gpu::Intent,
+    output: render::grade::Output,
+    intent: render::grade::Intent,
 ) -> (Vec<u16>, usize, usize) {
-    let gpu = crate::gpu::device().expect(
+    let gpu = gpu::device().expect(
         "no Vulkan adapter answered, not even a software one. The grade runs on the GPU so \
          that the editor and a rendition cannot drift apart, and there is no CPU copy to \
          fall back to. On a machine with no GPU, `bun run get:swiftshader` fetches a CPU \
@@ -387,7 +342,7 @@ pub fn graded_under(
     let graded = encode_cut(
         gpu,
         &cut,
-        &crate::gpu::Grade {
+        &render::grade::Grade {
             intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
         },
@@ -398,27 +353,23 @@ pub fn graded_under(
 
 /// One `encode` dispatch over the cut, wherever its frame is - resident where the render
 /// loop left it, host where a window arrived that way.
-pub fn encode_cut(
-    gpu: &'static crate::gpu::Gpu,
-    cut: &Cut,
-    grade: &crate::gpu::Grade<'_>,
-) -> Vec<u16> {
+pub fn encode_cut(gpu: &'static gpu::Gpu, cut: &Cut, grade: &render::grade::Grade<'_>) -> Vec<u16> {
     upload_cut(gpu, cut, grade).encode(grade)
 }
 
 pub fn upload_cut(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     cut: &Cut,
-    grade: &crate::gpu::Grade<'_>,
-) -> crate::gpu::Uploaded<'static> {
-    let peak = gpu.scene_peak();
+    grade: &render::grade::Grade<'_>,
+) -> render::grade::Uploaded<'static> {
+    let peak = render::grade::device(gpu).scene_peak();
     match cut.resident() {
-        Some(frame) => gpu.upload_resident(frame, grade, &peak),
+        Some(frame) => render::grade::device(gpu).upload_resident(frame, grade, &peak),
         None => {
             let samples = cut
                 .host_samples()
                 .expect("a cut holds one frame or the other");
-            gpu.upload(samples, grade, &peak)
+            render::grade::device(gpu).upload(samples, grade, &peak)
         }
     }
 }
@@ -430,17 +381,17 @@ fn neutral_scene<'a>(
     levels: tone::Anchored,
     options: &EncodeOptions,
     matched: Option<&'a HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> tone::SceneGrade<'a> {
-    tone::SceneGrade::new(
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> render::grade::SceneGrade<'a> {
+    render::grade::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
         None,
-        crate::gpu::Adjust {
+        render::grade::Adjust {
             // The match was fitted under its own illuminant, so it reads wrong under any other.
             camera_balance: true,
-            ..crate::gpu::Adjust::none()
+            ..render::grade::Adjust::none()
         },
         as_shot,
     )
@@ -469,7 +420,7 @@ fn neutral_scene<'a>(
 /// No defringe: it is a shader on the linear frame (`base::prepare`) and neither of these paths
 /// runs it, where `job::Base::build` does.
 fn cut_for(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     mut samples: Vec<u16>,
     width: usize,
     height: usize,
@@ -477,17 +428,17 @@ fn cut_for(
     matched: Option<&HdrMatch>,
     levels: tone::Anchored,
 ) -> Cut {
-    code_base(&mut samples, levels, options.grade.reference_white_nits);
+    render::base::code_base(&mut samples, levels, options.grade.reference_white_nits);
     let size = hdr_args::target_size(width as u32, height as u32, options);
-    let frame = crate::resident::Resident::upload(gpu, &samples, width, height);
+    let frame = colour::resident::Resident::upload(gpu, &samples, width, height);
     drop(samples);
     Cut::from_base(
         frame,
         matched.map(|m| &m.lens),
         size,
         options.strengths.sharpen,
-        image::SharpenSigma::fixed(options.sharpen_sigma.unwrap_or(image::DECONVOLVE_SIGMA)),
-        image::SharpenNoise::NONE,
+        detail::SharpenSigma::fixed(options.sharpen_sigma.unwrap_or(detail::DECONVOLVE_SIGMA)),
+        detail::SharpenNoise::NONE,
     )
 }
 
@@ -495,7 +446,7 @@ fn cut_for(
 ///
 /// Coded, fitted to size, warped and sharpened - **exactly what `edit::open` hands the
 /// shader**, and for the same reason: the grade itself is one WGSL implementation now
-/// (`gpu::encode`), so whatever reaches it has to be the same thing on both hosts.
+/// (`grade::encode`), so whatever reaches it has to be the same thing on both hosts.
 ///
 /// Nothing here knows what display a rendition targets. The colour transform, the roll-off
 /// and the transfer are all downstream of this and all run in one dispatch, so a job naming
@@ -521,48 +472,8 @@ pub struct Cut {
 /// reads them there, so a host `Vec` between the two is 366MB down and 366MB back up at 61MP
 /// for nothing. A window from `tile::prepared` arrives over the bus already and stays host.
 enum CutFrame {
-    Device(crate::resident::Resident),
+    Device(colour::resident::Resident),
     Host(Vec<u16>),
-}
-
-/// What a frame measures once the reader's geometry is applied to it.
-///
-/// The Rust twin of `displaySize` in `schemas/display_size.ts`, and the same three steps in the
-/// same order: straighten to the bounding box, crop as fractions of *that*, then the quarter
-/// turn. The two have to agree, because the catalogue lays a grid tile out on one and the
-/// encoder writes a file at the other - a disagreement is a tile that is the wrong shape for
-/// the picture inside it.
-///
-/// Floored at one: the fractions are free to describe a rectangle narrower than a pixel at
-/// tile size, and a rendition of no pixels is a failed encode rather than a small picture.
-///
-/// **Not a sub-rectangle of what went in.** A straighten's bounding box is larger than the frame it
-/// was cut from, so what comes back is its own space - which is why `encode` indexes
-/// `output_width` and a caller that sized a buffer off the frame instead under-allocated it.
-pub fn cropped_out(
-    frame: crate::px::Size<crate::px::Drawn>,
-    geometry: image::Geometry,
-) -> crate::px::Size<crate::px::Output> {
-    let (width, height) = cropped_size(frame.width.raw(), frame.height.raw(), geometry);
-    // The extent of a frame that is about to exist, which is the one thing `Output` can be given
-    // from outside: its pixels are as large as the rendition is small, so nothing in that space
-    // can be written down and everything else in it is derived from this.
-    crate::px::Size::measured(width, height)
-}
-
-pub fn cropped_size(width: usize, height: usize, geometry: image::Geometry) -> (usize, usize) {
-    let radians = geometry.angle_degrees.to_radians();
-    let (cos, sin) = (radians.cos().abs(), radians.sin().abs());
-    let (sw, sh) = (
-        width as f64 * cos + height as f64 * sin,
-        width as f64 * sin + height as f64 * cos,
-    );
-    let [left, top, right, bottom] = geometry.crop;
-    let w = sw * (right - left).max(0.0);
-    let h = sh * (bottom - top).max(0.0);
-    let turned = matches!(geometry.rotate % 360, 90 | 270);
-    let (w, h) = if turned { (h, w) } else { (w, h) };
-    ((w.round() as usize).max(1), (h.round() as usize).max(1))
 }
 
 impl Cut {
@@ -574,19 +485,19 @@ impl Cut {
     /// its samples, so the alternative is a lifetime on every rendition.
     ///
     /// No levels travel with it: the base carries the perceptual anchor the sharpen works in,
-    /// and the grade reads the levels off `tone::SceneGrade` rather than off the frame.
+    /// and the grade reads the levels off `render::grade::SceneGrade` rather than off the frame.
     pub fn from_base(
-        frame: crate::resident::Resident,
-        lens: Option<&crate::fit::Lens>,
-        size: hdr_args::Size,
+        frame: colour::resident::Resident,
+        lens: Option<&geometry::lens::Lens>,
+        size: formats::still::Size,
         sharpen: f64,
-        sharpen_sigma: image::SharpenSigma,
-        sharpen_noise: image::SharpenNoise,
+        sharpen_sigma: detail::SharpenSigma,
+        sharpen_noise: detail::SharpenNoise,
     ) -> Cut {
         let gpu = frame.gpu();
-        let base = crate::base::device(gpu).expect("the device the pipelines were built on");
+        let base = render::base::device(gpu).expect("the device the pipelines were built on");
         let asked = (size.width as usize, size.height as usize);
-        let frame = match crate::base::resize(gpu, base, &frame, asked) {
+        let frame = match render::base::resize(gpu, base, &frame, asked) {
             Some(smaller) => {
                 frame.reclaim();
                 smaller
@@ -600,18 +511,18 @@ impl Cut {
         // not cost a re-prepare. What that costs is a second resample of an already resampled
         // frame, measured at mean 0.38 counts of 65535 against one fused gather
         // (`the_pipeline_places_a_pixel_where_one_fused_gather_would`).
-        let cut = crate::base::gather_and_sharpen(
+        let cut = render::base::gather_and_sharpen(
             gpu,
             base,
             frame,
-            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            render::base::Gather::frame(units::px::Size::exact(width, height)),
             lens,
             sharpen,
             sharpen_sigma,
             sharpen_noise,
         );
         // No transfer at all: the grade reads this same buffer through
-        // `gpu::upload_resident`, so the frame never leaves the device between the decode
+        // `grade::upload_resident`, so the frame never leaves the device between the decode
         // and the graded readback.
         Cut {
             frame: CutFrame::Device(cut),
@@ -632,7 +543,7 @@ impl Cut {
 
     /// A window that never crossed it: `tile::prepared_on_device`'s own buffer, already resized,
     /// warped and sharpened, and read from where it lies by the grade.
-    pub fn device(frame: crate::resident::Resident, width: usize, height: usize) -> Cut {
+    pub fn device(frame: colour::resident::Resident, width: usize, height: usize) -> Cut {
         Cut {
             frame: CutFrame::Device(frame),
             width,
@@ -641,7 +552,7 @@ impl Cut {
     }
 
     /// The resident frame, where the cut is still on the device.
-    pub(crate) fn resident(&self) -> Option<&crate::resident::Resident> {
+    pub(crate) fn resident(&self) -> Option<&colour::resident::Resident> {
         match &self.frame {
             CutFrame::Device(frame) => Some(frame),
             CutFrame::Host(_) => None,
@@ -685,14 +596,14 @@ impl Cut {
     /// Off the cut above it rather than off the base, so a job naming three sizes pays one warp and
     /// two small reductions instead of three of each - and on the device, off a frame that is
     /// already there.
-    pub fn downscale(&self, size: hdr_args::Size) -> Cut {
+    pub fn downscale(&self, size: formats::still::Size) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
         match &self.frame {
             CutFrame::Device(frame) => {
                 let gpu = frame.gpu();
                 let base =
-                    crate::base::device(gpu).expect("the device the pipelines were built on");
-                match crate::base::resize(gpu, base, frame, (width, height)) {
+                    render::base::device(gpu).expect("the device the pipelines were built on");
+                match render::base::resize(gpu, base, frame, (width, height)) {
                     Some(smaller) => Cut {
                         frame: CutFrame::Device(smaller),
                         width,
@@ -737,7 +648,7 @@ pub fn encode_frame(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still(
+    formats::avif::save_still(
         frame,
         width,
         height,
@@ -757,7 +668,7 @@ pub fn encode_bands(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still_bands(
+    formats::avif::save_still_bands(
         bands,
         width,
         &still_options(options),
@@ -768,13 +679,13 @@ pub fn encode_bands(
 }
 
 #[cfg(feature = "renditions")]
-fn still_options(options: &EncodeOptions) -> crate::avif::StillOptions {
+fn still_options(options: &EncodeOptions) -> formats::avif::StillOptions {
     // The transfer is already applied and PQ's output gamut is Rec.2020, which the grade
     // already works in, so all that is left between here and a file is the YCbCr matrix,
     // which libavif does.
-    let (primaries, transfer, matrix) = hdr_args::cicp();
-    crate::avif::StillOptions {
-        cicp: crate::avif::Cicp {
+    let (primaries, transfer, matrix) = formats::still::cicp();
+    formats::avif::StillOptions {
+        cicp: formats::avif::Cicp {
             primaries,
             transfer,
             matrix,
@@ -801,9 +712,9 @@ pub fn encode_still(
     height: usize,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
-    as_shot: Option<crate::white_balance::Illuminant>,
+    as_shot: Option<colour::white_balance::Illuminant>,
 ) -> Result<(), String> {
-    let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
+    let gpu = gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let levels = levels_of(gpu, &samples, width, height, options.grade.white_quantile)
         .ok_or("the frame's levels could not be measured")?
         .anchored();
@@ -815,7 +726,7 @@ pub fn encode_still(
     let frame = encode_cut(
         gpu,
         &cut,
-        &scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq),
+        &scene.gpu_grade(cut.width, cut.height, render::grade::Output::Pq),
     );
     cut.release();
     encode_pq_frame(frame, cut.width, cut.height, options)

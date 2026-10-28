@@ -20,13 +20,13 @@ fn main() {
     };
     let numbers: Vec<usize> = args.filter_map(|a| a.parse().ok()).collect();
     let tile = match numbers.as_slice() {
-        [left, top, width, height] => rawshim::Tile {
+        [left, top, width, height] => formats::orientation::Tile {
             left: *left,
             top: *top,
             width: *width,
             height: *height,
         },
-        _ => rawshim::Tile {
+        _ => formats::orientation::Tile {
             left: 2000,
             top: 1400,
             width: 512,
@@ -34,9 +34,9 @@ fn main() {
         },
     };
 
-    let amounts = rawshim::galosh::Detail::at(0.0, 0.0);
+    let amounts = denoise::galosh::Detail::at(0.0, 0.0);
     let started = std::time::Instant::now();
-    let Some(whole) = rawshim::decode_rawler::decode(&path, amounts) else {
+    let Some(whole) = decode::raw::decode(&path, amounts) else {
         eprintln!("the whole frame declined");
         return;
     };
@@ -44,26 +44,26 @@ fn main() {
 
     // Twice, because the first pays for the GPU pipelines the frame decode already built and a
     // loupe's second tile is the one that matters.
-    let halo = rawshim::RENDITION_TILE_HALO;
+    let halo = decode::RENDITION_TILE_HALO;
     let view =
-        rawshim::view::View::whole(rawshim::px::Size::exact(whole.width, whole.height)).showing(
-            rawshim::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
+        decode::view::View::whole(units::px::Size::exact(whole.width, whole.height)).showing(
+            units::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
         );
-    let glass = rawshim::dust::Known::Off;
-    rawshim::decode_rawler::decode_tile(
+    let glass = denoise::dust::Known::Off;
+    decode::raw::decode_tile(
         &path,
         view,
         amounts,
-        rawshim::galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
         halo,
         glass,
     );
     let started = std::time::Instant::now();
-    let Some(cut) = rawshim::decode_rawler::decode_tile(
+    let Some(cut) = decode::raw::decode_tile(
         &path,
         view,
         amounts,
-        rawshim::galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
         halo,
         glass,
     ) else {
@@ -77,7 +77,7 @@ fn main() {
         whole.width, whole.height, cut.width, cut.height, tile.width, tile.height
     );
 
-    // Both come off `decode_rawler`, which leaves the frame on the device for the pipeline; this
+    // Both come off `decode::raw`, which leaves the frame on the device for the pipeline; this
     // reads samples, so it says so.
     let (Some(whole), Some(cut)) = (
         pollster::block_on(whole.to_host()),
@@ -94,8 +94,8 @@ fn main() {
     // The tile against the same rectangle of the whole frame. Both have been through the same
     // orientation, so a tile that landed where it was asked for reads the same samples.
     let (a, b) = (
-        rawshim::resident::levels_of(a),
-        rawshim::resident::levels_of(b),
+        colour::resident::levels_of(a),
+        colour::resident::levels_of(b),
     );
     let mut worst = 0f32;
     let mut total = 0f64;

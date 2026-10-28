@@ -10,13 +10,14 @@
 //!
 //! Skipped loudly where no adapter answers, for `gpu_dust.rs`'s reason.
 
+use colour::resident::stored_within;
+use colour::transfer::{Coding, Curve, Primaries};
+use decode::linearise::Picture;
+use decode::view::Scale;
+use formats::gain_map::{GainMap, Reconstruction};
 use rawler::decoders::Orientation;
-use rawshim::light::{Light, SceneNits};
-use rawshim::linearise::{GainMap, Picture, Reconstruction};
-use rawshim::px::{At, Photograph, Rect, Size};
-use rawshim::resident::stored_within;
-use rawshim::transfer::{Coding, Curve, Primaries};
-use rawshim::view::Scale;
+use units::light::{Light, SceneNits};
+use units::px::{At, Photograph, Rect, Size};
 
 /// The levels a window comes back as, on the host.
 fn linearised(
@@ -24,11 +25,11 @@ fn linearised(
     window: Rect<Photograph>,
     scale: Scale,
 ) -> Option<(Vec<f32>, usize, usize)> {
-    let gpu = rawshim::gpu::device()?;
-    let frame = picture.window(gpu, rawshim::linearise::device(gpu), window, scale)?;
+    let gpu = gpu::device()?;
+    let frame = picture.window(gpu, decode::linearise::device(gpu), window, scale)?;
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
-    Some((rawshim::resident::levels_of(&samples), width, height))
+    Some((colour::resident::levels_of(&samples), width, height))
 }
 
 fn whole(picture: &Picture) -> Option<(Vec<f32>, usize, usize)> {
@@ -61,7 +62,7 @@ fn ramp(width: usize, height: usize, depth: u32) -> Vec<u16> {
 
 #[test]
 fn the_kernel_undoes_the_transfer_the_table_states() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the linearise kernel was not run.");
         return;
     };
@@ -84,13 +85,13 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     assert_eq!((out_w, out_h), (width, height));
 
     let table = coding.table();
-    let white = rawshim::transfer::FULL_SCALE;
+    let white = colour::transfer::FULL_SCALE;
     for (at, sample) in samples.iter().enumerate() {
         let pixel = at / 3;
         let colour: [f64; 3] = std::array::from_fn(|channel| {
             f64::from(table[usize::from(codes[pixel * 3 + channel]) * 3 + channel]) * white
         });
-        let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].max(0.0);
+        let want = colour::space::in_gamut(colour)[at % 3].max(0.0);
         assert!(
             (f64::from(*sample) - want).abs() <= 1.0 + stored_within(want),
             "sample {at}: code {} became {sample}, and the host says {want}",
@@ -102,7 +103,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
 /// A 10-bit PQ picture puts diffuse white at full scale and carries highlights above it.
 #[test]
 fn a_pq_picture_keeps_its_headroom() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the PQ scale was not run.");
         return;
     };
@@ -110,7 +111,7 @@ fn a_pq_picture_keeps_its_headroom() {
     // Reference white, then something far above it.
     let coded = |nits: f64| {
         let light: Light<SceneNits> = Light::exactly(nits);
-        (rawshim::tone::pq(light).raw() * 1023.0).round() as u16
+        (colour::tone::pq(light).raw() * 1023.0).round() as u16
     };
     let white_code = coded(203.0);
     let bright_code = coded(1000.0);
@@ -122,7 +123,7 @@ fn a_pq_picture_keeps_its_headroom() {
         Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    let white = rawshim::transfer::FULL_SCALE;
+    let white = colour::transfer::FULL_SCALE;
     assert!(
         (f64::from(samples[0]) - white).abs() < 0.0075 * white,
         "white landed at {}",
@@ -138,7 +139,7 @@ fn a_pq_picture_keeps_its_headroom() {
 /// The brightest a PQ master can state, ten thousand nits, is carried rather than clipped.
 #[test]
 fn a_pq_picture_carries_its_whole_range() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the PQ range was not run.");
         return;
     };
@@ -146,7 +147,7 @@ fn a_pq_picture_carries_its_whole_range() {
     let codes = vec![1023u16; 3];
     let picture = Picture::upload(gpu, codes, 1, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
-    let ratio = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
+    let ratio = f64::from(samples[0]) / colour::transfer::FULL_SCALE;
     assert!(
         (ratio - 10_000.0 / 203.0).abs() < 0.01 * ratio,
         "10000 nits came back at {ratio}x white"
@@ -154,7 +155,7 @@ fn a_pq_picture_carries_its_whole_range() {
     assert_eq!(
         picture
             .peak_level()
-            .map(|peak| peak.raw() / rawshim::transfer::FULL_SCALE),
+            .map(|peak| peak.raw() / colour::transfer::FULL_SCALE),
         Some(Curve::Pq.light(1.0).raw()),
         "and the picture states it as its peak"
     );
@@ -164,7 +165,7 @@ fn a_pq_picture_carries_its_whole_range() {
 /// cast, and nothing about the picture says so.
 #[test]
 fn the_primaries_conversion_is_the_hosts() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the matrix was not run.");
         return;
     };
@@ -210,7 +211,7 @@ fn the_primaries_conversion_is_the_hosts() {
 /// turn is neither the same corner nor the same axes.
 #[test]
 fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the turn was not run.");
         return;
     };
@@ -262,7 +263,7 @@ fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
 /// every edge darkened and nothing to say why.
 #[test]
 fn halving_averages_light_rather_than_code_values() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the halving was not run.");
         return;
     };
@@ -300,7 +301,7 @@ fn halving_averages_light_rather_than_code_values() {
 /// not the other.
 #[test]
 fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the turned halving was not run.");
         return;
     };
@@ -358,7 +359,7 @@ fn two_stops() -> Reconstruction {
 /// none where it reads zero.
 #[test]
 fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map was not run.");
         return;
     };
@@ -385,7 +386,7 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
     .unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    let base = 128.0 / 255.0 * rawshim::transfer::FULL_SCALE;
+    let base = 128.0 / 255.0 * colour::transfer::FULL_SCALE;
     assert!(
         (f64::from(samples[0]) - base).abs() < 0.015 * base,
         "the unlifted pixel is {}",
@@ -405,7 +406,7 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
 /// stops" says "lift it by nothing" - 255 out of 65535 is a recovery of 0.004.
 #[test]
 fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map depth was not run.");
         return;
     };
@@ -453,7 +454,7 @@ fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
 /// stop dark, which is the sort of wrong that looks like a grade rather than a bug.
 #[test]
 fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so Apple's arm was not run.");
         return;
     };
@@ -496,7 +497,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
         (apple / iso - 2.5 / 2.0).abs() < 0.01,
         "Apple {apple} against ISO {iso}"
     );
-    let base = 64.0 / 255.0 * rawshim::transfer::FULL_SCALE;
+    let base = 64.0 / 255.0 * colour::transfer::FULL_SCALE;
     assert!(
         (apple / base - 2.5).abs() < 0.02,
         "Apple's half recovery came back at {}x",
@@ -511,7 +512,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
 /// that differ from each other.
 #[test]
 fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map terms were not run.");
         return;
     };
@@ -552,7 +553,7 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
     let log_gain =
         f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(1.0 / f64::from(gamma));
     // In units of diffuse white.
-    let got = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
+    let got = f64::from(samples[0]) / colour::transfer::FULL_SCALE;
     let base = f64::from(base_code) / 65535.0;
     let want = (base + f64::from(offset_base)) * log_gain.exp2() - f64::from(offset_alternate);
     assert!(
@@ -579,7 +580,7 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
 /// and all: a composite of these rolls off from it.
 #[test]
 fn a_gain_maps_stated_peak_is_its_brightest_pixel() {
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the gain map peak was not run.");
         return;
     };

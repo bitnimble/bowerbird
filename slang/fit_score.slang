@@ -53,9 +53,9 @@ struct Params {
 /// per class.
 [vk::binding(6, 0)] RWStructuredBuffer<float> invariant;
 
-/// `hdr_fit::BIAS_BUCKETS`, three bands of the camera's chroma against three of its lightness.
+/// `fit::hdr::BIAS_BUCKETS`, three bands of the camera's chroma against three of its lightness.
 static const int BIAS_BUCKETS = 9;
-/// `hdr_fit::COLOUR_CLASSES`: the neutrals, then each sector of the camera's hue as a muted
+/// `fit::hdr::COLOUR_CLASSES`: the neutrals, then each sector of the camera's hue as a muted
 /// class, a vivid one and a deep one.
 static const int HUE_SECTORS = 12;
 static const int COLOUR_CLASSES = 1 + 3 * HUE_SECTORS;

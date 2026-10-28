@@ -73,7 +73,7 @@ test('the sharpen and the defringe reach the HDR encode', () => {
   // is on the far side of the decode and reaches this path through nothing here; it has
   // its own wiring test in `galosh_decode`.
   //
-  // Only that the pixels moved. What the filters do is measured in `image.rs` against
+  // Only that the pixels moved. What the filters do is measured in `render/src/detail.rs` against
   // constructed inputs; what cannot be checked there is whether anything calls them.
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-finish-'));
   try {

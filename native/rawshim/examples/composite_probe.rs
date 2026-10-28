@@ -11,7 +11,7 @@
 
 mod support;
 
-use rawshim::composite_pairs::{Pyramid, coarse, refined};
+use composite::pairs::{Pyramid, coarse, refined};
 
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
@@ -23,7 +23,7 @@ fn main() {
     // modules. A merge spawns one for the align and one per rendition, so this is charged three
     // times over where the probe charges it once.
     let starting = std::time::Instant::now();
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     println!(
         "gpu: ready in {:.0}ms",
         starting.elapsed().as_secs_f64() * 1000.0
@@ -34,10 +34,10 @@ fn main() {
     // here rather than made per source, so the borrows below outlive the map.
     let planes_from: Vec<Option<String>> = paths.iter().map(|path| plane_for(path)).collect();
 
-    let sources: Vec<rawshim::composite_align::AlignSource<'_>> = paths
+    let sources: Vec<composite::align::AlignSource<'_>> = paths
         .iter()
         .zip(&planes_from)
-        .map(|(path, plane)| rawshim::composite_align::AlignSource {
+        .map(|(path, plane)| composite::align::AlignSource {
             photo_id: path,
             path,
             preview_path: plane.as_deref(),
@@ -54,7 +54,7 @@ fn main() {
         .collect();
 
     let started = std::time::Instant::now();
-    let planes = pollster::block_on(rawshim::composite_align::previews(gpu, &sources))
+    let planes = pollster::block_on(composite::align::previews(gpu, &sources))
         .expect("every source has a preview");
     println!(
         "previews: {} in {:.0}ms, {:.0}ms each",
@@ -66,15 +66,15 @@ fn main() {
         // Every stage's idea of which way up this photograph is, in one line: the catalogue's,
         // the search plane's, and what the region decode would produce. A panorama solved on one
         // and composited through another is a wrong focal and nothing saying so.
-        let header = rawshim::header::read_path(path);
+        let header = formats::header::read_path(path);
         let (turn, wide, tall) = header
             .as_ref()
             .map_or((0, 0, 0), |h| (h.orientation, h.width, h.height));
         if let Some(header) = header.as_ref() {
             println!(
                 "  {} {}, {:.0}mm f/{:.1} {:.4}s ISO {:.0}",
-                rawshim::header::name(&header.camera_make),
-                rawshim::header::name(&header.camera_model),
+                formats::header::name(&header.camera_make),
+                formats::header::name(&header.camera_model),
                 header.focal,
                 header.aperture,
                 header.shutter,
@@ -112,11 +112,11 @@ fn main() {
     // many of each frame's corners match one corner of the other clearly better than any second
     // place. Printed beside what the search says, so the two can be told apart on the same pairs.
     if let Ok(which) = std::env::var("PANO_PROBE_FEATURES") {
-        let described: Vec<rawshim::composite_features::Described> = planes
+        let described: Vec<composite::features::Described> = planes
             .iter()
             .map(|plane| {
-                let level = rawshim::composite_pairs::Pyramid::of(gpu, plane);
-                pollster::block_on(rawshim::composite_features::described(gpu, level.top()))
+                let level = composite::pairs::Pyramid::of(gpu, plane);
+                pollster::block_on(composite::features::described(gpu, level.top()))
                     .expect("the device describes")
             })
             .collect();
@@ -142,7 +142,7 @@ fn main() {
         };
         println!("\n  pair   corners matched   of ours   median ratio   clearly");
         for (a, b) in asked {
-            let pairs = rawshim::composite_features::paired(&described[a], &described[b]);
+            let pairs = composite::features::paired(&described[a], &described[b]);
             let mut ratios: Vec<f64> = pairs.iter().map(|p| p.over).collect();
             ratios.sort_by(f64::total_cmp);
             let middle = ratios.get(ratios.len() / 2).copied().unwrap_or(f64::NAN);
@@ -223,7 +223,7 @@ fn main() {
                 from.iter().filter(|d| **d <= 8.0).count() as f64 / from.len().max(1) as f64;
             // The same, over only the correspondences that locked on hard: if the junk is what the
             // peak already knows about, keeping the strong ones alone is the whole fix.
-            let locked: Vec<rawshim::composite_pairs::Match> =
+            let locked: Vec<composite::pairs::Match> =
                 matches.iter().filter(|m| m.peak > 0.9).copied().collect();
             let (apart, _) = deviations(&locked);
             let tight90 =
@@ -241,11 +241,11 @@ fn main() {
 
     println!();
     let whole = std::time::Instant::now();
-    let answer = pollster::block_on(rawshim::composite_align::align(
+    let answer = pollster::block_on(composite::align::align(
         gpu,
         &sources,
-        rawshim::composite_solve::Leash::Free,
-        rawshim::composite_align::Kind::Pan,
+        composite::solve::Leash::Free,
+        composite::align::Kind::Pan,
     ));
     println!(
         "align: {:.0}ms for {} sources",
@@ -275,8 +275,8 @@ fn main() {
             // Where each frame's centre lands on the canvas, as fractions of it: which frame is in
             // the part of a finished panorama that looks wrong is otherwise a guess.
             for (at, source) in p.sources.iter().enumerate() {
-                let ray = rawshim::composition::rotate(source.rotation, [0.0, 0.0, 1.0]);
-                let on = rawshim::composition::ray_to_canvas(p, ray);
+                let ray = composition::rotate(source.rotation, [0.0, 0.0, 1.0]);
+                let on = composition::ray_to_canvas(p, ray);
                 let (across, down) = match on {
                     Some(on) => (on[0] / p.canvas[0] as f64, on[1] / p.canvas[1] as f64),
                     None => (f64::NAN, f64::NAN),
@@ -341,13 +341,13 @@ fn main() {
 /// The panorama itself, rendered through the job every rendition goes through and handed over as
 /// a JPEG somebody can look at.
 /// A composition as `CompositeJob::recipe` reads one: the server's own `kind` beside its fields.
-fn tagged(recipe: &rawshim::composition::Composition) -> serde_json::Value {
+fn tagged(recipe: &composition::Composition) -> serde_json::Value {
     let mut value = serde_json::to_value(recipe).expect("a recipe");
     value["kind"] = serde_json::Value::String("panorama".into());
     value
 }
 
-fn render(recipe: &rawshim::composition::Composition, to: &str) {
+fn render(recipe: &composition::Composition, to: &str) {
     // The recipe's own sources, in its order: an align that left a photograph out answers a recipe
     // shorter than the set it was handed, and the render is indexed against the recipe.
     //
@@ -435,8 +435,8 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
     match rawshim::job::run(&job) {
         Ok(_) => {
             let bytes = std::fs::read(&avif).expect("the render was written");
-            let decoded = rawshim::image::decode(&bytes, 0).expect("the render decodes");
-            let jpeg = rawshim::jpeg::encode(decoded.as_ref(), 88).expect("a jpeg");
+            let decoded = formats::resize::decode(&bytes, 0).expect("the render decodes");
+            let jpeg = formats::jpeg::encode(decoded.as_ref(), 88).expect("a jpeg");
             std::fs::write(to, jpeg).expect("a writable path");
             println!("  wrote {to}");
             outlined(
@@ -455,8 +455,8 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
 /// Which frame is where is the question a seam actually asks, and reading it off a list of centres
 /// is guesswork: this puts the answer on the picture.
 fn outlined(
-    recipe: &rawshim::composition::Composition,
-    picture: rawshim::rgb::RgbRef<'_>,
+    recipe: &composition::Composition,
+    picture: units::rgb::RgbRef<'_>,
     crop: [f64; 4],
     to: &str,
 ) {
@@ -477,8 +477,8 @@ fn outlined(
         // A source pixel to a ray in its own camera, then through its rotation onto the canvas.
         let onto = |x: f64, y: f64| -> Option<[f64; 2]> {
             let ray = [x - sw / 2.0, y - sh / 2.0, source.focal];
-            let world = rawshim::composition::rotate(source.rotation, ray);
-            let on = rawshim::composition::ray_to_canvas(recipe, world)?;
+            let world = composition::rotate(source.rotation, ray);
+            let on = composition::ray_to_canvas(recipe, world)?;
             Some([(on[0] - left) * scale, (on[1] - top) * scale])
         };
         let pen = PEN[at % PEN.len()];
@@ -504,12 +504,12 @@ fn outlined(
         }
     }
 
-    let drawn = rawshim::rgb::RgbRef {
+    let drawn = units::rgb::RgbRef {
         data: &out,
         width: wide,
         height: tall,
     };
-    let jpeg = rawshim::jpeg::encode(drawn, 92).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(drawn, 92).expect("a jpeg");
     std::fs::write(to, jpeg).expect("a writable path");
     println!("  wrote {to}");
 }
@@ -621,21 +621,21 @@ impl Sheet<'_> {
 /// whether the points a pair rests on are the same piece of the world, or the same *kind* of piece
 /// in two places, which is what a scene that repeats offers and what every measure in the table has
 /// to be argued about.
-fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usize, to: &str) {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+fn draw(paths: &[String], planes: &[fit::hdr::Source], a: usize, b: usize, to: &str) {
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let long = |at: usize| planes[at].width.max(planes[at].height);
-    let Some(left) = rawshim::decode_rawler::upright_preview_rgb(
+    let Some(left) = decode::raw::upright_preview_rgb(
         &paths[a],
         long(a),
-        rawshim::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     ) else {
         println!("  {} embeds no preview", paths[a]);
         return;
     };
-    let Some(right) = rawshim::decode_rawler::upright_preview_rgb(
+    let Some(right) = decode::raw::upright_preview_rgb(
         &paths[b],
         long(b),
-        rawshim::decode_rawler::Preview::for_the_match(),
+        decode::raw::Preview::for_the_match(),
     ) else {
         println!("  {} embeds no preview", paths[b]);
         return;
@@ -692,7 +692,7 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
         ),
     };
     let mut out = vec![0u8; width * height * 3];
-    let mut blit = |picture: &rawshim::rgb::Rgb, at: (usize, usize)| {
+    let mut blit = |picture: &units::rgb::Rgb, at: (usize, usize)| {
         for y in 0..picture.height {
             for x in 0..picture.width {
                 let from = (y * picture.width + x) * 3;
@@ -743,12 +743,12 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
         sheet.dot(there, colour);
     }
 
-    let picture = rawshim::rgb::RgbRef {
+    let picture = units::rgb::RgbRef {
         width,
         height,
         data: &out,
     };
-    let jpeg = rawshim::jpeg::encode(picture, 90).expect("a jpeg");
+    let jpeg = formats::jpeg::encode(picture, 90).expect("a jpeg");
     std::fs::write(to, jpeg).expect("a writable path");
     println!("  wrote {to}");
 }
@@ -761,16 +761,16 @@ fn draw(paths: &[String], planes: &[rawshim::hdr_fit::Source], a: usize, b: usiz
 /// different instance of itself. The refine already drops a point that disagrees with its own tile,
 /// which is a local test - this is the whole field against itself, which a coincidence spread over
 /// two unrelated frames cannot pass.
-fn deviations(matches: &[rawshim::composite_pairs::Match]) -> (Vec<f64>, [f64; 6]) {
+fn deviations(matches: &[composite::pairs::Match]) -> (Vec<f64>, [f64; 6]) {
     // The same mapping the search itself keeps points by, so what is drawn is what was judged - and
     // an affine rather than a median offset, or a frame rolled a degree against its pair reads as a
     // steadily worsening disagreement along the seam, which is the roll and not a bad match.
-    let Some(mapping) = rawshim::composite_pairs::consensus(matches) else {
+    let Some(mapping) = composite::pairs::consensus(matches) else {
         return (vec![0.0; matches.len()], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
     };
     let from = matches
         .iter()
-        .map(|m| rawshim::composite_pairs::apart(&mapping, m))
+        .map(|m| composite::pairs::apart(&mapping, m))
         .collect();
     (from, mapping)
 }
@@ -781,10 +781,10 @@ fn deviations(matches: &[rawshim::composite_pairs::Match]) -> (Vec<f64>, [f64; 6
 /// piled in one corner are the same number and a very different claim, and the second is what a
 /// scene that repeats produces - one feature meeting the wrong instance of itself.
 fn covered(
-    matches: &[rawshim::composite_pairs::Match],
-    a: &rawshim::hdr_fit::Source,
-    b: &rawshim::hdr_fit::Source,
-    found: rawshim::composite_pairs::Coarse,
+    matches: &[composite::pairs::Match],
+    a: &fit::hdr::Source,
+    b: &fit::hdr::Source,
+    found: composite::pairs::Coarse,
     // The coarse translation is stated on the smallest level of the pyramid; the matches are on the
     // largest, which is the preview itself.
     up: usize,
@@ -837,23 +837,23 @@ fn plane_for(path: &str) -> Option<String> {
 
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
-    let header = rawshim::header::read_path(path)?;
-    rawshim::composite_job::focal_in_pixels(&header, rawshim::header::name(&header.camera_model))
+    let header = formats::header::read_path(path)?;
+    rawshim::composite_job::focal_in_pixels(&header, formats::header::name(&header.camera_model))
 }
 
 /// How far the frames' own centres climb across the canvas, in degrees.
 ///
 /// The visible symptom of a panorama that was not levelled: the frames make a staircase that runs
-/// uphill, and the horizon in them runs with it. Near zero is what `composite_solve::straighten` is for,
+/// uphill, and the horizon in them runs with it. Near zero is what `composite::solve::straighten` is for,
 /// and a residual here is the levelling's error rather than the solve's.
-fn climb(p: &rawshim::composition::Composition) -> f64 {
+fn climb(p: &composition::Composition) -> f64 {
     let centres: Vec<[f64; 2]> = p
         .sources
         .iter()
         .filter_map(|source| {
-            rawshim::composition::ray_to_canvas(
+            composition::ray_to_canvas(
                 p,
-                rawshim::composition::rotate(source.rotation, [0.0, 0.0, 1.0]),
+                composition::rotate(source.rotation, [0.0, 0.0, 1.0]),
             )
         })
         .collect();
@@ -872,15 +872,15 @@ fn climb(p: &rawshim::composition::Composition) -> f64 {
 }
 
 /// Full-resolution source pixels per preview pixel, which is what the recipe's focal is scaled by.
-fn full_scale(p: &rawshim::composition::Composition) -> f64 {
+fn full_scale(p: &composition::Composition) -> f64 {
     let source = &p.sources[0];
-    source.size[0].max(source.size[1]) as f64 / rawshim::px::TUNED_ON as f64
+    source.size[0].max(source.size[1]) as f64 / units::px::TUNED_ON as f64
 }
 
 /// The JPEG the search's plane is built from, for a reader who wants to see what it was given.
 fn write_preview(to: &str, from: &str) {
-    let want = rawshim::decode_rawler::Preview::for_the_match();
-    let Some(jpeg) = rawshim::decode_rawler::upright_preview_jpeg(from, want) else {
+    let want = decode::raw::Preview::for_the_match();
+    let Some(jpeg) = decode::raw::upright_preview_jpeg(from, want) else {
         println!("  {from} embeds no preview");
         return;
     };
@@ -894,20 +894,20 @@ fn analysis_for(path: &str) -> Option<Vec<u8>> {
     let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
         .run()?
         .measured;
-    let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
+    let mut analysis = fit::photo_analysis::PhotoAnalysis::default();
     analysis.from_raw.matched = Some(measured.matched?);
-    analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
+    analysis.from_render.levels = Some(fit::photo_analysis::MeasuredLevels {
         levels: measured.levels,
         white_quantile: support::GRADE.white_quantile,
     });
-    Some(rawshim::photo_analysis::encode(&analysis))
+    Some(fit::photo_analysis::encode(&analysis))
 }
 
 /// The photograph's own size, as the catalogue would have it.
 fn size_of(path: &str) -> [usize; 2] {
-    let header = match rawshim::decode_rendered::is_rendered(path) {
-        true => rawshim::header::read_rendered(path),
-        false => rawshim::header::read_path(path),
+    let header = match formats::rendered::is_rendered(path) {
+        true => formats::header::read_rendered(path),
+        false => formats::header::read_path(path),
     };
     header.map_or([0, 0], |h| [h.width as usize, h.height as usize])
 }

@@ -6,7 +6,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 use std::env;
 
 fn main() {
@@ -15,7 +16,7 @@ fn main() {
     let out = args.next().expect("out dir");
 
     let opened = support::Open::shipped(&path, 0).run().expect("decode");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let matched = opened.measured.matched.as_ref().expect("hdr fit");
 
     // SDR, which is the same grade with the peak at diffuse white and the sRGB transfer on
@@ -42,18 +43,18 @@ fn main() {
     );
     // What the fitted model does to a perfectly neutral input, at every level. Anything
     // other than zero here is the model tinting a grey, which is the cast by definition.
-    let no_map = rawshim::hdr_fit::HdrColour {
+    let no_map = colour::matched::HdrColour {
         chroma: None,
         ..colour.clone()
     };
     let levels = [0.02f32, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9];
     let greys: Vec<[f32; 4]> = levels.iter().map(|l| [*l, *l, *l, 0.0]).collect();
-    let through = |colour: &rawshim::hdr_fit::HdrColour| {
-        pollster::block_on(rawshim::hdr_fit::evaluated(
+    let through = |colour: &colour::matched::HdrColour| {
+        pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &greys,
-            rawshim::hdr_fit::Stage::Full,
+            fit::hdr::Stage::Full,
         ))
         .expect("the device evaluates the model")
     };
@@ -73,18 +74,18 @@ fn main() {
     }
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) = support::graded(&opened, &options, rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = support::graded(&opened, &options, render::grade::Output::Srgb);
     let data: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
     eprintln!("graded {width}x{height}");
 
     let crops: Vec<String> = args.collect();
     if crops.is_empty() {
-        let full = rawshim::rgb::RgbRef {
+        let full = units::rgb::RgbRef {
             width,
             height,
             data: &data,
         };
-        let small = rawshim::image::resize_to_fit(full, 1600);
+        let small = formats::resize::resize_to_fit(full, 1600);
         write(&format!("{out}/full.avif"), small.as_ref());
         return;
     }
@@ -105,7 +106,7 @@ fn main() {
         let scale = camera.width as f64 / width as f64;
         let at = |v: usize| (v as f64 * scale).round() as usize;
         let mine = cut(
-            rawshim::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width,
                 height,
                 data: &data,
@@ -146,7 +147,7 @@ fn main() {
 
 /// Two crops in one image, separated by a gap. The camera's is resampled to ours where the
 /// two were cut at different scales, so the pair is the same size and the same subject.
-fn beside(left: rawshim::rgb::RgbRef<'_>, right: rawshim::rgb::RgbRef<'_>) -> rawshim::rgb::Rgb {
+fn beside(left: units::rgb::RgbRef<'_>, right: units::rgb::RgbRef<'_>) -> units::rgb::Rgb {
     let gap = 12usize;
     let (w, h) = (left.width, left.height);
     let width = w * 2 + gap;
@@ -164,14 +165,14 @@ fn beside(left: rawshim::rgb::RgbRef<'_>, right: rawshim::rgb::RgbRef<'_>) -> ra
             }
         }
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width,
         height: h,
         data,
     }
 }
 
-fn mean(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
+fn mean(image: units::rgb::RgbRef<'_>) -> [f64; 3] {
     let mut sum = [0.0f64; 3];
     for p in 0..image.width * image.height {
         for c in 0..3 {
@@ -183,18 +184,18 @@ fn mean(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
 }
 
 fn cut(
-    image: rawshim::rgb::RgbRef<'_>,
+    image: units::rgb::RgbRef<'_>,
     x: usize,
     y: usize,
     w: usize,
     h: usize,
-) -> rawshim::rgb::Rgb {
+) -> units::rgb::Rgb {
     let mut data = vec![0u8; w * h * 3];
     for row in 0..h {
         let from = ((y + row) * image.width + x) * 3;
         data[row * w * 3..(row + 1) * w * 3].copy_from_slice(&image.data[from..from + w * 3]);
     }
-    rawshim::rgb::Rgb {
+    units::rgb::Rgb {
         width: w,
         height: h,
         data,
@@ -202,8 +203,8 @@ fn cut(
 }
 
 /// Both forms, because this exists to be looked at and AVIF does not open everywhere.
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,
@@ -219,7 +220,7 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
         .map_or_else(|| format!("{path}.jpg"), |s| format!("{s}.jpg"));
     std::fs::write(
         &jpeg,
-        rawshim::jpeg::encode(image, 95).expect("the crop encodes as JPEG"),
+        formats::jpeg::encode(image, 95).expect("the crop encodes as JPEG"),
     )
     .expect("the JPEG writes");
     eprintln!("wrote {path} and {jpeg}");

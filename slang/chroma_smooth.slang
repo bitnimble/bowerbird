@@ -9,7 +9,7 @@
 // neighbourhood's colour is *the model's own output*: this pass runs `matched_scene` at a
 // texel per `edit.chroma_shrink` pixels, encodes it for display, and a separable Gaussian
 // follows. That shrink is a share of the photograph rather than a count of this frame's
-// pixels (`gpu::chroma_shrink`), which is what keeps the footprint the same picture's worth
+// pixels (`grade::chroma_shrink`), which is what keeps the footprint the same picture's worth
 // of colour whether the frame is a 3840 rendition or the sensor's own size.
 // After the model rather than before it, because in the scene lit skin carries less red than
 // shadowed skin and a blur of the input drags each side's colour across the edge; in the
@@ -78,7 +78,7 @@ void model(uint3 dispatched : SV_DispatchThreadID)
 {
     let id = banded(dispatched, 8);
     // **Measured, not written down.** The shrink is a share of the photograph in the pixels of
-    // the frame this dispatch is over (`gpu::chroma_shrink`), and `Output` has no `exact` - so a
+    // the frame this dispatch is over (`grade::chroma_shrink`), and `Output` has no `exact` - so a
     // constant four here would not compile, which is the whole of what the module is for.
     let shrink = measured<Output>(max(edit.chroma_shrink, 1u));
     let phase = uint2(edit.neighbourhood_left % shrink.n, edit.neighbourhood_top % shrink.n);

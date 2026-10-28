@@ -38,10 +38,10 @@ fn main() {
         panic!("not integer samples");
     };
     let w = image.width;
-    let cfa = rawshim::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern");
+    let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa).expect("a pattern");
     let (pw, ph) = cfa.period();
-    let gains = rawshim::decode_rawler::channel_ceilings(&image);
-    let white = rawshim::decode_rawler::saturation_of(&image);
+    let gains = decode::raw::channel_ceilings(&image);
+    let white = decode::raw::saturation_of(&image);
     // **By position, as `Coefficients::at` takes it.** A sensor reports a black level per position
     // of the period and they are not equal - `per_position_black` says the two greens of a 2x2 can
     // differ by enough to leave a checkerboard - so conditioning a window against the first of them
@@ -55,8 +55,8 @@ fn main() {
     };
     println!("pattern {pw}x{ph}, white {white}, gains {gains:?}");
 
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
+    let gpu = gpu::device().expect("a Vulkan adapter");
+    let rcd = mosaic::demosaic::device(gpu).expect("the demosaic built");
 
     for (wx, wy, side) in windows {
         // Onto the period, so the window's phase is the frame's.
@@ -86,8 +86,8 @@ fn main() {
             sum[2] / seen[2].max(1.0),
         ];
 
-        let uploaded = rawshim::condition::Mosaic::upload(gpu, &window, side, side);
-        let plane = pollster::block_on(rawshim::demosaic::demosaic_plane(
+        let uploaded = mosaic::condition::Mosaic::upload(gpu, &window, side, side);
+        let plane = pollster::block_on(mosaic::demosaic::demosaic_plane(
             gpu,
             rcd,
             &uploaded,
@@ -106,7 +106,7 @@ fn main() {
         let mut out = [0.0f64; 3];
         let mut coded = [0.0f64; 3];
         let mut count = 0.0f64;
-        let matrix = rawshim::decode_rawler::camera_to_rec2020(&image).expect("a colour matrix");
+        let matrix = decode::raw::camera_to_rec2020(&image).expect("a colour matrix");
         for y in margin..side - margin {
             for x in margin..side - margin {
                 let at = (y * side + x) * 3;

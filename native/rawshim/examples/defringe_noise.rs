@@ -2,7 +2,7 @@
 //!
 //! `measure_defocus` subtracts the noise's own contribution to both of its sums analytically, from
 //! per-channel variances alone. That derivation assumes the three channels' noise is independent,
-//! and `image.rs`'s fixture asserts it against exactly that - grain drawn per channel. A demosaic
+//! and `detail.rs`'s fixture asserts it against exactly that - grain drawn per channel. A demosaic
 //! builds red and blue out of green, so the frame the estimate actually runs on has correlated
 //! channels, and a cross-covariance the subtraction has no term for.
 //!
@@ -37,7 +37,7 @@ fn main() {
             "--crop" => crop = args.next().and_then(|v| v.parse().ok()),
             "--inject" => inject = args.next().and_then(|v| pair(&v)),
             "--achromatic" => achromatic = true,
-            // Refused rather than ignored: the numbers this prints become constants in `image.rs`,
+            // Refused rather than ignored: the numbers this prints become constants in `detail.rs`,
             // and a mistyped flag swallowed as a sigma prints a plausible table of the wrong thing.
             other => match other.parse::<f32>() {
                 Ok(sigma) => sigmas.push(sigma),
@@ -49,15 +49,15 @@ fn main() {
         sigmas = vec![0.002, 0.005, 0.01, 0.02, 0.04];
     }
 
-    let Some(gpu) = rawshim::gpu::device() else {
+    let Some(gpu) = gpu::device() else {
         eprintln!("no adapter");
         std::process::exit(2);
     };
-    let Some(rcd) = rawshim::demosaic::device(gpu) else {
+    let Some(rcd) = mosaic::demosaic::device(gpu) else {
         eprintln!("no demosaic pipelines");
         std::process::exit(2);
     };
-    let Some(base) = rawshim::base::device(gpu) else {
+    let Some(base) = render::base::device(gpu) else {
         eprintln!("no base pipelines");
         std::process::exit(2);
     };
@@ -79,7 +79,7 @@ fn main() {
     // The content with no grain on it, past the matrix, so a noisy reconstruction of the same
     // content can be differenced against it.
     let quiet = reconstruct_matrixed(gpu, rcd, &structure, cfa, w, h, matrix);
-    // No copy of `image.rs`'s constants here: they are private, so one printed would go stale with
+    // No copy of `detail.rs`'s constants here: they are private, so one printed would go stale with
     // nothing to notice.
     println!(
         "{w}x{h}, cfa {cfa:?}, content {}, native sigma {}",
@@ -131,7 +131,7 @@ fn main() {
         // response to noise alone with no picture underneath it to confuse the ratio.
         let stencil = coded.as_ref().and_then(|plane| stencil_terms(plane, w, h));
         // Over the flat arm, which is pure reconstructed grain: what a 3x3-mean residual keeps of
-        // it, which is the divisor `image::sigma_from` needs.
+        // it, which is the divisor `render::detail::sigma_from` needs.
         let kept = coded
             .as_ref()
             .and_then(|plane| residual_fraction(plane, w, h));
@@ -214,7 +214,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
     let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
     let luma = |x: usize, y: usize| -> f64 {
         (0..3)
-            .map(|c| f64::from(rawshim::image::LUMA[c]) * at(x, y, c))
+            .map(|c| f64::from(colour::space::LUMA709[c]) * at(x, y, c))
             .sum()
     };
     let (mut sum, mut square, mut curved, mut counted) = (0f64, 0f64, 0f64, 0f64);
@@ -242,7 +242,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
 }
 
 /// What fraction of a plane's noise survives the residual of a 3x3 mean, against the 0.83
-/// `image::sigma_from` divides by.
+/// `render::detail::sigma_from` divides by.
 ///
 /// **That constant is the independent-noise answer too.** A pixel's own grain is 8/9 of what a 3x3
 /// mean of it returns, so subtracting the mean leaves most of it - but only where the eight
@@ -252,7 +252,7 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
 /// factor by which the fit's noise estimate is wrong.
 fn residual_fraction(plane: &[f32], width: usize, height: usize) -> Option<f64> {
     const MARGIN: usize = 12;
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     let luma = |x: usize, y: usize| -> f64 {
         (0..3)
             .map(|c| f64::from(weight[c]) * f64::from(plane[(y * width + x) * 3 + c]))
@@ -304,7 +304,7 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
     if clean.len() < width * height * 3 || noisy.len() < width * height * 3 {
         return None;
     }
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     let sums = |plane: &[f32]| -> [f64; 3] {
         let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
         let luma = |x: usize, y: usize| {
@@ -365,15 +365,15 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
 /// the edges, the textures and the radial falloff are the photograph's, and only the colour is
 /// gone. A synthetic pattern cannot stand in, for the reason the second arm needs a real one.
 fn greyed(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
 ) -> Option<Vec<f32>> {
     let plane = reconstruct(gpu, rcd, mosaic, cfa, width, height)?;
-    let weight = rawshim::image::LUMA;
+    let weight = colour::space::LUMA709;
     Some(
         (0..width * height)
             .map(|at| {
@@ -391,10 +391,10 @@ struct Read {
     plane: Vec<f32>,
     width: usize,
     height: usize,
-    cfa: rawshim::cfa::Cfa,
+    cfa: mosaic::cfa::Cfa,
     /// The photograph's own noise, as the decode fits it. What says whether the sigmas this probe
     /// sweeps are anywhere near what a real frame hands the stage.
-    native: Option<rawshim::galosh::NoiseFit>,
+    native: Option<denoise::galosh::NoiseFit>,
     /// The camera-to-rec2020 matrix `assemble` applies, so the noise can be measured on both sides
     /// of it. Production's own rather than a second spelling of it.
     matrix: [[f32; 3]; 3],
@@ -446,7 +446,7 @@ fn read_mosaic(path: &str) -> Option<Read> {
         .first()
         .map_or(0.0, |level| level.n as f32 / level.d as f32);
     let range = (white - black).max(1.0);
-    let cfa = rawshim::cfa::Cfa::from_rawler(&image.camera.cfa)?;
+    let cfa = mosaic::cfa::Cfa::from_rawler(&image.camera.cfa)?;
     Some(Read {
         plane: values
             .iter()
@@ -455,24 +455,24 @@ fn read_mosaic(path: &str) -> Option<Read> {
         width: image.width,
         height: image.height,
         cfa,
-        matrix: rawshim::decode_rawler::camera_to_rec2020(&image)?,
+        matrix: decode::raw::camera_to_rec2020(&image)?,
         native: std::fs::read(path).ok().and_then(|bytes| {
-            rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
+            rawshim::decode_frame_bytes(&bytes, 0, denoise::galosh::Fit::Only)
                 .and_then(|frame| frame.noise)
         }),
     })
 }
 
 fn reconstruct(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
 ) -> Option<Vec<f32>> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    pollster::block_on(rawshim::demosaic::demosaic_plane(
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
+    pollster::block_on(mosaic::demosaic::demosaic_plane(
         gpu,
         rcd,
         &uploaded,
@@ -492,43 +492,43 @@ fn reconstruct(
 /// it is the noise RCD produced rather than the noise the estimate sees. The matrix is a linear map
 /// applied per pixel, so it both rescales each channel's variance and remixes the pairs.
 fn reconstruct_matrixed(
-    gpu: &'static rawshim::gpu::Gpu,
-    rcd: &'static rawshim::demosaic::Rcd,
+    gpu: &'static gpu::Gpu,
+    rcd: &'static mosaic::demosaic::Rcd,
     mosaic: &[f32],
-    cfa: &rawshim::cfa::Cfa,
+    cfa: &mosaic::cfa::Cfa,
     width: usize,
     height: usize,
     matrix: [[f32; 3]; 3],
 ) -> Option<Vec<f32>> {
-    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    let at = rawshim::demosaic::Placement {
-        stride: rawshim::px::Span::exact(width),
-        crop: rawshim::px::Rect::exact(0, 0, width, height),
-        dest: rawshim::px::At::ORIGIN,
-        frame: rawshim::px::Size::exact(width, height),
+    let uploaded = mosaic::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let at = mosaic::demosaic::Placement {
+        stride: units::px::Span::exact(width),
+        crop: units::px::Rect::exact(0, 0, width, height),
+        dest: units::px::At::ORIGIN,
+        frame: units::px::Size::exact(width, height),
         orientation: 0,
         reduce: 1,
     };
-    let into = rawshim::demosaic::frame_buffer(gpu, width * height);
-    let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let into = mosaic::demosaic::frame_buffer(gpu, width * height);
+    let (_held, shape) = mosaic::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
     let ceiling = [1.0; 3];
-    let field = rawshim::highlight::measure(gpu, &uploaded, cfa, ceiling)?;
-    pollster::block_on(rawshim::demosaic::demosaic_into(
+    let field = mosaic::highlight::measure(gpu, &uploaded, cfa, ceiling)?;
+    pollster::block_on(mosaic::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
         cfa,
         &at,
-        rawshim::demosaic::Colour { matrix, ceiling },
+        mosaic::demosaic::Colour { matrix, ceiling },
         field.seen(),
         &into,
         &shape,
     ))?;
-    let samples = pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))?;
+    let samples = pollster::block_on(mosaic::demosaic::read_frame(gpu, &into, width * height))?;
     Some(
         samples
             .iter()
-            .map(|&bits| rawshim::resident::level_of_bits(bits) / 65535.0)
+            .map(|&bits| colour::resident::level_of_bits(bits) / 65535.0)
             .collect(),
     )
 }
@@ -549,13 +549,13 @@ fn show(fitted: Option<(f32, f32)>) -> String {
 /// is folded in at its own fitted RMS.
 fn as_fitted(
     drawn: f32,
-    native: Option<rawshim::galosh::NoiseFit>,
-) -> Option<rawshim::galosh::NoiseFit> {
+    native: Option<denoise::galosh::NoiseFit>,
+) -> Option<denoise::galosh::NoiseFit> {
     // The frame's own sigma comes off `alpha.s + sigma_sq` at full scale rather than off
     // `unified_sigma`, which is a GAT-domain figure and reads near one however dark the frame is.
     let carried = native.map_or(0.0, |fit| fit.model().at_white());
     let combined = (drawn * drawn + carried * carried).sqrt();
-    (combined > 0.0).then_some(rawshim::galosh::NoiseFit {
+    (combined > 0.0).then_some(denoise::galosh::NoiseFit {
         alpha: 0.0,
         sigma_sq: combined * combined,
         unified_sigma: combined,
@@ -564,19 +564,19 @@ fn as_fitted(
 }
 
 fn fit(
-    gpu: &'static rawshim::gpu::Gpu,
-    base: &'static rawshim::base::Base,
+    gpu: &'static gpu::Gpu,
+    base: &'static render::base::Base,
     plane: &[f32],
     width: usize,
     height: usize,
-    noise: Option<rawshim::galosh::NoiseFit>,
+    noise: Option<denoise::galosh::NoiseFit>,
     matrix: [[f32; 3]; 3],
 ) -> Option<(f32, f32)> {
     let samples: Vec<u16> = plane
         .iter()
-        .map(|&v| rawshim::resident::bits_of_level(v.max(0.0) * 65535.0))
+        .map(|&v| colour::resident::bits_of_level(v.max(0.0) * 65535.0))
         .collect();
-    pollster::block_on(rawshim::base::measure_defocus(
+    pollster::block_on(render::base::measure_defocus(
         gpu,
         base,
         &samples,

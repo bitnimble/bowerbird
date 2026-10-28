@@ -1,6 +1,6 @@
 // Longitudinal chromatic aberration, taken off the frame where it already is.
 //
-// `image::defringe` subtracts a multiple of luma's curvature from the two chroma differences, and
+// `base::defringe` subtracts a multiple of luma's curvature from the two chroma differences, and
 // `recombine` solves the luma equation for green so the correction cannot move brightness. Both
 // of those are per-pixel, so composing them algebraically leaves one add per channel:
 //
@@ -24,7 +24,7 @@ struct Params {
     uint height;
     float k_red;
     float k_blue;
-    /// `image::LUMA`, and `full` is the sensor's full scale in levels (`packed::level_of`).
+    /// `colour::space::LUMA709`, and `full` is the sensor's full scale in levels (`packed::level_of`).
     float3 luma;
     float full;
 };
@@ -63,7 +63,7 @@ void defringe_luma(uint3 id : SV_DispatchThreadID)
 
 /// One pixel's three samples, corrected.
 ///
-/// The stencil clamps at the frame's edge, as `image::laplacian` does with its saturating
+/// The stencil clamps at the frame's edge, as `detail::laplacian` does with its saturating
 /// indices - a border pixel reads itself for the neighbour it does not have, which makes the
 /// second difference zero there rather than a step.
 float3 corrected(uint pixel)

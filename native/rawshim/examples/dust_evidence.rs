@@ -16,7 +16,8 @@
 
 mod support;
 
-use rawshim::hdr_args::{Chroma, EncodeOptions};
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
 
 fn options() -> EncodeOptions {
     EncodeOptions {
@@ -28,7 +29,7 @@ fn options() -> EncodeOptions {
         strengths: support::STRENGTHS,
         // Fixed: what this example varies is the glass, and a sigma measured off one frame and not
         // the other would put a second difference in the pair it is evidence for.
-        sharpen_sigma: Some(rawshim::image::DECONVOLVE_SIGMA),
+        sharpen_sigma: Some(render::detail::DECONVOLVE_SIGMA),
         max_edge: 100_000.0,
         content_light: None,
     }
@@ -36,28 +37,28 @@ fn options() -> EncodeOptions {
 
 /// The photograph as a rendition would ship it, sharpened at the fixed sigma, with whatever the
 /// caller asked done about dust.
-fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
+fn rendered(path: &str, glass: denoise::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
     let opened = support::Open {
         dust: glass,
         ..support::Open::shipped(path, 0)
     }
     .run()
     .expect("decode");
-    let (coded, width, height) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = support::graded(&opened, &options(), render::grade::Output::Srgb);
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 
 /// Every candidate the frame offers, with no reader's gate applied.
-fn candidates(path: &str) -> Vec<rawshim::dust::Spot> {
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+fn candidates(path: &str) -> Vec<denoise::dust::Spot> {
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let bytes = std::fs::read(path).expect("the file");
-    let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("a decoder");
+    let held = pollster::block_on(decode::raw::hold_bytes(&bytes)).expect("a decoder");
     let sensor = held.glass();
     eprintln!(
         "  f/{}  {}x{}",
         sensor.aperture, sensor.width, sensor.height
     );
-    pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
+    pollster::block_on(denoise::dust::detect(gpu, held.device_mosaic(), &sensor))
         .unwrap_or_default()
 }
 
@@ -107,7 +108,7 @@ fn main() {
     let bar = |snr: f32| {
         (0..=100)
             .find(|hundredths| {
-                let at = rawshim::dust::Removal {
+                let at = denoise::dust::Removal {
                     sensitivity: f64::from(*hundredths) / 100.0,
                     intensity: 1.0,
                 };
@@ -132,9 +133,9 @@ fn main() {
     }
 
     if whole {
-        let (frame, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
-        let small = rawshim::image::resize_to_fit(
-            rawshim::rgb::RgbRef {
+        let (frame, width, height) = rendered(&path, denoise::dust::Wanted::Off);
+        let small = formats::resize::resize_to_fit(
+            units::rgb::RgbRef {
                 width,
                 height,
                 data: &frame,
@@ -154,7 +155,7 @@ fn main() {
         let name = format!("{out}/dust-whole.avif");
         write(
             &name,
-            rawshim::rgb::RgbRef {
+            units::rgb::RgbRef {
                 width: small.width,
                 height: small.height,
                 data: &data,
@@ -171,7 +172,7 @@ fn main() {
         spot.y * 2.0,
         spot.snr,
     );
-    let removal = rawshim::dust::Removal {
+    let removal = denoise::dust::Removal {
         sensitivity,
         intensity: 1.0,
     };
@@ -182,9 +183,9 @@ fn main() {
         spot.snr,
     );
 
-    let (before, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
+    let (before, width, height) = rendered(&path, denoise::dust::Wanted::Off);
     let held = [spot.clone()];
-    let (after, _, _) = rendered(&path, rawshim::dust::Wanted::Given(&held, removal));
+    let (after, _, _) = rendered(&path, denoise::dust::Wanted::Given(&held, removal));
 
     // A spot's coordinates are the sensor's quad grid, so twice them is photosites - which is the
     // render's own grid, both frames here being the sensor's full size with no reduction asked for.
@@ -226,7 +227,7 @@ fn main() {
     let name = format!("{out}/dust-{}-{}.avif", at.0 as usize, at.1 as usize);
     write(
         &name,
-        rawshim::rgb::RgbRef {
+        units::rgb::RgbRef {
             width: side * 2 + GAP,
             height: side,
             data: &pair,
@@ -292,8 +293,8 @@ fn circle(data: &mut [u8], width: usize, centre: (f32, f32), radius: f32) {
 
 /// Lossless, because the whole point of the pair is a correction that moves a few hundred pixels by
 /// a few percent, and a quantizer that smoothed them would be answering a different question.
-fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(
+fn write(path: &str, image: units::rgb::RgbRef<'_>) {
+    formats::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
         image.width,
         image.height,

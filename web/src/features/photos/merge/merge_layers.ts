@@ -29,7 +29,7 @@ export interface Piece {
   corridor: number;
 }
 
-/** The least ramp a mask gets, in canvas pixels: twice `assembly_weight::W_HIGH_PX`, the least `W`. */
+/** The least ramp a mask gets, in canvas pixels: twice `composite::assembly::weight::W_HIGH_PX`, the least `W`. */
 export const FEATHER_FLOOR_PX = 4;
 
 /**

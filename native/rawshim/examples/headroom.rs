@@ -13,11 +13,12 @@
 
 mod support;
 
-use rawshim::gpu::Output;
-use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::resident::level_of_bits;
+use render::grade::Output;
+use formats::still::Chroma;
+use rawshim::hdr_args::EncodeOptions;
+use colour::resident::level_of_bits;
 
-const REFERENCE_NITS: rawshim::light::Light<rawshim::light::SceneNits> =
+const REFERENCE_NITS: units::light::Light<units::light::SceneNits> =
     support::GRADE.reference_white_nits;
 
 fn saturation(rgb: [f64; 3]) -> f64 {
@@ -47,8 +48,8 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
     // The graded frame's own nits, in plain `f64` from here down: this is a viewer's tone map
     // rather than a stage, so what it wants is the numbers.
     let nits = |code: u16| {
-        let signal = rawshim::light::Light::measured(f64::from(code) / f64::from(u16::MAX));
-        rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(signal).raw()
+        let signal = units::light::Light::measured(f64::from(code) / f64::from(u16::MAX));
+        colour::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
     };
     let reference = REFERENCE_NITS.raw();
     let peak = graded
@@ -56,7 +57,7 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
         .map(|c| nits(*c))
         .fold(0.0f64, f64::max)
         .max(reference);
-    let to_srgb = rawshim::hdr_fit::rec2020_to_srgb();
+    let to_srgb = colour::space::rec2020_to_srgb();
     let transfer = |v: f64| match v <= 0.0031308 {
         true => v * 12.92,
         false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
@@ -90,7 +91,7 @@ fn main() {
     let opened = support::Open::shipped(&path, 0).run().expect("a decode");
     let frame = &opened.frame;
     let samples = frame.samples16().expect("16-bit");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
+    let gpu = gpu::device().expect("a Vulkan adapter");
     let levels = opened.measured.levels.anchored();
     let white = levels.white.raw();
     println!(
@@ -190,8 +191,8 @@ fn main() {
         let scene = [0, 1, 2].map(|c| f64::from(level_of_bits(samples[p * 3 + c])) / white);
         let nits = [0, 1, 2].map(|c| {
             let signal =
-                rawshim::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));
-            rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(signal).raw()
+                units::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));
+            colour::tone::pq_inv::<units::light::DisplayNits>(signal).raw()
         });
         println!(
             "{x:>4},{y:<4} {:>8.3} {:>8.3} {:>8.3} {:>6.3}   {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>6.3}",
@@ -222,11 +223,11 @@ fn main() {
             .iter()
             .map(|s| [s[0] as f32, s[1] as f32, s[2] as f32, 0.0])
             .collect();
-        let outs = pollster::block_on(rawshim::hdr_fit::evaluated(
+        let outs = pollster::block_on(fit::hdr::evaluated(
             gpu,
             colour,
             &samples,
-            rawshim::hdr_fit::Stage::Tone,
+            fit::hdr::Stage::Tone,
         ))
         .expect("the device evaluates the model");
         for ((over, scene), out) in overs.iter().zip(&scenes).zip(outs) {

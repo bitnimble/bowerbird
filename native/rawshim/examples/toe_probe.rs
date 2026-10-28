@@ -20,7 +20,7 @@
 
 mod support;
 
-/// The grid both sides are averaged onto, as `hdr_fit::FIT_LONG_EDGE` has it.
+/// The grid both sides are averaged onto, as `fit::hdr::FIT_LONG_EDGE` has it.
 const GRID: usize = 808;
 
 /// How many bins of the toe are reported and drawn.
@@ -28,8 +28,8 @@ const TOE: usize = 16;
 
 fn grey(path: &str, values: &[u8], width: usize, height: usize) {
     let rgb: Vec<u8> = values.iter().flat_map(|v| [*v, *v, *v]).collect();
-    let bytes = rawshim::jpeg::encode(
-        rawshim::rgb::RgbRef {
+    let bytes = formats::jpeg::encode(
+        units::rgb::RgbRef {
             width,
             height,
             data: &rgb,
@@ -57,7 +57,7 @@ fn main() {
 
     // Ours, box averaged to the grid, in multiples of diffuse white - the domain the curve bins.
     //
-    // Averaged from the 16-bit samples rather than through `image::resize`, which takes bytes: the
+    // Averaged from the 16-bit samples rather than through `formats::resize::resize`, which takes bytes: the
     // whole question is about levels under a hundredth of white, and an 8-bit intermediate has two
     // codes to say that in.
     let (wide, tall) = (
@@ -81,7 +81,7 @@ fn main() {
             let mut seen = 0usize;
             for row in y0..y1.max(y0 + 1) {
                 for col in x0..x1.max(x0 + 1) {
-                    total += f64::from(rawshim::resident::level_of_bits(
+                    total += f64::from(colour::resident::level_of_bits(
                         samples[(row * frame.width + col) * 3 + 1],
                     ));
                     seen += 1;
@@ -91,7 +91,7 @@ fn main() {
         }
     }
     let preview = rawshim::hdr::match_preview(&path).expect("an embedded preview");
-    let theirs = rawshim::image::resize(preview.as_ref(), wide, tall);
+    let theirs = formats::resize::resize(preview.as_ref(), wide, tall);
 
     // The green channel, which is what the shared curve is read at when a toe is reported.
     let mut sum = vec![0.0f64; TOE];

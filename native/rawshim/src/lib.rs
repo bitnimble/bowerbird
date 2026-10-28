@@ -31,20 +31,17 @@
 // Together they hold one invariant: the only things marked are those directly
 // performing an unsafe operation. A caller cannot be marked to cover a callee, and
 // a marker cannot outlive what it was for. `grep -rn "expect(unsafe_code)"
-// native/rawshim/src` is the audit.
+// native/*/src` is the audit.
 //
 // A marker counts one operation, not one block, so it measures the C surface rather
 // than how much code sits inside a brace - and a `Drop` of two lines carries as much
 // weight as a body of sixty. The number that has to keep falling is the calls
-// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/rawshim/src`.
+// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/*/src`. The other
+// crates hold the same three lints.
 //
-// Every C handle is owned by a Rust value whose `Drop` frees it - `avif::Image`,
-// `avif::Encoder`, `avif_gain_write::GainMap`, `jxl_write::Runner` - so the marked
-// calls are the one that creates and the one that frees, and no early return can leak
-// in between.
-//
-// What is left is the irreducible part: reading the one command buffer at an entry
-// point, and calling libavif and libjxl, which are C. Our own memory is
+// The C handles are `formats`', each owned by a Rust value whose `Drop` frees it. What is
+// left here is the irreducible part: reading the one command buffer at an entry
+// point. Our own memory is
 // marked nowhere - a `Frame` is an owned Rust value with a real lifetime, and the
 // handle API that needs raw pointers for it sits behind a lint fence, for tests.
 #![deny(unsafe_code)]
@@ -58,149 +55,31 @@ use std::os::raw::c_char;
 #[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
-mod acr3;
-mod align;
-/// The headroom behind Apple's own gain map, which the two maker note tags state between them.
-pub mod apple_gain;
-/// A composition's geometry, and the tiles across it that each take one frame.
-pub mod assembly;
-/// A set of photographs into an assembly: the whole of §3, up to the field its seams are solved over.
-pub mod assembly_analysis;
-/// What each piece's frame is multiplied by to meet the light across its seams.
-pub mod assembly_balance;
-/// §5.2's two bands, mixed in log2 light: the lowpass at `W(x)`, the detail at two render pixels.
-pub mod assembly_blend;
 /// The jobs an assembly asks for that render nothing: its analysis, and its seams.
 #[cfg(feature = "renditions")]
 pub mod assembly_job;
-/// Which frame each cell takes under the reader's picks.
-pub mod assembly_labelling;
-/// Each frame's light and colour over every cell a seam is solved on.
-pub mod assembly_levels;
-/// What the analysis measures over: every source of a recipe, prepared and on one canvas.
-pub mod assembly_planes;
-/// The crop-wide lowpass a render's two-band mix reads.
-pub mod assembly_render;
-/// The field a seam is solved over, and the min cut that solves it.
-pub mod assembly_seam;
-/// Where the frames a reader picked meet, solved for those picks.
-pub mod assembly_seams;
-/// A labelling's pieces as one subdivision whose neighbours share their vertices.
-pub mod assembly_tiles;
-/// What the analysis leaves on disk for a seam solve.
-pub mod assembly_volume;
-/// §5.2's weight field: one signed distance a source, one `W(x)` for all of them.
-pub mod assembly_weight;
-#[cfg(feature = "renditions")]
-pub mod avif;
-/// Writing a gain map beside a picture, which only an export asks for.
-#[cfg(feature = "renditions")]
-pub mod avif_gain_write;
-/// The stages between the demosaic and the grade, moving onto the GPU one at a time.
-pub mod base;
-pub mod burst;
-#[cfg(test)]
-mod burst_scene;
-/// Which colour each photosite carries, as a period rather than as a 2x2.
-pub mod cfa;
-/// The monotonic clock the timed paths read, which `wasm32` has none of.
-pub mod clock;
-/// A set of photographs into a recipe: what overlaps what, and where each one points.
-pub mod composite_align;
-/// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
-/// - which is the one thing a correlation search cannot say.
-pub mod composite_features;
 /// What a job asks of a composite: align a set of photographs, or render the recipe that came out.
 ///
 /// The server's half, like `job` it hands its work to: the browser opens one photograph and has
 /// no rendition to build, so a composite is not something it can be asked for.
 #[cfg(feature = "renditions")]
 pub mod composite_job;
-/// What two frames of a composite have in common: how far apart they sit, and where their content
-/// corresponds once that is known.
-pub mod composite_pairs;
-/// A world, and what a camera pointed at it would have recorded: the synthetic views a composite's
-/// alignment is exercised against, and the library the end-to-end suite composes one out of.
-pub mod composite_scene;
-/// Where each frame of a composite points, and how long the lens was, from what the pairs found.
-pub mod composite_solve;
-/// One rectangle of a composite's canvas, gathered source by source and blended.
-pub mod composite_tile;
-/// What a composition is: the sources a composite is made of, where each one points, and the
-/// surface they are projected onto. A panorama is one recipe over it; an assembly is another.
-pub mod composition;
-/// The sensor's samples into the mosaic, with the samples crossing to the GPU rather than it.
-pub mod condition;
 #[cfg(feature = "renditions")]
 pub mod debug;
-/// Which decoder a photograph gets, which is the one place the two front ends differ.
-pub mod decode;
-pub mod decode_rawler;
-/// The photographs that arrive already rendered: PNG, JPEG, HEIC and AVIF.
-pub mod decode_rendered;
-pub mod demosaic;
-pub mod dereflect;
-mod dng_rendering;
-/// Sensor particles found on the mosaic, and their shadows divided back out of it.
-pub mod dust;
-/// The search half of that, dispatched on the device the mosaic is already on.
-pub mod dust_find;
+#[cfg(all(test, feature = "renditions"))]
+mod demosaic_tests;
+#[cfg(test)]
+mod grade_tests;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
-pub mod exif;
 #[cfg(feature = "renditions")]
 pub mod ffi;
-pub mod fit;
-mod fit_curve;
-mod fit_lattice;
-mod fit_moments;
-mod fit_objective;
-mod fit_pairs;
-pub mod fit_score;
-pub mod fit_source;
-mod fit_span;
-mod fit_wide;
-pub mod frame;
-/// The denoise, on the mosaic, before anything has averaged a neighbour into it.
-pub mod galosh;
-pub mod gpu;
 pub mod hdr;
 pub mod hdr_args;
-pub mod hdr_fit;
-pub mod header;
-/// A HEIC as the viewer's stage decodes and draws it.
-pub mod heif_view;
-/// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
-pub mod hevc;
-pub mod highlight;
-pub mod image;
 pub mod job;
-pub mod jpeg;
-/// The gain map a JPEG carries as its second MPF image, in either spelling of the terms.
-pub mod jpeg_gain;
-/// The same, in the spelling a JPEG carries it.
 #[cfg(feature = "renditions")]
-pub mod jpeg_gain_write;
-/// JPEG XL, the same.
-#[cfg(feature = "renditions")]
-pub mod jxl_write;
-pub mod lattice;
-pub mod lens;
-pub mod light;
-/// A finished picture's code values into the frame the pipeline reads. The rendered formats'
-/// answer to the conditioning and the demosaic, which they have no mosaic for.
-pub mod linearise;
-/// Demosaicing by luma-chroma demultiplexing, for the patterns RCD cannot pair into 2x2 sites.
-pub mod lslcd;
-pub mod merge;
+pub mod lens_geometry;
 pub mod open;
-pub mod open_stage;
-/// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
-pub mod orientation;
-pub mod parallel;
-/// Where a patch of one frame lies in another, or elsewhere in its own.
-pub mod patch_search;
-pub mod photo_analysis;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are
@@ -208,211 +87,20 @@ pub mod photo_analysis;
 #[cfg(feature = "renditions")]
 pub mod picture;
 pub mod pipelines;
-pub mod planes;
-/// The other denoise, in the same place: a learned network a reader can choose instead.
-pub mod pmrid;
-/// PNG, which an export can ask for and nothing else writes.
-#[cfg(feature = "renditions")]
-pub mod png_write;
-#[cfg(feature = "renditions")]
-pub mod pq_rematch;
-pub mod print;
-pub mod printer_gamut;
-/// How far the work somebody is waiting on has got, read from outside the call doing it.
-pub mod progress;
-pub mod px;
-pub mod raw_cache;
-pub mod repair;
-pub mod repair_solve;
-pub mod resident;
-pub mod retouched_frame;
-pub mod rgb;
 pub mod scrub;
-pub mod sdr_match;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
 #[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
 pub mod snapshot;
-#[cfg(feature = "renditions")]
-pub mod stacks;
-pub mod tca;
-pub mod tca_device;
-/// TIFF, the same.
-#[cfg(feature = "renditions")]
-pub mod tiff_write;
 pub mod tile;
 pub mod tile_grid;
-pub mod tone;
-/// What a delivered picture's code values mean: somebody else's transfer, in somebody else's
-/// primaries, undone into the light the pipeline grades.
-pub mod transfer;
 /// The viewer's stage drawn into an Android TV's window, which the shell calls.
 #[cfg(all(feature = "renditions", target_os = "android"))]
 mod tv_stage;
-pub mod upscale;
-pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
-/// What a uniform block is, according to the shader that reads it.
-#[cfg(test)]
-mod wgsl_layout;
-pub mod wgsl_overrides;
-pub mod white_balance;
 
-/// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
-/// no C at all and so has no bindings to declare.
-#[cfg(feature = "renditions")]
-mod raw {
-    #![allow(
-        non_upper_case_globals,
-        non_camel_case_types,
-        non_snake_case,
-        dead_code
-    )]
-    #![expect(unsafe_code)]
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
-
-/// A line about something the pipeline declined to do, where the reader will actually see it.
-///
-/// **`eprintln!` is dropped on `wasm32-unknown-unknown`**, whose std has no stderr behind it - so
-/// the announcements that exist to stop a fall-through being silent were silent in the one host
-/// that has the most to fall through to. The console is where a page's are.
-///
-/// Held for [`bb_take_log`] once the server has asked for them, so they reach its log; stderr
-/// until then, which is where a test or an example reads them.
-pub(crate) fn warn(message: &str) {
-    #[cfg(target_arch = "wasm32")]
-    console::warn(message);
-    #[cfg(not(target_arch = "wasm32"))]
-    log::keep(log::Level::Warn, message);
-}
-
-/// A line worth knowing that is not a problem, on the same terms as [`warn`].
-pub(crate) fn info(message: &str) {
-    #[cfg(target_arch = "wasm32")]
-    console::info(message);
-    #[cfg(not(target_arch = "wasm32"))]
-    log::keep(log::Level::Info, message);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-mod log {
-    use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    const LINES_HELD: usize = 1000;
-
-    static HELD: Held = Held::new();
-
-    /// Held as the line's first character, which `rawshim.ts` reads back off.
-    #[derive(Clone, Copy)]
-    pub(crate) enum Level {
-        Info,
-        Warn,
-    }
-
-    pub(crate) fn keep(level: Level, message: &str) {
-        HELD.keep(level, message);
-    }
-
-    pub(crate) fn take(out: &mut [u8]) -> usize {
-        HELD.take(out)
-    }
-
-    struct Held {
-        claimed: AtomicBool,
-        lines: Mutex<Vec<String>>,
-    }
-
-    impl Held {
-        const fn new() -> Self {
-            Self {
-                claimed: AtomicBool::new(false),
-                lines: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn keep(&self, level: Level, message: &str) {
-            if !self.claimed.load(Ordering::Relaxed) {
-                eprintln!("{message}");
-                return;
-            }
-            let Ok(mut lines) = self.lines.lock() else {
-                return;
-            };
-            if lines.len() < LINES_HELD {
-                let marker = match level {
-                    Level::Info => 'I',
-                    Level::Warn => 'W',
-                };
-                // One line each: the reader splits on newlines and reads each one's marker.
-                lines.push(format!("{marker}{}", message.replace('\n', " ")));
-            }
-        }
-
-        /// Moves as many whole lines as fit into `out`, newline-separated, and returns the bytes
-        /// written; one line longer than `out` is cut to fit.
-        fn take(&self, out: &mut [u8]) -> usize {
-            self.claimed.store(true, Ordering::Relaxed);
-            if out.is_empty() {
-                return 0;
-            }
-            let Ok(mut lines) = self.lines.lock() else {
-                return 0;
-            };
-            let mut written = 0;
-            let mut taken = 0;
-            for line in lines.iter() {
-                let separator = usize::from(written > 0);
-                if separator + line.len() > out.len() - written {
-                    if taken == 0 {
-                        let cut = (0..=out.len())
-                            .rev()
-                            .find(|&at| line.is_char_boundary(at))
-                            .unwrap_or(0);
-                        out[..cut].copy_from_slice(&line.as_bytes()[..cut]);
-                        written = cut;
-                        taken = 1;
-                    }
-                    break;
-                }
-                if separator == 1 {
-                    out[written] = b'\n';
-                }
-                out[written + separator..written + separator + line.len()]
-                    .copy_from_slice(line.as_bytes());
-                written += separator + line.len();
-                taken += 1;
-            }
-            lines.drain(..taken);
-            written
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::{Held, Level};
-
-        #[test]
-        fn held_lines_come_out_whole_and_in_order() {
-            let held = Held::new();
-            held.keep(Level::Warn, "before the claim goes to stderr");
-            let mut out = [0u8; 14];
-            assert_eq!(held.take(&mut out), 0);
-            held.keep(Level::Info, "first");
-            held.keep(Level::Warn, "second");
-            held.keep(Level::Warn, "a line longer\nthan the buffer");
-            let written = held.take(&mut out);
-            assert_eq!(&out[..written], b"Ifirst\nWsecond");
-            let written = held.take(&mut out);
-            assert_eq!(&out[..written], b"Wa line longer");
-            assert_eq!(held.take(&mut out), 0);
-        }
-    }
-}
-
-/// Hands over the library's held log lines (see [`warn`]), and from the first call on holds
+/// Hands over the library's held log lines (see [`trace::warn`]), and from the first call on holds
 /// them rather than printing them.
 ///
 /// # Safety
@@ -425,36 +113,25 @@ pub unsafe extern "C" fn bb_take_log(out: *mut u8, cap: usize) -> usize {
         return 0;
     }
     let out = unsafe { std::slice::from_raw_parts_mut(out, cap) };
-    log::take(out)
+    trace::take_log(out)
 }
 
 /// Whether every stage lap goes to the held log as an info line, for a server logging at debug.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_log_laps(on: i32) {
-    clock::log_laps(on != 0);
+    trace::clock::log_laps(on != 0);
 }
 
-#[cfg(target_arch = "wasm32")]
-mod console {
-    #[wasm_bindgen::prelude::wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_namespace = console)]
-        pub fn warn(message: &str);
-        #[wasm_bindgen(js_namespace = console)]
-        pub fn info(message: &str);
-    }
-}
-
-/// A panic's message, for the same reason: without one the page is told `unreachable` and nothing
-/// else - not the assertion, not the file, not the line, only the trap the panic ends in.
+/// A panic's message, for [`trace::warn`]'s reason: without one the page is told `unreachable` and
+/// nothing else - not the assertion, not the file, not the line, only the trap the panic ends in.
 ///
 /// At module init, so it covers every entry point rather than the one that remembered to ask.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn announce_panics() {
     std::panic::set_hook(Box::new(|panicked| {
-        console::warn(&format!("rawshim: {panicked}"))
+        trace::warn(&format!("rawshim: {panicked}"))
     }));
 }
 
@@ -503,7 +180,7 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnMut() -> T) -> T {
                 .copied()
                 .or_else(|| panicked.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("no message");
-            warn(&format!(
+            trace::warn(&format!(
                 "rawshim: {what} panicked ({why}); reporting failure rather than aborting the process"
             ));
             fallback
@@ -526,7 +203,7 @@ fn rerun_on_loss<T>(
         let Some(wait) = (losses() != before).then(|| waits.next()).flatten() else {
             return outcome;
         };
-        warn(&format!(
+        trace::warn(&format!(
             "rawshim: {what} lost the GPU; running it again in {}s",
             wait.as_secs()
         ));
@@ -542,7 +219,7 @@ fn rerun_on_loss<T>(
 pub(crate) fn release_freed_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
-        if pmrid::arenas_held() {
+        if denoise::pmrid::arenas_held() {
             return;
         }
         unsafe extern "C" {
@@ -568,25 +245,25 @@ pub(crate) fn release_freed_memory() {
 ///
 /// Every caller on this side wants a `Frame`; only the FFI boundary wants a pointer, and it is
 /// the one place that builds one.
-pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<frame::Frame> {
+pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<decode::frame::Frame> {
     decode_frame_via(
         DecodeSource::Path(path),
         at_least_long_edge,
-        galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Detail::at(0.0, 0.0),
     )
 }
 
 /// The same decode, with the mosaic denoised before it is demosaiced.
 ///
-/// `fit` is whose statistics it filters with: [`galosh::Fit::Given`] where the caller has the
+/// `fit` is whose statistics it filters with: [`denoise::galosh::Fit::Given`] where the caller has the
 /// photograph's already, which is a quarter of a second of whole-frame reductions it does not pay
-/// again (`crate::photo_analysis`).
+/// again (`fit::photo_analysis`).
 pub fn decode_frame_denoised(
     path: &str,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
-    fit: galosh::Fit,
-) -> Option<frame::Frame> {
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Path(path),
         at_least_long_edge,
@@ -597,17 +274,17 @@ pub fn decode_frame_denoised(
 }
 
 /// `fit` is what the decode does about the noise, and only an in-memory decode is ever asked:
-/// [`galosh::Fit::Only`] measures the frame without filtering it, which is the editor's open, and
+/// [`denoise::galosh::Fit::Only`] measures the frame without filtering it, which is the editor's open, and
 /// the measurement rides back on `frame.noise` for the loupe tiles that follow.
 pub fn decode_frame_bytes(
     bytes: &[u8],
     at_least_long_edge: u32,
-    fit: galosh::Fit,
-) -> Option<frame::Frame> {
+    fit: denoise::galosh::Fit,
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Bytes(bytes),
         at_least_long_edge,
-        galosh::Detail::at(0.0, 0.0),
+        denoise::galosh::Detail::at(0.0, 0.0),
         None,
         fit,
     )
@@ -621,14 +298,14 @@ enum DecodeSource<'a> {
 fn decode_frame_via(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
-) -> Option<frame::Frame> {
+    detail: denoise::galosh::Detail,
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(
         source,
         at_least_long_edge,
         detail,
         None,
-        galosh::Fit::Measure,
+        denoise::galosh::Fit::Measure,
     )
 }
 
@@ -637,14 +314,14 @@ fn decode_frame_via(
 fn decode_frame_cropped(
     source: DecodeSource<'_>,
     at_least_long_edge: u32,
-    detail: galosh::Detail,
-    crop: Option<(crate::view::View, usize)>,
-    fit: galosh::Fit,
-) -> Option<frame::Frame> {
+    detail: denoise::galosh::Detail,
+    crop: Option<(decode::view::View, usize)>,
+    fit: denoise::galosh::Fit,
+) -> Option<decode::frame::Frame> {
     // Nothing taken off the glass here. The callers below are the ones that are not the pipeline -
     // the debug renders, the fixture pins, the examples - and a spot removed from a fixture is a
     // fixture that no longer pins what it was written to pin.
-    let glass = dust::Wanted::Off;
+    let glass = denoise::dust::Wanted::Off;
     let scene = match (&source, crop) {
         // The view carries its own scale, so `at_least_long_edge` says nothing here: whether a
         // window is halved is the *photograph's* question and the caller has already answered it.
@@ -654,7 +331,7 @@ fn decode_frame_cropped(
             detail,
             fit,
             halo,
-            dust::Known::Off,
+            denoise::dust::Known::Off,
         )),
         (DecodeSource::Path(path), None) => {
             decode::frame_from_path(path, detail, at_least_long_edge, false, fit, glass)
@@ -695,70 +372,16 @@ fn decode_frame_cropped(
 /// and starts moving as the reader pans.
 ///
 /// `halo` is how much context the denoise is given either side, and it is the caller's because the
-/// two callers want different answers: `RENDITION_TILE_HALO` where the tile has to match what a
+/// two callers want different answers: `decode::RENDITION_TILE_HALO` where the tile has to match what a
 /// render would produce, `EDITOR_TILE_HALO` where it is drawn and then replaced.
 pub fn decode_tile(
     path: &str,
-    view: crate::view::View,
-    detail: galosh::Detail,
-    fit: galosh::Fit,
+    view: decode::view::View,
+    detail: denoise::galosh::Detail,
+    fit: denoise::galosh::Fit,
     halo: usize,
-) -> Option<frame::Frame> {
+) -> Option<decode::frame::Frame> {
     decode_frame_cropped(DecodeSource::Path(path), 0, detail, Some((view, halo)), fit)
-}
-
-/// A rectangle of the mosaic, in the raw image's own pixels.
-#[derive(Clone, Copy)]
-pub struct Tile {
-    pub left: usize,
-    pub top: usize,
-    pub width: usize,
-    pub height: usize,
-}
-
-impl Tile {
-    /// The window grown by `halo` on every side, which is what a tile needs.
-    ///
-    /// The denoise is local with a bounded reach, so a tile denoised on its own disagrees with its
-    /// neighbour along the seam unless both were computed with the context that reaches across
-    /// it. The halo is trimmed off by the demosaic's own crop.
-    pub fn with_halo(self, halo: usize) -> Tile {
-        Tile {
-            left: self.left.saturating_sub(halo),
-            top: self.top.saturating_sub(halo),
-            width: self.width + halo * 2,
-            height: self.height + halo * 2,
-        }
-    }
-}
-
-/// How much context a tile is given either side, where what a seam costs is worth more than what
-/// it costs to avoid: at least the sharpen's reach (`the_sharpen_reads_within_the_tile_halo`).
-/// GALOSH reads farther and raises it to its own ([`galosh::reach`]).
-///
-/// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
-/// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
-/// the export is a magnifier that lies, which is worse than a slower one.
-pub const RENDITION_TILE_HALO: usize = 96;
-
-/// The same, for a tile the editor draws and then replaces.
-pub const EDITOR_TILE_HALO: usize = 32;
-
-/// Set by the seam harnesses to cut one frame at several halos from one process, which is the only
-/// way to put the results beside each other. `usize::MAX` leaves the caller's own choice alone.
-static TILE_HALO_OVERRIDE: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-
-pub fn set_tile_halo(halo: usize) {
-    TILE_HALO_OVERRIDE.store(halo, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The halo to use, which is the caller's unless a harness has taken the choice away.
-pub fn tile_halo(asked: usize) -> usize {
-    match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        usize::MAX => asked,
-        set => set,
-    }
 }
 
 /// The camera's embedded preview as an owned frame, fitted to `long_edge`.
@@ -772,18 +395,18 @@ pub fn tile_halo(asked: usize) -> usize {
 /// beside a small one, taking the large one reads 4-14MB to make an 800px tile that looks the same.
 /// A caller that wants the body's own rendering rather than a cheap source of pixels wants
 /// `decode_embedded_rgb` with `Preview::Largest`.
-pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Frame> {
+pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<decode::frame::Frame> {
     let image = guard("decode_embedded_frame", None, || {
-        decode_rawler::upright_preview_rgb(
+        decode::raw::upright_preview_rgb(
             raw_path,
             long_edge as usize,
-            decode_rawler::Preview::SmallestCovering(long_edge as usize),
+            decode::raw::Preview::SmallestCovering(long_edge as usize),
         )
     })?;
-    Some(frame::Frame::new(
+    Some(decode::frame::Frame::new(
         image.width,
         image.height,
-        frame::Pixels::Eight(image.data),
+        decode::frame::Pixels::Eight(image.data),
     ))
 }
 
@@ -791,16 +414,16 @@ pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Fr
 /// halves run off this decode in a single pass over it.
 #[cfg(feature = "renditions")]
 pub fn fit_hdr_for(
-    frame: &resident::Resident,
+    frame: &colour::resident::Resident,
     raw_path: &str,
     quantile: f64,
-    as_shot: Option<white_balance::Illuminant>,
-) -> Option<hdr_fit::HdrMatch> {
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<fit::hdr::HdrMatch> {
     fit_hdr_measured(
         frame,
         raw_path,
         quantile,
-        hdr_fit::CameraMatch::LensAndColour,
+        fit::hdr::CameraMatch::LensAndColour,
         as_shot,
     )
     .map(|(matched, _)| matched)
@@ -810,15 +433,15 @@ pub fn fit_hdr_for(
 /// otherwise read off the frame a second time.
 #[cfg(feature = "renditions")]
 pub fn fit_hdr_measured(
-    frame: &resident::Resident,
+    frame: &colour::resident::Resident,
     raw_path: &str,
     quantile: f64,
-    camera_match: hdr_fit::CameraMatch,
-    as_shot: Option<white_balance::Illuminant>,
-) -> Option<(hdr_fit::HdrMatch, tone::Levels)> {
+    camera_match: fit::hdr::CameraMatch,
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<(fit::hdr::HdrMatch, colour::tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
-        let geometry = ffi::geometry_for(raw_path)?;
+        let geometry = lens_geometry::geometry_for(raw_path)?;
         pollster::block_on(hdr::fit_all(
             gpu,
             raw_path,
@@ -840,7 +463,7 @@ pub fn fit_hdr_measured(
 /// after `render_base`'s sharpen, which is calibrated for the size it ran at (10.1).
 #[cfg(feature = "renditions")]
 pub fn save_avif_frame(
-    source: rgb::RgbRef<'_>,
+    source: units::rgb::RgbRef<'_>,
     quantizer: i32,
     speed: i32,
     full_chroma: bool,
@@ -848,7 +471,7 @@ pub fn save_avif_frame(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    avif::encode_rendition_rotated(
+    formats::avif::encode_rendition_rotated(
         source.data.into(),
         source.width,
         source.height,
@@ -877,14 +500,14 @@ pub fn save_avif_frame(
 ///
 /// A JPEG that arrived as itself is its own preview: nothing was lifted out of it, so what a
 /// caller asking for "the camera's rendering" gets is the file, byte for byte. Every other
-/// rendered format has none, and the caller renders (`decode_rendered`).
+/// rendered format has none, and the caller renders (`decode::rendered`).
 #[cfg(feature = "renditions")]
 fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    if decode_rendered::is_rendered(path) {
+    if formats::rendered::is_rendered(path) {
         let bytes = std::fs::read(path).ok()?;
         return bytes.starts_with(&[0xFF, 0xD8]).then(|| use_bytes(&bytes));
     }
-    decode_rawler::upright_preview_jpeg(path, decode_rawler::Preview::Largest)
+    decode::raw::upright_preview_jpeg(path, decode::raw::Preview::Largest)
         .map(|jpeg| use_bytes(&jpeg))
 }
 
@@ -893,8 +516,8 @@ fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Opti
 /// picture; Some(None) when it has one this cannot turn.
 #[cfg(feature = "renditions")]
 fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
-    if !decode_rendered::is_rendered(path) {
-        return with_embedded_jpeg(path, |jpeg| jpeg::with_added_rotation(jpeg, rotate));
+    if !formats::rendered::is_rendered(path) {
+        return with_embedded_jpeg(path, |jpeg| formats::jpeg::with_added_rotation(jpeg, rotate));
     }
     let bytes = std::fs::read(path).ok()?;
     if heif::is_heif(&bytes) {
@@ -902,7 +525,7 @@ fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
     }
     bytes
         .starts_with(&[0xFF, 0xD8])
-        .then(|| jpeg::with_added_rotation(&bytes, rotate))
+        .then(|| formats::jpeg::with_added_rotation(&bytes, rotate))
 }
 
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
@@ -911,8 +534,8 @@ fn turned_camera_picture(path: &str, rotate: u16) -> Option<Option<Vec<u8>>> {
 /// The body's own full-size rendering: every caller here is measuring against what the camera
 /// produced rather than looking for cheap pixels, which is the distinction `Preview` draws.
 #[cfg(feature = "renditions")]
-pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
-    decode_rawler::upright_preview_rgb(path, long_edge, decode_rawler::Preview::Largest)
+pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<units::rgb::Rgb> {
+    decode::raw::upright_preview_rgb(path, long_edge, decode::raw::Preview::Largest)
 }
 
 /// Reads what the catalogue needs from a RAW without decoding a pixel.
@@ -925,7 +548,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
 #[expect(unsafe_code)]
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
+pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut formats::header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
         return -1;
     }
@@ -933,7 +556,7 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
         return -1;
     };
     // Runs on every file of a scan, and parses maker notes off untrusted bytes.
-    match guard("bb_read_header", None, || header::read_path(path)) {
+    match guard("bb_read_header", None, || formats::header::read_path(path)) {
         Some(header) => {
             unsafe {
                 *out = header;
@@ -971,13 +594,13 @@ pub unsafe extern "C" fn bb_camera_names(
         return -1;
     };
     let Some((make, model)) = guard("bb_camera_names", None, || {
-        Some(header::camera_names(make, model))
+        Some(formats::header::camera_names(make, model))
     }) else {
         return -1;
     };
     unsafe {
-        header::write_name(std::slice::from_raw_parts_mut(out_make, 64), &make);
-        header::write_name(std::slice::from_raw_parts_mut(out_model, 64), &model);
+        formats::header::write_name(std::slice::from_raw_parts_mut(out_make, 64), &make);
+        formats::header::write_name(std::slice::from_raw_parts_mut(out_model, 64), &model);
     }
     0
 }
@@ -992,7 +615,7 @@ pub unsafe extern "C" fn bb_camera_names(
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_job_progress(progress_id: u32) -> u64 {
-    progress::packed(progress_id)
+    trace::progress::packed(progress_id)
 }
 
 /// Tells the job running under `progress_id` to stop at the next boundary it counts itself at.
@@ -1001,7 +624,7 @@ pub extern "C" fn bb_job_progress(progress_id: u32) -> u64 {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_cancel_job(progress_id: u32) {
-    progress::cancel(progress_id);
+    trace::progress::cancel(progress_id);
 }
 
 /// Keeps what a render allocates for the next render to reuse, until as many
@@ -1011,7 +634,7 @@ pub extern "C" fn bb_cancel_job(progress_id: u32) {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_hold_render_memory() {
-    pmrid::hold_arenas();
+    denoise::pmrid::hold_arenas();
 }
 
 /// Ends one `bb_hold_render_memory`; the last frees everything kept.
@@ -1019,7 +642,7 @@ pub extern "C" fn bb_hold_render_memory() {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_release_render_memory() {
-    pmrid::release_arenas();
+    denoise::pmrid::release_arenas();
     release_freed_memory();
 }
 
@@ -1028,7 +651,7 @@ pub extern "C" fn bb_release_render_memory() {
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_header_size() -> usize {
-    std::mem::size_of::<header::BbHeader>()
+    std::mem::size_of::<formats::header::BbHeader>()
 }
 
 /// How many bytes a stacking descriptor occupies, so the caller can size its
@@ -1173,8 +796,8 @@ mod tests {
                         .as_ref()
                         .map_or(0, |pair| pair[0].len() + pair[1].len())
                     + 3;
-                let blob = photo_analysis::encode(&photo_analysis::PhotoAnalysis {
-                    from_raw: photo_analysis::FromRaw {
+                let blob = fit::photo_analysis::encode(&fit::photo_analysis::PhotoAnalysis {
+                    from_raw: fit::photo_analysis::FromRaw {
                         matched: Some(fitted),
                         ..Default::default()
                     },
@@ -1193,16 +816,16 @@ mod tests {
         // Warmed first, because the pipelines and the adapter are built once per process and a
         // loupe asks its second question with them already up.
         let seeing = |side: usize| {
-            view::View::whole(px::Size::exact(whole.width, whole.height))
-                .showing(px::Rect::exact(2000, 1400, side, side))
+            decode::view::View::whole(units::px::Size::exact(whole.width, whole.height))
+                .showing(units::px::Rect::exact(2000, 1400, side, side))
         };
-        let sliders = galosh::Detail::at(40.0, 40.0);
+        let sliders = denoise::galosh::Detail::at(40.0, 40.0);
         decode_tile(
             &path,
             seeing(400),
             sliders,
-            galosh::Fit::Measure,
-            RENDITION_TILE_HALO,
+            denoise::galosh::Fit::Measure,
+            decode::RENDITION_TILE_HALO,
         );
         for side in [400usize, 700] {
             let started = std::time::Instant::now();
@@ -1210,8 +833,8 @@ mod tests {
                 &path,
                 seeing(side),
                 sliders,
-                galosh::Fit::Measure,
-                RENDITION_TILE_HALO,
+                denoise::galosh::Fit::Measure,
+                decode::RENDITION_TILE_HALO,
             );
             let took = started.elapsed().as_millis();
             let frame = tile.expect("the tile decodes");

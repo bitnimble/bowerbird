@@ -29,7 +29,7 @@ pub enum Want {
     /// Solve `recipe`'s seams for each of `picks` in place of its own, over the volume at
     /// `volume_path`. Renders nothing.
     Seams {
-        recipe: Box<crate::assembly::Assembly>,
+        recipe: Box<composite::assembly::Assembly>,
         volume_path: String,
         picks: Vec<Vec<usize>>,
     },
@@ -43,7 +43,7 @@ pub enum Shape {
     #[default]
     Pan,
     /// Frames of one scene from one place at different exposures, each over the whole of the
-    /// others (`composite_align::Kind::Stack`).
+    /// others (`composite::align::Kind::Stack`).
     ExposureBracket,
     /// The same, focused at different distances, which a lens breathes across: the burst align frees
     /// each frame's scale for it.
@@ -62,22 +62,22 @@ pub enum Shape {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CompositeRecipe {
-    Panorama(crate::composition::Composition),
-    Assembly(Box<crate::assembly::Assembly>),
+    Panorama(composition::Composition),
+    Assembly(Box<composite::assembly::Assembly>),
     /// Merged on the mosaic (`merge`), each frame weighed by its noise in the reference's light.
-    ExposureBracket(crate::composition::Composition),
+    ExposureBracket(composition::Composition),
     /// Merged on the mosaic, each place taking the frame in focus there.
-    FocusBracket(crate::composition::Composition),
+    FocusBracket(composition::Composition),
     /// Merged on the mosaic from where the sensor moved each frame.
-    PixelShift(crate::composition::Composition),
+    PixelShift(composition::Composition),
     /// Merged on the mosaic from wherever each frame's hand put it.
-    Burst(crate::composition::Composition),
+    Burst(composition::Composition),
 }
 
 impl CompositeRecipe {
     /// The geometry every kind shares - the levels-and-colour half of [`base`] reads only this,
     /// whichever arm it was handed.
-    pub fn composition(&self) -> &crate::composition::Composition {
+    pub fn composition(&self) -> &composition::Composition {
         match self {
             CompositeRecipe::Panorama(spec)
             | CompositeRecipe::ExposureBracket(spec)
@@ -88,7 +88,7 @@ impl CompositeRecipe {
         }
     }
 
-    fn stack(&self) -> Option<crate::burst::Stack> {
+    fn stack(&self) -> Option<burst::Stack> {
         let shape = match self {
             CompositeRecipe::Panorama(_) | CompositeRecipe::Assembly(_) => return None,
             CompositeRecipe::ExposureBracket(_) => Shape::ExposureBracket,
@@ -103,10 +103,10 @@ impl CompositeRecipe {
 impl Shape {
     /// How a shape merged on the mosaic is taken and weighed, and which frame it is drawn as, or
     /// None for one that is not.
-    fn merged(self) -> Option<(crate::burst::Stack, crate::composite_align::Reference)> {
-        use crate::burst::{Stack, Taken};
-        use crate::composite_align::Reference;
-        use crate::merge::Weights;
+    fn merged(self) -> Option<(burst::Stack, composite::align::Reference)> {
+        use burst::merge::Weights;
+        use burst::{Stack, Taken};
+        use composite::align::Reference;
         let (taken, weights, reference) = match self {
             Shape::Pan => return None,
             Shape::ExposureBracket => (Taken::Placed, Weights::MOMENT, Reference::MiddleExposure),
@@ -124,7 +124,7 @@ pub struct CompositionSource {
     pub photo_id: String,
     pub raw_file_path: String,
     /// A copy of this camera's own preview to search instead of opening the RAW for one
-    /// (`composite_align::AlignSource::preview_path`). Never read by a render, which needs the pixels.
+    /// (`composite::align::AlignSource::preview_path`). Never read by a render, which needs the pixels.
     #[serde(default)]
     pub preview_path: Option<String>,
     #[serde(default)]
@@ -156,7 +156,7 @@ const STRIP_BUDGET_BYTES: f64 = 512.0 * 1024.0 * 1024.0;
 /// Bytes a strip holds per output pixel: the layer being gathered - three 16-bit samples and the
 /// weight beside them - and the blend's accumulator, its alpha and the strip it resolves into.
 ///
-/// **Not per source.** `composite_tile::Blending` adds each layer and gives it back, so what a tile
+/// **Not per source.** `composite::tile::Blending` adds each layer and gives it back, so what a tile
 /// costs is its own pixels however many photographs reach it. Multiplied by the source count, as
 /// it was while a blend was handed every layer at once, a twenty-six frame pan took 180 rows a
 /// strip where 910 fit - and every one of those strips decodes every source that reaches it.
@@ -165,7 +165,7 @@ const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 6.0;
 fn strip_bytes_per_pixel(recipe: &CompositeRecipe) -> f64 {
     STRIP_BYTES_PER_PIXEL
         + match recipe.stack() {
-            Some(_) => crate::merge::WORKING_BYTES_PER_PIXEL,
+            Some(_) => burst::merge::WORKING_BYTES_PER_PIXEL,
             None => 0.0,
         }
 }
@@ -186,7 +186,7 @@ fn tile_runs(
     wide: usize,
     deep: usize,
 ) -> Vec<(u64, u64, u64)> {
-    crate::resident::runs(width, left, top, wide, deep)
+    colour::resident::runs(width, left, top, wide, deep)
 }
 
 /// The shape one source covers on the canvas, as its width over its height.
@@ -194,7 +194,7 @@ fn tile_runs(
 /// The reference's, walked round its border rather than cornered: the sources of a pan are one
 /// body's frames at one focal length, so any of them stands for the set, and a projection bows the
 /// edges between the corners.
-fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
+fn source_shape(spec: &composition::Composition) -> Option<f64> {
     let source = spec.sources.get(spec.reference)?;
     let (across, down) = (source.size[0] as f64, source.size[1] as f64);
     let mut low = [f64::MAX; 2];
@@ -207,8 +207,8 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
             (0.0, along * down),
             (across, along * down),
         ] {
-            let ray = crate::composition::source_to_ray(source, x, y);
-            let Some(on) = crate::composition::ray_to_canvas(spec, ray) else {
+            let ray = composition::source_to_ray(source, x, y);
+            let Some(on) = composition::ray_to_canvas(spec, ray) else {
                 continue;
             };
             for (axis, value) in on.iter().enumerate() {
@@ -240,7 +240,7 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
 /// canvas is shorter than the shape asks for, which is every single-row pan. A pan of several rows
 /// is squarer and gets squarer tiles, which is the case a fixed axis would have got wrong.
 fn tile_of(
-    spec: &crate::composition::Composition,
+    spec: &composition::Composition,
     width: usize,
     height: usize,
     bytes_per_pixel: f64,
@@ -266,19 +266,19 @@ fn tile_of(
 /// these, so they have to outlive it in the caller's own frame.
 pub(crate) type Models = Vec<(Option<String>, Option<String>)>;
 
-pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<crate::header::BbHeader>>, Models) {
-    let headers: Vec<Option<crate::header::BbHeader>> = pano
+pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<formats::header::BbHeader>>, Models) {
+    let headers: Vec<Option<formats::header::BbHeader>> = pano
         .sources
         .iter()
         .map(
-            |source| match crate::decode_rendered::is_rendered(&source.raw_file_path) {
-                true => crate::header::read_rendered(&source.raw_file_path),
-                false => crate::header::read_path(&source.raw_file_path),
+            |source| match formats::rendered::is_rendered(&source.raw_file_path) {
+                true => formats::header::read_rendered(&source.raw_file_path),
+                false => formats::header::read_path(&source.raw_file_path),
             },
         )
         .collect();
     let named = |field: &[u8]| {
-        let text = crate::header::name(field);
+        let text = formats::header::name(field);
         (!text.is_empty()).then(|| text.to_string())
     };
     let models = headers
@@ -291,20 +291,20 @@ pub(crate) fn headers_of(pano: &CompositeJob) -> (Vec<Option<crate::header::BbHe
     (headers, models)
 }
 
-/// The sources of a search, as `composite_align` and `assembly_analysis` both want them.
+/// The sources of a search, as `composite::align` and `composite::assembly::analysis` both want them.
 pub(crate) fn sources_of<'a>(
     pano: &'a CompositeJob,
-    headers: &'a [Option<crate::header::BbHeader>],
+    headers: &'a [Option<formats::header::BbHeader>],
     models: &'a Models,
-) -> Result<Vec<crate::composite_align::AlignSource<'a>>, String> {
-    let sources: Vec<crate::composite_align::AlignSource<'a>> = pano
+) -> Result<Vec<composite::align::AlignSource<'a>>, String> {
+    let sources: Vec<composite::align::AlignSource<'a>> = pano
         .sources
         .iter()
         .zip(headers)
         .zip(models)
         .map(|((source, header), (camera, lens))| {
             let positive = |value: f32| (value > 0.0).then_some(value);
-            crate::composite_align::AlignSource {
+            composite::align::AlignSource {
                 photo_id: &source.photo_id,
                 path: &source.raw_file_path,
                 preview_path: source.preview_path.as_deref(),
@@ -331,20 +331,16 @@ pub(crate) fn sources_of<'a>(
 }
 
 /// A set of photographs searched for the recipe that composites them (`Want::Align`).
-pub fn align(
-    gpu: &'static crate::gpu::Gpu,
-    pano: &CompositeJob,
-    shape: Shape,
-) -> Result<String, String> {
+pub fn align(gpu: &'static gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Result<String, String> {
     let (headers, models) = headers_of(pano);
     let sources = sources_of(pano, &headers, &models)?;
 
     let aligned = match shape.merged() {
-        None => pollster::block_on(crate::composite_align::align(
+        None => pollster::block_on(composite::align::align(
             gpu,
             &sources,
-            crate::composite_solve::Leash::Free,
-            crate::composite_align::Kind::Pan,
+            composite::solve::Leash::Free,
+            composite::align::Kind::Pan,
         ))?,
         // Every frame of a stack points at the same place, so its focal is held for the assembly's
         // reason (take-best-parts §3.1), and the picture is the reference's own frame.
@@ -355,17 +351,17 @@ pub fn align(
             {
                 return Err("these frames are not one stack".into());
             }
-            let mut aligned = pollster::block_on(crate::composite_align::align(
+            let mut aligned = pollster::block_on(composite::align::align(
                 gpu,
                 &sources,
-                crate::composite_solve::Leash::Assumed,
-                crate::composite_align::Kind::Stack(reference),
+                composite::solve::Leash::Assumed,
+                composite::align::Kind::Stack(reference),
             ))?;
             if aligned.composition.sources.len() != sources.len() {
                 return Err("every frame of a stack must be placed".into());
             }
             let on = &aligned.composition.sources[aligned.composition.reference];
-            let direct = crate::composition::Composition::of_one(on.size, on.lens.clone());
+            let direct = composition::Composition::of_one(on.size, on.lens.clone());
             aligned.composition.canvas = direct.canvas;
             aligned.composition.centre = direct.centre;
             aligned.composition.radians_per_pixel = direct.radians_per_pixel;
@@ -411,17 +407,17 @@ pub fn align(
 /// samples and answers in a fraction of what one strip costs. Once for the job rather than once per
 /// strip.
 fn whole_levels(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
-    spec: &crate::composition::Composition,
-    files: &[crate::composite_tile::SourceFile<'_>],
-    from: crate::composite_tile::From,
-    stacked: Option<&crate::resident::Resident>,
-) -> Result<Option<crate::tone::Anchored>, String> {
+    spec: &composition::Composition,
+    files: &[composite::tile::SourceFile<'_>],
+    from: composite::tile::From,
+    stacked: Option<&colour::resident::Resident>,
+) -> Result<Option<colour::tone::Anchored>, String> {
     if files.len() != spec.sources.len() {
         return Err("the recipe and the files it is being rendered from disagree".into());
     }
-    if from == crate::composite_tile::From::Camera {
+    if from == composite::tile::From::Camera {
         return camera_levels(files).map(Some);
     }
     // **The canvas's own quantile, over the canvas's own samples.** Every alternative here is a
@@ -440,12 +436,12 @@ fn whole_levels(
         // that light onto the reference's scale - so its estimate of the shared white is its white
         // times its gain. Where the gains are right those estimates agree; what they disagree about
         // is content, and the mean over the set is the average the whole canvas has.
-        let scaled = |levels: crate::tone::Levels| crate::tone::Levels {
-            white: crate::light::Light::measured(levels.white.raw() * source.gain),
-            peak: crate::light::Light::measured(levels.peak.raw() * source.gain),
+        let scaled = |levels: colour::tone::Levels| colour::tone::Levels {
+            white: units::light::Light::measured(levels.white.raw() * source.gain),
+            peak: units::light::Light::measured(levels.peak.raw() * source.gain),
             floor: levels
                 .floor
-                .map(|f| crate::light::Light::measured(f.raw() * source.gain)),
+                .map(|f| units::light::Light::measured(f.raw() * source.gain)),
         };
         if let Some(levels) = file
             .analysis
@@ -457,19 +453,19 @@ fn whole_levels(
         }
 
         const MEASURED_LONG_EDGE: u32 = 1024;
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             file.path,
             job.detail(),
             MEASURED_LONG_EDGE,
             false,
-            crate::galosh::Fit::Measure,
-            crate::dust::Wanted::Off,
+            denoise::galosh::Fit::Measure,
+            denoise::dust::Wanted::Off,
         )
         .ok_or("a source could not be decoded to measure its levels")?;
         let resident = frame
             .on_device(gpu)
             .ok_or("a source could not be read onto the device")?;
-        let levels = pollster::block_on(crate::fit_source::levels(
+        let levels = pollster::block_on(fit::source::levels(
             gpu,
             &resident,
             job.grade.white_quantile,
@@ -477,7 +473,7 @@ fn whole_levels(
         .ok_or("a source's levels could not be measured")?;
         measured.push(scaled(levels));
     }
-    let anchor = crate::composite_tile::combined(&measured);
+    let anchor = composite::tile::combined(&measured);
     if std::env::var_os("PANO_TRACE").is_some() {
         let whites: Vec<String> = measured
             .iter()
@@ -515,14 +511,14 @@ fn whole_levels(
 /// brightest any source's container can hold, so an SDR set rolls off nothing and a gain-mapped
 /// source rolls off from its own headroom: what the files say rather than anything measured.
 fn camera_levels(
-    files: &[crate::composite_tile::SourceFile<'_>],
-) -> Result<crate::tone::Anchored, String> {
-    let white = crate::light::Light::measured(crate::transfer::FULL_SCALE);
+    files: &[composite::tile::SourceFile<'_>],
+) -> Result<colour::tone::Anchored, String> {
+    let white = units::light::Light::measured(colour::transfer::FULL_SCALE);
     let mut peak = white;
     for file in files {
-        peak = peak.max(crate::composite_tile::camera_peak(file.path)?);
+        peak = peak.max(composite::tile::camera_peak(file.path)?);
     }
-    Ok(crate::tone::Levels {
+    Ok(colour::tone::Levels {
         white,
         peak,
         // Unmeasured, like the two above: nothing walked a histogram for this canvas, so the low
@@ -561,7 +557,7 @@ thread_local! {
 /// canvas is gathered, so what is measured here is a quantile of the set as the bodies exposed it
 /// rather than of the set as it is blended - an approximation, and a close one for the gains an
 /// alignment produces, which sit within a stop of each other because the frames are of one scene.
-/// Carrying them would mean a gain per row of the stack, in `fit_source::levels`, which is where
+/// Carrying them would mean a gain per row of the stack, in `fit::source::levels`, which is where
 /// this would go if a set ever arrived metered far enough apart to see it.
 ///
 /// Stacked rather than laid out where each source falls on the canvas, because neither a quantile
@@ -571,15 +567,15 @@ thread_local! {
 /// With the illuminant the `reference` source was balanced for, which the canvas is graded against,
 /// and each source's noise fit over its whole mosaic.
 fn stacked_sources(
-    gpu: &'static crate::gpu::Gpu,
-    base: &'static crate::base::Base,
+    gpu: &'static gpu::Gpu,
+    base: &'static render::base::Base,
     job: &Job,
-    files: &[crate::composite_tile::SourceFile<'_>],
+    files: &[composite::tile::SourceFile<'_>],
     reference: usize,
 ) -> Option<(
-    crate::resident::Resident,
-    Option<crate::white_balance::Illuminant>,
-    Vec<Option<crate::galosh::NoiseFit>>,
+    colour::resident::Resident,
+    Option<colour::white_balance::Illuminant>,
+    Vec<Option<denoise::galosh::NoiseFit>>,
 )> {
     /// The long edge each source is reduced to before it joins the stack.
     const REDUCED_TO: usize = 1024;
@@ -590,23 +586,23 @@ fn stacked_sources(
 
     // Undenoised: reducing to `REDUCED_TO` averages away what a full-resolution denoise would take,
     // at a fraction of its cost per source.
-    let read = crate::galosh::Detail {
+    let read = denoise::galosh::Detail {
         luminance: Some(0.0),
         colour: Some(0.0),
         ..job.detail().without_upscaler()
     };
-    let mut parts: Vec<crate::resident::Resident> = Vec::with_capacity(files.len());
+    let mut parts: Vec<colour::resident::Resident> = Vec::with_capacity(files.len());
     let mut as_shot = None;
     let mut fits = Vec::with_capacity(files.len());
     for (at, file) in files.iter().enumerate() {
         let stored = file.analysis.and_then(|a| a.from_raw.noise);
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             file.path,
             read,
             DECODED_AT,
             false,
-            crate::galosh::wanted(stored, read),
-            crate::dust::Wanted::Off,
+            denoise::galosh::wanted(stored, read),
+            denoise::dust::Wanted::Off,
         )?;
         if at == reference {
             as_shot = frame.as_shot;
@@ -629,7 +625,7 @@ fn stacked_sources(
                 // Even, because a frame is two samples to a word and a stacked part has to start
                 // on one.
                 let out = (out.0 & !1, out.1 & !1);
-                crate::base::resize_scene(gpu, base, &resident, out)?
+                render::base::resize_scene(gpu, base, &resident, out)?
             }
         };
         parts.push(reduced);
@@ -640,7 +636,7 @@ fn stacked_sources(
         return None;
     }
     let tall: usize = parts.iter().map(|part| part.size().1).sum();
-    let stacked = crate::resident::Resident::empty(gpu, wide, tall);
+    let stacked = colour::resident::Resident::empty(gpu, wide, tall);
     let mut recording = gpu.record();
     let mut at = 0u64;
     for part in &parts {
@@ -677,15 +673,11 @@ fn stacked_sources(
 /// None where the sources do not share a width - a set shot on two bodies - and the caller then
 /// combines their own levels instead.
 fn union_levels(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
-    stacked: &crate::resident::Resident,
-) -> Option<crate::tone::Anchored> {
-    let levels = pollster::block_on(crate::fit_source::levels(
-        gpu,
-        stacked,
-        job.grade.white_quantile,
-    ))?;
+    stacked: &colour::resident::Resident,
+) -> Option<colour::tone::Anchored> {
+    let levels = pollster::block_on(fit::source::levels(gpu, stacked, job.grade.white_quantile))?;
     Some(levels.anchored())
 }
 
@@ -705,32 +697,32 @@ fn union_levels(
 ///
 /// The geometry half of a match is not fitted here at all. Every source's lens was gathered by the
 /// recipe on the way onto the canvas, so the composite has none left to correct and carries
-/// [`crate::fit::Lens::none`], which is what the reference's match was already reduced to.
+/// [`geometry::lens::Lens::none`], which is what the reference's match was already reduced to.
 fn union_match(
-    gpu: &'static crate::gpu::Gpu,
+    gpu: &'static gpu::Gpu,
     job: &Job,
-    files: &[crate::composite_tile::SourceFile<'_>],
-    stacked: &crate::resident::Resident,
-    as_shot: Option<crate::white_balance::Illuminant>,
-) -> Option<crate::hdr_fit::HdrMatch> {
-    if job.camera_match != crate::hdr_fit::CameraMatch::LensAndColour {
+    files: &[composite::tile::SourceFile<'_>],
+    stacked: &colour::resident::Resident,
+    as_shot: Option<colour::white_balance::Illuminant>,
+) -> Option<fit::hdr::HdrMatch> {
+    if job.camera_match != fit::hdr::CameraMatch::LensAndColour {
         return None;
     }
     const FITTED_ON: usize = 1024;
 
     // The camera's own pictures, stacked the same way: the fit reads the pair as one scene, and
     // what it compares is the content rather than the arrangement of it.
-    let mut theirs: Vec<crate::rgb::Rgb> = Vec::with_capacity(files.len());
+    let mut theirs: Vec<units::rgb::Rgb> = Vec::with_capacity(files.len());
     for file in files {
-        theirs.push(crate::decode_rawler::upright_preview_rgb(
+        theirs.push(decode::raw::upright_preview_rgb(
             file.path,
             FITTED_ON,
-            crate::decode_rawler::Preview::for_the_match(),
+            decode::raw::Preview::for_the_match(),
         )?);
     }
     // Each stack has to be square, so a set whose cameras embed previews of different widths
     // declines rather than stacking a ragged one. The two stacks need not match *each other* -
-    // `fit_source::prepared` resizes ours to whatever the preview's own fitted width is.
+    // `fit::source::prepared` resizes ours to whatever the preview's own fitted width is.
     let across = theirs.first()?.width;
     if across == 0 || theirs.iter().any(|camera| camera.width != across) {
         return None;
@@ -750,30 +742,30 @@ fn union_match(
     for camera in &theirs {
         bytes.extend_from_slice(&camera.data);
     }
-    let preview = crate::rgb::Rgb {
+    let preview = units::rgb::Rgb {
         data: bytes.into(),
         width: across,
         height: deep,
     };
 
-    let (tw, _) = crate::hdr_fit::fitted_preview_size(preview.width, preview.height);
-    let prepared = pollster::block_on(crate::fit_source::prepared(
+    let (tw, _) = fit::hdr::fitted_preview_size(preview.width, preview.height);
+    let prepared = pollster::block_on(fit::source::prepared(
         gpu,
         stacked,
         tw,
         job.grade.white_quantile,
     ))?;
-    let (wide_jpeg, _) = pollster::block_on(crate::hdr_fit::preview_planes(gpu, &preview))?;
-    let matched = pollster::block_on(crate::hdr_fit::fit_linearised(
+    let (wide_jpeg, _) = pollster::block_on(fit::hdr::preview_planes(gpu, &preview))?;
+    let matched = pollster::block_on(fit::hdr::fit_linearised(
         gpu,
         &prepared.plane,
         prepared.levels,
         wide_jpeg,
-        crate::fit::Lens::none(),
+        geometry::lens::Lens::none(),
         as_shot,
     ))?;
-    Some(crate::hdr_fit::HdrMatch {
-        lens: crate::fit::Lens::none(),
+    Some(fit::hdr::HdrMatch {
+        lens: geometry::lens::Lens::none(),
         colour: matched.colour,
     })
 }
@@ -782,26 +774,26 @@ fn union_match(
 ///
 /// None where the file records no focal length, or neither the file nor lensfun gives a crop
 /// factor, and the alignment then does what it can with an assumed field of view.
-pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<f64> {
+pub fn focal_in_pixels(header: &formats::header::BbHeader, model: &str) -> Option<f64> {
     if header.focal <= 0.0 {
         return None;
     }
     let crop = lensdb::crop_factor(
-        crate::header::name(&header.camera_make),
+        formats::header::name(&header.camera_make),
         model,
         header.crop(),
     )?;
     // The diagonal, which is what a crop factor is a ratio of: a 4:3 picture's long edge is not
     // 36mm over its crop.
     let diagonal = f64::from(header.width).hypot(f64::from(header.height));
-    Some(f64::from(header.focal) * crop * diagonal / crate::dust::FULL_FRAME_DIAGONAL_MM.raw())
+    Some(f64::from(header.focal) * crop * diagonal / denoise::dust::FULL_FRAME_DIAGONAL_MM.raw())
 }
 
 /// The rectangle two of them share, or None where they share none.
 fn overlap(
-    a: crate::px::Rect<crate::px::Composite>,
-    b: crate::px::Rect<crate::px::Composite>,
-) -> Option<crate::px::Rect<crate::px::Composite>> {
+    a: units::px::Rect<units::px::Composite>,
+    b: units::px::Rect<units::px::Composite>,
+) -> Option<units::px::Rect<units::px::Composite>> {
     let (al, at, aw, ah) = a.raw();
     let (bl, bt, bw, bh) = b.raw();
     let left = al.max(bl);
@@ -809,14 +801,14 @@ fn overlap(
     let right = (al + aw).min(bl + bw);
     let bottom = (at + ah).min(bt + bh);
     (right > left && bottom > top)
-        .then(|| crate::px::Rect::exact(left, top, right - left, bottom - top))
+        .then(|| units::px::Rect::exact(left, top, right - left, bottom - top))
 }
 
 /// How a strip of a recipe is drawn.
 enum Drawn {
     Blended,
-    Assembly(crate::assembly::Drawing),
-    Merged(crate::composition::Composition, crate::burst::Stack),
+    Assembly(composite::assembly::Drawing),
+    Merged(composition::Composition, burst::Stack),
 }
 
 /// The composite this job's targets are cut from, at the largest of the sizes they asked for.
@@ -828,19 +820,19 @@ pub(crate) fn base(
     sources: &[CompositionSource],
     wanted: &CompositeRecipe,
     size: u32,
-    from: crate::composite_tile::From,
-    window: Option<crate::px::Rect<crate::px::Composite>>,
+    from: composite::tile::From,
+    window: Option<units::px::Rect<units::px::Composite>>,
     // The parts of `window` the caller asked for, or empty for the whole of it.
-    // `composite_tile::CompositeRequest::parts` says what they buy.
-    parts: &[crate::px::Rect<crate::px::Composite>],
+    // `composite::tile::CompositeRequest::parts` says what they buy.
+    parts: &[units::px::Rect<units::px::Composite>],
 ) -> Result<Base, String> {
-    let mut lap = crate::clock::laps("  panorama ");
+    let mut lap = trace::clock::laps("  panorama ");
     let spec = wanted.composition();
     if spec.sources.len() != sources.len() {
         return Err("the recipe and the files it names disagree".into());
     }
-    let refused = || crate::base::without_a_device("the composite's stages");
-    let gpu = crate::gpu::device().ok_or_else(refused)?;
+    let refused = || render::base::without_a_device("the composite's stages");
+    let gpu = gpu::device().ok_or_else(refused)?;
 
     let (canvas_w, canvas_h, scale) = sized(spec, size);
     // **The buffer is the window's, the picture is the canvas's, and the two are different
@@ -848,7 +840,7 @@ pub(crate) fn base(
     // reader zoomed into a ladder asks for the rectangle their stage can hold, and everything
     // the grade is anchored to - the geometry, the sharpen's scale, the presence sliders' reach -
     // is still the canvas's.
-    let asked = window.unwrap_or_else(|| crate::px::Rect::exact(0, 0, canvas_w, canvas_h));
+    let asked = window.unwrap_or_else(|| units::px::Rect::exact(0, 0, canvas_w, canvas_h));
     let (window_left, window_top, width, height) = asked.raw();
     if width == 0 || height == 0 || window_left + width > canvas_w || window_top + height > canvas_h
     {
@@ -866,19 +858,19 @@ pub(crate) fn base(
             "a window is asked for in even columns, and this one is {width} wide at {window_left}",
         ));
     }
-    let analyses: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = sources
+    let analyses: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = sources
         .iter()
         .map(|source| {
             source
                 .photo_analysis
                 .as_deref()
-                .and_then(crate::photo_analysis::decode)
+                .and_then(fit::photo_analysis::decode)
         })
         .collect();
-    let files: Vec<crate::composite_tile::SourceFile<'_>> = sources
+    let files: Vec<composite::tile::SourceFile<'_>> = sources
         .iter()
         .zip(&analyses)
-        .map(|(source, analysis)| crate::composite_tile::SourceFile {
+        .map(|(source, analysis)| composite::tile::SourceFile {
             path: &source.raw_file_path,
             analysis: analysis.as_ref(),
         })
@@ -886,26 +878,31 @@ pub(crate) fn base(
 
     // A camera's JPEG is read whole whatever tile wants it, so the sources of this canvas are
     // decoded once between them rather than once per tile they reach - and go with this value
-    // rather than being left in a worker that has finished (`composite_tile::CameraPictures`).
-    let _pictures = crate::composite_tile::CameraPictures::fresh();
+    // rather than being left in a worker that has finished (`composite::tile::CameraPictures`).
+    let _pictures = composite::tile::CameraPictures::fresh();
     // Zeroed by the device, which is what a tile no photograph reaches is left as.
-    let whole = crate::resident::Resident::empty(gpu, width, height);
+    let whole = colour::resident::Resident::empty(gpu, width, height);
     let (across, down) = tile_of(spec, width, height, strip_bytes_per_pixel(wanted));
     // The levels below, then a tile at a time. Every tile costs about the same - the same pixels of
     // the same canvas, gathered from whichever sources reach them - so a count of them is the
     // honest measure of how far through this is.
-    crate::progress::begin(1 + width.div_ceil(across) * height.div_ceil(down));
+    trace::progress::begin(1 + width.div_ceil(across) * height.div_ceil(down));
     // **Once, before the first strip, and the same for every one of them.** A strip measuring its
     // own diffuse white is coded against the sky where it holds sky and against a headland where
     // it holds one, and the joins between them are bands across the finished picture - which is
     // exactly what a loupe tile is forbidden from doing for the same reason.
     let known = job.stored();
-    let stamp = spec.set_stamp();
+    let stamp = fit::photo_analysis::SetStamp::of(
+        spec.sources
+            .iter()
+            .map(|source| (source.photo_id.as_str(), source.gain)),
+        spec.reference,
+    );
     let filed = match from {
         // **Only what this set measured.** These are a quantile and a colour fit over every source
         // at once, so a recipe whose sources or gains changed under the same photograph measured
         // something else - and the quantile alone cannot tell the two apart.
-        crate::composite_tile::From::Original if known.from_render.set == Some(stamp) => {
+        composite::tile::From::Original if known.from_render.set == Some(stamp) => {
             // The quantile is the one setting either measure is sensitive to, and the match
             // carries no stamp of its own - so what licenses reusing it beside these levels is
             // that the pass which filed them is the pass that fitted it.
@@ -914,18 +911,18 @@ pub(crate) fn base(
                 .levels
                 .and_then(|m| m.levels_at(job.grade.white_quantile))
         }
-        crate::composite_tile::From::Original => None,
+        composite::tile::From::Original => None,
         // Never the camera arm's, whose white is the transfer's rather than a quantile of this
         // picture (`camera_levels`) - and which files nothing, for that reason.
-        crate::composite_tile::From::Camera => None,
+        composite::tile::From::Camera => None,
     };
     // **The set's samples, once, for both measures that read them**, and not at all for an answer
     // already on file: this is a reduced decode of every source, so it is the expensive half of a
     // composite and the half a pan pays on every render and every open of it.
-    let needs_colour = job.camera_match == crate::hdr_fit::CameraMatch::LensAndColour
+    let needs_colour = job.camera_match == fit::hdr::CameraMatch::LensAndColour
         && files
             .iter()
-            .any(|file| !crate::decode_rendered::is_rendered(file.path))
+            .any(|file| !formats::rendered::is_rendered(file.path))
         && known
             .from_raw
             .matched
@@ -940,8 +937,8 @@ pub(crate) fn base(
         _ => (files.as_slice(), spec.reference, (0..files.len()).collect()),
     };
     let (stacked, stacked_as_shot, sampled_fits) = match from {
-        crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
-            match crate::base::device(gpu)
+        composite::tile::From::Original if filed.is_none() || needs_colour => {
+            match render::base::device(gpu)
                 .and_then(|base| stacked_sources(gpu, base, job, sampled, sampled_reference))
             {
                 Some((stacked, as_shot, fits)) => (Some(stacked), as_shot, fits),
@@ -952,7 +949,7 @@ pub(crate) fn base(
     };
     // **One fit a source for the whole canvas.** A tile left to measure its own denoises against
     // its window's statistics, and the picture changes with how the canvas is tiled.
-    let mut fits: Vec<Option<crate::galosh::NoiseFit>> = files
+    let mut fits: Vec<Option<denoise::galosh::NoiseFit>> = files
         .iter()
         .map(|file| file.analysis.and_then(|a| a.from_raw.noise))
         .collect();
@@ -962,7 +959,7 @@ pub(crate) fn base(
     if known.from_render.set == Some(stamp) {
         fits[spec.reference] = fits[spec.reference].or(known.from_raw.noise);
     }
-    let refitted: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = files
+    let refitted: Vec<Option<fit::photo_analysis::PhotoAnalysis>> = files
         .iter()
         .zip(&fits)
         .map(|(file, fit)| {
@@ -975,17 +972,17 @@ pub(crate) fn base(
             Some(analysis)
         })
         .collect();
-    let files: Vec<crate::composite_tile::SourceFile<'_>> = files
+    let files: Vec<composite::tile::SourceFile<'_>> = files
         .iter()
         .zip(&refitted)
-        .map(|(file, refitted)| crate::composite_tile::SourceFile {
+        .map(|(file, refitted)| composite::tile::SourceFile {
             path: file.path,
             analysis: refitted.as_ref().or(file.analysis),
         })
         .collect();
     let measured = match filed {
         Some(levels) => {
-            crate::progress::advance();
+            trace::progress::advance();
             let matched = if needs_colour {
                 stacked
                     .as_ref()
@@ -999,7 +996,7 @@ pub(crate) fn base(
         // decode - and is exactly when the buffer would otherwise be dropped without the nudge
         // `reclaim` gives the device (`resident::Resident::reclaim`).
         None => whole_levels(gpu, job, spec, &files, from, stacked.as_ref()).map(|levels| {
-            crate::progress::advance();
+            trace::progress::advance();
             // **One picture, one colour rendering.** Fitted over every source at once rather than
             // taken from the reference frame, which is what the rest of the pipeline after the
             // demosaic already does with the grade and the roll-off: `union_match` says why.
@@ -1031,9 +1028,9 @@ pub(crate) fn base(
     let mut decoded_noise = None;
     // An assembly's two bands are taken against a lowpass over the whole crop, so it is built once
     // for the render and sliced by every strip: per strip it would truncate at each strip's own
-    // edge and draw a seam with no image seam under it (`assembly_render::lowpass`). Deferred to
+    // edge and draw a seam with no image seam under it (`composite::assembly::lowpass::lowpass`). Deferred to
     // the first strip that asks, which is where a request to build it from exists.
-    let mut hold: Option<crate::assembly_render::Lowpass> = None;
+    let mut hold: Option<composite::assembly::lowpass::Lowpass> = None;
     let drawn = match (wanted, wanted.stack()) {
         (CompositeRecipe::Assembly(assembly), _) => Drawn::Assembly(assembly.rendered()?),
         (_, Some(stack)) => Drawn::Merged(spec.clone(), stack),
@@ -1045,26 +1042,26 @@ pub(crate) fn base(
         let deep = down.min(height - top);
         let mut left = 0;
         while left < width {
-            crate::progress::stop_if_cancelled()?;
+            trace::progress::stop_if_cancelled()?;
             let wide = across.min(width - left);
             // The canvas's own coordinate, where `tile_runs` below stays in the buffer's: a
             // window's tile is somewhere else in the picture than it is in the buffer, and the
             // gather has to be told the first.
-            let strip = crate::px::Rect::exact(window_left + left, window_top + top, wide, deep);
+            let strip = units::px::Rect::exact(window_left + left, window_top + top, wide, deep);
             // **The caller's parts clipped to this strip**, so a source is decoded for the parts
             // of it that are actually here. This assembly walks the window in strips of its own
             // sizing, which for a tile fetch is one strip and for a rendition is many - and a
             // strip holding none of the parts is one nothing asked for.
-            let here: Vec<crate::px::Rect<crate::px::Composite>> = parts
+            let here: Vec<units::px::Rect<units::px::Composite>> = parts
                 .iter()
                 .filter_map(|part| overlap(*part, strip))
                 .collect();
             if !parts.is_empty() && here.is_empty() {
                 left += wide;
-                crate::progress::advance();
+                trace::progress::advance();
                 continue;
             }
-            let request = crate::composite_tile::CompositeRequest {
+            let request = composite::tile::CompositeRequest {
                 window: strip,
                 parts: &here,
                 scale,
@@ -1075,35 +1072,33 @@ pub(crate) fn base(
                 detail: job.detail(),
                 sources: &files,
                 from,
-                weight: crate::composite_tile::Weight::Feather,
+                weight: composite::tile::Weight::Feather,
             };
             // **A tile of a canvas can hold no photograph at all.** The canvas is framed to what
             // the sources cover between them, and a hand-held pan leaves wedges of nothing at its
             // corners - which a full-width strip always crossed a source somewhere in, and a tile
             // does not. Left as the zeros it was allocated with, and the rendition's own crop is
             // what trims them off (§19.4).
-            if !matches!(&drawn, Drawn::Merged(..))
-                && !crate::composite_tile::covered(spec, &request)
-            {
+            if !matches!(&drawn, Drawn::Merged(..)) && !composite::tile::covered(spec, &request) {
                 left += wide;
-                crate::progress::advance();
+                trace::progress::advance();
                 continue;
             }
             let (tile, prepared) = match &drawn {
-                Drawn::Blended => {
-                    pollster::block_on(crate::composite_tile::prepared(spec, &request))?
+                Drawn::Blended => pollster::block_on(composite::tile::prepared(spec, &request))?,
+                Drawn::Merged(first, stack) => {
+                    pollster::block_on(composite::tile::merged(first, &request, &frames, *stack))?
                 }
-                Drawn::Merged(first, stack) => pollster::block_on(crate::composite_tile::merged(
-                    first, &request, &frames, *stack,
-                ))?,
                 Drawn::Assembly(assembly) => {
                     let held = match &hold {
                         Some(held) => held,
-                        None => hold.insert(pollster::block_on(crate::assembly_render::lowpass(
-                            assembly, &request,
-                        ))?),
+                        None => hold.insert(pollster::block_on(
+                            composite::assembly::lowpass::lowpass(assembly, &request),
+                        )?),
                     };
-                    pollster::block_on(crate::assembly_render::prepared(assembly, held, &request))?
+                    pollster::block_on(composite::assembly::lowpass::prepared(
+                        assembly, held, &request,
+                    ))?
                 }
             };
             let mut recording = gpu.record();
@@ -1118,13 +1113,13 @@ pub(crate) fn base(
             // Only where the composite's own fit declined: `union_match` is the colour this picture
             // is graded through, and the reference's is the fallback.
             fallback_match = fallback_match.or_else(|| {
-                prepared.matched.map(|m| crate::hdr_fit::HdrMatch {
-                    lens: crate::fit::Lens::none(),
+                prepared.matched.map(|m| fit::hdr::HdrMatch {
+                    lens: geometry::lens::Lens::none(),
                     colour: m.colour,
                 })
             });
             left += wide;
-            crate::progress::advance();
+            trace::progress::advance();
             lap("tile");
         }
         top += deep;
@@ -1135,11 +1130,11 @@ pub(crate) fn base(
     // render rolled off against - and none of it is true of the cameras' own pictures, which come
     // out of a body that already answered all of it. Same reasoning as the match beside it.
     let reference = match from {
-        crate::composite_tile::From::Original => analyses
+        composite::tile::From::Original => analyses
             .get(spec.reference)
             .and_then(|a| a.clone())
             .unwrap_or_default(),
-        crate::composite_tile::From::Camera => crate::photo_analysis::PhotoAnalysis::default(),
+        composite::tile::From::Camera => fit::photo_analysis::PhotoAnalysis::default(),
     };
     let anchored = levels.ok_or("this composite has no levels to grade against")?;
     // **The reference frame's balance, from whichever tile reached it, or from what the last pass
@@ -1152,7 +1147,7 @@ pub(crate) fn base(
     // absent illuminant stand in for one the file does name.
     let as_shot = as_shot.or_else(|| known.from_raw.balance.and_then(|kept| kept.as_shot));
     let wb_gains = wb_gains.or_else(|| known.from_raw.balance.map(|kept| kept.wb_gains));
-    let balance = wb_gains.map(|wb_gains| crate::photo_analysis::Balance { wb_gains, as_shot });
+    let balance = wb_gains.map(|wb_gains| fit::photo_analysis::Balance { wb_gains, as_shot });
     // A reference never rendered alone has no fit on file, and without one the sharpen reads the
     // canvas as noiseless and deconvolves its grain at full strength.
     let noise = fits[spec.reference].or(decoded_noise);
@@ -1167,9 +1162,9 @@ pub(crate) fn base(
     // this row would be read back by the next composite *of the photographs* as its own.
     let matched = job.camera_match.apply(matched.or(fallback_match));
     let analysis = match from {
-        crate::composite_tile::From::Camera => crate::photo_analysis::PhotoAnalysis::default(),
-        crate::composite_tile::From::Original => crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
+        composite::tile::From::Camera => fit::photo_analysis::PhotoAnalysis::default(),
+        composite::tile::From::Original => fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 // The reference's: no single fit describes a blend.
                 noise,
@@ -1179,8 +1174,8 @@ pub(crate) fn base(
                 capture_sigma: reference.from_raw.capture_sigma,
                 balance,
             },
-            from_render: crate::photo_analysis::FromRender {
-                levels: Some(crate::photo_analysis::MeasuredLevels {
+            from_render: fit::photo_analysis::FromRender {
+                levels: Some(fit::photo_analysis::MeasuredLevels {
                     // The pre-anchor pair, which is what the store holds: `anchored` only floors a
                     // white below one count, and this picture's is orders above it.
                     levels: *anchored,
@@ -1203,9 +1198,9 @@ pub(crate) fn base(
         // "the picture the reader's geometry is stated against and the presence sliders reach
         // across", and for a window of a ladder that is still the whole canvas.
         photograph: (canvas_w, canvas_h),
-        window: window.map(|_| crate::gpu::Window {
-            photograph: crate::px::Size::exact(canvas_w, canvas_h),
-            origin: crate::px::At::exact(window_left, window_top),
+        window: window.map(|_| render::grade::Window {
+            photograph: units::px::Size::exact(canvas_w, canvas_h),
+            origin: units::px::At::exact(window_left, window_top),
         }),
         matched,
         capture_sigma: analysis.from_raw.capture_sigma,
@@ -1223,26 +1218,26 @@ pub(crate) fn base(
         // The reference's fit and tags rather than whichever source's decode reached this window,
         // so every window of the canvas sharpens as the rendition does.
         sharpen_noise: match from {
-            crate::composite_tile::From::Camera => crate::image::SharpenNoise::NONE,
-            crate::composite_tile::From::Original => crate::base::sharpen_noise(
-                crate::composite_tile::coded_as(anchored, spec.sources[spec.reference].gain),
+            composite::tile::From::Camera => render::detail::SharpenNoise::NONE,
+            composite::tile::From::Original => render::base::sharpen_noise(
+                composite::tile::coded_as(anchored, spec.sources[spec.reference].gain),
                 job.grade.reference_white_nits,
                 noise,
                 match drawn {
                     Drawn::Merged(..) => job.detail().without_upscaler(),
-                    _ => job.detail().on_bayer(crate::decode_rawler::upscalable_at(
-                        files[spec.reference].path,
-                    )),
+                    _ => job
+                        .detail()
+                        .on_bayer(decode::raw::upscalable_at(files[spec.reference].path)),
                 }
                 .noise_left(noise),
-                crate::decode_rawler::camera_to_rec2020_at(files[spec.reference].path),
+                decode::raw::camera_to_rec2020_at(files[spec.reference].path),
                 wb_gains.unwrap_or([1.0; 3]),
                 1,
             ),
         },
         // The camera arm measures the bodies' own pictures rather than this canvas, so nothing it
         // found is true of the photograph - the peak `run` is about to read included.
-        describes_the_photograph: from == crate::composite_tile::From::Original,
+        describes_the_photograph: from == composite::tile::From::Original,
         removal: None,
     })
 }
@@ -1251,7 +1246,7 @@ pub(crate) fn base(
 /// canvas pixels one of those is.
 ///
 /// Even, because a strip of a frame two samples to a word has to start on a word.
-fn sized(spec: &crate::composition::Composition, size: u32) -> (usize, usize, f64) {
+fn sized(spec: &composition::Composition, size: u32) -> (usize, usize, f64) {
     let long = spec.canvas[0].max(spec.canvas[1]) as f64;
     let want = match size {
         0 => long.min(f64::from(MAX_LONG_EDGE)),
@@ -1276,8 +1271,7 @@ fn sized(spec: &crate::composition::Composition, size: u32) -> (usize, usize, f6
 /// shallow levels of a very wide canvas are all the same shape.
 pub fn level_shape(canvas: &[usize; 2], level: u32) -> (usize, usize) {
     let long = canvas[0].max(canvas[1]);
-    let spec =
-        crate::composition::Composition::of_one(*canvas, crate::composition::LensSpec::none());
+    let spec = composition::Composition::of_one(*canvas, composition::LensSpec::none());
     let (width, height, _) = sized(&spec, (long >> level) as u32);
     (width, height)
 }
@@ -1285,13 +1279,13 @@ pub fn level_shape(canvas: &[usize; 2], level: u32) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resident::BYTES_PER_PIXEL;
+    use colour::resident::BYTES_PER_PIXEL;
 
-    fn recipe(canvas: [usize; 2]) -> crate::composition::Composition {
-        crate::composition::Composition {
-            version: crate::composition::VERSION,
+    fn recipe(canvas: [usize; 2]) -> composition::Composition {
+        composition::Composition {
+            version: composition::VERSION,
             sources: Vec::new(),
-            projection: crate::composition::Projection::Cylindrical,
+            projection: composition::Projection::Cylindrical,
             canvas,
             centre: [canvas[0] as f64 / 2.0, canvas[1] as f64 / 2.0],
             radians_per_pixel: 1.0 / 5200.0,
@@ -1303,7 +1297,7 @@ mod tests {
 
     #[test]
     fn a_full_frame_body_in_apsc_mode_has_the_apsc_focal() {
-        let mut header = crate::header::BbHeader::blank();
+        let mut header = formats::header::BbHeader::blank();
         header.camera_make[..4].copy_from_slice(b"Sony");
         (header.width, header.height, header.focal) = (6240, 4160, 45.0);
         let full = focal_in_pixels(&header, "ILCE-7CR").expect("the body's crop factor");
@@ -1318,7 +1312,7 @@ mod tests {
     /// 12mm across 3.34um photosites is 3593 of them, where the long edge over 36mm says 3456.
     #[test]
     fn a_four_thirds_focal_is_measured_on_the_diagonal() {
-        let mut header = crate::header::BbHeader::blank();
+        let mut header = formats::header::BbHeader::blank();
         header.camera_make[..7].copy_from_slice(b"OLYMPUS");
         (header.width, header.height, header.focal) = (5184, 3888, 12.0);
         let focal = focal_in_pixels(&header, "E-M1").expect("the body's crop factor");
@@ -1339,30 +1333,26 @@ mod tests {
     /// the anchor's.
     #[test]
     fn a_composite_of_a_camera_s_picture_is_that_picture() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
-        let (wide, tall) = (
-            crate::composite_align::tests::WIDE,
-            crate::composite_align::tests::TALL,
-        );
-        let focal = crate::composite_align::tests::FOCAL;
-        let paths =
-            crate::composite_align::tests::fixtures("camera-identity", &[[1.0, 0.0, 0.0, 0.0]]);
+        let (wide, tall) = (composite::scene::WIDE, composite::scene::TALL);
+        let focal = composite::scene::FOCAL;
+        let paths = composite::scene::fixtures("camera-identity", &[[1.0, 0.0, 0.0, 0.0]]);
         // A canvas the source's own size, at its own scale, looking along its own axis: the recipe
         // is then the identity, so anything the composite does to the picture is the pipeline's.
-        let spec = crate::composition::Composition {
-            version: crate::composition::VERSION,
-            sources: vec![crate::composition::SourceSpec {
+        let spec = composition::Composition {
+            version: composition::VERSION,
+            sources: vec![composition::SourceSpec {
                 photo_id: paths[0].clone(),
                 size: [wide, tall],
                 rotation: [1.0, 0.0, 0.0, 0.0],
                 focal,
-                lens: crate::composition::LensSpec::none(),
+                lens: composition::LensSpec::none(),
                 gain: 1.0,
-                warp: crate::composition::no_warp(),
+                warp: composition::no_warp(),
             }],
-            projection: crate::composition::Projection::Rectilinear,
+            projection: composition::Projection::Rectilinear,
             canvas: [wide, tall],
             centre: [wide as f64 / 2.0, tall as f64 / 2.0],
             radians_per_pixel: 1.0 / focal,
@@ -1372,25 +1362,25 @@ mod tests {
         };
         // With a match kept about it, which is the case the composite has to ignore: the whole set
         // is these pictures, and a match belongs to a render of the RAW behind one of them.
-        let analysis = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
-                matched: Some(crate::photo_analysis::tests::a_match()),
+        let analysis = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
+                matched: Some(fit::photo_analysis::testing::a_match()),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let files = vec![crate::composite_tile::SourceFile {
+        let files = vec![composite::tile::SourceFile {
             path: &paths[0],
             analysis: Some(&analysis),
         }];
 
         let levels = camera_levels(&files).expect("a finished picture states its white");
-        assert_eq!(levels.white.raw(), crate::transfer::FULL_SCALE);
-        assert_eq!(levels.peak.raw(), crate::transfer::FULL_SCALE);
+        assert_eq!(levels.white.raw(), colour::transfer::FULL_SCALE);
+        assert_eq!(levels.peak.raw(), colour::transfer::FULL_SCALE);
 
         const ACROSS: usize = 64;
-        let request = crate::composite_tile::CompositeRequest {
-            window: crate::px::Rect::exact(
+        let request = composite::tile::CompositeRequest {
+            window: units::px::Rect::exact(
                 wide / 2 - ACROSS / 2,
                 tall / 2 - ACROSS / 2,
                 ACROSS,
@@ -1401,29 +1391,28 @@ mod tests {
             scale: 1.0,
             white_quantile: 0.9,
             levels: Some(levels),
-            reference_white_nits: crate::light::Light::exactly(203.0),
-            strengths: crate::image::Strengths {
+            reference_white_nits: units::light::Light::exactly(203.0),
+            strengths: render::detail::Strengths {
                 sharpen: 0.0,
                 defringe: 0.0,
             },
-            detail: crate::galosh::Detail::at(0.0, 0.0),
+            detail: denoise::galosh::Detail::at(0.0, 0.0),
             sources: &files,
-            from: crate::composite_tile::From::Camera,
-            weight: crate::composite_tile::Weight::Feather,
+            from: composite::tile::From::Camera,
+            weight: composite::tile::Weight::Feather,
         };
-        let (composite, prepared) =
-            pollster::block_on(crate::composite_tile::prepared(&spec, &request))
-                .expect("a window composites");
+        let (composite, prepared) = pollster::block_on(composite::tile::prepared(&spec, &request))
+            .expect("a window composites");
         assert!(
             prepared.matched.is_none(),
             "a camera's own picture is not matched to itself"
         );
         // The same window off the photographs themselves does carry it, which is what makes the
         // line above a decision rather than an absence.
-        let (rendered, matched) = pollster::block_on(crate::composite_tile::prepared(
+        let (rendered, matched) = pollster::block_on(composite::tile::prepared(
             &spec,
-            &crate::composite_tile::CompositeRequest {
-                from: crate::composite_tile::From::Original,
+            &composite::tile::CompositeRequest {
+                from: composite::tile::From::Original,
                 ..request
             },
         ))
@@ -1436,13 +1425,13 @@ mod tests {
         let coded = pollster::block_on(composite.into_host()).expect("the window reads back");
 
         // The picture itself, over the same rectangle, as the decode hands it over.
-        let frame = crate::decode::frame_from_path(
+        let frame = decode::frame_from_path(
             &paths[0],
-            crate::galosh::Detail::at(0.0, 0.0),
+            denoise::galosh::Detail::at(0.0, 0.0),
             wide as u32,
             false,
-            crate::galosh::Fit::Measure,
-            crate::dust::Wanted::Off,
+            denoise::galosh::Fit::Measure,
+            denoise::dust::Wanted::Off,
         )
         .expect("the fixture decodes");
         let resident = frame
@@ -1454,8 +1443,8 @@ mod tests {
         // stands for, on the scale `encode_base` put them.
         let reference = 203.0;
         let level_of = |code: u16| {
-            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(
-                f64::from(code) / crate::transfer::FULL_SCALE,
+            colour::tone::pq_inv::<units::light::SceneNits>(units::light::Light::measured(
+                f64::from(code) / colour::transfer::FULL_SCALE,
             ))
             .raw()
                 * levels.white.raw()
@@ -1470,7 +1459,7 @@ mod tests {
         let (left, top, _, _) = request.window.raw();
         for y in 0..ACROSS {
             for c in 0..ACROSS * 3 {
-                theirs += f64::from(crate::resident::level_of_bits(
+                theirs += f64::from(colour::resident::level_of_bits(
                     source[((top + y) * wide + left) * 3 + c],
                 ));
             }
@@ -1504,17 +1493,17 @@ mod tests {
     }
 
     /// A panorama of `frame`-shaped sources, for the tiling to read a shape off.
-    fn shaped(canvas: [usize; 2], frame: [usize; 2]) -> crate::composition::Composition {
+    fn shaped(canvas: [usize; 2], frame: [usize; 2]) -> composition::Composition {
         let focal = 5200.0;
-        crate::composition::Composition {
-            sources: vec![crate::composition::SourceSpec {
+        composition::Composition {
+            sources: vec![composition::SourceSpec {
                 photo_id: "one".into(),
                 size: frame,
                 rotation: [1.0, 0.0, 0.0, 0.0],
                 focal,
-                lens: crate::composition::LensSpec::none(),
+                lens: composition::LensSpec::none(),
                 gain: 1.0,
-                warp: crate::composition::no_warp(),
+                warp: composition::no_warp(),
             }],
             ..recipe(canvas)
         }
@@ -1693,11 +1682,11 @@ mod tests {
             .composite
             .expect("an answer");
         let answer: serde_json::Value = serde_json::from_str(&answered).expect("an answer parses");
-        let recipe: crate::composition::Composition =
+        let recipe: composition::Composition =
             serde_json::from_value(answer["recipe"].clone()).expect("a recipe parses");
         assert_eq!(recipe.sources.len(), 2);
         assert!(
-            recipe.canvas[0] > crate::composite_align::tests::WIDE,
+            recipe.canvas[0] > composite::scene::WIDE,
             "{:?}",
             recipe.canvas
         );
@@ -1724,7 +1713,7 @@ mod tests {
     /// answer is also *kept* is `a_composite_reads_what_it_was_measured_as`'s claim, not this one's.
     #[test]
     fn every_level_of_a_prepared_picture_is_one_photograph() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-levels");
@@ -1812,7 +1801,7 @@ mod tests {
     /// against a first call that also pays for every pipeline it is the first to reach.
     #[test]
     fn a_composite_reads_what_it_was_measured_as() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-reuse");
@@ -1847,27 +1836,24 @@ mod tests {
         );
         assert_eq!(
             second.header.camera_match,
-            crate::hdr_fit::CameraMatch::LensAndColour
+            fit::hdr::CameraMatch::LensAndColour
         );
 
         let mut lens_only = job(&paths, recipe.clone(), "render");
-        lens_only.camera_match = crate::hdr_fit::CameraMatch::Lens;
+        lens_only.camera_match = fit::hdr::CameraMatch::Lens;
         let measured =
             crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        let mut richer = crate::photo_analysis::decode(
+        let mut richer = fit::photo_analysis::decode(
             measured.header.photo_analysis.as_deref().expect("analysis"),
         )
         .expect("stored analysis");
-        richer.from_raw.matched = Some(crate::photo_analysis::tests::a_match());
-        lens_only.photo_analysis = Some(crate::photo_analysis::encode(&richer));
+        richer.from_raw.matched = Some(fit::photo_analysis::testing::a_match());
+        lens_only.photo_analysis = Some(fit::photo_analysis::encode(&richer));
         let prepared =
             crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        assert_eq!(
-            prepared.header.camera_match,
-            crate::hdr_fit::CameraMatch::Lens
-        );
+        assert_eq!(prepared.header.camera_match, fit::hdr::CameraMatch::Lens);
         assert!(
-            crate::photo_analysis::decode(
+            fit::photo_analysis::decode(
                 prepared.header.photo_analysis.as_deref().expect("analysis")
             )
             .and_then(|analysis| analysis.from_raw.matched)
@@ -1912,7 +1898,7 @@ mod tests {
     ///
     /// **A smaller window is the same picture in the same place, and not the same samples.** It
     /// decodes a smaller region of each source, and a region decode answers at the scale it can
-    /// rather than the one it was asked for (`composite_tile::prepared`) - so a window reads its
+    /// rather than the one it was asked for (`composite::tile::prepared`) - so a window reads its
     /// sources *finer* than the coarse level does and resamples them less. Measured on these
     /// views: 593 counts of 65535 mean, against 3000 to 10000 for the same rectangle compared at
     /// any other offset. So what is pinned is the offset, by the margin between them, and a window
@@ -1920,7 +1906,7 @@ mod tests {
     /// windows of one level decode the same way as each other.
     #[test]
     fn a_window_of_a_level_is_that_rectangle_of_it() {
-        if crate::gpu::device().is_none() {
+        if gpu::device().is_none() {
             return;
         }
         let paths = views("prepare-window");
@@ -1939,20 +1925,20 @@ mod tests {
         // not RAWs - balance from: a window that never decodes the reference has to read the
         // *file's*, and a filed value equal to the frame's could not tell a read from a coincidence.
         const WARM: f64 = 5240.0;
-        let mut filed = crate::photo_analysis::decode(&kept).expect("the blob reads back");
+        let mut filed = fit::photo_analysis::decode(&kept).expect("the blob reads back");
         let gains = filed
             .from_raw
             .balance
             .expect("the level filed its gains")
             .wb_gains;
-        filed.from_raw.balance = Some(crate::photo_analysis::Balance {
+        filed.from_raw.balance = Some(fit::photo_analysis::Balance {
             wb_gains: gains,
-            as_shot: Some(crate::white_balance::Illuminant {
+            as_shot: Some(colour::white_balance::Illuminant {
                 temperature: WARM,
                 tint: 1.5,
             }),
         });
-        let kept = crate::photo_analysis::encode(&filed);
+        let kept = fit::photo_analysis::encode(&filed);
 
         // A rectangle inside it, on even columns, and not at the origin: an origin of zero would
         // pass even with the buffer's coordinate handed to the gather.
@@ -1964,7 +1950,7 @@ mod tests {
         let part = crate::picture::prepared(
             &with_analysis,
             1,
-            Some(crate::px::Rect::exact(left, top, wide, deep)),
+            Some(units::px::Rect::exact(left, top, wide, deep)),
             &[],
         )
         .expect("a window of that level");
@@ -1985,14 +1971,14 @@ mod tests {
         // last pass filed where it does not. Only one end of a two-view pan is the reference's.
         assert_eq!(
             part.header.as_shot,
-            Some(crate::white_balance::RENDERED_WHITE)
+            Some(colour::white_balance::RENDERED_WHITE)
         );
         let strip = (across / 8) & !1;
         let at_end = |left: usize| {
             crate::picture::prepared(
                 &with_analysis,
                 1,
-                Some(crate::px::Rect::exact(left, 0, strip, down)),
+                Some(units::px::Rect::exact(left, 0, strip, down)),
                 &[],
             )
             .expect("a window at one end")
@@ -2003,7 +1989,7 @@ mod tests {
         let ends = [at_end(0), at_end((across - strip) & !1)];
         assert!(
             ends.contains(&Some(WARM))
-                && ends.contains(&Some(crate::white_balance::RENDERED_WHITE.temperature)),
+                && ends.contains(&Some(colour::white_balance::RENDERED_WHITE.temperature)),
             "the two ends of the pan read {ends:?}",
         );
 
@@ -2015,7 +2001,7 @@ mod tests {
         let full = crate::picture::prepared(
             &all,
             1,
-            Some(crate::px::Rect::exact(0, 0, across, down)),
+            Some(units::px::Rect::exact(0, 0, across, down)),
             &[],
         )
         .expect("the whole level as a window");
@@ -2072,48 +2058,48 @@ mod tests {
     /// lens, and the identity rotation - so what is left between the two answers is the filter.
     #[test]
     fn the_gather_undersamples_a_reduction_by_this_much() {
-        let Some(gpu) = crate::gpu::device() else {
+        let Some(gpu) = gpu::device() else {
             return;
         };
-        let base = crate::base::device(gpu).expect("the base pipelines");
+        let base = render::base::device(gpu).expect("the base pipelines");
         let paths = views("gather-reduction");
-        let spec = crate::composition::Composition::of_one(
-            [crate::composite_scene::WIDE, crate::composite_scene::TALL],
-            crate::composition::LensSpec::none(),
+        let spec = composition::Composition::of_one(
+            [composite::scene::WIDE, composite::scene::TALL],
+            composition::LensSpec::none(),
         );
-        let files = vec![crate::composite_tile::SourceFile {
+        let files = vec![composite::tile::SourceFile {
             path: &paths[0],
             analysis: None,
         }];
 
         // One white for both, so nothing below is the coding disagreeing.
-        let levels = crate::tone::Levels {
-            white: crate::light::Light::measured(0.25 * crate::transfer::FULL_SCALE),
-            peak: crate::light::Light::measured(crate::transfer::FULL_SCALE),
+        let levels = colour::tone::Levels {
+            white: units::light::Light::measured(0.25 * colour::transfer::FULL_SCALE),
+            peak: units::light::Light::measured(colour::transfer::FULL_SCALE),
             floor: None,
         }
         .anchored();
         let gathered = |scale: f64, width: usize, height: usize| {
-            let request = crate::composite_tile::CompositeRequest {
-                window: crate::px::Rect::exact(0, 0, width, height),
+            let request = composite::tile::CompositeRequest {
+                window: units::px::Rect::exact(0, 0, width, height),
                 // The whole window, which is what an empty list means.
                 parts: &[],
                 scale,
                 white_quantile: 0.9,
                 levels: Some(levels),
-                reference_white_nits: crate::light::Light::exactly(203.0),
+                reference_white_nits: units::light::Light::exactly(203.0),
                 // Off, both of them: a sharpen or a defringe is a second difference between the
                 // two answers and neither is the filter under test.
-                strengths: crate::image::Strengths {
+                strengths: render::detail::Strengths {
                     sharpen: 0.0,
                     defringe: 0.0,
                 },
-                detail: crate::galosh::Detail::at(0.0, 0.0),
+                detail: denoise::galosh::Detail::at(0.0, 0.0),
                 sources: &files,
-                from: crate::composite_tile::From::Original,
-                weight: crate::composite_tile::Weight::Feather,
+                from: composite::tile::From::Original,
+                weight: composite::tile::Weight::Feather,
             };
-            let (frame, _) = pollster::block_on(crate::composite_tile::prepared(&spec, &request))
+            let (frame, _) = pollster::block_on(composite::tile::prepared(&spec, &request))
                 .expect("one source gathers");
             frame
         };
@@ -2124,14 +2110,14 @@ mod tests {
         // frame gathered one-to-one. Reduce *that* with the area filter and gather it again at
         // scale 8, and the two answers differ by their filters alone. Against a full-resolution
         // reference instead, the decode fork dominates and says nothing about either.
-        let held = crate::composite_scene::WIDE / 2;
-        let one_to_one = gathered(2.0, held, crate::composite_scene::TALL / 2);
-        let small = (held / 4, crate::composite_scene::TALL / 8);
+        let held = composite::scene::WIDE / 2;
+        let one_to_one = gathered(2.0, held, composite::scene::TALL / 2);
+        let small = (held / 4, composite::scene::TALL / 8);
         let reference =
-            crate::base::resize(gpu, base, &one_to_one, small).expect("the area filter");
+            render::base::resize(gpu, base, &one_to_one, small).expect("the area filter");
         let ours = gathered(8.0, small.0, small.1);
 
-        let read = |frame: &crate::resident::Resident| {
+        let read = |frame: &colour::resident::Resident| {
             pollster::block_on(frame.host()).expect("the frame reads back")
         };
         let (mine, theirs) = (read(&ours), read(&reference));
@@ -2214,10 +2200,7 @@ mod tests {
         );
         // What was asked for is a panorama, not one of its frames.
         let long = canvas[0].as_u64().unwrap().max(canvas[1].as_u64().unwrap());
-        assert!(
-            long > crate::composite_align::tests::WIDE as u64,
-            "canvas {canvas:?}"
-        );
+        assert!(long > composite::scene::WIDE as u64, "canvas {canvas:?}");
     }
 
     /// Nothing a render of a RAW measured reaches a composite of the cameras' own pictures.
@@ -2226,7 +2209,7 @@ mod tests {
     /// levels the strips are coded against, the colour the canvas is graded through, and the
     /// analysis the sharpen and the roll-off read - all of them are the reference photograph's for
     /// a composite of the photographs, and none of them describes what a body printed. Held here
-    /// rather than at `composite_tile::prepared`, because this is where the choice is made and a render
+    /// rather than at `composite::tile::prepared`, because this is where the choice is made and a render
     /// job is what crosses it.
     #[test]
     fn a_camera_composite_carries_nothing_the_reference_photograph_measured() {
@@ -2235,15 +2218,15 @@ mod tests {
 
         // Every source with an analysis of the kind a library keeps: the match a render of the RAW
         // was fitted, and the blur that decode carried.
-        let analysis = crate::photo_analysis::PhotoAnalysis {
-            from_raw: crate::photo_analysis::FromRaw {
-                matched: Some(crate::photo_analysis::tests::a_match()),
+        let analysis = fit::photo_analysis::PhotoAnalysis {
+            from_raw: fit::photo_analysis::FromRaw {
+                matched: Some(fit::photo_analysis::testing::a_match()),
                 capture_sigma: Some(1.25),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let kept = crate::photo_analysis::encode(&analysis);
+        let kept = fit::photo_analysis::encode(&analysis);
         let mut rendering = job(&paths, recipe, "render");
         let pano = rendering.composite.as_mut().expect("a panorama");
         for source in &mut pano.sources {
@@ -2259,7 +2242,7 @@ mod tests {
             &pano.sources,
             recipe,
             256,
-            crate::composite_tile::From::Camera,
+            composite::tile::From::Camera,
             None,
             &[],
         )
@@ -2277,8 +2260,8 @@ mod tests {
             "a foreign analysis rode along"
         );
         // The white the pictures arrived with rather than a quantile of them.
-        assert_eq!(camera.levels.white.raw(), crate::transfer::FULL_SCALE);
-        assert_eq!(camera.levels.peak.raw(), crate::transfer::FULL_SCALE);
+        assert_eq!(camera.levels.white.raw(), colour::transfer::FULL_SCALE);
+        assert_eq!(camera.levels.peak.raw(), colour::transfer::FULL_SCALE);
 
         // The same job off the photographs takes all three, which is what makes the three
         // assertions above a decision rather than an absence.
@@ -2287,7 +2270,7 @@ mod tests {
             &pano.sources,
             recipe,
             256,
-            crate::composite_tile::From::Original,
+            composite::tile::From::Original,
             None,
             &[],
         )
@@ -2298,14 +2281,11 @@ mod tests {
         );
         assert_eq!(ours.capture_sigma, Some(1.25));
         assert!(
-            ours.levels.white.raw() < crate::transfer::FULL_SCALE,
+            ours.levels.white.raw() < colour::transfer::FULL_SCALE,
             "the sources' own white is measured, and came back {}",
             ours.levels.white.raw(),
         );
-        for mode in [
-            crate::hdr_fit::CameraMatch::Lens,
-            crate::hdr_fit::CameraMatch::None,
-        ] {
+        for mode in [fit::hdr::CameraMatch::Lens, fit::hdr::CameraMatch::None] {
             rendering.camera_match = mode;
             let composite = rendering.composite.as_ref().expect("composite");
             let Want::Render { recipe } = &composite.want else {
@@ -2316,14 +2296,14 @@ mod tests {
                 &composite.sources,
                 recipe,
                 256,
-                crate::composite_tile::From::Original,
+                composite::tile::From::Original,
                 None,
                 &[],
             )
             .expect("selected camera stages");
             assert_eq!(
                 selected.matched.is_some(),
-                mode == crate::hdr_fit::CameraMatch::Lens
+                mode == fit::hdr::CameraMatch::Lens
             );
             assert!(
                 selected
@@ -2336,9 +2316,8 @@ mod tests {
     }
 
     fn views(name: &str) -> Vec<String> {
-        let pan =
-            |degrees: f64| crate::composition::from_axis_angle([0.0, degrees.to_radians(), 0.0]);
-        crate::composite_align::tests::fixtures(name, &[pan(-10.0), pan(10.0)])
+        let pan = |degrees: f64| composition::from_axis_angle([0.0, degrees.to_radians(), 0.0]);
+        composite::scene::fixtures(name, &[pan(-10.0), pan(10.0)])
     }
 
     /// A job of the shape the worker sends, with a panorama on it.

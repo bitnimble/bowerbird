@@ -13,7 +13,7 @@ fn main() {
     let white: f64 = args.next().map_or(16.0, |s| s.parse().expect("a number"));
 
     let read = |path: &str| {
-        rawshim::avif::decode_at(&std::fs::read(path).expect("the file"), 16).expect("an AVIF")
+        formats::avif::decode_at(&std::fs::read(path).expect("the file"), 16).expect("an AVIF")
     };
     let (left, w, h) = read(&a);
     let (right, w2, h2) = read(&b);

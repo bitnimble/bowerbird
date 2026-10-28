@@ -1,7 +1,7 @@
 // How far the frame's own chroma reaches, taken over every pixel of the sharp plane where the plane
 // already is.
 //
-// The gather is a sample per pixel with the lens's falloff lifted in - `hdr_fit::chroma_span` has
+// The gather is a sample per pixel with the lens's falloff lifted in - `fit::hdr::chroma_span` has
 // why the sharp plane rather than the pairs, and why the falloff has to be on. Building those
 // samples on the host and reading the whole evaluated plane back to take a percentile of it is
 // 27MB each way on a 1616x1077 plane, to answer with one number.
@@ -31,7 +31,7 @@ struct Params {
 
 /// Interleaved f32 RGB, the plane the samples are taken from.
 [vk::binding(0, 0)] StructuredBuffer<float> plane;
-/// `fit::Gain::at` per radius bucket, 256 of them.
+/// `geometry::lens::falloff` per radius bucket, 256 of them.
 [vk::binding(1, 0)] StructuredBuffer<float> gains;
 /// Four floats a sample, as `fit_model.slang` reads them: the colour, then a neighbourhood of zero.
 [vk::binding(2, 0)] RWStructuredBuffer<float> samples;
