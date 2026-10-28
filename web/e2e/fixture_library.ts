@@ -1,7 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PANORAMA_VIEW_NAMES, panoramaViews } from '../../scripts/pano-views';
 import { PathSegment, route } from '../../src/schemas/route';
@@ -9,14 +7,11 @@ import { PathSegment, route } from '../../src/schemas/route';
 const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
 
 // A throwaway library root + DB per run, so E2E never touches a real catalogue
-// and a rerun starts from a known-empty state. Keyed by checkout so parallel
-// worktrees don't wipe each other's fixture mid-run, but stable across reruns
-// of one checkout so the copies are overwritten rather than piling up in /tmp.
-const CHECKOUT_KEY = createHash('sha1')
-  .update(path.resolve(E2E_DIR, '../..'))
-  .digest('hex')
-  .slice(0, 8);
-export const E2E_ROOT = path.join(tmpdir(), `bowerbird-e2e-${CHECKOUT_KEY}`);
+// and a rerun starts from a known-empty state. Inside the checkout (gitignored) so
+// parallel worktrees never share one and deleting a worktree deletes its copies.
+// At the repo root rather than under web/: Vite watches web/, and these are
+// gigabytes of RAWs and renditions written mid-run.
+export const E2E_ROOT = path.resolve(E2E_DIR, '../../.e2e');
 // One library root per spec file. Each worker has a catalogue of its own, but the
 // roots on disk are the run's, so specs that move files (binning, moving into
 // shoots) would otherwise move them under each other and depend on file order.
@@ -140,7 +135,7 @@ function mergeBurst(directory: string): void {
   if (frames.every((at) => existsSync(at))) return;
   mkdirSync(directory, { recursive: true });
   // Written aside and the DNGs alone copied in: the burst puts a JPEG beside each frame.
-  const scratch = path.join(tmpdir(), `bowerbird-merge-burst-${process.pid}`);
+  const scratch = path.join(E2E_ROOT, 'merge-burst-scratch');
   const run = spawnSync(
     'bun',
     [
