@@ -35,7 +35,7 @@ pub(super) const BANDS_RUNNING: usize = 2;
 
 /// The share of the memory budget past which bands are cut [`PRESSED_SPLIT`] times smaller:
 /// Windows moves buffers past the budget to system memory, slowing dispatches twentyfold.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_vendor = "apple")))]
 const VRAM_PRESSED: f64 = 0.85;
 
 const PRESSED_SPLIT: u32 = 4;
@@ -253,7 +253,7 @@ impl Device {
 
     /// Whether this process holds past [`VRAM_PRESSED`] of its video memory budget, where Vulkan
     /// says (`VK_EXT_memory_budget`). On Windows that budget is the one WDDM demotes past.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_vendor = "apple")))]
     #[expect(unsafe_code)]
     pub(super) fn vram_pressed(&self) -> bool {
         use ash::vk;
@@ -293,7 +293,7 @@ impl Device {
         budget.heap_usage[heap] as f64 > budget.heap_budget[heap] as f64 * VRAM_PRESSED
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_vendor = "apple"))]
     pub(super) fn vram_pressed(&self) -> bool {
         false
     }

@@ -11,8 +11,9 @@ bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
 pollster = "0.4"
 
 # Reads the memory budget Vulkan reports, which wgpu does not pass on. Not on wasm, where it does
-# not compile: it loads the Vulkan loader through `libloading`.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# not compile: it loads the Vulkan loader through `libloading`. Not on Apple, where wgpu runs Metal
+# and builds no Vulkan backend.
+[target.'cfg(not(any(target_arch = "wasm32", target_vendor = "apple")))'.dependencies]
 ash = "0.38"
 
 # wgpu's own version, so cargo unifies to one copy: `Device::as_webgpu` returns a handle built by
