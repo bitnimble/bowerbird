@@ -47,9 +47,9 @@ export interface EditAdjust {
  * The reader's crop, straighten and turn - `geometry::warp::Geometry`, field for field.
  *
  * The picture they produce is *not* here, and that is the point: the module works the output's
- * size out from these (`hdr::cropped_size`), so a shape sent alongside them would be a second
- * answer to a question the shader has already indexed its output grid by. The page reads its own
- * through `displaySize`, which is the server's function rather than a copy of it.
+ * size out from these (`geometry::warp::cropped_size`), so a shape sent alongside them would be a
+ * second answer to a question the shader has already indexed its output grid by. The page reads
+ * its own through `displaySize`, which is the server's function rather than a copy of it.
  */
 export interface EditGeometry {
   /** Left, top, right, bottom, as fractions of the straightened frame. */

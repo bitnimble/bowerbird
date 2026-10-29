@@ -1,6 +1,6 @@
 // Reduce noise from the bulk bar: the frames are aligned, merged on the mosaic and rendered before
 // the call answers, so a tile standing for all of them is a merge a real device made. What the
-// picture looks like is native's (`burst_scene`).
+// picture looks like is native's (`burst::scene`).
 import { expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { BURST_PHOTOS_DIR, MERGE_PHOTO_NAMES } from '../fixture_library';

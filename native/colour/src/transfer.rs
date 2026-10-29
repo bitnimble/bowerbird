@@ -12,6 +12,8 @@
 //! calls for an answer that has at most 65536 distinct results - and a shader spelling the curve
 //! itself disagrees with this one in the last bit, over the frame every rendition is built from.
 
+use crate::space::{apply3, multiply};
+
 /// The level a finished picture's diffuse white lands on; its highlights sit above it.
 pub const FULL_SCALE: f64 = 65535.0;
 
@@ -144,7 +146,7 @@ impl Primaries {
         let white = column(self.white);
         let basis = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
         let scale = match invert(basis) {
-            Some(inverse) => apply(inverse, white),
+            Some(inverse) => apply3(&inverse, white[0], white[1], white[2]),
             None => [1.0, 1.0, 1.0],
         };
         let mut matrix = [[0.0; 3]; 3];
@@ -170,7 +172,7 @@ impl Primaries {
     /// are held against and six places of agreement is the whole point of the comparison.
     pub fn from_rec2020(self) -> [[f64; 3]; 3] {
         match invert(self.to_xyz()) {
-            Some(inverse) => multiply(inverse, Primaries::REC2020.to_xyz()),
+            Some(inverse) => multiply(&inverse, &Primaries::REC2020.to_xyz()),
             None => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
@@ -184,7 +186,7 @@ fn from_xyz(to_xyz: [[f64; 3]; 3]) -> [[f32; 3]; 3] {
     let Some(inverse) = invert(Primaries::REC2020.to_xyz()) else {
         return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     };
-    let combined = multiply(inverse, to_xyz);
+    let combined = multiply(&inverse, &to_xyz);
     let mut out = [[0.0f32; 3]; 3];
     for (row, cells) in combined.iter().enumerate() {
         for (column, cell) in cells.iter().enumerate() {
@@ -204,24 +206,6 @@ const D65_TO_D50: [[f64; 3]; 3] = [
     [0.029_582, 0.990_484, -0.017_079],
     [-0.009_252, 0.015_073, 0.751_678],
 ];
-
-fn apply(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
-    let mut out = [0.0; 3];
-    for (row, cells) in matrix.iter().enumerate() {
-        out[row] = cells[0] * vector[0] + cells[1] * vector[1] + cells[2] * vector[2];
-    }
-    out
-}
-
-fn multiply(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let mut out = [[0.0; 3]; 3];
-    for (row, cells) in out.iter_mut().enumerate() {
-        for (column, cell) in cells.iter_mut().enumerate() {
-            *cell = (0..3).map(|k| left[row][k] * right[k][column]).sum();
-        }
-    }
-    out
-}
 
 fn invert(matrix: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let m = matrix;
@@ -364,9 +348,9 @@ impl Coding {
         ];
         // The colorants are adapted to the PCS illuminant, so the destination is adapted with
         // them and the conversion between the two stays exact.
-        let inverse = invert(multiply(D65_TO_D50, Primaries::REC2020.to_xyz()))?;
+        let inverse = invert(multiply(&D65_TO_D50, &Primaries::REC2020.to_xyz()))?;
         let mut matrix = [[0.0f32; 3]; 3];
-        for (row, cells) in multiply(inverse, to_xyz).iter().enumerate() {
+        for (row, cells) in multiply(&inverse, &to_xyz).iter().enumerate() {
             for (column, cell) in cells.iter().enumerate() {
                 matrix[row][column] = *cell as f32;
             }
@@ -666,7 +650,7 @@ mod tests {
     /// Display P3's colorants as an ICC profile writes them: the primaries taken to XYZ and
     /// Bradford-adapted to D50, which is what `from_icc` has to undo.
     fn display_p3_profile() -> Vec<u8> {
-        let adapted = multiply(D65_TO_D50, Primaries::DISPLAY_P3.to_xyz());
+        let adapted = multiply(&D65_TO_D50, &Primaries::DISPLAY_P3.to_xyz());
         let mut out = vec![0u8; 132];
         out[128..132].copy_from_slice(&4u32.to_be_bytes());
         let mut table = Vec::new();

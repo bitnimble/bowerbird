@@ -22,7 +22,7 @@
 import lanes;
 import packed;
 
-/// Positions in the largest period carried, which is X-Trans's 6x6 (`crate::cfa::MAX_PERIOD`).
+/// Positions in the largest period carried, which is X-Trans's 6x6 (`mosaic::cfa::MAX_PERIOD`).
 static const uint MAX_SLOTS = 36;
 
 struct Params {

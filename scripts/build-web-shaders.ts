@@ -2,13 +2,14 @@
 //
 //   bun run build:web-shaders
 //
-// **`build.rs` cannot do this one.** It writes into `$OUT_DIR`, which is cargo's and which Vite has
-// no path to, and the web app is built on machines that never run cargo at all. So the same pinned
-// `slangc` is run again here, over the shaders `slang/` holds for the browser, into a gitignored
-// directory the app imports with `?raw`.
+// **`native/shaders/build.rs` cannot do this one.** It writes into `$OUT_DIR`, which is cargo's and
+// which Vite has no path to, and the web app is built on machines that never run cargo at all. So
+// the same pinned `slangc` is run again here, over the shaders `slang/` holds for the browser, into
+// a gitignored directory the app imports with `?raw`.
 //
-// Everything else about it is `build.rs`'s rule: the pinned compiler first, then `BOWERBIRD_SLANGC`,
-// then `PATH`, and a refusal naming both rather than a stage quietly left out.
+// Everything else about it is `native/shaders/build.rs`'s rule: `BOWERBIRD_SLANGC` first, then
+// the pinned compiler, then `PATH`, and a refusal naming the getter rather than a stage quietly
+// left out.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +27,7 @@ const OUT = resolve(ROOT, 'web/src/features/photos/generated');
 /// `native/rawshim` and reaches the editor through wasm rather than through Vite.
 const SHADERS = ['stage.slang', 'stage_import.slang', 'readback.slang'];
 
-/** The pinned compiler, the one an environment names, or whatever is on `PATH`. */
+/** The compiler an environment names, the pinned one, or whatever is on `PATH`. */
 function slangc(): string {
   const named = process.env.BOWERBIRD_SLANGC;
   if (named != null && existsSync(named)) return named;

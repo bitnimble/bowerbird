@@ -20,7 +20,7 @@ export interface Pq420Frame {
 export const VIDEO_SURFACES = ['stage', 'loupe', 'wheel'] as const;
 export type VideoSurface = (typeof VIDEO_SURFACES)[number];
 
-/** `gpu::Pq420Layout::header`'s length. */
+/** `grade::Pq420Layout::header`'s length. */
 const HEADER_WORDS = 8;
 
 function pq420FrameOf(bytes: Uint8Array<ArrayBuffer>): Pq420Frame {

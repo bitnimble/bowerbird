@@ -3,26 +3,21 @@
 
 /// How much of a RAW the spline parser is given before it is given all of it.
 ///
-/// Not "the first few kilobytes", which is what this was assumed to be until it was
-/// measured: over 1000 files sampled across the whole catalogue, a 128KB window
-/// missed the spline on 971 of them and 256KB missed none. The tag is early, its
-/// data is not - it lands past the previews IFD0 points at. So this is double what
-/// was needed, and still two orders of magnitude below a whole frame.
+/// Of 1000 files sampled across the whole catalogue, a 128KB window missed the spline on 971 and
+/// 256KB missed none. The tag is early, its data is not - it lands past the previews IFD0 points
+/// at. So this is double what was needed, and still two orders of magnitude below a whole frame.
 const SPLINE_WINDOW: u64 = 512 * 1024;
 
 /// The spline the body recorded for this shot, or None where it recorded none.
 ///
 /// `geometry_for` reads this itself; this exists so the fixture test can hold the
-/// parser against a real ARW, which `lens.rs`'s synthetic TIFFs cannot do.
+/// parser against a real ARW, which `decode::lens`'s synthetic TIFFs cannot do.
 #[cfg(all(test, feature = "fixtures"))]
 pub fn _for_testing_distortion_spline(path: &str) -> Option<Vec<f64>> {
     distortion_of(path).ok()?.spline
 }
 
 /// The spline, from as little of the file as will yield it.
-///
-/// Reading it whole was a page-cache hit in `bb_fit` - the decode had just pulled
-/// the same file through - but it still allocated and copied 25-60MB per photo.
 ///
 /// The whole file is still read when the window comes back empty, and that is
 /// load-bearing rather than belt-and-braces: TIFF offsets are absolute, and the
@@ -134,9 +129,8 @@ fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
 
 /// The database's profile for whatever lens this file names.
 ///
-/// None when the file names no lens, when nothing plausible matches, or when the
-/// match carries no distortion data - each of which leaves the geometry to be
-/// fitted, as it was before lensfun was here.
+/// None when the file names no lens, when nothing plausible matches, or when the match carries no
+/// distortion data - each of which leaves the geometry to be fitted.
 fn lensfun_geometry(path: &str) -> Option<fit::profile::Geometry> {
     let header = formats::header::read_path(path)?;
     let knots = lensdb::distortion_knots(

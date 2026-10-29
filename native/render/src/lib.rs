@@ -5,7 +5,6 @@
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-/// The stages between the demosaic and the grade, moving onto the GPU one at a time.
 pub mod base;
 pub mod detail;
 pub mod grade;

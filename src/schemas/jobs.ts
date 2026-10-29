@@ -206,7 +206,7 @@ export const JobSchema = z.object({
    * correction is on the mosaic, inside the one decode every target is cut from.
    *
    * **Fractions here, positions in the document.** Unlike the pair above these are converted on
-   * the way in, because `crate::dust::Settings` is what a shader reads them as - so the scaling
+   * the way in, because `denoise::dust::Settings` is what a shader reads them as - so the scaling
    * lives in `dustSettings`, which both this side and the editor call.
    */
   dust: DustSettingsSchema,

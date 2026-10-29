@@ -49,7 +49,7 @@ pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<units::rgb::Rgb> {
 }
 
 /// A frame and its dimensions: the scene-linear decode where a caller has just decoded, and
-/// the coded base everywhere below `tone::encode_base`.
+/// the coded base everywhere below `base::encode_base`.
 pub struct Source<'a> {
     pub samples: &'a [u16],
     pub width: usize,
@@ -466,7 +466,7 @@ pub struct Cut {
 }
 
 /// Where the cut's samples are: normalised PQ Rec.2020 `u16` either way, as
-/// `tone::encode_base` coded them and as the shader reads them back through `nits_of_code`.
+/// `base::encode_base` coded them and as the shader reads them back through `nits_of_code`.
 ///
 /// The render loop wants them on the device - the sharpen leaves them there and the grade
 /// reads them there, so a host `Vec` between the two is 366MB down and 366MB back up at 61MP

@@ -3,7 +3,7 @@ import { Logger, pageLog } from '../features/logs/page_log';
 import type { ModuleStart } from '../wasi/thread_pool';
 
 /**
- * `crate::planes::Layout`: where each plane is in the samples, in bytes. Two planes are NV12's,
+ * `formats::planes::Layout`: where each plane is in the samples, in bytes. Two planes are NV12's,
  * chroma interleaved.
  */
 export interface PlanesLayout {

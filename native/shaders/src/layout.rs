@@ -20,7 +20,7 @@
 ///
 /// `source` is the module as the host composes it, since a struct can only be laid out in the
 /// program it belongs to. `name` is the struct's, not the binding's.
-pub fn uniform_size(source: &str, name: &str) -> Result<usize, String> {
+fn uniform_size(source: &str, name: &str) -> Result<usize, String> {
     let module = naga::front::wgsl::parse_str(source).map_err(|e| {
         format!(
             "{name}: the module does not parse: {}",

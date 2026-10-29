@@ -1,8 +1,6 @@
 [package]
 name = "rawshim"
 version = "0.1.0"
-# 2024 so bindgen's generated `unsafe extern "C"` blocks parse as written. It also makes
-# `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
 edition = "2024"
 
 [features]
@@ -11,10 +9,10 @@ default = ["renditions"]
 # The server's half: building renditions, which is what wants libavif and the lens database.
 #
 # Off, the crate links no C, which is everything the editor's open needs - `edit::prepare_bytes`
-# reads the lens spline the camera recorded in the RAW itself (`lens::read_distortion`) rather
-# than the database, and the display transform is the client's GPU rather than an AVIF encoder.
-# That is what lets the desktop and mobile shells ship without a native library to resolve at
-# all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
+# reads the lens spline the camera recorded in the RAW itself (`decode::lens::read_distortion`)
+# rather than the database, and the display transform is the client's GPU rather than an AVIF
+# encoder. That is what lets the desktop and mobile shells ship without a native library to
+# resolve at all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
 renditions = ["dep:lensdb", "dep:stacks", "composite/renditions", "decode/renditions", "formats/renditions", "render/renditions"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
@@ -192,13 +190,9 @@ geometry = { path = "../geometry" }
 gpu = { path = "../gpu" }
 mosaic = { path = "../mosaic" }
 render = { path = "../render" }
-shaders = { path = "../shaders" }
 stacks = { path = "../stacks", optional = true }
 trace = { path = "../trace" }
 units = { path = "../units" }
-# The f16 the detail and neighbourhood textures and the jacobian readback are held in. Conversion
-# only - no feature of it is wanted.
-half = { version = "2.7.1", default-features = false }
 # The grade runs here, on the same WGSL the editor runs, so there is one implementation of
 # it rather than two that must be held in agreement (DESIGN 21.1). That costs the server an
 # adapter; where there is no hardware one, `gpu::device` falls back to whatever software
@@ -223,11 +217,9 @@ png = "0.18.1"
 # tensor core is reached through. Already in the tree - it is what wgpu's own Vulkan backend calls -
 # and named here because `examples/coopmat.rs` opens a device of its own with it.
 #
-# **Not on wasm, where it does not compile at all**: it loads the Vulkan loader through
-# `libloading`, which a browser has no equivalent of. An unconditional dependency here builds every
-# native target and fails the one the editor runs on, which no cargo suite would have caught -
-# `--all-targets` is every target for *this* triple.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Not on wasm, where it does not compile at all: it loads the Vulkan loader through `libloading`,
+# which a browser has no equivalent of.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 ash = "0.38"
 
 # Not ours: rawler enables uuid's `v4`, and uuid refuses to compile for wasm32 without a named
@@ -241,16 +233,18 @@ uuid = { version = "1", features = ["js"] }
 # same link makes that a different crate's `JsValue` than the one this crate can return.
 wasm-bindgen = "0.2.108"
 # The canvas the editor draws on, taken from the page as an `OffscreenCanvas` and turned into a
-# surface (`grade::Canvas`). wgpu's own version and its own feature, so this unifies to the copy
-# already in the tree rather than adding one - the same argument as `wasm-bindgen` above.
+# surface (`render::grade::Canvas`). wgpu's own version and its own feature, so this unifies to the
+# copy already in the tree rather than adding one - the same argument as `wasm-bindgen` above.
 web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 # What an exported `async fn` expands into: the adapter request cannot block a browser's thread,
-# so `openGpuDevice` is a promise.
+# so `pageDevice` is a promise.
 wasm-bindgen-futures = "0.4.58"
 
 [dev-dependencies]
 fit = { path = "../fit", features = ["testing"] }
 formats = { path = "../formats", features = ["testing"] }
+half = { version = "2.7.1", default-features = false }
+shaders = { path = "../shaders" }
 jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 moxcms = "0.9.1"
 # `rawler`'s own, for the same reason: `DngWriter::preview` takes a `DynamicImage` and nothing else,

@@ -516,7 +516,7 @@ pub enum Arm {
     Float,
 }
 
-/// Every kernel of the forward pass, built once for the process.
+/// Every kernel of the forward pass, built once per device.
 pub struct Pmrid {
     pub arm: Arm,
     layout: wgpu::BindGroupLayout,
@@ -547,11 +547,7 @@ struct Coop {
     fragment: usize,
 }
 
-/// The kernels, built on the first frame that asks for them and kept for the process.
-///
-/// Two holders for the one thing, as `gpu::device` has them and for its reason: the weights are a
-/// buffer, and a browser's buffer is neither `Send` nor `Sync`, so the page holds what it built
-/// where it built it.
+/// The kernels, built on the first frame that asks for them on each device.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Pmrid> {
     static BUILT: gpu::Cache<Option<Pmrid>> = gpu::Cache::new();
@@ -560,6 +556,7 @@ pub fn device(gpu: &'static gpu::Gpu) -> Option<&'static Pmrid> {
         .as_ref()
 }
 
+// Not a `gpu::Cache`: it would keep the `None` answered before the page hands the weights over.
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static BUILT: std::cell::Cell<Option<&'static Pmrid>> = const { std::cell::Cell::new(None) };
@@ -716,8 +713,9 @@ fn forward_pass(half: bool) -> &'static str {
 ///
 /// **Named backend by backend, never a fallthrough.** What the driver is handed decides how the
 /// host packs the weights, so a backend guessed at is a picture that comes out wrong rather than a
-/// kernel that fails to build. A backend `build.rs` emits nothing for has no arm - the layers stay
-/// on the WGSL pass, which is the answer the editor takes and the one pinned against this.
+/// kernel that fails to build. A backend `native/shaders/build.rs` emits nothing for has no arm -
+/// the layers stay on the WGSL pass, which is the answer the editor takes and the one pinned
+/// against this.
 ///
 /// **Neither artefact is in the browser's module**, which is what the `cfg` is for rather than the
 /// `None`: a page has no passthrough shader of any kind, and these are a quarter of a megabyte a
@@ -777,7 +775,7 @@ fn coop_kernels(gpu: &gpu::Gpu, net: &Net, weights: &[u8]) -> Option<Coop> {
         .collect();
     let module = {
         #[expect(unsafe_code)]
-        // SAFETY: the kernel is this repository's, compiled by `build.rs` from
+        // SAFETY: the kernel is this repository's, compiled by `native/shaders/build.rs` from
         // `slang/passthrough/pmrid_coop.slang`, and the layout below is what it declares. Nothing
         // about either is a caller's to choose.
         unsafe {
@@ -1319,8 +1317,7 @@ struct Edges {
     colour: f32,
 }
 
-/// Arenas kept between frames while anyone holds them ([`hold_arenas`]), keyed by the shape of
-/// arena they are: packed width, packed height and the arm that built it.
+/// Arenas kept between frames while anyone holds them ([`hold_arenas`]).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct Kept<K, T> {
     holds: usize,
@@ -1360,12 +1357,13 @@ impl<K: PartialEq, T> Kept<K, T> {
     }
 }
 
+/// Keyed by device, packed width, packed height and the arm that built it.
 #[cfg(not(target_arch = "wasm32"))]
-static KEPT: std::sync::Mutex<Kept<(usize, usize, Arm), Session>> =
+static KEPT: std::sync::Mutex<Kept<(u64, usize, usize, Arm), Session>> =
     std::sync::Mutex::new(Kept::new());
 
 #[cfg(not(target_arch = "wasm32"))]
-fn kept() -> std::sync::MutexGuard<'static, Kept<(usize, usize, Arm), Session>> {
+fn kept() -> std::sync::MutexGuard<'static, Kept<(u64, usize, usize, Arm), Session>> {
     KEPT.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -1393,7 +1391,7 @@ pub fn arenas_held() -> bool {
 /// The arena and the bindings one tile size needs, built once and dispatched over every tile.
 struct Session {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    shape: (usize, usize, Arm),
+    shape: (u64, usize, usize, Arm),
     arena: gpu::Buffer,
     edges: gpu::Buffer,
     /// `tally_sums` in `slang/pmrid.slang`.
@@ -1415,7 +1413,7 @@ impl Session {
     /// An idle arena of this shape where one is kept, or a new one.
     fn take(gpu: &'static gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(kept) = kept().take((pw, ph, pmrid.arm)) {
+        if let Some(kept) = kept().take((gpu.id(), pw, ph, pmrid.arm)) {
             return kept;
         }
         Session::hold(gpu, pmrid, pw, ph)
@@ -1521,7 +1519,7 @@ impl Session {
         recording.submit();
 
         Session {
-            shape: (pw, ph, pmrid.arm),
+            shape: (gpu.id(), pw, ph, pmrid.arm),
             arena,
             edges,
             tally,
@@ -1973,10 +1971,10 @@ mod tests {
 
     /// [`super::COOP_ROWS`] is the rows the shader marks `DISPATCHED`.
     ///
-    /// **The Metal artefact holds those kernels and nothing else**, `build.rs` reading them off the
-    /// same lines, so a row this table names and that file does not is a module with no such entry
-    /// point - on a Mac, and on no machine this is developed on. The shader's default `FRAGMENT` is
-    /// here too, the Vulkan artefact taking it as it stands.
+    /// **The Metal artefact holds those kernels and nothing else**, `native/shaders/build.rs`
+    /// reading them off the same lines, so a row this table names and that file does not is a
+    /// module with no such entry point - on a Mac, and on no machine this is developed on. The
+    /// shader's default `FRAGMENT` is here too, the Vulkan artefact taking it as it stands.
     #[test]
     fn the_rows_are_the_ones_the_shader_marks() {
         let source = std::fs::read_to_string(concat!(

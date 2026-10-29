@@ -815,7 +815,7 @@ pub mod tests {
     }
 
     /// Stripes ten pixels apart across a frame of `size`, and a bright, coloured disc on them.
-    pub fn striped_with_a_disc(size: (usize, usize), centre: (f64, f64)) -> Vec<u16> {
+    pub(crate) fn striped_with_a_disc(size: (usize, usize), centre: (f64, f64)) -> Vec<u16> {
         let mut samples = Vec::with_capacity(size.0 * size.1 * 3);
         for y in 0..size.1 {
             for x in 0..size.0 {
@@ -834,7 +834,7 @@ pub mod tests {
     }
 
     /// A loop of radius 12 around `centre`, on the grid.
-    pub fn loop_around(whole: Size<Drawn>, centre: (f64, f64)) -> Vec<Point<Stored>> {
+    pub(crate) fn loop_around(whole: Size<Drawn>, centre: (f64, f64)) -> Vec<Point<Stored>> {
         (0..16)
             .map(|at| {
                 let angle = at as f64 * std::f64::consts::TAU / 16.0;

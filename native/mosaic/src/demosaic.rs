@@ -1544,7 +1544,7 @@ mod tests {
             colour,
             crate::highlight::Colouring::DEFAULT,
         );
-        middle_of(&samples, crop.2, crop.3)
+        pixel_at(&samples, crop.2, (crop.2 / 2, crop.3 / 2))
     }
 
     fn rggb() -> crate::cfa::Cfa {
@@ -1590,9 +1590,9 @@ mod tests {
         pollster::block_on(super::read_frame(gpu, &frame, crop.2 * crop.3)).expect("it reads back")
     }
 
-    fn middle_of(samples: &[u16], width: usize, height: usize) -> [f32; 3] {
-        let middle = ((height / 2) * width + width / 2) * 3;
-        std::array::from_fn(|c| colour::resident::level_of_bits(samples[middle + c]))
+    fn pixel_at(samples: &[u16], width: usize, (x, y): (usize, usize)) -> [f32; 3] {
+        let first = (y * width + x) * 3;
+        std::array::from_fn(|c| colour::resident::level_of_bits(samples[first + c]))
     }
 
     /// A disc blown in every channel takes a vivid surround's colour partway, evenly to its middle,
@@ -1685,14 +1685,10 @@ mod tests {
             },
             crate::highlight::Colouring::at(1.0),
         );
-        let at = |x: usize, y: usize| {
-            let first = (y * inner + x) * 3;
-            std::array::from_fn(|c| colour::resident::level_of_bits(samples[first + c]))
-        };
         let middle = side / 2 - inset;
         Disc {
-            rim: at(middle + RADIUS - 4, middle),
-            middle: at(middle, middle),
+            rim: pixel_at(&samples, inner, (middle + RADIUS - 4, middle)),
+            middle: pixel_at(&samples, inner, (middle, middle)),
         }
     }
 }

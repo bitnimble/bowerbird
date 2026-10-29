@@ -88,7 +88,7 @@ export interface Developed {
   highlightRecovery: number;
   /** The dust panel's switch and pair, already scaled to the fractions the module reads. */
   dust: DustSettings;
-  /** The reader's repairs, as the document holds them (`crate::repair`). */
+  /** The reader's repairs, as the document holds them (`composite::repair`). */
   repairs: Repair[];
   reflection: ReflectionSettings;
   sharpen: number;

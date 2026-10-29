@@ -6,7 +6,7 @@
 // associative and an atomic one lands in whatever order the lanes did, so two fits of one
 // photograph would draw different curves; instead each workgroup owns a contiguous run of pixels,
 // summed into a slice of its own in the order a serial walk meets them, and the host folds the
-// blocks in order and in f64. `fit::score::folded` records the same trade.
+// blocks in order and in f64. `fit::hdr::folded` records the same trade.
 //
 // The solve stays on the host. It is `pool_violators`, a knot fit and a monotone pass over 256 bins
 // - arithmetic, not arithmetic over pixels - and it wants f64.

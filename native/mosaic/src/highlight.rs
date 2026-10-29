@@ -129,8 +129,8 @@ impl Kernels {
         Some(Kernels {
             seed: pipeline("field_seed", &bayer),
             seed_xtrans: pipeline("field_seed", &xtrans),
-            push: pipeline("field_push", &bayer),
             rim: pipeline("field_rim", &bayer),
+            push: pipeline("field_push", &bayer),
             pull: pipeline("field_pull", &bayer),
             lend: pipeline("field_lend", &bayer),
             layout,
@@ -162,7 +162,7 @@ impl Colouring {
     }
 }
 
-/// The filled colour share at every level-0 cell of a mosaic.
+/// The light `highlight_field.slang` lends every level-0 cell of a mosaic (its `lent`).
 #[derive(Clone)]
 pub struct Field {
     pub(crate) buffer: gpu::Buffer,

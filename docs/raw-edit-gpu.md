@@ -27,7 +27,7 @@ Four things this note got wrong or did not foresee, each fixed by measurement:
 
 - **The finishing filters are not a per-tick stage.** They run once, at the open
   (`edit::open`), on a base already coded into normalised PQ
-  (`tone::encode_base`), which is why they convert nothing. A tick is the grade
+  (`base::encode_base`), which is why they convert nothing. A tick is the grade
   alone.
 - **The graded frame does not need to exist.** §6 assumed a chain of resident
   textures; the colour transform is one fragment shader straight to the canvas,

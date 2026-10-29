@@ -664,7 +664,7 @@ bun run test:e2e                  # Playwright; starts its own API + Vite on ran
 
 Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The dev server's proxy still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
 
-`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs `librawshim.so` built. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
+`bun run test:e2e` builds a throwaway library under `.e2e/` at the repo root (gitignored) from the ARW fixture and drives the real stack, so it needs `librawshim.so` built. Each checkout has its own, so two worktrees testing at once do not wipe each other's fixture. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
 
 ### 18.8 Bug reports
 

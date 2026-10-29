@@ -263,7 +263,7 @@ pub async fn decode_tile_source(
 /// `scale` is the frame's pixels a side per photosite of `view`: 2 merges onto a grid twice as fine
 /// as the sensor's, and hands back a frame twice the size of the window.
 #[allow(clippy::too_many_arguments)]
-pub async fn decode_merged_tile(
+pub(crate) async fn decode_merged_tile(
     sources: &[rawler::rawsource::RawSource],
     view: crate::view::View,
     detail: denoise::galosh::Detail,

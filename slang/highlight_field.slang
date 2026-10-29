@@ -123,6 +123,11 @@ float4 estimate_of(float4 level, float near, uint pair)
 
 uint at_of(uint x, uint y, uint pair) { return (field.offset + y * field.width + x) * 2 + pair; }
 
+uint coarse_at_of(uint x, uint y, uint pair)
+{
+    return (field.coarse_offset + y * field.coarse_width + x) * 2 + pair;
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void field_seed(uint3 id : SV_DispatchThreadID)
@@ -193,7 +198,7 @@ void field_push(uint3 id : SV_DispatchThreadID)
                 }
             }
         }
-        levels[(field.coarse_offset + id.y * field.coarse_width + id.x) * 2 + pair] = sum;
+        levels[coarse_at_of(id.x, id.y, pair)] = sum;
     }
 }
 
@@ -203,16 +208,16 @@ float4 coarse_at(uint x, uint y, uint pair)
     let at = (float2(x, y) + 0.5) * 0.5 - 0.5;
     let base = int2(floor(at));
     let t = at - float2(base);
-    var share = float4(0.0);
+    var sum = float4(0.0);
     for (int dy = 0; dy < 2; dy++) {
         for (int dx = 0; dx < 2; dx++) {
             let cx = clamp(base.x + dx, 0, int(field.coarse_width) - 1);
             let cy = clamp(base.y + dy, 0, int(field.coarse_height) - 1);
             let w = (dx == 0 ? 1.0 - t.x : t.x) * (dy == 0 ? 1.0 - t.y : t.y);
-            share += w * estimates[(field.coarse_offset + uint(cy) * field.coarse_width + uint(cx)) * 2 + pair];
+            sum += w * estimates[coarse_at_of(uint(cx), uint(cy), pair)];
         }
     }
-    return share;
+    return sum;
 }
 
 /// The top level's light about cell `(x, y)`, its own and its eight neighbours', and `UNLIT` with

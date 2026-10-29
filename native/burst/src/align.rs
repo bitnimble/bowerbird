@@ -126,12 +126,12 @@ struct AlignParams {
 }
 
 #[cfg(test)]
-pub fn luma_block() -> usize {
+pub(crate) fn luma_block() -> usize {
     std::mem::size_of::<LumaParams>()
 }
 
 #[cfg(test)]
-pub fn align_block() -> usize {
+pub(crate) fn align_block() -> usize {
     std::mem::size_of::<AlignParams>()
 }
 

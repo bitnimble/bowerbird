@@ -473,7 +473,7 @@ fn gain_map_of(
 
 /// The terms a HEIC's own gain map is applied with: ISO 21496-1's out of its `tmap`, or Apple's
 /// headroom out of the maker note, which is not in the file beside the map.
-pub fn heif_terms(
+pub(crate) fn heif_terms(
     map: &heif::GainMap,
     exif: Option<&[u8]>,
 ) -> Option<crate::gain_map::Reconstruction> {
@@ -516,7 +516,7 @@ fn avif_gain_map(_: &[u8], _: usize, _: usize) -> Option<GainMap> {
 
 /// A HEIF `tmap` item's terms: ISO 21496-1's payload behind a version byte, which the JPEG
 /// spelling does not carry. Read without stripping it, every term lands one byte off.
-pub fn tmap_terms(item: &[u8]) -> Option<crate::gain_map::Reconstruction> {
+pub(crate) fn tmap_terms(item: &[u8]) -> Option<crate::gain_map::Reconstruction> {
     match item.split_first()? {
         (0, payload) => iso_21496_terms(payload),
         _ => None,
@@ -530,7 +530,7 @@ pub fn tmap_terms(item: &[u8]) -> Option<crate::gain_map::Reconstruction> {
 /// The weight a display would apply is deliberately not read: this produces the alternate
 /// rendition in full, and the roll-off that meets a panel comes later (`gain_map.slang`'s
 /// `gain_mapped`).
-pub fn iso_21496_terms(body: &[u8]) -> Option<crate::gain_map::Reconstruction> {
+pub(crate) fn iso_21496_terms(body: &[u8]) -> Option<crate::gain_map::Reconstruction> {
     let flags = *body.get(4)?;
     let channels = match flags & 0x80 != 0 {
         true => 3usize,

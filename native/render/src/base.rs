@@ -1,18 +1,8 @@
 //! The base frame's own stages, on the GPU.
 //!
 //! Everything between the demosaic and the grade that both a rendition and the editor's open run:
-//! the coding, the defringe, the warp, the sharpen, and the two whole-frame numbers the
-//! rest of them read. Measured on a 61MP frame, and this is why they are worth moving at all -
-//! `open code, defringe` 1170ms, `open lens warp` 639ms and `open noise measure` 1021ms, against
-//! a decode that is already on the GPU either side of them.
-//!
-//! **The prize is not the stage timings, it is the two transfers they sit between.** RCD leaves
-//! the frame in VRAM and reads it back; the grade uploads it again. At 61MP that is 361MB each
-//! way for the privilege of running pointwise arithmetic on a CPU. Every stage that moves here
-//! brings those two closer together, and the last one deletes them.
-//!
-//! Its own module rather than more of `grade.rs` for the reason `demosaic.rs` is its own: the denoise
-//! sits between them, and this one's frame is the demosaiced one.
+//! the coding, the defringe, the warp, the sharpen, and the two whole-frame numbers the rest of
+//! them read.
 
 use gpu::compute::groups;
 use gpu::dispatch::{Banded, Whole};
@@ -39,8 +29,9 @@ pub struct Base {
     sharpen_apply: Banded,
     /// Every code a frame can hold, as the light behind it, normalised so the largest is one.
     ///
-    /// The resize's, and the process's: it is the PQ curve inverted and nothing about a particular
-    /// frame, so it is built once beside the pipelines rather than per render. 256kB.
+    /// The resize's, shared by every frame on this device: it is the PQ curve inverted and
+    /// nothing about a particular frame, so it is built once beside the pipelines rather than per
+    /// render. 256kB.
     light_of_code: gpu::Buffer,
     /// The same for a frame that has not been coded, which is the ramp. 256kB.
     light_of_level: gpu::Buffer,
@@ -1360,7 +1351,7 @@ pub fn sharpens(samples: usize, width: usize, height: usize, amount: f64) -> boo
 ///
 /// Four dispatches per iteration over ping-pong luma planes, then the neighbourhood range and the
 /// limit-and-blend write.
-pub fn sharpen_into(
+pub(crate) fn sharpen_into(
     gpu: &gpu::Gpu,
     base: &Base,
     recording: &mut gpu::Recording<'_>,
@@ -2273,12 +2264,12 @@ pub async fn measure_edge_spread(
 /// percentile of ~2200 codes, given ~8600 by the shipped file; its headlight's red, 2365 given
 /// 6327. At this bar that frame's worst tile reads 0.24 and the next frame's 0.10, with the
 /// clean frames at nothing.
-pub const CHROMA_LEAK_CODES: f32 = 4096.0;
+pub(crate) const CHROMA_LEAK_CODES: f32 = 4096.0;
 
 /// Blocks whose mean luma is under this many 16-bit PQ codes are not counted: 0.15 of the curve
 /// is 1.7 nits, black on a display whose diffuse white is 203, and an error there is a
 /// dark-adapted eye's to see.
-pub const CHROMA_LEAK_DARK: f32 = 0.15 * 65535.0;
+pub(crate) const CHROMA_LEAK_DARK: f32 = 0.15 * 65535.0;
 
 /// The tile the leak is counted over, in 2x2 blocks: 64 pixels a side.
 const CHROMA_LEAK_TILE: usize = 32;

@@ -160,7 +160,7 @@ struct Kernel {
     name: &'static str,
 }
 
-/// Every kernel, built once and kept for the process.
+/// Every kernel, built once per device.
 pub struct Galosh {
     ne_block_stats: Kernel,
     under_black_reduce: Kernel,
@@ -2252,12 +2252,7 @@ mod tests {
 
     #[test]
     fn an_unset_highlight_recovery_is_the_documents_default() {
-        let schema = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../src/schemas/highlight_recovery.ts"),
-        )
-        .expect("the schema reads");
-        let default: f64 = schema
+        let default: f64 = include_str!("../../../src/schemas/highlight_recovery.ts")
             .split("DEFAULT_HIGHLIGHT_RECOVERY = ")
             .nth(1)
             .and_then(|rest| rest.split(';').next())

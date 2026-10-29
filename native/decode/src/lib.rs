@@ -120,7 +120,7 @@ fn held_unturned(path: &str) -> Result<crate::rendered::Held, String> {
 }
 
 /// A held finished picture as its whole self, halved where the caller's floor allows it.
-pub async fn whole(
+pub(crate) async fn whole(
     held: &crate::rendered::Held,
     at_least_long_edge: u32,
 ) -> Option<crate::frame::Frame> {
@@ -347,7 +347,7 @@ pub fn tile_halo(asked: usize) -> usize {
 
 /// The window a tile was built in, ready for the grade.
 pub struct Prepared {
-    /// Normalised PQ Rec.2020 ([`colour::tone::encode_base`]), the window and its margin.
+    /// Normalised PQ Rec.2020 ([`render::base::encode_base`]), the window and its margin.
     pub samples: Vec<u16>,
     pub width: usize,
     pub height: usize,

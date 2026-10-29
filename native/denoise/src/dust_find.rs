@@ -59,7 +59,7 @@ pub struct Find {
 /// reduction beside them, and the handful of scalars the lanes broadcast through.
 const WORKGROUP_STORAGE: u32 = (2 * crate::dust::BINS as u32 + 1) * 64 * 4 + 64;
 
-/// The kernels, built once and kept for the process.
+/// The kernels, built once per device.
 ///
 /// None where the adapter cannot hold that. The caller's answer is to leave the photograph's
 /// particles where they are, which is a far better outcome than a failed decode.
@@ -571,7 +571,7 @@ impl Search {
         });
         recording.submit();
 
-        read_f32(gpu, &out, blobs.len() * words).await
+        gpu::read_floats(gpu, &out, blobs.len() * words).await
     }
 }
 
@@ -642,16 +642,6 @@ async fn read_halves(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option
         bytes
             .chunks_exact(2)
             .map(|half| u16::from_ne_bytes([half[0], half[1]]))
-            .collect(),
-    )
-}
-
-async fn read_f32(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option<Vec<f32>> {
-    let bytes = mapped(gpu, from, (count * 4) as u64).await?;
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
             .collect(),
     )
 }

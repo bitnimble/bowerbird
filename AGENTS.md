@@ -148,8 +148,8 @@ Run getters in each worktree to create symlinks. `XDG_CACHE_HOME` moves cache;
 - **A place or count in a plane is a `px` `Wide`, and `wide * 3` its first value or sample count**
   (`wide_at<S>(x, y, width)`, `wide<S>(n)`). Adreno truncates `x` to 24 bits in a multiply by a
   non-power-of-two constant, so a 61MP frame's bottom half lands on its top; the operator goes
-  through `times.slang`. Any other runtime `* 3` is `times(x, 3)`, and `build.rs` refuses one left
-  in WGSL; unrolled constants fold away and may stay.
+  through `times.slang`. Any other runtime `* 3` is `times(x, 3)`, and `native/shaders/build.rs`
+  refuses one left in WGSL; unrolled constants fold away and may stay.
 
 ## Formatting
 
@@ -324,7 +324,7 @@ in about five seconds.
   chain). Never `decode_frame`/`fit_hdr_for`, which skip all three and move the camera match, nor
   `hdr::graded_as`, which skips the defringe and sharpens at a fixed sigma with no noise table.
 - `grade.rs` supplies editor passes; `wasm.rs` calls `grade::present`.
-  `gpu.encode(frame, grade)` needs an **already coded and warped** frame.
+  `grade::device(gpu).encode(frame, grade)` needs an **already coded and warped** frame.
   `graded_as` codes for itself: passing a prepared frame codes twice, lifting/flattening the image.
 - Only denoise is `galosh.rs`, on the mosaic.
 

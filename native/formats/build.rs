@@ -10,13 +10,10 @@ use std::path::{Path, PathBuf};
 fn main() {
     // Every path named here must exist. Cargo cannot stat a missing one, so it treats the script
     // as dirty and re-runs it on every build - which regenerates the bindings, which recompiles the
-    // crate, on a tree where nothing changed. `wrapper_client.h` was listed here after it was
-    // deleted and cost every native test run two minutes of rebuild.
+    // crate, on a tree where nothing changed.
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
 
-    // Only a `renditions` build binds anything: rawler reads the RAWs, and libavif and libjxl are
-    // the server's alone. An editor build links no C at all.
     if env::var("CARGO_FEATURE_RENDITIONS").is_err() {
         return;
     }
@@ -30,17 +27,12 @@ fn main() {
 }
 
 /// AVIF, encode and decode, which only a `renditions` build binds.
-///
-/// It was split out when the editor encoded its own frames and needed the encode half on its
-/// own; the editor draws to a canvas now and asks for neither, so the split has one caller
-/// left and the whole surface goes to it.
 fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
     builder
         .allowlist_type("avifImage")
         .allowlist_type("avifRGBImage")
         .allowlist_type("avifEncoder")
-        // Every call's return type. Named rather than left to come through a struct
-        // field, which is how the server run happened to get it.
+        // Every call's return type, named so it does not hang on a struct field pulling it in.
         .allowlist_type("avifResult")
         .allowlist_function("avifImageCreate")
         .allowlist_function("avifImageDestroy")
@@ -64,8 +56,7 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifResultToString")
         .allowlist_var("AVIF_DEFAULT_IMAGE_DIMENSION_LIMIT")
         .allowlist_var("AVIF_DEFAULT_IMAGE_SIZE_LIMIT")
-        // The decode half reads renditions back for a JPEG download, which is what libvips
-        // was kept for.
+        // The decode half reads renditions back for a JPEG download.
         .allowlist_type("avifDecoder")
         .allowlist_function("avifImageCreateEmpty")
         .allowlist_function("avifDecoderCreate")
@@ -76,7 +67,7 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifDecoderParse")
         .allowlist_function("avifImageYUVToRGB")
         // The gain map beside a picture, which is a second image and the terms that apply it.
-        // Stable since 1.2 (`libavif` below is what makes sure this is that).
+        // Stable since 1.2, and `codecs` below links a pinned build past it.
         .allowlist_type("avifGainMap")
         .allowlist_type("avifImageContentTypeFlag")
         .allowlist_type("avifSignedFraction")

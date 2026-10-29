@@ -576,7 +576,7 @@ fn save_avif(
 /// to, the coding, the camera match, and the denoise. What is left per target is the resize,
 /// the warp, and then one dispatch carrying the colour transform, the roll-off into that
 /// display's peak and the transfer - followed by the encode.
-/// Normalised PQ Rec.2020 (`tone::encode_base`), denoised and defringed, and the one thing about a
+/// Normalised PQ Rec.2020 (`base::encode_base`), denoised and defringed, and the one thing about a
 /// base that depends on how it was made.
 ///
 /// A whole-frame build leaves it where the coding wrote it, because the resize and the warp that
@@ -850,7 +850,7 @@ impl Base {
         );
         // Read off the levels and coded against them, once, here. Everything below this line
         // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
-        // sensor levels, and `tone::encode_base` says what that buys.
+        // sensor levels, and `base::encode_base` says what that buys.
         //
         // Ahead of every warp and every resize, which is where the denoise belongs and the
         // sharpen does not (`Cut::from_base` runs it after both). At the decode's size, which is the largest
@@ -1258,6 +1258,7 @@ pub(crate) fn whole_removal(job: &Job) -> Option<dereflect::Removal> {
         detail: job.detail(),
         dust: job.dust,
         half_size: job.half_size,
+        device: gpu.id(),
     };
     let layer = dereflect::kept(found, || {
         let frame = decode::frame_from_path(

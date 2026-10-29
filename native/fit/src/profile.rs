@@ -35,7 +35,7 @@ const FIT_BLUR_SIGMA: f64 = 3.0;
 
 /// A pair from a steep gradient is worthless: a fraction of a pixel of
 /// misalignment there swamps the colour difference being measured.
-pub const MAX_PAIR_GRADIENT: i32 = 24;
+pub(crate) const MAX_PAIR_GRADIENT: i32 = 24;
 
 const MIN_PAIRS: usize = 2000;
 pub const MIN_BIN_SAMPLES: f64 = 8.0;
@@ -73,7 +73,7 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub fn held_out(self) -> Phase {
+    pub(crate) fn held_out(self) -> Phase {
         match self {
             Phase::Train => Phase::Test,
             Phase::Test => Phase::Train,
@@ -181,8 +181,8 @@ struct Grids {
 
 // ------------------------------------------------------------------ the grids, on the device
 
-/// `fit_grids.slang`'s two resamplers, built once for the process.
-pub struct Resamplers {
+/// `fit_grids.slang`'s two resamplers, built once per device.
+pub(crate) struct Resamplers {
     layout: wgpu::BindGroupLayout,
     lanczos: wgpu::ComputePipeline,
     blur: wgpu::ComputePipeline,
@@ -190,7 +190,7 @@ pub struct Resamplers {
     box_blur_windowed: wgpu::ComputePipeline,
 }
 
-pub fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
+pub(crate) fn resamplers(gpu: &'static gpu::Gpu) -> &'static Resamplers {
     static BUILT: gpu::Cache<Resamplers> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -422,7 +422,7 @@ const BOX_PASSES: usize = 3;
 
 /// The colour fit's prefilter: three passes of a truncated box an axis, over a plane whose values
 /// may run past one.
-pub fn box_blurred(
+pub(crate) fn box_blurred(
     gpu: &'static gpu::Gpu,
     recording: &mut gpu::Recording<'_>,
     source: &Sampled,
@@ -465,7 +465,7 @@ pub fn box_blurred(
 /// `fit_grids.slang`'s windowed box workgroup: the pixels of a line it writes, and the widest
 /// window it holds.
 const BOX_SEGMENT: u32 = 256;
-pub const BOX_MOST_RADIUS: usize = BOX_SEGMENT as usize / 2;
+pub(crate) const BOX_MOST_RADIUS: usize = BOX_SEGMENT as usize / 2;
 const BOX_WINDOWED_FROM: usize = 16;
 
 /// An 8-bit plane on the device as its own bytes, and a grid back off it.
@@ -604,7 +604,7 @@ impl Gain {
 
     /// Tabulated rather than left to be evaluated, because the geometry search reads it
     /// per pair and evaluating it is a `powf` for the transfer.
-    pub fn from_poly(a: f64, b: f64) -> Self {
+    pub(crate) fn from_poly(a: f64, b: f64) -> Self {
         let linear = linear_table();
         let mut lut = vec![0u8; 256 * 256];
         for radius in 0..256 {

@@ -32,7 +32,7 @@ const RECORD_WORDS: usize = 2;
 const SCORE_WORDS: usize = 3;
 
 /// `crate::profile::refit_gain`'s radius bins, and the three sums each carries.
-pub const FALLOFF_BINS: usize = 12;
+pub(crate) const FALLOFF_BINS: usize = 12;
 const FALLOFF_WORDS: usize = 3;
 
 pub struct Kernels {
@@ -338,7 +338,7 @@ impl Paired {
 
     /// [`Self::scored`] on the training half, of `source` through each of `lenses`, warped in the
     /// same round trip into planes this keeps.
-    pub async fn scored_through(
+    pub(crate) async fn scored_through(
         &self,
         source: &gpu::Buffer,
         source_size: (usize, usize),

@@ -8,7 +8,7 @@
 // Two samples to a word, the left one in the low half: the little-endian `u16` rows the encoder
 // reads. Each lane codes a four-by-two block of luma and the two chroma samples over it, sited
 // with the left luma column of each pair and between its two rows, as the MP4's `vpcC` says. Where the
-// planes are and how long their rows are is the host's (`gpu::Pq420Layout`), so a lane past the
+// planes are and how long their rows are is the host's (`grade::Pq420Layout`), so a lane past the
 // picture's right or bottom edge writes padding the encoder never reads.
 import light;
 import prelude;

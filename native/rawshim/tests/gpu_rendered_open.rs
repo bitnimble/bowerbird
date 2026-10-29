@@ -85,7 +85,7 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
     assert!(header.peak >= header.white);
     // And the frame is a picture rather than a flat buffer, which is what a decode that lost its
     // pixels somewhere in the chain would leave. These are normalised PQ, not the linear samples
-    // the levels above are in (`tone::encode_base`), so what is asked of them is the spread.
+    // the levels above are in (`base::encode_base`), so what is asked of them is the spread.
     let brightest = opened.samples.iter().copied().max().unwrap_or(0);
     let darkest = opened.samples.iter().copied().min().unwrap_or(0);
     assert!(

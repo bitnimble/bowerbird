@@ -1,5 +1,4 @@
-// The decode, the fit and the grade, exposed as what the app actually wants rather
-// than the twenty-odd C calls it once made to assemble them.
+// The decode, the fit and the grade, exposed as what the app actually wants.
 //
 // Everything a frame needs happens on this side: as-shot white balance, the demosaic, the
 // half-size decision, and the masked-border crop. JS gets one call and a pointer.
@@ -12,7 +11,6 @@
 // each pairs visibly with the symbol it crosses the boundary in - `BbHeader` with
 // `bb_read_header`. Types that stay on this side are named normally.
 
-#![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 // Unsafe is denied crate-wide and exempted one statement at a time, never one
 // module or one function at a time. The three lints are a set and none of them
 // does the job alone:
@@ -36,14 +34,13 @@
 // A marker counts one operation, not one block, so it measures the C surface rather
 // than how much code sits inside a brace - and a `Drop` of two lines carries as much
 // weight as a body of sixty. The number that has to keep falling is the calls
-// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/*/src`. The other
-// crates hold the same three lints.
+// themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/*/src`. Every
+// crate that marks unsafe holds the same three lints.
 //
-// The C handles are `formats`', each owned by a Rust value whose `Drop` frees it. What is
-// left here is the irreducible part: reading the one command buffer at an entry
-// point. Our own memory is
-// marked nowhere - a `Frame` is an owned Rust value with a real lifetime, and the
-// handle API that needs raw pointers for it sits behind a lint fence, for tests.
+// The C handles are `formats`', each owned by a Rust value whose `Drop` frees it. The unsafe here
+// is the irreducible part: reading the one command buffer at an entry point. Our own memory is
+// marked nowhere - a `Frame` is an owned Rust value with a real lifetime, and the handle API that
+// needs raw pointers for it sits behind a lint fence, for tests.
 #![deny(unsafe_code)]
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]

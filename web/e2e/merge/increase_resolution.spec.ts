@@ -1,6 +1,6 @@
 // Increase resolution from the bulk bar: the same merge as Reduce noise onto a grid twice as fine.
 // The frames are smaller than the photo viewer's rendition, so opening it merges at 2x. The size
-// is the server's (`composites_service.test.ts`), the picture native's (`burst_scene`).
+// is the server's (`composites_service.test.ts`), the picture native's (`burst::scene`).
 import { expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { MERGE_PHOTO_NAMES, RESOLUTION_PHOTOS_DIR } from '../fixture_library';

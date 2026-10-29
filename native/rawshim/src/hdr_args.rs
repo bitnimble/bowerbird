@@ -83,7 +83,7 @@ mod tests {
     use super::*;
 
     /// The library's own defaults, which is what the recorded rows were captured with.
-    const SHIPPING_GRADE: crate::hdr_args::Grade = crate::hdr_args::Grade {
+    const SHIPPING_GRADE: Grade = Grade {
         reference_white_nits: units::light::Light::exactly(203.0),
         white_quantile: 0.9,
     };

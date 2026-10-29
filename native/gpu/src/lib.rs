@@ -1,10 +1,9 @@
 //! The device: opened once, replaced after a loss, and the only way anything allocates on it.
 //!
-//! **The device is process-wide and built once.** Adapter enumeration and shader
-//! compilation are tens of milliseconds; a rendition job that paid them per photo would
-//! spend more there than on the grade. Held behind a `OnceLock` rather than passed down
-//! through every caller, because the alternative is threading a device through
-//! `job::run` -> `hdr::graded` -> `tone` for a resource there is exactly one of.
+//! **The device is process-wide.** Adapter enumeration and shader compilation are tens of
+//! milliseconds; a rendition job that paid them per photo would spend more there than on the
+//! grade. Held in a `static` rather than threaded down from `job::run` through every stage, for a
+//! resource there is one of at a time.
 
 #![deny(unsafe_code)]
 #![deny(unfulfilled_lint_expectations)]
@@ -100,7 +99,7 @@ static REOPENED: std::sync::Mutex<Vec<trace::clock::Mark>> = std::sync::Mutex::n
 /// A device lost since it opened is replaced here, so the next call after a loss runs on a new one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device() -> Option<&'static Gpu> {
-    let mut opened = GPU.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut opened = dispatch::locked(&GPU);
     *opened = match *opened {
         Opened::Open(gpu) | Opened::Lost(gpu) if gpu.lost() => reopened(gpu),
         Opened::Unasked => Gpu::new().map_or(Opened::Refused, |gpu| {
@@ -121,7 +120,7 @@ pub fn device() -> Option<&'static Gpu> {
 /// Leaked like the first: a call still running holds the lost one.
 #[cfg(not(target_arch = "wasm32"))]
 fn reopened(lost: &'static Gpu) -> Opened {
-    let mut reopened = REOPENED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut reopened = dispatch::locked(&REOPENED);
     reopened.retain(|at| at.elapsed() < LOSS_WINDOW);
     if reopened.len() >= LOSSES_TOLERATED {
         trace::warn("rawshim gpu: the device was lost too often; no other is opened yet");
@@ -351,7 +350,7 @@ pub async fn read_words(gpu: &Gpu, staging: &wgpu::Buffer) -> Option<Vec<u32>> {
 }
 
 /// The first `count` floats of a storage buffer, copied out through a readback of their own.
-pub async fn read_floats(gpu: &'static Gpu, buffer: &Buffer, count: usize) -> Option<Vec<f32>> {
+pub async fn read_floats(gpu: &Gpu, buffer: &Buffer, count: usize) -> Option<Vec<f32>> {
     let bytes = (count * 4) as u64;
     let mut recording = gpu.record();
     let readback = recording.buffer(&wgpu::BufferDescriptor {
@@ -602,9 +601,7 @@ impl Queue {
     }
 
     fn recent(&self) -> std::sync::MutexGuard<'_, Submissions> {
-        self.recent
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        dispatch::locked(&self.recent)
     }
 }
 
@@ -830,7 +827,7 @@ pub async fn finished(gpu: &Gpu) -> Option<()> {
     {
         let (state, signal) = Signal::pair();
         gpu.queue.on_submitted_work_done(move || signal(true));
-        let _ = gpu.device.poll(wgpu::PollType::Poll);
+        gpu.nudge();
         state.await.then_some(())
     }
 }
@@ -877,18 +874,14 @@ impl Signal {
         }));
         let wrote = state.clone();
         let signal = move |answer: bool| {
-            let mut wrote = wrote
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut wrote = dispatch::locked(&wrote);
             wrote.answer = Some(answer);
             if let Some(waker) = wrote.waker.take() {
                 waker.wake();
             }
         };
         let waited = std::future::poll_fn(move |context| {
-            let mut state = state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = dispatch::locked(&state);
             match state.answer {
                 Some(answer) => std::task::Poll::Ready(answer),
                 None => {
@@ -926,7 +919,7 @@ impl Gpu {
     /// The cell the cache at `cache` fills on this device. The lock is not held while it fills,
     /// since one stage's build asks for another's.
     fn built_for(&self, cache: usize) -> &'static std::sync::OnceLock<Box<Built>> {
-        let mut built = self.built.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut built = dispatch::locked(&self.built);
         // Leaked like the device, which a call still running may hold.
         built
             .entry(cache)
@@ -936,8 +929,8 @@ impl Gpu {
 
 /// A stage's pipelines, built on a device's first use of them and held by that device, so a
 /// device opened after a loss builds its own.
-// Sized, so every cache's static has an address of its own: the address is the key.
 pub struct Cache<T> {
+    // Sized, so every cache's static has an address of its own: the address is the key.
     _sized: u8,
     holds: std::marker::PhantomData<fn() -> T>,
 }
@@ -1282,8 +1275,10 @@ mod tests {
     fn a_cache_builds_once_per_device() {
         static FIRST: super::Cache<u64> = super::Cache::new();
         static SECOND: super::Cache<u64> = super::Cache::new();
-        let gpus: [&'static super::Gpu; 2] =
-            std::array::from_fn(|_| &*Box::leak(Box::new(super::Gpu::new().expect("a GPU adapter"))));
+        let gpus: [&'static super::Gpu; 2] = [
+            super::device().expect("a GPU adapter"),
+            Box::leak(Box::new(super::Gpu::new().expect("a GPU adapter"))),
+        ];
         let mut builds = 0;
         let mut on = |cache: &'static super::Cache<u64>, gpu: usize| {
             *cache.get(gpus[gpu], || {

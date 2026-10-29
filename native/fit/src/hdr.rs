@@ -40,7 +40,7 @@ const FIT_BLUR_RADIUS: usize = 2;
 /// crosses first, so a cautious gate censors red's brightest teachers while green and
 /// blue keep theirs, and the shared curve's top end is then taught by less-red content -
 /// a green tinge on the brightest skin, from a transform with no local knob at all.
-pub const CAMERA_CLIPPING: f64 = 0.98;
+pub(crate) const CAMERA_CLIPPING: f64 = 0.98;
 
 /// The same thing at the other end, and only the global stages discount it.
 ///
@@ -63,14 +63,14 @@ pub const CAMERA_CLIPPING: f64 = 0.98;
 /// and a curve is the one part of the model that can say so.
 ///
 /// The level `GREY_FLOOR` already calls enough light to read a pixel's chroma at.
-pub const CAMERA_CRUSHED: f64 = 0.02;
+pub(crate) const CAMERA_CRUSHED: f64 = 0.02;
 
 /// The same level again, where the pair list asks whether either side rendered a pixel neutral.
 ///
 /// Named apart from `CAMERA_CRUSHED` on purpose: that one is a statement about what a body's
 /// output means at the bottom of its range, and this is a floor under a chroma *ratio*, which is
 /// noise taken between small numbers whoever produced them. Ours is tested against it too.
-pub const GREY_FLOOR: f64 = 0.02;
+pub(crate) const GREY_FLOOR: f64 = 0.02;
 
 /// Hues around the coarse grid's circle.
 ///
@@ -622,25 +622,25 @@ pub struct Plane {
 ///
 /// The mask is the low byte and the hue is the one above it, which is what leaves the shader's
 /// `ALL` and `COLOUR` room to sit beside the three channel bits without colliding with a bucket.
-pub const HUE_SHIFT: u32 = 8;
+pub(crate) const HUE_SHIFT: u32 = 8;
 
 /// How much square-root luma may change across a pixel before a small misregistration could
 /// change its colour, which is what disqualifies it as a pair.
-pub const PAIR_GRADIENT: f64 = 0.03;
+pub(crate) const PAIR_GRADIENT: f64 = 0.03;
 
 /// Below this much chroma a pixel has no hue worth censusing: a ratio taken between crushed
 /// codes is noise, and a pixel the camera rendered 2/1/3 would land in a bin on nothing.
-pub const HUE_CHROMA: f64 = 0.1;
+pub(crate) const HUE_CHROMA: f64 = 0.1;
 
 /// Below this many usable pixels a frame does not get to move its own ceiling.
-pub const MIN_CEILING_PIXELS: usize = 16;
+pub(crate) const MIN_CEILING_PIXELS: usize = 16;
 
 /// How far up our own render a pair still carries colour, as a fraction of diffuse white.
 ///
 /// Only our clipping, unlike `TRUST_CEILING`. Above this the channel is at or against the
 /// top of its container and the objective clamps it to the gamut (`fit_score.slang`), so the
 /// comparison would be against a white we invented rather than one we rendered.
-pub const OUR_CLIPPING: f64 = 0.99;
+pub(crate) const OUR_CLIPPING: f64 = 0.99;
 
 // ------------------------------------------------------------------- the model
 
@@ -958,7 +958,7 @@ impl Evaluated {
 }
 
 /// `fit_model.slang`'s bindings: `colour.slang`'s model, and the samples in and out.
-pub fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn model_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         let device = gpu.describing();
@@ -1189,7 +1189,7 @@ pub async fn evaluated(
     evaluate(gpu, colour, samples, stage).read(gpu).await
 }
 
-pub fn gather_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn gather_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -1592,7 +1592,7 @@ fn harm(score: &Score, reference: &Score) -> f64 {
 const HARM_SOFTNESS: f64 = 0.25;
 
 /// `fit_score.slang`'s `class_of`.
-pub const COLOUR_CLASSES: usize = 37;
+pub(crate) const COLOUR_CLASSES: usize = 37;
 
 /// Pairs a class needs for its excess to count half.
 const CLASS_CONFIDENCE: f64 = 32.0;
@@ -1654,7 +1654,7 @@ fn folded(blocks: impl IntoIterator<Item = crate::score::Partial>) -> Score {
 }
 
 /// Three bands of the camera's chroma against three of its lightness.
-pub const BIAS_BUCKETS: usize = 9;
+pub(crate) const BIAS_BUCKETS: usize = 9;
 
 /// How much a unit of systematic bias counts against a unit of average error.
 const BIAS_WEIGHT: f64 = 3.0;
@@ -1806,10 +1806,10 @@ const MEASURE_BLOCK: usize = 4096;
 
 /// Hues the frame is divided into before its pairs are counted, plus one bucket for
 /// everything too close to grey to have a hue at all.
-pub const HUE_BINS: usize = 12;
+pub(crate) const HUE_BINS: usize = 12;
 
 /// Each hue bin muted and vivid, then the one grey bucket.
-pub const HUE_SLOTS: usize = 2 * HUE_BINS + 1;
+pub(crate) const HUE_SLOTS: usize = 2 * HUE_BINS + 1;
 
 /// How far a bin's weight may be pushed from parity, either way.
 ///
@@ -1826,7 +1826,7 @@ const BALANCE_LIMIT: f64 = 4.0;
 /// Levels the curve fit's pairs are counted over, and how far parity may push one, on the
 /// square root of a level's share of the ceiling (`fit_curve.slang`'s `level_of`).
 pub const LEVEL_BINS: usize = 12;
-pub const LEVEL_BALANCE_LIMIT: f64 = 2.0;
+pub(crate) const LEVEL_BALANCE_LIMIT: f64 = 2.0;
 
 /// The same bound for the chroma lattice, which can afford far more of it.
 ///
@@ -1952,7 +1952,7 @@ const RIDGE_CANDIDATES: [f64; 6] = [0.15, 0.05, 0.02, 0.008, 0.002, 0.0005];
 /// One pixel in this many along each axis carries `FRAME`, which is the set every candidate is
 /// scored on beside the pairs. A sixteenth of the plane, enough to say what a candidate does to a
 /// picture and cheap enough to ask of seven candidates a round.
-pub const FRAME_STRIDE: usize = 4;
+pub(crate) const FRAME_STRIDE: usize = 4;
 
 /// The matrix, at the least damping this frame can support.
 ///
@@ -2168,7 +2168,7 @@ async fn fit_curves(
 
 /// How close to grey the camera has to render a pixel for it to count as neutral, and
 /// how many such pixels are needed before their average is worth acting on.
-pub const GREY_CHROMA: f64 = 0.06;
+pub(crate) const GREY_CHROMA: f64 = 0.06;
 const MIN_GREY: u64 = 200;
 const NEUTRAL_PULL_LEAST: units::light::Gain = units::light::Gain::of_ratio(0.9);
 const NEUTRAL_PULL_MOST: units::light::Gain = units::light::Gain::of_ratio(1.1);
@@ -2640,7 +2640,7 @@ const MAP_RIDGE: f64 = 0.05;
 /// those colours from nowhere and a smooth shoulder bands at precisely the levels both
 /// admissions declined. Neutrals outvoting the pairs in shared cells is the weight
 /// ladder's job to prevent, not this bar's.
-pub const WIDE_MIN_CHROMA: f64 = 0.005;
+pub(crate) const WIDE_MIN_CHROMA: f64 = 0.005;
 
 /// Wide-plane pixels one correspondence is shared across.
 ///
@@ -2691,7 +2691,7 @@ const WIDE_REFINE: i32 = 1;
 /// `MAP_CONFIDENCE` asks for. Measured against one on the three fixtures: the held-out pair
 /// deltaE moves by two hundredths either way, and a 1:1 crop of the frame the lattice moved most
 /// on by 0.6 of a count in 255, worst pixel 9.
-pub const WIDE_STRIDE: usize = 2;
+pub(crate) const WIDE_STRIDE: usize = 2;
 
 /// What one admitted pixel counts for: the ones the stride passed over.
 const WIDE_STANDS_FOR: f64 = (WIDE_STRIDE * WIDE_STRIDE) as f64;
@@ -2894,7 +2894,7 @@ pub const SAMPLE: isize = 1;
 /// *bias* from mixing two surfaces, and every count of slack here is more of it. At this
 /// threshold it averages only neighbours that are the same colour to within the sensor's
 /// own noise, which is the case it was wanted for and no other.
-pub const SAMPLE_RANGE: f64 = 0.008;
+pub(crate) const SAMPLE_RANGE: f64 = 0.008;
 
 /// Half-width of the window a registered pair is read through on both planes, in wide-plane
 /// pixels: its box mean, or its centre's half where it holds two colours (`fit_register.slang`). The reads reach `SEARCH` plus this past a grid position, and the host
@@ -2979,14 +2979,14 @@ const SHAPING_WGSL: &str = shaders::FIT_WARP.source;
 const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
-pub fn warp_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn warp_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[])
     })
 }
 
-pub fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[])
@@ -2996,7 +2996,7 @@ pub fn box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
 const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(2, WRITE), (3, READ), (4, READ), (20, UNIFORM)];
 
-pub fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -3009,7 +3009,7 @@ pub fn packed_box_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     })
 }
 
-pub fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -3030,7 +3030,7 @@ pub fn register_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     })
 }
 
-pub fn stats_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
+pub(crate) fn stats_device(gpu: &'static gpu::Gpu) -> &'static Kernel {
     static BUILT: gpu::Cache<Kernel> = gpu::Cache::new();
     BUILT.get(gpu, || {
         kernel(
@@ -4194,7 +4194,7 @@ async fn neighbourhood_plane(
 
 /// How far the four neighbours two pixels out may sit from the centre, in luma and
 /// relative to it, for a shift of a pixel or two to be unable to change the colour.
-pub const FLAT_ENOUGH: f64 = 0.04;
+pub(crate) const FLAT_ENOUGH: f64 = 0.04;
 
 /// A registered wide-plane sample: ours with the falloff on, the camera's answer, and
 /// the lattice's hue weight for it.
@@ -5385,7 +5385,7 @@ const WIDE_WEIGHTS: [f64; 3] = [0.0, 0.01, 0.25];
 /// camera has content over it. Two orders below a real shadow, and one-sided: a Sony puts
 /// true black at code 0-1, under this bar, over our signal - on a night frame that is half
 /// the pairs, and refusing them left the fitted toe a pedestal at code 16.
-pub const MARGIN_DARK: f64 = 0.004;
+pub(crate) const MARGIN_DARK: f64 = 0.004;
 
 async fn fit_model(
     gpu: &'static gpu::Gpu,
@@ -6040,7 +6040,7 @@ pub fn levelled_source(gpu: &'static gpu::Gpu, plane: units::rgb::RgbRef<'_>) ->
 ///
 /// The planes stay on the device because the objective that reads them is
 /// `slang/fit_objective.slang`.
-pub fn warped_planes(
+pub(crate) fn warped_planes(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     (sw, sh): (usize, usize),
@@ -6069,7 +6069,7 @@ pub fn warped_planes(
 }
 
 /// [`warped_planes`], recorded into planes the caller holds, in the caller's recording.
-pub fn warped_into(
+pub(crate) fn warped_into(
     gpu: &'static gpu::Gpu,
     recording: &mut gpu::Recording<'_>,
     source: &gpu::Buffer,
@@ -6108,7 +6108,7 @@ pub fn warped_into(
 /// Only the tests that look at a warped plane want this - the search reads the buffers where they
 /// are, and a candidate's plane is 820KB.
 #[cfg(test)]
-pub async fn warped_levels(
+pub(crate) async fn warped_levels(
     gpu: &'static gpu::Gpu,
     source: &gpu::Buffer,
     source_size: (usize, usize),

@@ -579,7 +579,7 @@ pub fn removal(
 }
 
 /// What a layer is a function of besides the model: the photograph, its strokes, the lens they
-/// are drawn through, and the decode's denoise and dust.
+/// are drawn through, the decode's denoise and dust, and the device it is held on.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(PartialEq)]
 pub struct Found {
@@ -589,6 +589,7 @@ pub struct Found {
     pub detail: denoise::galosh::Detail,
     pub dust: denoise::dust::Settings,
     pub half_size: bool,
+    pub device: u64,
 }
 
 /// The layers found most recently, for a host that cuts many windows from one photograph and holds

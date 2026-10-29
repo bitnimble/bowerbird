@@ -3,7 +3,7 @@
 // Everything before the first slider tick - decode, prepare, fit the camera match,
 // materialise the lens warp, denoise and sharpen - with none of the per-tick half, which is
 // `grade.rs` (`docs/gpu-editor.md`). What comes out is `Opened`: the coded frame the grade
-// reads (`tone::encode_base`), left on the device, plus the numbers the grade needs and cannot
+// reads (`base::encode_base`), left on the device, plus the numbers the grade needs and cannot
 // re-derive from pixels.
 //
 // This half is where the threads are worth having - measured at 3.2x between one and

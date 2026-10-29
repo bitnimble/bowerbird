@@ -45,7 +45,7 @@
 
 /// A gradient worth regressing against. Below this the projection is mostly noise and
 /// the sample earns nothing but variance.
-pub const MIN_EDGE: f64 = 40.0;
+pub(crate) const MIN_EDGE: f64 = 40.0;
 
 /// How far the frame is averaged down before anything is measured.
 ///
@@ -103,31 +103,31 @@ const MAX_SCALE: f64 = 0.01;
 /// nothing - which reads as a perfect result. Measured: a 6x overshoot displaces red about
 /// 6.7px and was waved through. At 5px a real fringe has already died away, so a correct
 /// correction is not penalised for it, and a gross one has nowhere to hide.
-pub const HALO_OFFSETS: [f64; 2] = [2.0, 5.0];
+pub(crate) const HALO_OFFSETS: [f64; 2] = [2.0, 5.0];
 
 /// Samples taken either side of each reading, perpendicular to the radius.
 ///
 /// Free precision: a radial displacement moves nothing along the perpendicular, so
 /// averaging across it adds samples without blurring what is being measured. Cuts the
 /// standard error of the split by about a third.
-pub const HALO_ACROSS: i32 = 2;
+pub(crate) const HALO_ACROSS: i32 = 2;
 
 /// Point sources needed before the verification will believe its own answer.
-pub const MIN_POINTS: usize = 30;
+pub(crate) const MIN_POINTS: usize = 30;
 
 /// Where the scan starts looking, as a fraction of the half-diagonal.
 ///
 /// The innermost radius anything here reads at, so one scan serves every split and each of them
 /// names the band it wants instead. A scan's floor only decides which points it admits, so
 /// scanning twice would be the same walk over the same picture for a subset of the same answer.
-pub const SCAN_FROM: f64 = MEASURE_BINS[0];
+pub(crate) const SCAN_FROM: f64 = MEASURE_BINS[0];
 
 /// Where the verification reads, as a fraction of the half-diagonal. A lateral fringe is legible
 /// in the outer frame and almost nowhere else.
-pub const POINT_FROM: f64 = 0.7;
+pub(crate) const POINT_FROM: f64 = 0.7;
 
 /// A band that excludes nothing. A radius is a fraction of the half-diagonal, so 1 is the corner.
-pub const ANY_RADIUS: (f64, f64) = (0.0, 2.0);
+pub(crate) const ANY_RADIUS: (f64, f64) = (0.0, 2.0);
 
 /// The fraction of the fringe a correction has to actually remove to be kept.
 ///
@@ -221,7 +221,7 @@ pub fn widest(tca: Option<&[Vec<f64>; 2]>) -> f64 {
 const MEASURE_BINS: [f64; 5] = [0.15, 0.35, 0.55, 0.75, 0.95];
 
 /// Point sources a bin needs before its nulling is believed.
-pub const MIN_PER_BIN: usize = 40;
+pub(crate) const MIN_PER_BIN: usize = 40;
 
 /// Bins that must resolve before a slope is fitted through them. Two points define a line
 /// through the origin exactly and prove nothing about whether the profile is a line.

@@ -219,7 +219,7 @@ fn named(compiles: &[Compile]) -> String {
     )
 }
 
-/// The pinned compiler, the one an environment names, or whatever is on `PATH`.
+/// The compiler an environment names, the pinned one, or whatever is on `PATH`.
 ///
 /// `PATH` is searched here rather than left to the shell so that the answer is a path this script
 /// can watch and report. The bare name at the end is the one that does not exist, and it is kept

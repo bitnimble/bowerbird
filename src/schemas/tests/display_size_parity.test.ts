@@ -1,10 +1,9 @@
 // What a geometry does to a frame's shape, held to the other host's answer.
 //
-// **Three consumers and two implementations.** `hdr::cropped_size` decides what a rendition is
-// written at; this side decides what shape the grid lays a tile out in, and what the editor sizes
-// its stage to. `cropped_size`'s own doc has always said the two have to agree - "a disagreement is
-// a tile that is the wrong shape for the picture inside it" - and until this file neither side
-// asked the other.
+// **Three consumers and two implementations.** `geometry::warp::cropped_size` decides what a
+// rendition is written at; this side decides what shape the grid lays a tile out in, and what the
+// editor sizes its stage to. `cropped_out`'s doc says the two have to agree: "a disagreement
+// is a tile that is the wrong shape for the picture inside it".
 //
 // What that costs when it drifts is not an error anywhere: the catalogue lays out a tile at one
 // aspect, the encoder writes a file at another, and every photograph in the library is letterboxed

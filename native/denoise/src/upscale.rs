@@ -1451,7 +1451,7 @@ fn coop_kernels(gpu: &gpu::Gpu, fragment: usize, blocks: &[u16]) -> Option<Coop>
         .collect();
     let module = {
         #[expect(unsafe_code)]
-        // SAFETY: the kernel is this repository's, compiled by `build.rs` from
+        // SAFETY: the kernel is this repository's, compiled by `native/shaders/build.rs` from
         // `slang/passthrough/upscale_coop.slang`, and the layout below is what it declares.
         unsafe {
             device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {

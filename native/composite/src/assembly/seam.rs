@@ -201,7 +201,7 @@ impl MinCut {
     }
 
     /// `u`'s arcs from the source and to the sink, at most one of them other than zero.
-    pub fn terminals(&mut self, u: usize, source: f32, sink: f32) {
+    pub(crate) fn terminals(&mut self, u: usize, source: f32, sink: f32) {
         self.tr[u] = source - sink;
     }
 
@@ -244,7 +244,7 @@ impl MinCut {
         None
     }
 
-    pub fn max_flow(&mut self) -> f32 {
+    pub(crate) fn max_flow(&mut self) -> f32 {
         self.index();
         for u in 0..self.tr.len() {
             let sink = match self.tr[u] {
@@ -438,7 +438,7 @@ impl MinCut {
     }
 
     /// Every node the source still reaches, which is the one cut every maximum flow agrees on.
-    pub fn source_side(&self) -> Vec<bool> {
+    pub(crate) fn source_side(&self) -> Vec<bool> {
         let mut seen: Vec<bool> = self.tr.iter().map(|&tr| tr > DRY).collect();
         let mut stack: Vec<usize> = (0..seen.len()).filter(|&u| seen[u]).collect();
         while let Some(u) = stack.pop() {

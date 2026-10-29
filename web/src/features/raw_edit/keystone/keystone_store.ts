@@ -108,7 +108,7 @@ export class KeystoneStore {
    * What the region is a window on: the picture the geometry above produces.
    *
    * `displaySize` is the server's own function rather than a copy of it, which is what keeps this
-   * agreeing with `hdr::cropped_size` - the size the module lays its output grid out at.
+   * agreeing with `geometry::warp::cropped_size` - the size the module lays its output grid out at.
    */
   @computed.struct get output(): { width: number; height: number } {
     const doc = this.shownDoc;

@@ -441,7 +441,7 @@ fn ray_at(framing: &Framing, canvas: [f64; 2]) -> [f64; 3] {
 ///
 /// Row by row, each column carrying how far up it has been true: that turns every row into a
 /// histogram whose largest rectangle is the classic stack walk, and the whole grid into one pass.
-pub fn largest_inside(covered: &[bool], across: usize, down: usize) -> Option<[usize; 4]> {
+pub(crate) fn largest_inside(covered: &[bool], across: usize, down: usize) -> Option<[usize; 4]> {
     let mut heights = vec![0usize; across];
     let mut best: Option<(usize, [usize; 4])> = None;
     for row in 0..down {

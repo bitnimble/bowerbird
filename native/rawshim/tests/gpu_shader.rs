@@ -163,7 +163,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
         f_push(&mut words, 0.0);
     }
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
-    // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
+    // exactly the fields is rejected as too small. Same rule as `render::grade::uniform`.
     while words.len() % 4 != 0 {
         words.push(0);
     }

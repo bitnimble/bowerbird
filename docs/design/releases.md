@@ -214,9 +214,9 @@ libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 libjxl, libjpeg-turbo and the six libraries under the first two - aom, dav1d and sharpyuv under libavif; highway,
 brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`, and
 `--target aarch64-linux-android` cross-builds them for `arm64-android` into a tree of its own,
-`.codecs-aarch64-linux-android`, which `build.rs` links when cargo builds for the phone. On
-Windows `-static-md` is the load-bearing half of the name: static archives against the _dynamic_
-C runtime, which is the runtime Rust's MSVC target links.
+`.codecs-aarch64-linux-android`, which `native/formats/build.rs` links when cargo builds for the
+phone. On Windows `-static-md` is the load-bearing half of the name: static archives against the
+_dynamic_ C runtime, which is the runtime Rust's MSVC target links.
 
 **Every version is written down once, in one vcpkg commit** (`scripts/get-codecs.ts`), which fixes
 each port and the vcpkg tool alike. The tree in `~/.cache/bowerbird` is named for the hash of that

@@ -1,6 +1,6 @@
 import type { EditDoc } from './photo_edits';
 
-/** `crate::dust::Settings`: the switch, and the two positions as the fractions a shader reads. */
+/** `denoise::dust::Settings`: the switch, and the two positions as the fractions a shader reads. */
 export type DustSettings = {
   enabled: boolean;
   sensitivity: number;

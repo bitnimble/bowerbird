@@ -10,9 +10,9 @@
 use gpu::dispatch::Whole;
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
-pub const NODE_WORDS: usize = 35;
+pub(crate) const NODE_WORDS: usize = 35;
 /// Where the residual-weighted offsets a kernel's reach is sized from start among them.
-pub const REACH_WORDS: usize = 26;
+pub(crate) const REACH_WORDS: usize = 26;
 /// Words a landing occupies on the device.
 const LANDING_WORDS: usize = 12;
 /// Corners of a cell, which is how many cells a node is a corner of.

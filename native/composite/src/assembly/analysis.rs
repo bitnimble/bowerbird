@@ -155,7 +155,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
 }
 
 /// Whether a radial reading is past [`NEAR_IDENTITY`], once it is on the analysis plane.
-pub fn unaligned_at(radial: Share) -> bool {
+pub(crate) fn unaligned_at(radial: Share) -> bool {
     radial.across(Span::<Analysis>::exact(
         crate::assembly::planes::ANALYSIS_LONG,
     )) > NEAR_IDENTITY

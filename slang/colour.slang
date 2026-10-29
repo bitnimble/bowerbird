@@ -96,7 +96,7 @@ public float3 level_at(uint x, uint y)
 // box, where `no_struct_returns_under_a_loop` refuses a struct returned by value. Each caller
 // wraps once instead, where the domain is what it is naming.
 
-/// A code back to the nits `tone::encode_base` coded, which is `level * reference / white`.
+/// A code back to the nits `base::encode_base` coded, which is `level * reference / white`.
 ///
 /// So dividing by `edit.reference` gives the `level / white` every stage below wants, and the
 /// frame's own diffuse white lands at 1.0 exactly as it did when the buffer held levels.
@@ -619,7 +619,7 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.
 ///
-/// The frame arrives anchored - `tone::encode_base` divided by diffuse white and multiplied
+/// The frame arrives anchored - `base::encode_base` divided by diffuse white and multiplied
 /// by the reference before coding - so what the levels form of this divided out is already
 /// done, and the exposure is what is left. It cancelled out of `neutral_peak` there and does
 /// here too: the ratio of the frame's peak to its own white is what the roll-off is against,

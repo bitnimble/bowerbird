@@ -359,7 +359,7 @@ async fn read_plane(
 
 /// A render assembled from codes, for the tests that measure one rather than produce one.
 #[cfg(test)]
-pub fn uploaded_render(gpu: &'static gpu::Gpu, image: units::rgb::RgbRef<'_>) -> Rendered {
+pub(crate) fn uploaded_render(gpu: &'static gpu::Gpu, image: units::rgb::RgbRef<'_>) -> Rendered {
     let words: Vec<u8> = image
         .data
         .iter()

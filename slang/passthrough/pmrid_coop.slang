@@ -15,10 +15,10 @@
 // swept by, on a Vulkan device of its own, over the same layer list.
 //
 // **Two languages out of it, because a cooperative matrix is reached through the driver's own.**
-// `build.rs` compiles this to SPIR-V for Vulkan and to MSL for Metal, where the same op spells
-// `simdgroup_matrix`. What differs is `FRAGMENT`: Vulkan's multiply is 16x16 on the parts the sweep
-// ran on, and Metal has 8x8 and nothing else, so the fragment is a define the build sets and the
-// host holds a copy of.
+// `native/shaders/build.rs` compiles this to SPIR-V for Vulkan and to MSL for Metal, where the
+// same op spells `simdgroup_matrix`. What differs is `FRAGMENT`: Vulkan's multiply is 16x16 on the
+// parts the sweep ran on, and Metal has 8x8 and nothing else, so the fragment is a define the build
+// sets and the host holds a copy of.
 //
 // **The Metal arm is a weaker trade than the Vulkan one, and the reason is the hardware under the
 // instruction.** An Ampere `OpCooperativeMatrixMulAddKHR` reaches a pipe the lanes cannot, which is
@@ -584,7 +584,8 @@ void settle<let ROWS : uint, let WIDE : uint, let HELD : uint, let UP : bool>(
 ///
 /// **Metal has no object file here: `newLibraryWithSource` compiles the string it is handed when
 /// the device opens**, so every entry point in the file is a kernel compiled on the way to the six
-/// that run, and the sweep below is fifty of them. `build.rs` reads the names off these lines.
+/// that run, and the sweep below is fifty of them. `native/shaders/build.rs` reads the names off
+/// these lines.
 #define DISPATCHED(rows)                                                           \
     [shader("compute")]                                                            \
     [numthreads(SEPARABLE_THREADS, 1, 1)]                                          \

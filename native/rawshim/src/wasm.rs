@@ -1411,9 +1411,9 @@ impl HeldRaw {
     /// re-measured off are all still the open's, taken from pixels that are no longer there.
     ///
     /// The pyramid is the one that shows. A fit-to-window draw of a large photograph reads a mip
-    /// (`gpu::draw_into` takes that arm at a ratio of two or more), so without this a Detail drag
-    /// or the dust switch would land every band, finish, and leave the canvas byte-identical -
-    /// the control doing nothing at all until the reader zoomed past 1:2.
+    /// (`render::grade::Uploaded::draw_into` takes that arm at a ratio of two or more), so without
+    /// this a Detail drag or the dust switch would land every band, finish, and leave the canvas
+    /// byte-identical - the control doing nothing at all until the reader zoomed past 1:2.
     ///
     /// Once, after the last band: these are whole-frame reductions, and one built against a
     /// half-replaced frame is fitted to two denoise strengths at once.

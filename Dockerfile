@@ -312,9 +312,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
   && rustup toolchain install --profile minimal \
   && rm /tmp/rustup.sh
 COPY native ./native
-# The shaders, and the compiler that turns them into the WGSL `build.rs` `include_str!`s. **The
-# crate does not compile without both** - not "renders differently", does not build - because every
-# stage that produces a picture has one implementation and it is these files (§0.4).
+# The shaders, and the compiler that turns them into the WGSL `native/shaders/build.rs`
+# `include_str!`s. **The crate does not compile without both** - not "renders differently", does
+# not build - because every stage that produces a picture has one implementation and it is these
+# files (§0.4).
 COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
 COPY --from=models /app/native/rawshim/.pmrid ./native/rawshim/.pmrid

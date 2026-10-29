@@ -25,9 +25,7 @@ units = { path = "../units" }
 wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
 bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
 pollster = "0.4"
-rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 
 [dev-dependencies]
-formats = { path = "../formats", features = ["testing"] }
 shaders = { path = "../shaders", features = ["layout"] }

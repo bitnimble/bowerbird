@@ -13,15 +13,15 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
+import { z } from 'zod';
 
 const ROOT = join(import.meta.dir, '..', '..');
 
 /** The native workspace's own crates, read off its manifest so a crate split out is covered. */
-const CRATES = (
-  Bun.TOML.parse(readFileSync(join(ROOT, 'native', 'Cargo.toml'), 'utf8')) as {
-    workspace: { members: string[] };
-  }
-).workspace.members;
+const CRATES = z
+  .object({ workspace: z.object({ members: z.array(z.string()) }) })
+  .parse(Bun.TOML.parse(readFileSync(join(ROOT, 'native', 'Cargo.toml'), 'utf8')))
+  .workspace.members;
 
 const SOURCE = [
   'src',

@@ -18,7 +18,7 @@ import {
 import { ProofSchema } from '../edits';
 import { PrintSceneSchema } from '../print/print_scene';
 
-/** `crate::edit::EditRequest`, which the module takes as JSON. */
+/** `edit::EditRequest`, which the module takes as JSON. */
 export type LocalOpen = {
   /** Longest edge the decode is fitted to, which is the size every tick then grades. */
   longEdge: number;
@@ -94,7 +94,7 @@ export function crossing(mosaic: LocalPrepare): PrepareCrossing {
   };
 }
 
-/** `crate::tile::TileRequest`, which the module takes as JSON. */
+/** `tile::TileRequest`, which the module takes as JSON. */
 export type LocalTileRequest = {
   /** `[left, top, width, height]` in the photograph's own pixels, which is the frame's space. */
   tile: [number, number, number, number];
@@ -136,7 +136,7 @@ export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() })
 
 /**
  * A tick's draws of the canvases the page shows itself - RGB9E5 words, or the planes of a video
- * frame for one attached as video (`gpu::Gpu::pq420`) - and null for the rest.
+ * frame for one attached as video (`grade::Grader::pq420`) - and null for the rest.
  */
 export const TickedSchema = z.object({
   stage: BytesSchema.nullable(),

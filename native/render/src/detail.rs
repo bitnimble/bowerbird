@@ -123,15 +123,15 @@ pub fn deconvolve_split(capture: Option<f32>, sensor_long: usize, out_long: usiz
 
 /// The edge-width histogram's bins and the widest rise one can hold, in pixels. Both are
 /// `edge_spread.slang`'s, pinned by a test.
-pub const EDGE_SPREAD_BINS: usize = 256;
-pub const EDGE_SPREAD_CEIL: f32 = 8.0;
+pub(crate) const EDGE_SPREAD_BINS: usize = 256;
+pub(crate) const EDGE_SPREAD_CEIL: f32 = 8.0;
 
 /// How far a rise may climb before it stops being one edge. The shader's, and what decides how
 /// much of the frame's border has no room to be measured.
-pub const EDGE_SPREAD_RUN: usize = 8;
+pub(crate) const EDGE_SPREAD_RUN: usize = 8;
 
 /// The 10-90 distance of a Gaussian's own edge, in sigmas.
-pub const EDGE_SPREAD_PER_SIGMA: f32 = 2.563;
+pub(crate) const EDGE_SPREAD_PER_SIGMA: f32 = 2.563;
 
 /// What fraction of a frame's edges is taken to be the optics rather than the scene.
 ///
@@ -142,7 +142,7 @@ const EDGE_SPREAD_QUANTILE: f64 = 0.1;
 
 /// The capture's blur, off a mapped copy of that histogram, or None where the frame offered too
 /// few edges or an answer outside what a lens does.
-pub fn edge_spread_sigma(mapped: &[u8]) -> Option<f32> {
+pub(crate) fn edge_spread_sigma(mapped: &[u8]) -> Option<f32> {
     let bins: Vec<u64> = mapped
         .chunks_exact(4)
         .map(|word| u64::from(u32::from_le_bytes([word[0], word[1], word[2], word[3]])))
@@ -177,23 +177,23 @@ pub fn edge_spread_sigma(mapped: &[u8]) -> Option<f32> {
 ///
 /// It is also a halo: [`Strengths::halo`] is `2·RADIUS·this + RADIUS`, so a loupe tile grows its
 /// decode window by it - a 400px tile decodes 484 square.
-pub const DECONVOLVE_ITERATIONS: usize = 10;
+pub(crate) const DECONVOLVE_ITERATIONS: usize = 10;
 
 /// Half-width of the point spread, in taps. See `gaussian`.
 ///
 /// **Taps and not pixels**: this is how many samples the stencil reads, and what decides how much
 /// picture they span is the sigma, which [`deconvolve_split`] composes per scale and clamps to
 /// what five of them are honest for. `sharpen.slang` declares it in the same unit.
-pub const DECONVOLVE_TAPS: units::px::Span<units::px::Tap> = units::px::Span::exact(2);
+pub(crate) const DECONVOLVE_TAPS: units::px::Span<units::px::Tap> = units::px::Span::exact(2);
 
 /// The same as a plain count, for the arithmetic that indexes with it.
-pub const DECONVOLVE_RADIUS: usize = DECONVOLVE_TAPS.raw();
+pub(crate) const DECONVOLVE_RADIUS: usize = DECONVOLVE_TAPS.raw();
 
 /// How far a reconstruction's per-channel noise tracks each other channel's, as Pearson
 /// coefficients indexed by channel pair.
 ///
 /// Measured on RCD by `examples/defringe_noise`; a different demosaic needs them measured again.
-pub const DEMOSAIC_CHANNEL_CORRELATION: [[f64; 3]; 3] =
+pub(crate) const DEMOSAIC_CHANNEL_CORRELATION: [[f64; 3]; 3] =
     [[1.0, 0.63, 0.45], [0.63, 1.0, 0.63], [0.45, 0.63, 1.0]];
 
 /// What a five-point Laplacian of luma returns over reconstructed noise, as a multiple of luma's
@@ -202,21 +202,21 @@ pub const DEMOSAIC_CHANNEL_CORRELATION: [[f64; 3]; 3] =
 /// Not the stencil's own `1+1+1+1+16`: that holds only where no two of the five share a photosite,
 /// and a demosaic builds the neighbours out of the centre's. Measured over pure reconstructed grain
 /// by `examples/defringe_noise`, two Sony bodies and a Canon giving 7.46 to 7.59.
-pub const NOISE_CURVATURE_PER_VARIANCE: f64 = 7.53;
+pub(crate) const NOISE_CURVATURE_PER_VARIANCE: f64 = 7.53;
 
 /// Indexed by channel; green is never asked, its response being identically zero.
 ///
 /// Fitted against `defocus.slang`'s summed terms, where they are applied. A per-pixel expectation of
 /// the same quantity comes to about four times these and raising them to it puts blue's coefficient
 /// back on the decline with grain they were fitted to remove.
-pub const NOISE_RESPONSE_PER_VARIANCE: [f64; 3] = [0.045, 0.0, 0.21];
+pub(crate) const NOISE_RESPONSE_PER_VARIANCE: [f64; 3] = [0.045, 0.0, 0.21];
 
 /// The reconstruction's noise covariance, from each channel's measured variance and the
 /// correlations the lattice and the camera matrix between them imply.
 ///
 /// `variance` is read off the frame the defringe sees, which is past the matrix; the correlations
 /// are not, so only they are carried through it. Passing no matrix leaves the lattice's own.
-pub fn noise_covariance(variance: [f64; 3], matrix: Option<[[f32; 3]; 3]>) -> [[f64; 3]; 3] {
+pub(crate) fn noise_covariance(variance: [f64; 3], matrix: Option<[[f32; 3]; 3]>) -> [[f64; 3]; 3] {
     let correlation = matrix.map_or(DEMOSAIC_CHANNEL_CORRELATION, correlation_through);
     let mut sigma = [[0f64; 3]; 3];
     for (a, row) in sigma.iter_mut().enumerate() {
@@ -273,8 +273,8 @@ pub fn gaussian(sigma: f32, radius: usize) -> Vec<f32> {
 }
 
 /// Bins in the noise estimate's histogram, over a high-pass magnitude of 0..`NOISE_MAX`.
-pub const NOISE_BINS: usize = 1024;
-pub const NOISE_MAX: f32 = 0.08;
+pub(crate) const NOISE_BINS: usize = 1024;
+pub(crate) const NOISE_MAX: f32 = 0.08;
 
 /// Where the noise estimate stops believing itself, with no measurement to say.
 ///
@@ -351,18 +351,18 @@ pub fn sigma_from(bins: &[u32], ceiling: f32) -> f32 {
 }
 
 /// Samples of real curvature the estimate needs before it will believe itself.
-pub const DEFOCUS_MIN_SAMPLES: usize = 2000;
+pub(crate) const DEFOCUS_MIN_SAMPLES: usize = 2000;
 
 /// Every nth pixel in each direction the estimate reads.
 ///
 /// The coefficient is one number for the whole frame, so a 24MP frame at 3 still offers a
 /// million samples and reading them all buys nothing.
-pub const DEFOCUS_STRIDE: usize = 3;
+pub(crate) const DEFOCUS_STRIDE: usize = 3;
 
 /// Beyond this it is not a focus difference, it is a frame the model had no business
 /// being fitted on. A coefficient is a blur difference in pixels squared; the worst real
 /// measurement is a small fraction of one.
-pub const DEFOCUS_MAX: f32 = 0.5;
+pub(crate) const DEFOCUS_MAX: f32 = 0.5;
 
 /// Below this a coefficient is indistinguishable from zero, so it neither corrects
 /// anything nor gets a vote on whether the other channel is believable.
@@ -370,7 +370,7 @@ pub const DEFOCUS_MAX: f32 = 0.5;
 /// Measured against a channel that is genuinely defocused: IMG_8408's blue reads 0.148
 /// where its red reads -0.011, and treating that -0.011 as a real disagreement threw the
 /// whole frame away.
-pub const DEFOCUS_NOISE: f32 = 0.02;
+pub(crate) const DEFOCUS_NOISE: f32 = 0.02;
 
 /// The five-point Laplacian of a plane, clamped at the border.
 ///
@@ -397,14 +397,14 @@ pub fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
 /// Radial bins the defocus fit accumulates into, uniform in r^2.
 ///
 /// Enough to fit a line through and few enough that each holds a real sample count.
-pub const DEFOCUS_BINS: usize = 6;
+pub(crate) const DEFOCUS_BINS: usize = 6;
 
 /// Samples a bin needs before its own coefficient is believed.
-pub const DEFOCUS_MIN_PER_BIN: usize = 200;
+pub(crate) const DEFOCUS_MIN_PER_BIN: usize = 200;
 
 /// Bins that must resolve before the constant and the `r^2` term can be told apart. Two
 /// points fit a line exactly and prove nothing about whether the profile is one.
-pub const DEFOCUS_MIN_BINS: usize = 3;
+pub(crate) const DEFOCUS_MIN_BINS: usize = 3;
 
 /// **Longitudinal chromatic aberration, which no warp can fix.**
 ///

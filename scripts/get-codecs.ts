@@ -4,8 +4,8 @@
 //
 //   bun run get:codecs [--target aarch64-linux-android]
 //
-// A target other than this machine gets a tree of its own, `.codecs-<target>`, which `build.rs`
-// links when cargo builds for it.
+// A target other than this machine gets a tree of its own, `.codecs-<target>`, which
+// `native/formats/build.rs` links when cargo builds for it.
 //
 // Through vcpkg (`vcpkg.ts`), so a rendition is encoded by the same aom wherever the app was built
 // (DESIGN §23.7), and every library is static: `rawshim` asks the reader's machine for nothing but
@@ -28,7 +28,7 @@ const TRIPLET = tripletFor(TARGET);
 const NAME = TARGET == null ? FEATURE : `${FEATURE}-${TARGET}`;
 const RECIPE = vcpkgRecipe(FEATURE, import.meta.path, TRIPLET);
 const HOME = pinnedHome(NAME, RECIPE);
-/** What `build.rs` reads the whole link from, relative to `HOME`. */
+/** What `native/formats/build.rs` reads the whole link from, relative to `HOME`. */
 const LINK = 'link.txt';
 const MODULES = ['libavif', 'libjxl', 'libjxl_threads', 'libjxl_cms', 'libturbojpeg'];
 
@@ -66,8 +66,8 @@ function build(): void {
 }
 
 /**
- * The link line `pkgconf --static` gives for the libraries `rawshim` binds, as the lines
- * `build.rs` turns into cargo's: `include`, `search`, `static` and `dylib`.
+ * The link line `pkgconf --static` gives for the libraries `formats` binds, as the lines
+ * `native/formats/build.rs` turns into cargo's: `include`, `search`, `static` and `dylib`.
  *
  * Asked of the tree's own pkgconf with only the tree's `.pc` files visible, so nothing on the build
  * machine can reach the link. `static` is a library whose archive is in the tree, in the order a
@@ -101,7 +101,8 @@ function linkLines(installed: string): string[] {
     if (token.startsWith('-L')) lines.push(`search ${inside(token.slice(2))}`);
     else if (token.startsWith('-l')) libraries.push(token.slice(2));
     else if (token === '-pthread') libraries.push('pthread');
-    else throw new Error(`pkgconf gave ${token}, which build.rs has no way to pass on`);
+    else
+      throw new Error(`pkgconf gave ${token}, which native/formats/build.rs has no way to pass on`);
   }
   // The last mention of each kept, which is where pkgconf puts a library after everything needing it.
   const ordered = libraries.filter((library, at) => libraries.lastIndexOf(library) === at);

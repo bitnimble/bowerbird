@@ -19,15 +19,13 @@ import type { EditDoc } from './photo_edits';
  * Rounded, and floored at one: a rendition of zero pixels is not a picture, and the crop
  * fractions are free to describe a rectangle narrower than a pixel at tile size.
  *
- * **Its own module, importing `EditDoc` as a type only.** It lived beside the schemas, which
- * import zod - and the page needs this function, where it deliberately takes only *types*
- * across that boundary rather than pulling a validation library into the bundle. Splitting it
- * out is what lets the editor share the one implementation instead of keeping a second.
+ * **Its own module, importing `EditDoc` as a type only**, so the page shares the one
+ * implementation without pulling zod into its bundle.
  *
- * **`hdr::cropped_size` is the other host's copy**, and `display_size_parity.test.ts` holds the two
- * to `display-size.txt`. They cannot be one implementation: this runs in the catalogue's layout for
- * every tile on the wall and on the server for every row it writes, neither of which has the wasm
- * module in reach - so what is shared is the answer rather than the code.
+ * **`geometry::warp::cropped_size` is the other host's copy**, and `display_size_parity.test.ts`
+ * holds the two to `display-size.txt`. They cannot be one implementation: this runs in the
+ * catalogue's layout for every tile on the wall and on the server for every row it writes, neither
+ * of which has the wasm module in reach - so what is shared is the answer rather than the code.
  */
 export function displaySize(
   width: number,

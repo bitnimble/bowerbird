@@ -261,7 +261,10 @@ pub fn decode_at(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), S
     decode_at_with_rotation(bytes, depth, true)
 }
 
-pub fn decode_at_unturned(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize), String> {
+pub(crate) fn decode_at_unturned(
+    bytes: &[u8],
+    depth: u32,
+) -> Result<(Vec<u16>, usize, usize), String> {
     decode_at_with_rotation(bytes, depth, false)
 }
 
@@ -769,7 +772,7 @@ pub fn encode_rgb8(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn encode_rgb8_rotated(
+pub(crate) fn encode_rgb8_rotated(
     rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
     height: usize,

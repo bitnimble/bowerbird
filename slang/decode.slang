@@ -1,6 +1,6 @@
 // The frame's coding, undone: nits for every `u16` code a sample can hold.
 //
-// The frame arrives in normalised PQ (`tone::encode_base`) rather than in scene-linear
+// The frame arrives in normalised PQ (`base::encode_base`) rather than in scene-linear
 // levels, because every stage between the decode and here reads a difference against a blur
 // and so needs a perceptual domain of its own. Coded once rather than borrowed and given back
 // per pass, those stages are pointwise, and this is where the coding is undone.

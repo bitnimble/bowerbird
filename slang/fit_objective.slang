@@ -59,8 +59,8 @@ struct Params {
 /// Each candidate's fitted curve, 256 levels, one to a word so `fit_obj_curve` can write it.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> curves;
 /// `fit::profile::invert_curve`'s answer for the round's own curve, 256 levels, then
-/// `fit::profile::linear_table`'s
-/// 256 - the sRGB transfer undone, which is the light a ratio of levels has to be taken in.
+/// `fit::profile::linear_table`'s 256 - the sRGB transfer undone, which is the light a ratio of
+/// levels has to be taken in.
 [vk::binding(8, 0)] StructuredBuffer<float> falloff_tables;
 /// Per block, `FALLOFF_BINS` triples: the light the camera wants, the light we have, and the pairs
 /// that carried them.

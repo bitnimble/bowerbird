@@ -125,24 +125,24 @@ describe('opening a catalogue', () => {
 
     runMigrations(db);
 
-    const recovery = (sql: string): unknown => (db.query(sql).get() as { value: unknown }).value;
+    const scalar = (sql: string): unknown => (db.query(sql).get() as { value: unknown }).value;
     expect(
-      recovery(
+      scalar(
         `SELECT json_extract(doc, '$.highlightRecovery') AS value FROM photo_edits WHERE photo_id = 'full'`,
       ),
     ).toBe(50);
     expect(
-      recovery(
+      scalar(
         `SELECT json_extract(doc, '$.exposure') AS value FROM photo_edits WHERE photo_id = 'full'`,
       ),
     ).toBe(1);
     expect(
-      recovery(
+      scalar(
         `SELECT json_extract(doc, '$.highlightRecovery') AS value FROM photo_edits WHERE photo_id = 'moved'`,
       ),
     ).toBe(30);
     expect(
-      recovery(`SELECT json_extract(doc, '$.highlightRecovery') AS value FROM edit_conflicts`),
+      scalar(`SELECT json_extract(doc, '$.highlightRecovery') AS value FROM edit_conflicts`),
     ).toBe(50);
     const migratedSteps = [
       { from: { highlightRecovery: 50 }, to: { highlightRecovery: 70 } },
@@ -152,13 +152,13 @@ describe('opening a catalogue', () => {
       "SELECT deltas AS value FROM photo_edit_history WHERE photo_id = 'full'",
       'SELECT history AS value FROM edit_conflicts',
     ]) {
-      expect(JSON.parse(recovery(sql) as string)).toEqual(migratedSteps);
+      expect(JSON.parse(scalar(sql) as string)).toEqual(migratedSteps);
     }
-    expect(recovery("SELECT doc AS value FROM photo_edits WHERE photo_id = 'corrupt'")).toBe(
+    expect(scalar("SELECT doc AS value FROM photo_edits WHERE photo_id = 'corrupt'")).toBe(
       '{"highlightRecovery": 100',
     );
     expect(
-      recovery("SELECT deltas AS value FROM photo_edit_history WHERE photo_id = 'corrupt'"),
+      scalar("SELECT deltas AS value FROM photo_edit_history WHERE photo_id = 'corrupt'"),
     ).toBe('[{"from": {"highlightRecovery": 100}');
     db.close();
   });

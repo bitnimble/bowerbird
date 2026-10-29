@@ -15,7 +15,7 @@
 
 use crate::raw;
 
-pub const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
+pub(crate) const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
 // Flag set bits, for `avif.rs`'s reason: an enum's `.0` is `int` to MSVC.
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 const AVIF_TRANSFORM_IMIR: u32 = 1 << 3;
@@ -23,9 +23,9 @@ const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FOR
 const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat =
     raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
 /// Rec.2020 primaries, PQ, Rec.2020 non-constant luminance: what every HDR still here is.
-pub const HDR_CICP: (u16, u16) = (9, 16);
+pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.
-pub const SDR_CICP: (u16, u16) = (1, 13);
+pub(crate) const SDR_CICP: (u16, u16) = (1, 13);
 /// The gain map's own primaries and transfer are unspecified by the standard.
 pub const UNSPECIFIED: u16 = 2;
 
@@ -120,7 +120,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
 }
 
 #[expect(unsafe_code)]
-pub fn orientation_tag(image: &crate::avif::Image) -> Result<u16, String> {
+pub(crate) fn orientation_tag(image: &crate::avif::Image) -> Result<u16, String> {
     unsafe {
         let image = &*image.0;
         if image.transformFlags & AVIF_TRANSFORM_IMIR != 0 {

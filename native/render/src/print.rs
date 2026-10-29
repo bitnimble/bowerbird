@@ -5,11 +5,11 @@ pub mod environment;
 
 pub use environment::Environment;
 
-pub const ALBEDO_VIEWS: u32 = 128;
-pub const ALBEDO_ROUGHNESSES: u32 = 64;
-pub const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
+pub(crate) const ALBEDO_VIEWS: u32 = 128;
+pub(crate) const ALBEDO_ROUGHNESSES: u32 = 64;
+pub(crate) const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
 /// `print_light_calibrate.slang`'s words: the lamp's seven, then the room's nine bands in three channels.
-pub const CALIBRATION_BYTES: u64 = (7 + 9 * 3) * 4;
+pub(crate) const CALIBRATION_BYTES: u64 = (7 + 9 * 3) * 4;
 const FRAME_BORDER: Share = Share::of(1, 8);
 const LAMP_REACH: f64 = 10.0;
 const LAMP_NEAREST: f64 = 1.0;
@@ -305,7 +305,7 @@ impl Scene {
         )
     }
 
-    pub fn light_parameters(&self) -> [f32; 4] {
+    pub(crate) fn light_parameters(&self) -> [f32; 4] {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
         let (light, _) = self.lamp();
@@ -433,7 +433,7 @@ impl Scene {
     }
 }
 
-pub fn light_uniform(parameters: [f32; 4], temperature: f32) -> Vec<u8> {
+pub(crate) fn light_uniform(parameters: [f32; 4], temperature: f32) -> Vec<u8> {
     parameters
         .into_iter()
         .chain([temperature, 0.0, 0.0, 0.0])

@@ -584,7 +584,7 @@ fn blend_params(pixels: usize) -> Vec<u8> {
 }
 
 #[cfg(test)]
-pub fn blend_block() -> usize {
+pub(crate) fn blend_block() -> usize {
     blend_params(1).len()
 }
 
@@ -1378,7 +1378,7 @@ fn preview_of(path: &str, at_least_long_edge: u32) -> Result<units::rgb::Rgb, St
 /// `at_least_long_edge` bounds it twice over: the smallest preview the body wrote that still
 /// covers it, and then the DCT scale that decode reads at. A grid tile of a ten-frame panorama is
 /// then ten small JPEGs rather than ten 14MB ones.
-pub async fn camera_picture(
+pub(crate) async fn camera_picture(
     path: &str,
     at_least_long_edge: u32,
 ) -> Result<decode::frame::Frame, String> {

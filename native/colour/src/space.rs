@@ -56,8 +56,8 @@ pub fn multiply(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     out
 }
 
-/// A 3x3 over one colour, for the fixtures and the pins that check a matrix by hand. The stages
-/// that apply one to a picture do it in the shader that produced the picture.
+/// Over one colour only: a stage applying a matrix to a picture does it in the shader that
+/// produced the picture.
 pub fn apply3(m: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> [f64; 3] {
     [
         m[0][0] * r + m[0][1] * g + m[0][2] * b,

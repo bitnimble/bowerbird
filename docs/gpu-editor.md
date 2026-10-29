@@ -33,7 +33,7 @@ One device, no readback between decode and draw.
 ## 3. The open, and what it leaves on the device
 
 `edit.rs` decodes, prepares, fits camera match, materialises lens warp, denoises and sharpens.
-Its `Opened` holds device-resident coded frame (`tone::encode_base`) and grade metadata.
+Its `Opened` holds device-resident coded frame (`base::encode_base`) and grade metadata.
 
 This half is where threads are worth having, measured at 3.2x between one and twelve. The tick
 below is entirely the GPU's.
@@ -131,8 +131,8 @@ is not reused: it posts where it recently submitted from, `GpuThread` records th
 sessionStorage (`gpu_losses.ts`, 3 reloads in 10 minutes at most), waits for the editor to store
 what it holds (`beforeReload`, `EditPresenter.flush`) and reloads. The next worker hands the sites
 to `splitBands`, which cuts the bands dispatched from each 8 times smaller per loss
-(`gpu/dispatch.rs`). Every dispatch is its own submission, and one that follows the picture's size
-runs as bands sized to about 50ms, so Windows' 2s watchdog (TDR) is not reached.
+(`native/gpu/src/dispatch.rs`). Every dispatch is its own submission, and one that follows the
+picture's size runs as bands sized to about 50ms, so Windows' 2s watchdog (TDR) is not reached.
 
 Page retains open header for the panel. Its `stage_resolution.ts` decides backing-store
 dimensions from layout size and device pixel ratio.

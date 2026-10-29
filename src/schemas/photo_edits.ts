@@ -224,7 +224,7 @@ export const EditDocSchema = z
     sharpening: z.number().int().min(0).max(100).nullable().default(null),
 
     // Dust. The particles on the sensor's cover glass, divided back out of the mosaic beside
-    // the denoise (`crate::dust`).
+    // the denoise (`denoise::dust`).
     //
     // **On, because the frames that would pay for it are the ones that cannot hold a particle
     // anyway.** A shadow's diameter goes as `d/N` and its depth as `N^2`, so the search refuses

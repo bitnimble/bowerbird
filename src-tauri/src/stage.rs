@@ -1,5 +1,5 @@
 //! The viewer's HDR photo on a TV (DESIGN §18.5.1), drawn by `StagePlugin.kt` and
-//! `gpu::surface_stage`.
+//! `grade::surface_stage`.
 
 /// Where the page's stage is, in device pixels of the page, and how to light what goes in it.
 #[derive(serde::Serialize, serde::Deserialize)]

@@ -20,7 +20,7 @@
 
 mod support;
 
-/// The grid both sides are averaged onto, as `fit::hdr::FIT_LONG_EDGE` has it.
+/// The grid both sides are averaged onto, as `colour::matched::FIT_LONG_EDGE` has it.
 const GRID: usize = 808;
 
 /// How many bins of the toe are reported and drawn.

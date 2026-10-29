@@ -4,7 +4,6 @@
 // Every C handle is owned by a Rust value whose `Drop` frees it - `avif::Image`, `avif::Encoder`,
 // `avif_gain_write::GainMap`, `jxl_write::Runner` - so the marked calls are the one that creates
 // and the one that frees, and no early return can leak in between.
-#![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![deny(unsafe_code)]
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]

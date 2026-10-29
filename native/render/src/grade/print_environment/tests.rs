@@ -3,28 +3,8 @@ use crate::print::Scene;
 use crate::print::environment::ENVIRONMENTS;
 use gpu::Gpu;
 
-fn floats(
-    gpu: &Gpu,
-    mut recording: gpu::Recording<'_>,
-    from: &gpu::Buffer,
-    count: usize,
-) -> Vec<f32> {
-    let bytes = (count * 4) as u64;
-    let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("print environment readback"),
-        size: bytes,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
-    recording.submit();
-    pollster::block_on(gpu::read_back(gpu, &readback, |bytes| {
-        bytes
-            .chunks_exact(4)
-            .map(|word| f32::from_le_bytes(word.try_into().expect("a float")))
-            .collect()
-    }))
-    .expect("a readback")
+fn floats(gpu: &Gpu, from: &gpu::Buffer, count: usize) -> Vec<f32> {
+    pollster::block_on(gpu::read_floats(gpu, from, count)).expect("a readback")
 }
 
 /// `print_environment_probe.slang`'s `measure` over the environment's source map, and its width.
@@ -100,7 +80,7 @@ fn measured(gpu: &Gpu, environment: Environment) -> (Vec<f32>, u32) {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
     });
-    (floats(gpu, recording, &output, 7), map.width)
+    (floats(gpu, &output, 7), map.width)
 }
 
 #[test]
@@ -117,7 +97,7 @@ fn each_environments_lamp_is_the_light_it_takes_out_of_its_map() {
             scene.light_temperature_kelvin as f32,
             &map,
         );
-        let calibration = floats(gpu, gpu.record(), &buffer, 7);
+        let calibration = floats(gpu, &buffer, 7);
 
         let turned =
             f64::from(environment.source().turn(width)) / f64::from(width) * std::f64::consts::TAU;
@@ -190,19 +170,17 @@ fn another_lamp_in_the_same_room_calibrates_as_if_from_scratch() {
     );
     let fresh = floats(
         gpu,
-        gpu.record(),
         &crate::grade::device(gpu).print_light_calibration(parameters, temperature, &map),
         words,
     );
     let copied = floats(
         gpu,
-        gpu.record(),
         &crate::grade::device(gpu).print_lamp_calibration(&first, parameters, temperature, &map),
         words,
     );
     assert_ne!(
         fresh[..6],
-        floats(gpu, gpu.record(), &first, words)[..6],
+        floats(gpu, &first, words)[..6],
         "the lamp moved"
     );
     assert_eq!(copied, fresh);

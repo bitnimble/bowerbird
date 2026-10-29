@@ -48,10 +48,11 @@ typealias Cell = float;
 /// What an arena cell is held in, apart from what it is computed in.
 ///
 /// **`float` unless the build says `half`, which it does for every device with `shader-f16`.**
-/// `build.rs` compiles this a second time with `STORED` defined: the cooperative-matrix kernels
-/// read and write the arena in place as a matrix unit's `half` operands, and on its own the WGSL
-/// pass takes 101ms over a 24MP frame in `half` against 116 in `float` on an RTX 3080, and 251
-/// against 280 over 64MP. `float` is for whatever lacks the feature, page or host.
+/// `native/shaders/build.rs` compiles this a second time with `STORED` defined: the
+/// cooperative-matrix kernels read and write the arena in place as a matrix unit's `half` operands,
+/// and on its own the WGSL pass takes 101ms over a 24MP frame in `half` against 116 in `float` on
+/// an RTX 3080, and 251 against 280 over 64MP. `float` is for whatever lacks the feature, page or
+/// host.
 #ifndef STORED
 #define STORED float
 #endif

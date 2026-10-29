@@ -3,9 +3,9 @@
 //
 //   bun run get:slangc
 //
-// `build.rs` looks here first and then on `PATH`, and refuses with this command's name when it
-// finds neither. Nothing fetches during a build: a compiler that arrives over the network mid-build
-// is a build whose output depends on the day it ran.
+// `native/shaders/build.rs` looks here after `BOWERBIRD_SLANGC` and before `PATH`, and refuses with
+// this command's name when it finds none. Nothing fetches during a build: a compiler that arrives
+// over the network mid-build is a build whose output depends on the day it ran.
 //
 // Through vcpkg (`vcpkg.ts`), which downloads Slang's own release build rather than compiling it,
 // so the version is the vcpkg commit's. **Moving that commit moves the compiler, and codegen

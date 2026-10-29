@@ -107,16 +107,8 @@ const PACK_BINDINGS: [(u32, Binding); 3] = [
 /// `the_shader_sizes_match_the_buffers_allocated_for_them`.
 const DETAIL_LONG: u32 = 512;
 
-/// The working texture for a frame of this size: the long edge capped, never scaled up.
-///
-/// The only place this is decided. The editor is told the answer on `PreparedHeader`, because
-/// how large a share of the picture each blur covers follows from it - two hosts rounding it
-/// differently would apply two different clarities and both would look like photographs.
-pub fn detail_size(width: usize, height: usize) -> DetailSize {
-    detail_within(width, height, width.max(height))
-}
-
-/// The same, for a frame that is a *piece* of a photograph whose long edge is `photograph_long`.
+/// The working texture for a frame of this size, which may be a *piece* of a photograph whose
+/// long edge is `photograph_long`: the long edge capped, never scaled up.
 ///
 /// **At the photograph's rate rather than its own.** The blur is a shrink of the frame it is
 /// built from, so a loupe tile scaled to fill the working texture would blur a twelfth of the
@@ -162,7 +154,7 @@ const FINE_SIGMA: f64 = 1.0 / 1024.0;
 /// window and the models it fits are averaged over another, so an output texel depends on twice
 /// the radius, and the fine reference adds its own taps on top. A caller building the blur for a
 /// *piece* of a photograph needs this to know how much of the surroundings it has to hold
-/// (`job::presence_reach`); a whole frame has them already.
+/// (`tile::presence_reach`); a whole frame has them already.
 ///
 /// The arithmetic is `detail.slang`'s, in Rust, which `the_detail_reach_is_the_shaders_own` pins
 /// against the shader rather than trusting.
@@ -182,9 +174,7 @@ pub fn detail_reach(detail_long: u32) -> usize {
     (2.0 * guide + fine) as usize
 }
 
-/// The blur's working texture, named so it can travel to the editor as one.
-#[derive(Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy)]
 pub struct DetailSize {
     pub width: u32,
     pub height: u32,
@@ -327,7 +317,7 @@ pub struct Grader {
     chroma_model: dispatch::Banded,
     chroma_blur: dispatch::Banded,
     sampler: wgpu::Sampler,
-    /// The frame's coding undone. Filled once with the device, since `tone::encode_base`
+    /// The frame's coding undone. Filled once with the device, since `base::encode_base`
     /// anchors every frame to the reference white before coding it and what comes back out
     /// is nits - nothing here depends on the photograph.
     nits_of_code: Buffer,
@@ -348,7 +338,7 @@ pub fn device(gpu: &'static Gpu) -> &'static Grader {
 }
 
 impl Grader {
-    pub fn print_light_calibration(
+    pub(crate) fn print_light_calibration(
         &self,
         parameters: [f32; 4],
         temperature: f32,
@@ -358,7 +348,7 @@ impl Grader {
     }
 
     /// Another lamp in the room `calibrated` was made for, which must be `environment`.
-    pub fn print_lamp_calibration(
+    pub(crate) fn print_lamp_calibration(
         &self,
         calibrated: &Buffer,
         parameters: [f32; 4],
@@ -424,7 +414,7 @@ impl Grader {
         buffer
     }
 
-    pub fn print_albedo_table(&self, eta: f32) -> Buffer {
+    pub(crate) fn print_albedo_table(&self, eta: f32) -> Buffer {
         let mut recording = self.gpu.record();
         let buffer = self.gpu.own_buffer(&wgpu::BufferDescriptor {
             label: Some("print directional albedo"),
@@ -1129,7 +1119,7 @@ pub struct SceneGrade<'a> {
     /// Settled on the photo like everything else here: two sizes of it must not be balanced
     /// against two different baselines.
     as_shot: Option<colour::white_balance::Illuminant>,
-    /// The camera match, whatever `adjust`'s profile asks of it (`crate::grade::Grade::colour`).
+    /// The camera match, whatever `adjust`'s profile asks of it (`crate::grade::Adjust::colour`).
     colour: Option<&'a HdrColour>,
 }
 
@@ -2205,7 +2195,7 @@ pub struct Uploaded<'a> {
     /// tick that first wants one.
     held: std::cell::RefCell<Vec<Texture>>,
     /// The identity the uniform describes where a frame has no camera match, kept alive
-    /// because `Grade::colour` borrows one or the other.
+    /// because `Adjust::colour` borrows one or the other.
     identity: HdrColour,
     /// What the resources above were built from, so [`Uploaded::encode`] can refuse a grade
     /// that disagrees with them rather than dispatching against the wrong lattice.
@@ -2255,19 +2245,9 @@ impl Grader {
 
     /// [`Self::read_peak`], awaited.
     pub async fn peak_of(&self, peak: &ScenePeak) -> Option<f32> {
-        let mut recording = self.gpu.record();
-        let staging = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("peak readback"),
-            size: 4,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        recording.copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
-        recording.submit();
-        read_back(self.gpu, &staging, |mapped| {
-            f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
-        })
-        .await
+        gpu::read_floats(self.gpu, &peak.buffer, 1)
+            .await
+            .map(|floats| floats[0])
     }
 
     /// The peak a caller already knows, which nothing will then measure.

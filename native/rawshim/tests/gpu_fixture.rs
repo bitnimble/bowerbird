@@ -319,11 +319,10 @@ fn the_editor_filters_detail_in_the_order_this_host_does() {
 
 /// What a geometry does to a frame's shape, for the page and the catalogue to be held against.
 ///
-/// **Three consumers, two implementations, and nothing between them until now.** `geometry::warp::cropped_size`
-/// decides what a rendition is written at; `displaySize` in `schemas/display_size.ts` decides what
-/// shape the grid lays a tile out in *and* what the editor sizes its stage to. Its own doc says the
-/// two have to agree - "a disagreement is a tile that is the wrong shape for the picture inside it" -
-/// and neither side asked the other.
+/// **Three consumers, two implementations.** `geometry::warp::cropped_size` decides what a
+/// rendition is written at; `displaySize` in `schemas/display_size.ts` decides what shape the grid
+/// lays a tile out in *and* what the editor sizes its stage to. `cropped_out`'s doc says the two
+/// have to agree: "a disagreement is a tile that is the wrong shape for the picture inside it".
 ///
 /// The angles include negatives because the two spell the absolute differently: this side takes
 /// `cos().abs()` of the signed radians, the page takes the cosine of `Math.abs(degrees)`. Those
@@ -597,7 +596,7 @@ fn the_prepare_reproduces_the_recorded_frame() {
 /// `peak_out[0]` is an *input* to the grade, and `SceneGrade::new` fills it from `measure`
 /// and `quantile` - the same two passes the editor's open runs. What this pins is the grade;
 /// that the peak tracks the exposure across the slider's range is
-/// `gpu::the_kept_candidates_answer_as_the_whole_sample_does`.
+/// `render::grade`'s `the_kept_candidates_answer_as_the_whole_sample_does`.
 #[test]
 fn the_encode_pass_reproduces_the_recorded_frame() {
     let Some(gpu) = gpu::device() else {

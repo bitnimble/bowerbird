@@ -1,8 +1,9 @@
 //! A rendition the page decoded, as the codes a finished picture is held at.
 //!
-//! The browser's `ImageDecoder` reads an AVIF this crate cannot in wasm (`decode::rendered::av1`),
-//! and hands back its planes rather than RGB; where there is none, `native/avif_planes` does. `planes.slang` is the conversion libavif does on the
-//! server, so what `decode::linearise::Picture` holds is the same either way.
+//! The browser's `ImageDecoder` reads an AVIF this crate cannot in wasm (`rendered::av1`), and
+//! hands back its planes rather than RGB; where there is none, `native/avif_planes` does.
+//! `planes.slang` is the conversion libavif does on the server, so what `decode::linearise::Picture`
+//! holds is the same either way.
 
 use gpu::dispatch::Whole;
 use serde::Deserialize;

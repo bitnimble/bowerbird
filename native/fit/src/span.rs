@@ -187,7 +187,7 @@ fn describing(
 
 /// The ZCAM chroma of the sample at `rank`, over `evaluated`, which is the model's output over
 /// every pixel of `plane` as [`lifted`].
-pub async fn ranked_chroma(
+pub(crate) async fn ranked_chroma(
     gpu: &'static gpu::Gpu,
     evaluated: &gpu::Buffer,
     plane: &crate::hdr::Source,

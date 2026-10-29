@@ -233,10 +233,6 @@ impl Device {
         self.0.poll(poll_type)
     }
 
-    pub fn on_uncaptured_error(&self, handler: std::sync::Arc<dyn wgpu::UncapturedErrorHandler>) {
-        self.0.on_uncaptured_error(handler);
-    }
-
     /// Counts this device's loss in [`LOSSES`], unless it was destroyed on purpose.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn count_loss(&self) {
@@ -537,7 +533,7 @@ impl Costs {
     }
 }
 
-fn locked<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(super) fn locked<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

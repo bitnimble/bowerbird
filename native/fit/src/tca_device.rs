@@ -501,7 +501,7 @@ impl Frame {
         ])
     }
 
-    pub fn reduced_size(&self) -> (usize, usize) {
+    pub(crate) fn reduced_size(&self) -> (usize, usize) {
         (self.out_width, self.out_height)
     }
 

@@ -2,6 +2,8 @@
 //! dust found and divided out of it beside them.
 
 #![deny(unsafe_code)]
+#![deny(unfulfilled_lint_expectations)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 /// Sensor particles found on the mosaic, and their shadows divided back out of it.
 pub mod dust;

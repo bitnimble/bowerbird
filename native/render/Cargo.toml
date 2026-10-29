@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# The encode's half of the formats, which `grade::Coded` hands frames to.
+# libavif's half of the formats, whose decoded planes (`formats::avif::Coded`)
+# `grade::surface_stage` draws.
 renditions = ["formats/renditions"]
 
 [dependencies]
@@ -24,7 +25,6 @@ bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
 half = { version = "2.7.1", default-features = false }
 moxcms = "0.9.1"
 pollster = "0.4"
-rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
@@ -35,5 +35,5 @@ wasm-bindgen = "0.2.108"
 web-sys = { version = "0.3.85", features = ["OffscreenCanvas"] }
 
 [dev-dependencies]
-formats = { path = "../formats", features = ["testing"] }
+rayon = "1.10"
 shaders = { path = "../shaders", features = ["layout"] }

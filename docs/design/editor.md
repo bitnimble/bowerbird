@@ -32,7 +32,7 @@ A rendition and the editor open a photograph through the same code (`open::measu
 
 **Settings cross as one JSON value, `edit::EditRequest`.** The web side reads the server's settings. Inlining peak, anchor or denoise defaults would make edited libraries show one picture and write another.
 
-**The browser decodes nothing of a RAW, including the preview the match is fitted from.** `crate::jpeg` is `jpeg-decoder`, pure Rust, and the decoder the server fits against; `Fitting::Preview` reads the preview out of the RAW's own bytes, on both hosts.
+**The browser decodes nothing of a RAW, including the preview the match is fitted from.** `formats::jpeg::decode` is `jpeg-decoder`, pure Rust, and the decoder the server fits against; `Fitting::Preview` reads the preview out of the RAW's own bytes, on both hosts.
 
 ### 21.1.1 The merge page draws through the stage's own pipeline, not a second one
 
@@ -125,7 +125,7 @@ the mockup clears the reader's own choice, and `max` for an address opened direc
 already in a rendition, so the page asks for it to be built or fetched where it is missing or behind
 the edits and downloads the file, and nothing of it is prepared on the server. The camera's JPEG is
 decoded by the module, as a JPEG original is, turned by its EXIF. The module has no AV1 decoder
-(`decode::rendered::av1`), so an HDR AVIF reaches it as the planes WebCodecs' `ImageDecoder` hands
+(`formats::rendered::av1`), so an HDR AVIF reaches it as the planes WebCodecs' `ImageDecoder` hands
 back from `copyTo`, or `native/avif_planes` (below) where there is no `ImageDecoder` or it declines,
 and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the same
 video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against

@@ -8,7 +8,7 @@
 use gpu::dispatch::Whole;
 
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
-pub const MOMENT_WORDS: usize = 36;
+pub(crate) const MOMENT_WORDS: usize = 36;
 
 pub struct Kernel {
     layout: wgpu::BindGroupLayout,
