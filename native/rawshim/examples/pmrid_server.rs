@@ -383,7 +383,11 @@ fn developed(
         ceiling: request.ceilings,
     };
     let built = pollster::block_on(decode::raw::demosaic_as_decoded(
-        &mosaic, &cfa, colour, 2,
+        &mosaic,
+        &cfa,
+        colour,
+        Detail::AUTO,
+        2,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
     let host = pollster::block_on(built.into_host())

@@ -708,7 +708,7 @@ pub struct Detail {
     /// Which filter those two positions drive, which is a choice and not a strength.
     #[serde(default)]
     pub denoiser: Denoiser,
-    /// The Highlight recovery slider, 0 to 100; unset is 100.
+    /// The Highlight recovery slider, 0 to 100; unset is `Colouring::DEFAULT`'s.
     #[serde(default)]
     pub highlight_recovery: Option<f64>,
 }
@@ -780,7 +780,10 @@ impl Detail {
 
     /// How much colour a reconstructed highlight keeps.
     pub fn colouring(&self) -> mosaic::highlight::Colouring {
-        mosaic::highlight::Colouring::at(self.highlight_recovery.unwrap_or(100.0) / 100.0)
+        self.highlight_recovery
+            .map_or(mosaic::highlight::Colouring::DEFAULT, |amount| {
+                mosaic::highlight::Colouring::at(amount / 100.0)
+            })
     }
 
     /// Whether either half is still a measurement rather than a number.
@@ -2239,12 +2242,33 @@ mod tests {
                 ..Detail::AUTO
             })
         };
-        assert_eq!(pair(Detail::AUTO), (1.0, 1.0));
+        assert_eq!(pair(Detail::AUTO), (1.0, 0.0));
         assert_eq!(at(100.0), (1.0, 1.0));
         assert_eq!(at(75.0), (1.0, 0.5));
         assert_eq!(at(50.0), (1.0, 0.0));
         assert_eq!(at(25.0), (0.5, 0.0));
         assert_eq!(at(0.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn an_unset_highlight_recovery_is_the_documents_default() {
+        let schema = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../src/schemas/highlight_recovery.ts"),
+        )
+        .expect("the schema reads");
+        let default: f64 = schema
+            .split("DEFAULT_HIGHLIGHT_RECOVERY = ")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("the schema declares DEFAULT_HIGHLIGHT_RECOVERY")
+            .parse()
+            .expect("a number");
+        let set = Detail {
+            highlight_recovery: Some(default),
+            ..Detail::AUTO
+        };
+        assert_eq!(Detail::AUTO.colouring(), set.colouring());
     }
 
     #[test]

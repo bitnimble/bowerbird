@@ -2,6 +2,7 @@
 // pure: a test of a pure function pulls no component, and a component here pulls Base UI, which
 // decides once at import whether it has a DOM. Imported before a suite's `registerDom()`, it
 // decides no - and every popover in the whole process then renders unwired.
+import { DEFAULT_HIGHLIGHT_RECOVERY } from '../../../../src/schemas/highlight_recovery';
 import { type EditDoc } from '../../../../src/schemas/photo_edits';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 
@@ -111,7 +112,7 @@ export const DETAIL: readonly SliderSpec[] = [
     min: 0,
     max: 100,
     step: 1,
-    neutral: 100,
+    neutral: DEFAULT_HIGHLIGHT_RECOVERY,
   },
   {
     key: 'sharpening',

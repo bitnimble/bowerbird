@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import { dustSettings } from '../../schemas/dust_settings';
+import { DEFAULT_HIGHLIGHT_RECOVERY } from '../../schemas/highlight_recovery';
 import type { Job } from '../../schemas/jobs';
 import { PathSegment, route } from '../../schemas/route';
 import type { Originals } from '../../services/blobs/originals';
@@ -105,7 +106,7 @@ export class QualityCheckApi {
             denoiseLuminance: null,
             denoiseColour: null,
             denoiser: metered.denoiser,
-            highlightRecovery: 100,
+            highlightRecovery: DEFAULT_HIGHLIGHT_RECOVERY,
             // Off, for the same reason: this page compares quantizers, and a correction that
             // removed a few discs from whichever photograph was chosen is a second variable.
             dust: dustSettings(undefined),

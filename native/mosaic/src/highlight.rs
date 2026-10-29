@@ -21,10 +21,11 @@ fn site(cfa: &crate::cfa::Cfa) -> usize {
 
 /// Photosites around a place that its field depends on: every level's cell above level 0 lends
 /// through a bilinear one cell wide, the top level's own cell and its neighbours (`top_light`), the
-/// level-0 bilinear read and the site's centred window.
+/// level-0 bilinear read, the blown neighbours that make a cell rim (`field_rim`) and the site's
+/// centred window.
 pub fn reach(cfa: &crate::cfa::Cfa) -> usize {
     let cell = CELL_SITES * site(cfa);
-    cell * ((1 << LEVELS) + 2 * (1 << (LEVELS - 1)) + 1) + site(cfa)
+    cell * ((1 << LEVELS) + 2 * (1 << (LEVELS - 1)) + 2) + site(cfa)
 }
 
 /// The grid a region's origin must sit on for its cells, at every level, to be the frame's.
@@ -57,8 +58,10 @@ pub struct Kernels {
     layout: wgpu::BindGroupLayout,
     seed: wgpu::ComputePipeline,
     seed_xtrans: wgpu::ComputePipeline,
+    rim: wgpu::ComputePipeline,
     push: wgpu::ComputePipeline,
     pull: wgpu::ComputePipeline,
+    lend: wgpu::ComputePipeline,
 }
 
 pub fn device(gpu: &'static Gpu) -> Option<&'static Kernels> {
@@ -99,6 +102,8 @@ impl Kernels {
                 },
                 storage(1),
                 storage(2),
+                storage(3),
+                storage(4),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -125,7 +130,9 @@ impl Kernels {
             seed: pipeline("field_seed", &bayer),
             seed_xtrans: pipeline("field_seed", &xtrans),
             push: pipeline("field_push", &bayer),
+            rim: pipeline("field_rim", &bayer),
             pull: pipeline("field_pull", &bayer),
+            lend: pipeline("field_lend", &bayer),
             layout,
         })
     }
@@ -141,7 +148,8 @@ pub struct Colouring {
 }
 
 impl Colouring {
-    pub const DEFAULT: Colouring = Colouring::at(1.0);
+    /// The slider's default position, `DEFAULT_HIGHLIGHT_RECOVERY` in `src/schemas/highlight_recovery.ts`.
+    pub const DEFAULT: Colouring = Colouring::at(0.5);
 
     /// The Detail panel's one amount, 0 to 1: its first half brings the colour into highlights
     /// whose channels still read, its second into those that ran out entirely.
@@ -240,20 +248,25 @@ pub fn measure(
         .collect();
     let (top_w, top_h) = sizes[sizes.len() - 1];
     let cells = offsets[offsets.len() - 1] + top_w * top_h;
-    let buffer = |label| {
+    let finest = sizes[0].0 * sizes[0].1;
+    let buffer = |label, bytes: usize| {
         gpu.own_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
-            size: (cells * 16) as u64,
+            size: bytes.max(4) as u64,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         })
     };
-    let (levels, estimates) = (buffer("highlight levels"), buffer("highlight estimates"));
+    let levels = buffer("highlight levels", cells * 32);
+    let estimates = buffer("highlight estimates", cells * 32);
+    let lent = buffer("highlight lent", finest * 16);
+    let blown = buffer("highlight blown cells", finest * 4);
     let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, cfa, mosaic, 0);
 
     let mut recording = gpu.record();
-    recording.holding(&levels);
-    recording.holding(&estimates);
+    for held in [&levels, &estimates, &blown] {
+        recording.holding(held);
+    }
     let level = |k: usize| (sizes[k].0, sizes[k].1, offsets[k]);
     let mut dispatch = |pipeline: &wgpu::ComputePipeline,
                         k: usize,
@@ -292,6 +305,14 @@ pub fn measure(
                     binding: 2,
                     resource: estimates.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: lent.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: blown.as_entire_binding(),
+                },
             ],
         });
         recording.dispatch(
@@ -313,6 +334,7 @@ pub fn measure(
         false => &kernels.seed_xtrans,
     };
     dispatch(seed, 0, None, sizes[0]);
+    dispatch(&kernels.rim, 0, None, sizes[0]);
     for k in 0..sizes.len() - 1 {
         dispatch(&kernels.push, k, Some(k + 1), sizes[k + 1]);
     }
@@ -320,9 +342,10 @@ pub fn measure(
         let above = (k + 1 < sizes.len()).then_some(k + 1);
         dispatch(&kernels.pull, k, above, sizes[k]);
     }
+    dispatch(&kernels.lend, 0, None, sizes[0]);
     recording.submit();
     Some(Field {
-        buffer: estimates,
+        buffer: lent,
         width: sizes[0].0,
         height: sizes[0].1,
         cell: Span::exact(cell),

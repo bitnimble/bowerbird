@@ -109,6 +109,10 @@ name = "snapshot_diff"
 required-features = ["renditions"]
 
 [[example]]
+name = "highlight_bench"
+required-features = ["renditions"]
+
+[[example]]
 name = "match_renders"
 required-features = ["renditions"]
 

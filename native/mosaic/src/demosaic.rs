@@ -1595,47 +1595,78 @@ mod tests {
         std::array::from_fn(|c| colour::resident::level_of_bits(samples[middle + c]))
     }
 
-    /// A disc blown in every channel borrows a vivid surround's colour and comes back white under a
-    /// pale one, at the default Highlight recovery.
+    /// A disc blown in every channel takes a vivid surround's colour partway, evenly to its middle,
+    /// at full Highlight recovery; a pale surround, or one that disagrees on its hue, leaves
+    /// it white.
     #[test]
-    fn a_blown_disc_takes_a_vivid_lights_colour_and_not_a_pale_ones() {
+    fn a_blown_disc_takes_its_rims_colour_partway_throughout() {
         let Some(gpu) = gpu::device() else {
             return;
         };
         let Some(rcd) = super::device(gpu) else {
             return;
         };
-        let pink = blown_disc(gpu, rcd, [0.9, 0.18, 0.63]);
+        let green_share = |p: [f32; 3]| p[1] / p[0].max(p[2]);
+        let pink = blown_disc(gpu, rcd, |_, _| [0.9, 0.18, 0.63]);
+        for at in [pink.rim, pink.middle] {
+            assert!(
+                (0.3..0.8).contains(&green_share(at)),
+                "under a pink light the disc came back {at:?}, paler than pink and not white"
+            );
+        }
         assert!(
-            pink[1] < 0.5 * pink[0] && pink[1] < 0.5 * pink[2],
-            "under a pink light the disc came back {pink:?}"
+            (green_share(pink.middle) - green_share(pink.rim)).abs() < 0.1,
+            "under a pink light the disc's middle came back {:?} against its rim's {:?}",
+            pink.middle,
+            pink.rim
         );
-        let cream = blown_disc(gpu, rcd, [0.9, 0.81, 0.72]);
-        let spread = (cream[0].max(cream[1]).max(cream[2]) - cream[0].min(cream[1]).min(cream[2]))
-            / cream[0].max(cream[1]).max(cream[2]);
+        let spread = |at: [f32; 3]| {
+            (at[0].max(at[1]).max(at[2]) - at[0].min(at[1]).min(at[2]))
+                / at[0].max(at[1]).max(at[2])
+        };
+        let cream = blown_disc(gpu, rcd, |_, _| [0.9, 0.81, 0.72]);
+        for at in [cream.rim, cream.middle] {
+            assert!(
+                spread(at) <= 0.02,
+                "under a cream light the disc came back {at:?}"
+            );
+        }
+        let split = blown_disc(gpu, rcd, |dx, _| match dx < 0.0 {
+            true => [0.18, 0.45, 0.9],
+            false => [0.9, 0.45, 0.18],
+        });
         assert!(
-            spread <= 0.02,
-            "under a cream light the disc came back {cream:?}"
+            spread(split.middle) <= 0.05,
+            "between a blue light and an orange one the disc came back {:?}",
+            split.middle
         );
     }
 
-    /// The middle pixel of a disc on every ceiling, inside a flat `surround`, through the demosaic
-    /// and the colour pass at the identity.
+    struct Disc {
+        /// A few pixels inside its edge.
+        rim: [f32; 3],
+        middle: [f32; 3],
+    }
+
+    /// A disc on every ceiling, inside a `surround` given each place's offset from its centre,
+    /// through the demosaic and the colour pass at the identity, at full Highlight recovery.
     fn blown_disc(
         gpu: &'static gpu::Gpu,
         rcd: &'static super::Rcd,
-        surround: [f32; 3],
-    ) -> [f32; 3] {
+        surround: impl Fn(f32, f32) -> [f32; 3],
+    ) -> Disc {
+        const RADIUS: usize = 40;
         let side = 256usize;
         let cfa = &rggb();
         let centre = side as f32 / 2.0;
         let mosaic: Vec<f32> = (0..side)
             .flat_map(|r| {
+                let surround = &surround;
                 (0..side).map(move |c| {
                     let (dx, dy) = (c as f32 - centre, r as f32 - centre);
-                    match dx * dx + dy * dy < 40.0 * 40.0 {
+                    match dx * dx + dy * dy < (RADIUS * RADIUS) as f32 {
                         true => 1.0,
-                        false => surround[cfa.colour_at(r, c) as usize],
+                        false => surround(dx, dy)[cfa.colour_at(r, c) as usize],
                     }
                 })
             })
@@ -1652,8 +1683,16 @@ mod tests {
                 matrix: IDENTITY_F32,
                 ceiling: [1.0; 3],
             },
-            crate::highlight::Colouring::DEFAULT,
+            crate::highlight::Colouring::at(1.0),
         );
-        middle_of(&samples, inner, inner)
+        let at = |x: usize, y: usize| {
+            let first = (y * inner + x) * 3;
+            std::array::from_fn(|c| colour::resident::level_of_bits(samples[first + c]))
+        };
+        let middle = side / 2 - inset;
+        Disc {
+            rim: at(middle + RADIUS - 4, middle),
+            middle: at(middle, middle),
+        }
     }
 }

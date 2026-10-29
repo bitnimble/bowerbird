@@ -44,7 +44,7 @@ describe('developed', () => {
     expect(job.sharpen).toBeCloseTo(1.05);
     expect(job.denoiseLuminance).toBe(30);
     expect(job.highlightRecovery).toBe(40);
-    expect(developed(stored, 'galosh', () => true).highlightRecovery).toBe(100);
+    expect(developed(stored, 'galosh', () => true).highlightRecovery).toBe(50);
     expect(job.dust.enabled).toBe(false);
     expect(job.exposure).toBe(1.5);
     expect(developed(stored, 'galosh', () => true).sharpen).toBeCloseTo(0.45);

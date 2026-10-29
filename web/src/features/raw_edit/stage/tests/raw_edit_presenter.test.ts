@@ -403,7 +403,7 @@ describe('a slider reaching the picture', () => {
         luminance: 60,
         colour: 20,
         denoiser: 'galosh',
-        highlightRecovery: 100,
+        highlightRecovery: 50,
         sharpening: 50,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],

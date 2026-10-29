@@ -42,11 +42,11 @@ fn a_blown_rock_does_not_turn_magenta() {
     };
     let read =
         |colouring| RealWindow::read(gpu, rcd, "lit-rock", (1248, 704), A7CR_COLOUR, colouring);
-    read(Colouring::DEFAULT)
+    // At full recovery, where the lamp's tint reaches the blown face; the default lends it none.
+    read(Colouring::at(1.0))
         .snapshot(gpu)
         .check("highlights/lit-rock", WINDOW_TOLERANCE);
-    // The lamp's tint stays faintly on the blown face by default, so neutral is read with none.
-    let census = read(Colouring::at(0.5)).census();
+    let census = read(Colouring::DEFAULT).census();
     census.blown_is_neutral("the rock's blown patches", 100_000);
     census.nothing_near_clipping_is_magenta("the rock");
 }

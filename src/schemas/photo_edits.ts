@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_HIGHLIGHT_RECOVERY } from './highlight_recovery';
 import {
   MOST_REFLECTION_STROKES,
   MOST_REPAIRS,
@@ -212,7 +213,7 @@ export const EditDocSchema = z
     colourNoise: z.number().int().min(0).max(100).nullable().default(null),
     // Null is the library's.
     denoiser: DenoiserSchema.nullable().default(null),
-    highlightRecovery: z.number().int().min(0).max(100).default(100),
+    highlightRecovery: z.number().int().min(0).max(100).default(DEFAULT_HIGHLIGHT_RECOVERY),
 
     // The capture sharpening beside them, and a position rather than a strength for the same
     // reason: 50 is the deconvolution as computed and 100 twice its difference from the frame

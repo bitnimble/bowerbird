@@ -73,7 +73,50 @@ function journal(): JournalEntry[] {
 const DATA_MIGRATIONS: Partial<Record<string, (db: Database) => void>> = {
   '0018_stat_file_hash': rehashFromStat,
   '0020_photo_links': linkPhotos,
+  '0021_highlight_recovery_default': highlightRecoveryHistories,
 };
+
+/**
+ * Every undo step's Highlight recovery at 100 as 50, as the migration's SQL moves the documents, so
+ * an undo past it does not bring the old default back.
+ */
+function highlightRecoveryHistories(db: Database): void {
+  type Side = { highlightRecovery?: unknown };
+  const moved = (deltas: string): string | null => {
+    let steps: unknown;
+    try {
+      steps = JSON.parse(deltas);
+    } catch {
+      // Left for `history()` to read as empty; throwing here would abort every launch.
+      return null;
+    }
+    if (!Array.isArray(steps)) return null;
+    let changed = false;
+    for (const step of steps as ({ from?: Side; to?: Side } | null)[]) {
+      for (const side of [step?.from, step?.to]) {
+        if (side?.highlightRecovery !== 100) continue;
+        side.highlightRecovery = 50;
+        changed = true;
+      }
+    }
+    return changed ? JSON.stringify(steps) : null;
+  };
+  const rewrite = (table: string, column: string, key: string): void => {
+    const rows = db
+      .query(
+        `SELECT ${key} AS key, ${column} AS deltas FROM ${table}
+               WHERE instr(${column}, 'highlightRecovery') > 0`,
+      )
+      .all() as { key: string | number; deltas: string }[];
+    const update = db.query(`UPDATE ${table} SET ${column} = ? WHERE ${key} = ?`);
+    for (const row of rows) {
+      const deltas = moved(row.deltas);
+      if (deltas != null) update.run(deltas, row.key);
+    }
+  };
+  rewrite('photo_edit_history', 'deltas', 'photo_id');
+  rewrite('edit_conflicts', 'history', 'rowid');
+}
 
 /**
  * Names every finished picture's camera as its RAW's header does (`header::camera_names`), links

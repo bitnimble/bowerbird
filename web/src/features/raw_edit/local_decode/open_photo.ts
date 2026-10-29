@@ -7,6 +7,7 @@ import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
 import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
+import { DEFAULT_HIGHLIGHT_RECOVERY } from '../../../../../src/schemas/highlight_recovery';
 import { reflectionSettings } from '../../../../../src/schemas/reflection_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { denoiserFor } from '../../../../../src/schemas/denoiser';
@@ -331,7 +332,7 @@ export function prepareOf(
     luminance: doc?.luminanceNoise ?? null,
     colour: doc?.colourNoise ?? null,
     denoiser,
-    highlightRecovery: doc?.highlightRecovery ?? 100,
+    highlightRecovery: doc?.highlightRecovery ?? DEFAULT_HIGHLIGHT_RECOVERY,
     sharpening: sharpeningOf(doc?.sharpening ?? null, denoiser),
     dust: dustSettings(doc),
     repairs: doc?.repairs ?? [],

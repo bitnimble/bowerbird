@@ -222,9 +222,30 @@ Wells fills_at(uint x, uint y)
     return wells_of(sum / max(seen, float3(1.0)), brightest, ceiling);
 }
 
-/// The colour share of the light around a place in this dispatch's mosaic
-/// (`highlight_field.slang`'s `estimates`), bilinear between the field's cell centres.
-float3 light_around(float2 at)
+/// The light around a place in this dispatch's mosaic, bilinear between the field's cell centres.
+struct Around
+{
+    /// Colour share, summing to one.
+    float3 share;
+    /// Log2 fill of the light that lent it.
+    float fill;
+    /// How much of that light's colour reaches here: one in a blown cell, whose rim lent it, or beside
+    /// the light, falling toward zero for a cell that had to borrow from far off.
+    float near;
+}
+
+Around light_around(float2 at)
+{
+    let estimate = estimate_around(at);
+    Around around;
+    around.share = float3(estimate.r, estimate.g, 1.0 - estimate.r - estimate.g);
+    around.fill = estimate.b;
+    around.near = estimate.a;
+    return around;
+}
+
+/// `highlight_field.slang`'s `lent` at a place in this dispatch's mosaic.
+float4 estimate_around(float2 at)
 {
     let cells = (at + float2(params.field_left, params.field_top)) / float(params.field_cell) - 0.5;
     let base = int2(floor(cells));
@@ -240,7 +261,7 @@ float3 light_around(float2 at)
             share += w * highlight[uint(y) * params.field_width + uint(x)];
         }
     }
-    return share.rgb;
+    return share;
 }
 
 /// How far under the light that clips every channel a pixel's handover from `colour_reading` to
@@ -257,7 +278,8 @@ float3 reconstructed(float3 camera, Wells under, float2 at)
     let hi = max(fill.r, max(fill.g, fill.b));
     let clipped = max(under.clipped.r, max(under.clipped.g, under.clipped.b));
     if (hi < BLOWN_FROM && clipped == 0.0) { return camera; }
-    let around = light_around(at);
+    let lent = light_around(at);
+    let around = lent.share;
     let running = running_out(fill);
     let gone = max(running, under.clipped);
     // Off the photosites once a channel runs out: RCD interpolates a run-out channel from green and
@@ -269,11 +291,27 @@ float3 reconstructed(float3 camera, Wells under, float2 at)
     let measured = smoothstep(0.0, 0.5, reading.r + reading.g + reading.b);
     let lo = min(fill.r, min(fill.g, fill.b));
     let toward_clip = smoothstep(-WHITENS_OVER.s, 0.0, log2(max(lo, 1e-6)));
-    let kept = lerp(params.colour_reading, params.colour_blown * vivid(around), toward_clip);
+    let blown_colour = params.colour_blown * vivid(around) * lent.near * BLOWN_KEEPS;
+    let kept = lerp(params.colour_reading, blown_colour, toward_clip)
+        * smoothstep(LENT_FROM.s, LENT_TO.s, lent.fill);
     let neutral = broadband(wells, fill, gone);
     let lit = lit_like(wells, gone, measured, around) * luma_of(neutral);
-    return lerp(neutral, fitted(neutral, lit), kept);
+    return toward(neutral, fitted(neutral, lit), kept);
 }
+
+/// `kept` of the way from `neutral` to `lit` in ratio, at `neutral`'s luma: a linear blend lands
+/// near white for a soft colour and leaves a saturated one, a green-less magenta, nearly whole.
+float3 toward(float3 neutral, float3 lit, float kept)
+{
+    if (kept <= 0.0) { return neutral; }
+    let mixed = neutral * pow(max(lit, float3(1e-6)) / max(neutral, float3(1e-6)), float3(kept));
+    // An out-of-gamut blue near clip has luma at or under zero through the camera matrix; scaled
+    // by it, the pixel blows up.
+    let luma = luma_of(mixed);
+    return luma > 1e-6 ? mixed * (luma_of(neutral) / luma) : mixed;
+}
+
+static const float BLOWN_KEEPS = 0.7;
 
 static const float VIVID_FROM = 0.6;
 static const float VIVID_TO = 1.4;

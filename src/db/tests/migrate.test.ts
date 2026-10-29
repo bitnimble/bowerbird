@@ -89,6 +89,80 @@ describe('opening a catalogue', () => {
     db.close();
   });
 
+  it('moves Highlight recovery left at 100 to the new default, undo history included', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0021_highlight_recovery_default'");
+    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('lib', '/l', 'L');
+    const photo = db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+         VALUES (?, 'lib', json_object('kind', 'file', 'path', ?), 6000, 4000, '2026-01-01')`,
+    );
+    const edits = db.query(
+      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at)
+         VALUES (?, ?, 1, 1, '2026-01-01')`,
+    );
+    const history = db.query('INSERT INTO photo_edit_history (photo_id, deltas) VALUES (?, ?)');
+    const steps = JSON.stringify([
+      { from: { highlightRecovery: 100 }, to: { highlightRecovery: 70 } },
+      { from: { exposure: 0 }, to: { exposure: 1 } },
+    ]);
+    for (const [id, doc] of [
+      ['full', { version: 1, exposure: 1, highlightRecovery: 100 }],
+      ['moved', { version: 1, highlightRecovery: 30 }],
+    ] as const) {
+      photo.run(id, `Trip/${id}.ARW`);
+      edits.run(id, JSON.stringify(doc));
+      history.run(id, steps);
+    }
+    photo.run('corrupt', 'Trip/corrupt.ARW');
+    edits.run('corrupt', '{"highlightRecovery": 100');
+    history.run('corrupt', '[{"from": {"highlightRecovery": 100}');
+    db.query(
+      `INSERT INTO edit_conflicts (photo_id, session_id, doc, history, cursor, chain)
+         VALUES ('full', 's', ?, ?, 1, '[]')`,
+    ).run(JSON.stringify({ version: 1, highlightRecovery: 100 }), steps);
+
+    runMigrations(db);
+
+    const recovery = (sql: string): unknown => (db.query(sql).get() as { value: unknown }).value;
+    expect(
+      recovery(
+        `SELECT json_extract(doc, '$.highlightRecovery') AS value FROM photo_edits WHERE photo_id = 'full'`,
+      ),
+    ).toBe(50);
+    expect(
+      recovery(
+        `SELECT json_extract(doc, '$.exposure') AS value FROM photo_edits WHERE photo_id = 'full'`,
+      ),
+    ).toBe(1);
+    expect(
+      recovery(
+        `SELECT json_extract(doc, '$.highlightRecovery') AS value FROM photo_edits WHERE photo_id = 'moved'`,
+      ),
+    ).toBe(30);
+    expect(
+      recovery(`SELECT json_extract(doc, '$.highlightRecovery') AS value FROM edit_conflicts`),
+    ).toBe(50);
+    const migratedSteps = [
+      { from: { highlightRecovery: 50 }, to: { highlightRecovery: 70 } },
+      { from: { exposure: 0 }, to: { exposure: 1 } },
+    ];
+    for (const sql of [
+      "SELECT deltas AS value FROM photo_edit_history WHERE photo_id = 'full'",
+      'SELECT history AS value FROM edit_conflicts',
+    ]) {
+      expect(JSON.parse(recovery(sql) as string)).toEqual(migratedSteps);
+    }
+    expect(recovery("SELECT doc AS value FROM photo_edits WHERE photo_id = 'corrupt'")).toBe(
+      '{"highlightRecovery": 100',
+    );
+    expect(
+      recovery("SELECT deltas AS value FROM photo_edit_history WHERE photo_id = 'corrupt'"),
+    ).toBe('[{"from": {"highlightRecovery": 100}');
+    db.close();
+  });
+
   it('names camera files as their RAWs do, links the pairs, and gives each pair the later marks', () => {
     const db = new Database(':memory:');
     runMigrations(db);

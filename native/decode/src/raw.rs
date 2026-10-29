@@ -2645,17 +2645,18 @@ fn upscales(detail: denoise::galosh::Detail, noise: Option<denoise::galosh::Nois
 }
 
 /// A whole conditioned mosaic demosaiced as [`Held::into_frame`] demosaics a decode reduced `by`,
-/// highlights reconstructed from the mosaic's own field at the shipped colouring.
+/// highlights reconstructed from the mosaic's own field at `detail`'s colouring.
 pub async fn demosaic_as_decoded(
     mosaic: &mosaic::condition::Mosaic,
     cfa: &mosaic::cfa::Cfa,
     colour: mosaic::demosaic::Colour,
+    detail: denoise::galosh::Detail,
     by: usize,
 ) -> Option<colour::resident::Resident> {
     let gpu = gpu::device()?;
     let rcd = mosaic::demosaic::device(gpu)?;
     let field = mosaic::highlight::measure(gpu, mosaic, cfa, colour.ceiling)?;
-    let detail = denoise::galosh::Detail::AUTO.on_bayer(cfa.is_bayer());
+    let detail = detail.on_bayer(cfa.is_bayer());
     let (width, height) = (mosaic.width, mosaic.height);
     demosaic_at(
         gpu,
