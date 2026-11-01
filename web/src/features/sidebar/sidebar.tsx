@@ -1,9 +1,24 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Bug, FolderOutput, GitMerge, Images, PanelLeftClose, Settings } from 'lucide-react';
+import {
+  Bug,
+  FolderInput,
+  FolderOutput,
+  GitMerge,
+  Images,
+  PanelLeftClose,
+  Settings,
+} from 'lucide-react';
+import { importJobDone } from '../../../../src/schemas/imports';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { inMobileApp } from '../../api/transport';
 import { drawer } from '../../app/drawer.stylex';
-import { useExportStore, usePresenters, useReplicationStore } from '../../app/stores_context';
+import {
+  useExportStore,
+  useImportStore,
+  usePresenters,
+  useReplicationStore,
+} from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { ICON } from '../../ui/icon';
 import { ProgressBar } from '../../ui/progress_bar';
@@ -13,6 +28,7 @@ import { AlbumsPageStrings } from '../albums/albums_page.strings';
 import { ExportsPageStrings } from '../exports/exports_page.strings';
 import { bugReporter } from '../feedback/report_bug';
 import { ReportBugStrings } from '../feedback/report_bug_dialog.strings';
+import { ImportPageStrings } from '../import/import_page.strings';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { UpdateBadge } from '../updates/update_badge';
 import { LibraryNav } from './library_nav';
@@ -185,6 +201,7 @@ export function Sidebar({
 
         {/* About the app rather than the photos, so away from the catalogue. */}
         <SidebarSection style={styles.sectionApp}>
+          <ImportLink />
           <ExportsLink />
           <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
             {SettingsStrings.settings()}
@@ -214,6 +231,30 @@ const EditConflictsLink = observer(function EditConflictsLink(): JSX.Element | n
     <SidebarLink to={route(PathSegment.editConflicts())} icon={GitMerge}>
       <SidebarText>{SidebarStrings.editsToChoose()}</SidebarText>
       <span {...stylex.props(sidebarStyles.count)}>{waiting}</span>
+    </SidebarLink>
+  );
+});
+
+const ImportLink = observer(function ImportLink(): JSX.Element | null {
+  const store = useImportStore();
+  if (inMobileApp()) return null;
+  const job = store.job;
+  const done = job == null ? 0 : importJobDone(job);
+
+  return (
+    <SidebarLink to={route(PathSegment.imports())} icon={FolderInput}>
+      {job == null || !store.copying ? (
+        ImportPageStrings.importPhotos()
+      ) : (
+        <span {...stylex.props(styles.running)}>
+          <SidebarText>{ImportPageStrings.addingCount(done, job.total)}</SidebarText>
+          <ProgressBar
+            label={ImportPageStrings.addingCount(done, job.total)}
+            value={done}
+            max={job.total}
+          />
+        </span>
+      )}
     </SidebarLink>
   );
 });

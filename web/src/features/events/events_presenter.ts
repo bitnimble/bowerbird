@@ -5,8 +5,10 @@ import {
   ReplicationEventSchema,
 } from '../../../../src/schemas/events';
 import { ExportProgressSchema } from '../../../../src/schemas/exports';
+import { ImportJobSchema } from '../../../../src/schemas/imports';
 import { type EventStream, subscribeEvents } from '../../api/transport';
 import type { ExportPresenter } from '../export/export_presenter';
+import type { ImportPresenter } from '../import/import_presenter';
 import type { LabelsPresenter } from '../labels/labels_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ReplicationPresenter } from '../replication/replication_presenter';
@@ -28,6 +30,7 @@ export class EventsPresenter {
     private readonly exports: Pick<ExportPresenter, 'progressed'>,
     private readonly labels: Pick<LabelsPresenter, 'load'>,
     private readonly backup: Pick<BackupPresenter, 'load' | 'refresh' | 'dispose'>,
+    private readonly imports: Pick<ImportPresenter, 'jobProgressed' | 'loadJob'>,
   ) {}
 
   // EventSource reconnects on its own and replays what it missed through Last-Event-ID, so
@@ -46,6 +49,7 @@ export class EventsPresenter {
         this.photos.serverReachable();
         void this.replication.reload('background');
         void this.labels.load('background');
+        void this.imports.loadJob();
       },
       renditions: (payload) => {
         // The announcement carries the rows' new values rather than a bare "it changed", so
@@ -78,8 +82,10 @@ export class EventsPresenter {
       // A photograph is one request the client waits on, so how far into it the render has got
       // cannot come back in the answer: the file is the answer.
       export: (payload) => this.exports.progressed(ExportProgressSchema.parse(JSON.parse(payload))),
+      import: (payload) => this.imports.jobProgressed(ImportJobSchema.parse(JSON.parse(payload))),
     });
     void this.backup.load();
+    void this.imports.loadJob();
   }
 
   disconnect(): void {

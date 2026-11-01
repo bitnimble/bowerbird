@@ -2,7 +2,8 @@ import { describe, it, expect } from 'bun:test';
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { moveIntoDir, moveOverClaim, moveWithoutReplacing } from '../files';
+import { moveOverClaim, moveWithoutReplacing } from '../deletions';
+import { moveIntoDir } from '../files';
 import { scanLibraryTree } from '../scan';
 import { scope, withRoot } from './library_tree_test_helpers';
 
@@ -119,6 +120,20 @@ describe.each([
       expect(refused).toBe('EEXIST');
       expect(await readFile(to, 'utf8')).toBe('existing');
       expect(await readFile(from, 'utf8')).toBe('new');
+    }),
+  );
+
+  it(
+    'fails on a missing source and leaves no empty claim at the target',
+    withRoot(async (root) => {
+      const to = path.join(root, 'a.arw');
+
+      const refused = await move(path.join(root, 'gone.partial'), to).catch(
+        (err: NodeJS.ErrnoException) => err.code,
+      );
+
+      expect(refused).toBe('ENOENT');
+      expect(existsSync(to)).toBe(false);
     }),
   );
 });

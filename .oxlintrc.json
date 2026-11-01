@@ -1,10 +1,15 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": ["node_modules", "web/dist", "landing/dist", "native", ".scratch-*.ts"],
-  "jsPlugins": ["./scripts/oxlint-plugin-strings.ts", "./scripts/oxlint-plugin-ids.ts"],
+  "jsPlugins": [
+    "./scripts/oxlint-plugin-strings.ts",
+    "./scripts/oxlint-plugin-ids.ts",
+    "./scripts/oxlint-plugin-deletions.ts"
+  ],
   "rules": {
     "no-console": "error",
     "ids/no-uuid": "error",
+    "deletions/no-direct-delete": "error",
     "no-restricted-imports": [
       "error",
       {
@@ -43,7 +48,8 @@
     {
       "files": ["src/utils/deletions.ts"],
       "rules": {
-        "no-restricted-imports": "off"
+        "no-restricted-imports": "off",
+        "deletions/no-direct-delete": "off"
       }
     },
     {
@@ -62,6 +68,7 @@
       "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/**"],
       "rules": {
         "no-restricted-imports": "off",
+        "deletions/no-direct-delete": "off",
         "no-console": "off"
       }
     },
@@ -69,6 +76,7 @@
       "files": ["scripts/**", "landing/scripts/**"],
       "rules": {
         "no-restricted-imports": "off",
+        "deletions/no-direct-delete": "off",
         "no-console": "off"
       }
     },

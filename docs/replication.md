@@ -730,10 +730,12 @@ user asking for it.
 
 ### 7.6 Manual eviction ("Remove local copy")
 
-V1 ships one eviction: a bulk "remove local copy (kept on <peer>)" action. It requires a live
-confirmation from a listening peer that verifies possession at that moment (existence plus
-spot-check of `content_hash`), deletes the local file, tombstones the local location row. If no
-peer confirms, it refuses. Policy eviction later reuses exactly this rule.
+V1 ships one eviction: a bulk "remove local copy (kept on <peer>)" action. It reads the local file
+against the recorded `content_hash`, then requires a live confirmation from a listening peer that
+verifies possession at that moment (existence plus spot-check of `content_hash`), deletes the local
+file, tombstones the local location row. Both checks run inside `deleteEvictedOriginal`, the peer's
+last, so no caller can hand it an old answer. If no peer confirms, it refuses. Policy eviction later
+reuses exactly this rule.
 
 Refuse per photograph; report both successes and failures. Like other bulk routes (§12.3), use
 `PhotoTarget` positions in a filtered collection, keeping hundred-thousand-photo selections one

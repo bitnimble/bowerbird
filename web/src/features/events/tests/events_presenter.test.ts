@@ -69,6 +69,7 @@ test('backup loads before Settings, refreshes on each stream open and reads back
     { progressed: () => {} },
     { load: async () => {} },
     backup,
+    { jobProgressed: () => {}, loadJob: async () => {} },
   );
   sessions.push(events);
   events.connect();
@@ -88,6 +89,65 @@ test('backup loads before Settings, refreshes on each stream open and reads back
   source.emit('backup', JSON.stringify({ library_id: 'lib' }));
   await when(() => store.statusOf('lib') === server, { timeout: 1000 });
   expect(reads).toBe(4);
+});
+
+test('an import job reaches its presenter, and a reconnect re-reads it', () => {
+  useFakeEventSource();
+  backupApi.list = async () => ({ backups: [] });
+  const statuses: string[] = [];
+  let jobReads = 0;
+  const events = new EventsPresenter(
+    {
+      serverReachable: () => {},
+      renditionsRebuilt: () => {},
+      renditionFetch: () => {},
+      compositeProgressed: () => {},
+      reload: async () => {},
+    },
+    { load: async () => {} },
+    { libraryChanged: async () => {}, reload: async () => {} },
+    { renditionsRebuilt: () => {} },
+    { progressed: () => {} },
+    { load: async () => {} },
+    new BackupPresenter(
+      new BackupStore(),
+      { reload: async () => {} },
+      { show: () => {}, showError: () => {} },
+    ),
+    {
+      jobProgressed: (job) => statuses.push(job.status),
+      loadJob: async () => {
+        jobReads++;
+      },
+    },
+  );
+  sessions.push(events);
+  events.connect();
+  const source = Source.opened[0];
+  expect(jobReads).toBe(1);
+
+  source?.emit(
+    'import',
+    JSON.stringify({
+      id: 'job00001',
+      library_id: 'lib00001',
+      shoot_id: null,
+      status: 'copying',
+      total: 2,
+      copied: 1,
+      skipped: 0,
+      failed: 0,
+      failed_names: [],
+      deleted: 0,
+      kept: 0,
+      kept_names: [],
+    }),
+  );
+  source?.emit('open');
+  source?.emit('open');
+
+  expect(statuses).toEqual(['copying']);
+  expect(jobReads).toBe(2);
 });
 
 test('a finished scan re-reads the grid and the library counts', () => {
@@ -118,6 +178,7 @@ test('a finished scan re-reads the grid and the library counts', () => {
       { reload: async () => {} },
       { show: () => {}, showError: () => {} },
     ),
+    { jobProgressed: () => {}, loadJob: async () => {} },
   );
   sessions.push(events);
   events.connect();
@@ -150,6 +211,7 @@ test('a batch of rewritten renditions reaches the grid and a triage session whol
       { reload: async () => {} },
       { show: () => {}, showError: () => {} },
     ),
+    { jobProgressed: () => {}, loadJob: async () => {} },
   );
   sessions.push(events);
   events.connect();

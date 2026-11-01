@@ -102,6 +102,7 @@ describe('subscribeEvents', () => {
       scan: () => {},
       composite: () => {},
       export: () => {},
+      import: () => {},
       ...watching,
     };
   }

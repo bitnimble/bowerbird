@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProcessingStageSchema, RenditionSchema } from './common';
 import { CompositeProgressSchema } from './composition';
 import { ExportProgressSchema } from './exports';
+import { ImportJobSchema } from './imports';
 
 /** A photo's derived file has been rewritten, with the stamp its row now carries. */
 export const RenditionEventSchema = z.object({
@@ -39,6 +40,7 @@ export const LibraryEventSchemas = {
   scan: ScanEventSchema,
   composite: CompositeProgressSchema,
   export: ExportProgressSchema,
+  import: ImportJobSchema,
 };
 export type LibraryEventKind = keyof typeof LibraryEventSchemas;
 export type LibraryEventPayload<K extends LibraryEventKind> = z.input<

@@ -89,7 +89,9 @@ export class FolderBrowserPresenter {
   }
 
   @action.bound
-  private selected(path: string): void {
+  selected(path: string): void {
+    this.walk++;
+    this.store.loading = false;
     this.store.selection = { path };
     this.store.listing = null;
   }

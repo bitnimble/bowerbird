@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { deleteGeneratedFile } from '../../../utils/deletions';
 import { readCaptureOffset } from '../analysis/exif_zone';
 import { headerOf } from '../rawshim/raw_decoder';
 import { runJob, writeRendered } from '../rawshim/rawshim_job';
@@ -84,9 +85,7 @@ self.onmessage = async (event) => {
     });
   } catch (err) {
     for (const output of outputsOf(job))
-      await Bun.file(output)
-        .delete()
-        .catch(() => {});
+      await deleteGeneratedFile(job.dataPath, output).catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
   }
 };

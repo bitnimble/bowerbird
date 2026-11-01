@@ -628,30 +628,36 @@ export class TransferService {
       });
     }
 
-    let confirmation: BlobVerifyResponse;
-    try {
-      const res = await this.transport.request(peer, route(photo.id, PathSegment.verify()));
-      if (!res.ok) return `peer answered ${res.status} to the possession check`;
-      confirmation = BlobVerifyResponseSchema.parse(await res.json());
-    } catch (error) {
-      return `peer could not be reached for a live possession check: ${String(error)}`;
-    }
-    if (!confirmation.held || confirmation.content_hash !== recorded) {
-      return 'peer could not verify possession of a matching copy';
-    }
     return await this.refusable(() =>
       libraryMutex.run(library.id, async () => {
-        await deleteEvictedOriginal(library.root_path, abs, confirmation, recorded, this.writes);
+        await deleteEvictedOriginal(
+          library.root_path,
+          abs,
+          recorded,
+          () => this.askPeerForCopy(peer, photo.id),
+          this.writes,
+        );
         this.retire(library.id, photo.id, at);
       }),
     );
   }
 
+  private async askPeerForCopy(peer: string, photoId: string): Promise<BlobVerifyResponse> {
+    let res: Response;
+    try {
+      res = await this.transport.request(peer, route(photoId, PathSegment.verify()));
+    } catch (error) {
+      throw new Error(`peer could not be reached for a live possession check: ${String(error)}`);
+    }
+    if (!res.ok) throw new Error(`peer answered ${res.status} to the possession check`);
+    return BlobVerifyResponseSchema.parse(await res.json());
+  }
+
   /**
    * The deletion's own refusal, reported as one.
    *
-   * Every check above is made again inside `utils/deletions.ts`, against the files rather than
-   * against the rows, and a copy that fails one there is a photograph that keeps its original -
+   * The checks that decide are inside `utils/deletions.ts`, against the files rather than against
+   * the rows, and a copy that fails one there is a photograph that keeps its original -
    * which is the answer `evict` promises per photograph. Thrown instead, one refused copy ends the
    * whole batch, and a cull that meets a half-written backup stops rather than stepping over it.
    */

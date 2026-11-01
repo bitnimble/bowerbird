@@ -395,7 +395,11 @@ export class ScanReconciler {
       binName: null,
       excluded: new Set(),
     };
-    const { files } = await scanLibraryTree(inside, binRoot, keepLease, () => true);
+    const { files } = await scanLibraryTree(inside, {
+      startDir: binRoot,
+      onDir: keepLease,
+      descend: () => true,
+    });
     return files;
   }
 

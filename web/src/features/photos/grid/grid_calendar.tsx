@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { createContext, useContext, useEffect, useRef, type CSSProperties } from 'react';
 import {
   DayPicker,
   getDefaultClassNames,
@@ -56,10 +56,28 @@ function parseDay(iso: string | undefined): Date | undefined {
   return y == null || m == null || d == null ? undefined : new Date(y, m - 1, d);
 }
 
-const AnyDateButton = observer(function AnyDateButton(): JSX.Element {
-  const store = useListingStore();
-  const { photos } = usePresenters();
-  const f = store.filters;
+interface ShotDateRange {
+  from: string | undefined;
+  to: string | undefined;
+  /** The days the collection spans, which is what the caption's selects offer. */
+  firstDay: string | undefined;
+  lastDay: string | undefined;
+  /** Each day's 0..1 weight for its dot (`dayDensities`). */
+  density: ReadonlyMap<string, number>;
+  onChange: (from: string | undefined, to: string | undefined) => void;
+}
+
+// react-day-picker draws these parts itself and types them as taking only its own props.
+const DateRangeContext = createContext<ShotDateRange | null>(null);
+
+function useDateRange(): ShotDateRange {
+  const range = useContext(DateRangeContext);
+  if (range == null) throw new Error('date range parts used outside DateRangeFilter');
+  return range;
+}
+
+function AnyDateButton(): JSX.Element {
+  const { from, to, onChange } = useDateRange();
 
   return (
     <Button
@@ -68,13 +86,13 @@ const AnyDateButton = observer(function AnyDateButton(): JSX.Element {
       // The month arrows are a glyph apiece and the row is as wide as the calendar; a
       // word here would sit over the month's name.
       aria-label={GridControlsStrings.anyDate()}
-      disabled={f.takenFrom == null && f.takenTo == null}
-      onClick={() => void photos.setFilters({ ...f, takenFrom: undefined, takenTo: undefined })}
+      disabled={from == null && to == null}
+      onClick={() => onChange(undefined, undefined)}
     >
       <RotateCcw size={ICON} />
     </Button>
   );
-});
+}
 
 /**
  * The calendar's month arrows, with what clears the range beside them. Drawn in the caption
@@ -112,15 +130,8 @@ function CalendarNav(): JSX.Element {
 const DOT_FAINTEST = 0.45;
 const DOT_SMALLEST = 0.5;
 
-const DayDot = observer(function DayDot({
-  date,
-  picked,
-}: {
-  date: Date;
-  picked: boolean;
-}): JSX.Element | null {
-  const store = useListingStore();
-  const density = store.dayDensity.get(isoDay(date));
+function DayDot({ date, picked }: { date: Date; picked: boolean }): JSX.Element | null {
+  const density = useDateRange().density.get(isoDay(date));
   if (density == null) return null;
   return (
     <span
@@ -134,15 +145,13 @@ const DayDot = observer(function DayDot({
       }}
     />
   );
-});
+}
 
 /**
  * A day, with how much was shot on it under the number.
  *
- * Not an `observer` itself, for the reason `CalendarNav` is not: react-day-picker types a
- * day as returning an element. The focus effect is the default component's, which this
- * replaces rather than wraps - without it the arrow keys move the highlight and not the
- * caret.
+ * The focus effect is the default component's, which this replaces rather than wraps - without
+ * it the arrow keys move the highlight and not the caret.
  */
 function CalendarDayButton({
   day,
@@ -177,11 +186,11 @@ const MONTH_NAMES = Array.from({ length: 12 }, (_, month) =>
  * `goToMonth` clamps to the collection's ends, so the lists only offer months and years
  * it actually spans.
  */
-const CaptionSelects = observer(function CaptionSelects({ month }: { month: Date }): JSX.Element {
-  const store = useListingStore();
+function CaptionSelects({ month }: { month: Date }): JSX.Element {
+  const { firstDay, lastDay } = useDateRange();
   const { goToMonth } = useDayPicker();
-  const first = parseDay(store.firstPhotoDay) ?? month;
-  const last = parseDay(store.lastPhotoDay) ?? month;
+  const first = parseDay(firstDay) ?? month;
+  const last = parseDay(lastDay) ?? month;
   const year = month.getFullYear();
   const from = year === first.getFullYear() ? first.getMonth() : 0;
   const to = year === last.getFullYear() ? last.getMonth() : 11;
@@ -213,12 +222,8 @@ const CaptionSelects = observer(function CaptionSelects({ month }: { month: Date
       />
     </div>
   );
-});
+}
 
-/**
- * Not an `observer`: react-day-picker types a caption as returning an element, where an
- * observer returns the wider ReactNode.
- */
 function CalendarCaption({
   calendarMonth,
   displayIndex: _displayIndex,
@@ -232,39 +237,55 @@ function CalendarCaption({
   );
 }
 
-export const GridDateRangeFilter = observer(function GridDateRangeFilter(): JSX.Element {
-  const store = useListingStore();
-  const { photos } = usePresenters();
-  const from = store.filters.takenFrom;
-  const to = store.filters.takenTo;
+export function DateRangeFilter(range: ShotDateRange): JSX.Element {
+  const { from, to, firstDay, lastDay, onChange } = range;
   const selected: DateRange | undefined =
     from == null && to == null ? undefined : { from: parseDay(from), to: parseDay(to) };
   // The month a picked range starts in, else the last one the collection holds anything
   // in. Keyed on it because react-day-picker reads an opening month once: a collection
   // whose days land after the panel is open would otherwise stay on this month.
-  const opening = from ?? store.lastPhotoDay;
+  const opening = from ?? lastDay;
 
   return (
-    <DayPicker
-      key={opening}
-      mode="range"
-      selected={selected}
-      defaultMonth={parseDay(opening)}
-      // The months the collection spans, which is what the caption's two selects offer
-      // and what the arrows stop at.
-      startMonth={parseDay(store.firstPhotoDay)}
-      endMonth={parseDay(store.lastPhotoDay)}
-      hideNavigation
-      className={stylex.props(styles.calendar).className}
-      style={CALENDAR_VARS}
-      classNames={CALENDAR_CLASSES}
-      components={{ DayButton: CalendarDayButton, MonthCaption: CalendarCaption }}
-      onSelect={(range) =>
-        void photos.setFilters({
-          ...store.filters,
-          takenFrom: range?.from == null ? undefined : isoDay(range.from),
-          takenTo: range?.to == null ? undefined : isoDay(range.to),
-        })
+    <DateRangeContext.Provider value={range}>
+      <DayPicker
+        key={opening}
+        mode="range"
+        selected={selected}
+        defaultMonth={parseDay(opening)}
+        // The months the collection spans, which is what the caption's two selects offer
+        // and what the arrows stop at.
+        startMonth={parseDay(firstDay)}
+        endMonth={parseDay(lastDay)}
+        hideNavigation
+        className={stylex.props(styles.calendar).className}
+        style={CALENDAR_VARS}
+        classNames={CALENDAR_CLASSES}
+        components={{ DayButton: CalendarDayButton, MonthCaption: CalendarCaption }}
+        onSelect={(picked) =>
+          onChange(
+            picked?.from == null ? undefined : isoDay(picked.from),
+            picked?.to == null ? undefined : isoDay(picked.to),
+          )
+        }
+      />
+    </DateRangeContext.Provider>
+  );
+}
+
+export const GridDateRangeFilter = observer(function GridDateRangeFilter(): JSX.Element {
+  const store = useListingStore();
+  const { photos } = usePresenters();
+
+  return (
+    <DateRangeFilter
+      from={store.filters.takenFrom}
+      to={store.filters.takenTo}
+      firstDay={store.firstPhotoDay}
+      lastDay={store.lastPhotoDay}
+      density={store.dayDensity}
+      onChange={(takenFrom, takenTo) =>
+        void photos.setFilters({ ...store.filters, takenFrom, takenTo })
       }
     />
   );

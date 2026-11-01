@@ -1,22 +1,38 @@
-import { existsSync, statSync } from 'node:fs';
-import { rm, rmdir, unlink } from 'node:fs/promises';
+import { existsSync, lstatSync, statSync, type Stats } from 'node:fs';
+import {
+  link,
+  lstat,
+  open,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { config } from '../config';
 import { AppError } from '../errors';
 import { BackupError } from '../services/backup/backup_error';
 import type { WriteGrants } from '../services/libraries/write_grants';
 import { Logger } from '../logger';
 import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
-import { contentHash } from './hash';
-import { containsPath, getBinPath } from './paths';
-import { findOriginalsAnywhere, isStrayOriginal } from './scan';
+import { flushDirectory, flushFile } from './flush';
+import { contentHash, copyHashing } from './hash';
+import { containsPath, dataPathForLibraryId, getBinPath } from './paths';
+import { findOriginalsAnywhere, isOriginal, isStrayOriginal } from './scan';
+import { stagedName, stagingPathFor } from './staging';
 
-// The only module allowed to remove anything from disk: the `no-restricted-imports`
-// rule in .oxlintrc.json bans the fs deletion calls everywhere else. Originals are
-// the one thing here that cannot be regenerated, so every deletion either proves
-// its target is not one before the call is made, or *derives* that target from
-// something that cannot name one. Nothing here deletes a path a caller chose.
+// The only module allowed to remove anything from disk: `no-restricted-imports` and
+// `deletions/no-direct-delete` in .oxlintrc.json ban the deletion calls everywhere else.
+// Originals are the one thing here that cannot be regenerated, so every deletion either
+// proves its target is not one before the call is made, or *derives* that target from
+// something that cannot name one. Where an original does go, the proof that another copy
+// holds its bytes is taken inside the function that deletes it: no check is exported for a
+// caller to run first, and none can be skipped or left to go stale.
 
 // The subdirectories of a data directory that hold generated files, and so the
 // only ones a file may be deleted from one at a time. Everything else under
@@ -93,7 +109,14 @@ export async function deleteDraft(dataPath: string, target: string): Promise<voi
 // original is still inside it: nothing under `DATA_DIR` is written by anyone but
 // this app (§6), so an original there means the directory is not what it is
 // believed to be, and this is the one call here that cannot be undone.
-export async function deleteDataDirectory(dataPath: string): Promise<void> {
+export async function deleteDataDirectory(libraryId: string): Promise<void> {
+  const dataPath = dataPathForLibraryId(libraryId);
+  if (path.dirname(path.resolve(dataPath)) !== path.resolve(config.dataDir)) {
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to delete ${dataPath}: not a library's data directory`,
+    );
+  }
   const strays = await findOriginalsAnywhere(dataPath);
   if (strays.length > 0) {
     throw new AppError(
@@ -186,6 +209,27 @@ export async function deleteBackupFile(backupsDir: string, target: string): Prom
   await rm(target, { force: true });
 }
 
+/** `stagingPathFor` of an original's name, which no format this app holds as an original ends in. */
+function isImportStaging(target: string): boolean {
+  const original = stagedName(target);
+  return original != null && isOriginal(original);
+}
+
+// What an import was writing, discarded when the copy failed.
+export async function deleteImportStaging(target: string): Promise<void> {
+  if (!isImportStaging(target)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not an import staging file`);
+  }
+  await rm(target, { force: true });
+}
+
+// What a crash left behind in a folder an import is about to write to.
+export async function sweepImportStaging(dir: string): Promise<void> {
+  for (const name of await readdir(dir)) {
+    if (isImportStaging(name)) await deleteImportStaging(path.join(dir, name));
+  }
+}
+
 // A partial blob download, discarded on hash mismatch or cancel. Staged files
 // live directly in the staging directory as `<photoId>.partial`, which no RAW is
 // ever named, so both checks together cannot name an original.
@@ -214,27 +258,37 @@ export async function deleteEmptyStagingDirectory(target: string): Promise<void>
   });
 }
 
-// The one deliberate deletion of an original: manual eviction (docs/replication.md
-// §7.6). The confirmation is the safety argument - a listening peer verified
-// possession moments ago and its copy hashed to exactly the recorded content
-// hash - so it is checked here, at the deletion, rather than trusted from the
-// caller. The replicated locations table alone never satisfies this: its rows are
-// stale by construction, and two peers each trusting the other's row can destroy
-// the last two copies concurrently (§7.2).
+function isOneFile(a: Stats, b: Stats): boolean {
+  return a.dev === b.dev && a.ino === b.ino;
+}
+
+// A deliberate deletion of an original: manual eviction (docs/replication.md §7.6). The
+// peer is asked here, as the last thing before the unlink, because only its answer now says
+// what it holds now. The replicated locations table alone never satisfies this: its rows
+// are stale by construction, and two peers each trusting the other's row can destroy the
+// last two copies concurrently (§7.2). The local file is read as well, because the peer's
+// copy only stands in for this file if this file still is what the hash recorded.
 export async function deleteEvictedOriginal(
   rootPath: string,
   target: string,
-  confirmation: BlobVerifyResponse,
-  recordedHash: string | null,
+  recordedHash: string,
+  askPeer: () => Promise<BlobVerifyResponse>,
   writes: WriteGrants,
 ): Promise<void> {
   if (!containsPath(rootPath, target)) {
     throw new AppError('IO_ERROR', `refusing to evict ${target}: outside the library root`);
   }
-  if (recordedHash == null || !confirmation.held || confirmation.content_hash !== recordedHash) {
+  if ((await contentHash(target)) !== recordedHash) {
     throw new AppError(
       'CONFLICT',
-      `refusing to evict ${target}: no live confirmation of another verified copy`,
+      `refusing to evict ${target}: it has changed since it was hashed`,
+    );
+  }
+  const confirmation = await askPeer();
+  if (!confirmation.held || confirmation.content_hash !== recordedHash) {
+    throw new AppError(
+      'CONFLICT',
+      `refusing to evict ${target}: peer could not verify possession of a matching copy`,
     );
   }
   await writes.grant([target]);
@@ -242,11 +296,78 @@ export async function deleteEvictedOriginal(
 }
 
 /**
- * The other deliberate deletion of an original: the cull giving a local copy back to a backup
+ * A deliberate deletion of an original: the import moving it into a library across filesystems,
+ * with "Delete after copying" on (DESIGN §9.11).
+ *
+ * The copy, its proof, and the unlink are this one call, reading the source once. A destination
+ * already there has to hold the same bytes instead of being copied to.
+ *
+ * Throws with the source untouched when the destination can't be shown to hold it. Returns whether
+ * the source went: false means the copy stands and the source couldn't be removed, as on a card
+ * locked read-only.
+ */
+export async function moveOriginal(source: string, destination: string): Promise<boolean> {
+  const existing = await stat(destination).catch(() => null);
+  if (existing == null) await copyOriginal(source, destination);
+  else await proveSameBytes(source, destination, existing);
+  try {
+    // A symlink's target is what was copied, and removing the link wouldn't free it.
+    if (!(await lstat(source)).isFile()) return false;
+    await unlink(source);
+    return true;
+  } catch (err) {
+    log.warn('could not remove an original after copying it', {
+      file: source,
+      err: String(err),
+    });
+    return false;
+  }
+}
+
+/**
+ * Copies to a name that must be free, leaving nothing under it unless the bytes read back the same
+ * as they left the source.
+ */
+export async function copyOriginal(source: string, destination: string): Promise<void> {
+  const staging = stagingPathFor(destination);
+  try {
+    const copied = await copyHashing(source, staging);
+    if ((await contentHash(staging)) !== copied) {
+      throw new AppError('IO_ERROR', `the copy of ${source} does not match it`);
+    }
+    await moveWithoutReplacing(staging, destination);
+    // A power cut can otherwise keep the source's unlink and lose the copy's name.
+    await flushDirectory(path.dirname(destination));
+  } finally {
+    await deleteImportStaging(staging);
+  }
+}
+
+// Two names for one file always hash the same, which says nothing about a second copy.
+async function proveSameBytes(source: string, destination: string, copy: Stats): Promise<void> {
+  const original = await lstat(source).catch(() => null);
+  if (original?.isFile() !== true) {
+    throw new AppError('IO_ERROR', `refusing to delete ${source}: it is not a file`);
+  }
+  if (!copy.isFile()) {
+    throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} is not a file`);
+  }
+  if (isOneFile(original, copy)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} is the same file`);
+  }
+  if ((await contentHash(source)) !== (await contentHash(destination))) {
+    throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} does not match`);
+  }
+  await flushFile(destination);
+  await flushDirectory(path.dirname(destination));
+}
+
+/**
+ * A deliberate deletion of an original: the cull giving a local copy back to a backup
  * folder (docs/replication.md §14.5).
  *
- * Its own function rather than an argument to the one above, because the safety argument is a
- * different one. A peer is *asked* whether it holds the bytes, and its yes is a promise it keeps
+ * Its own function rather than an argument to `deleteEvictedOriginal`, because the safety argument
+ * is a different one. A peer is *asked* whether it holds the bytes, and its yes is a promise it keeps
  * by refusing to evict its own copy at the same moment; a folder promises nothing and answers
  * nothing, so nobody is standing behind the backup's copy but this device. So this reads both
  * files, now, and refuses unless all three agree: the backup's bytes, this device's bytes, and the
@@ -275,6 +396,10 @@ export async function deleteBackedUpOriginal(
       `The backup copy of ${path.basename(target)} is missing. Run the backup again before removing its local copy.`,
     );
   }
+  // Both hashes would match, and the unlink would take the only copy.
+  if (isOneFile(statSync(target), statSync(backupCopy))) {
+    throw new AppError('IO_ERROR', `refusing to give up ${target}: ${backupCopy} is the same file`);
+  }
   const onBackup = await contentHash(backupCopy);
   if (onBackup !== recordedHash) {
     throw new BackupError(
@@ -302,13 +427,62 @@ export async function deleteEmptyClaim(target: string): Promise<void> {
   await unlink(target);
 }
 
-// The source half of a move: `movedTo` already holds the bytes (a hard link to
-// the same inode, or a completed copy), so removing `from` loses nothing. That
-// the destination exists is the entire safety argument, which is why it is
-// checked here rather than trusted from the caller.
+// Android refuses an app's hard links outright (SELinux), and exFAT and SMB have none to make. On
+// Windows exFAT, libuv reports ERROR_INVALID_FUNCTION as EISDIR.
+const NO_HARD_LINKS = new Set(['EPERM', 'EACCES', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EISDIR']);
+
+/**
+ * Moves `from` to `to` on the same filesystem, failing with `EEXIST` rather than replacing a file
+ * already there, including one another move is placing at the same moment.
+ */
+export async function moveWithoutReplacing(from: string, to: string): Promise<void> {
+  try {
+    await link(from, to);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code == null || !NO_HARD_LINKS.has(code)) throw err;
+    await moveOverClaim(from, to);
+    return;
+  }
+  await unlinkMovedFile(from, to);
+}
+
+/** The same, claiming `to` with an exclusive create and renaming the bytes over that claim. */
+export async function moveOverClaim(from: string, to: string): Promise<void> {
+  await (await open(to, 'wx')).close();
+  try {
+    await rename(from, to);
+  } catch (err) {
+    await deleteEmptyClaim(to).catch(() => undefined);
+    throw err;
+  }
+}
+
+// The source half of a move: `movedTo` already holds the bytes, as a hard link to the same inode
+// or a completed copy, so removing `from` loses nothing. Which of those it is decides what proves
+// it: a hard link has to be a second name for the file, and a copy has to read back the same.
 export async function unlinkMovedFile(from: string, movedTo: string): Promise<void> {
-  if (!existsSync(movedTo)) {
+  // lstat: a library can hold a symlinked photo, and a hard link to one is a link to the symlink.
+  const destination = lstatSync(movedTo, { throwIfNoEntry: false });
+  if (destination == null) {
     throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} does not exist`);
   }
+  const source = lstatSync(from);
+  if (isOneFile(source, destination)) {
+    if (source.nlink < 2 || (await canonicalName(from)) === (await canonicalName(movedTo))) {
+      throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} is the same file`);
+    }
+  } else if (destination.isSymbolicLink()) {
+    throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} is a link, not a copy`);
+  } else if (
+    statSync(from).size !== destination.size ||
+    (await contentHash(from)) !== (await contentHash(movedTo))
+  ) {
+    throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} does not match`);
+  }
   await unlink(from);
+}
+
+async function canonicalName(file: string): Promise<string> {
+  return path.join(await realpath(path.dirname(file)), path.basename(file));
 }
