@@ -92,7 +92,7 @@ beforeEach(() => {
     { id: 'sht00003', library_id: 'lib00001', folder_path: '../escaped' },
   ] as Shoot[];
   service = new ImportService(
-    { getById: (id) => (id === library.id ? library : null) },
+    { getById: (id) => (id === library.id ? library : null), list: () => [library] },
     { getById: (id) => shoots.find((shoot) => shoot.id === id) ?? null },
     { filesHeld: () => held },
     {
@@ -352,6 +352,190 @@ test('a vanished source file is reported and the rest still copy', async () => {
 
   expect(job).toMatchObject({ status: 'finished', copied: 1, failed: 1, failed_names: ['a.arw'] });
   expect(readdirSync(root)).toEqual(['b.arw']);
+});
+
+async function copyDeleting(fileIds?: number[]): Promise<ImportJob> {
+  const scan = await service.scan(card);
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: fileIds ?? scan.files.map((file) => file.id),
+    delete_originals: true,
+  });
+  return await finished();
+}
+
+test('deleting after copying takes the originals once their copies landed', async () => {
+  const original = place(card, 'DCIM/DSC1.ARW', 'raw bytes');
+
+  const job = await copyDeleting();
+
+  expect(existsSync(original)).toBe(false);
+  expect(readFileSync(path.join(root, 'DSC1.ARW'), 'utf8')).toBe('raw bytes');
+  expect(job).toMatchObject({ status: 'finished', copied: 1, deleted: 1, kept: 0 });
+  expect(scanned).toEqual([{ libraryId: library.id, scope: { paths: ['DSC1.ARW'] } }]);
+});
+
+test('without the option no original is deleted', async () => {
+  const original = place(card, 'DSC1.ARW');
+
+  const job = await scanAndCopyAll();
+
+  expect(existsSync(original)).toBe(true);
+  expect(job).toMatchObject({ deleted: 0, kept: 0 });
+});
+
+test('a file left unticked stays on the card', async () => {
+  const ticked = place(card, 'a.arw');
+  const unticked = place(card, 'b.arw');
+  const scan = await service.scan(card);
+  const a = scan.files.find((file) => file.rel_path === 'a.arw')?.id ?? -1;
+
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [a],
+    delete_originals: true,
+  });
+  const job = await finished();
+
+  expect(existsSync(ticked)).toBe(false);
+  expect(existsSync(unticked)).toBe(true);
+  expect(job).toMatchObject({ total: 1, deleted: 1 });
+});
+
+test('a file already at the destination is deleted once it reads back the same', async () => {
+  const original = place(card, 'DSC1.ARW', 'raw bytes');
+  place(root, 'DSC1.ARW', 'raw bytes');
+
+  const job = await copyDeleting();
+
+  expect(existsSync(original)).toBe(false);
+  expect(job).toMatchObject({ copied: 0, skipped: 1, deleted: 1 });
+});
+
+test('a same-sized, same-dated file holding other bytes keeps the original, as a failure', async () => {
+  const original = place(card, 'DSC1.ARW', 'raw bytes');
+  place(root, 'DSC1.ARW', 'bad bytes');
+
+  const job = await copyDeleting();
+
+  expect(readFileSync(original, 'utf8')).toBe('raw bytes');
+  expect(readFileSync(path.join(root, 'DSC1.ARW'), 'utf8')).toBe('bad bytes');
+  expect(job).toMatchObject({
+    status: 'finished',
+    skipped: 0,
+    failed: 1,
+    failed_names: ['DSC1.ARW'],
+    deleted: 0,
+    kept: 0,
+  });
+  expect(scanned).toHaveLength(0);
+});
+
+test('an unticked half of a pair stays on the card and out of the library', async () => {
+  const raw = place(card, 'DSC1.ARW', 'the raw');
+  const jpeg = place(card, 'DSC1.JPG', 'the jpeg');
+  const scan = await service.scan(card);
+  const id = scan.files.find((file) => file.rel_path === 'DSC1.ARW')?.id ?? -1;
+
+  await copyDeleting([id]);
+
+  expect(existsSync(raw)).toBe(false);
+  expect(existsSync(jpeg)).toBe(true);
+  expect(readdirSync(root)).toEqual(['DSC1.ARW']);
+});
+
+test('stopping between a RAW and its camera file leaves the second untouched', async () => {
+  const originals = [place(card, 'DSC1.ARW', 'the raw'), place(card, 'DSC1.JPG', 'the jpeg')];
+  onProgress = (job) => {
+    if (job.deleted === 1) service.stop();
+  };
+
+  const job = await copyDeleting();
+
+  expect(job).toMatchObject({ status: 'stopped', copied: 1, deleted: 1 });
+  expect(originals.filter((original) => existsSync(original))).toHaveLength(1);
+  expect(readdirSync(root)).toHaveLength(1);
+});
+
+test('a copy that fails deletes nothing, and the rest carry on', async () => {
+  const gone = place(card, 'a.arw');
+  const fine = place(card, 'b.arw');
+  const scan = await service.scan(card);
+  rmSync(gone);
+
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: scan.files.map((file) => file.id),
+    delete_originals: true,
+  });
+  const job = await finished();
+
+  expect(existsSync(fine)).toBe(false);
+  expect(job).toMatchObject({ copied: 1, failed: 1, deleted: 1, kept: 0 });
+});
+
+test('a copy that fails never reaches the deletion', async () => {
+  const original = place(card, 'DSC1.ARW');
+  const scan = await service.scan(card);
+  rmSync(original);
+  mkdirSync(original);
+
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: true,
+  });
+  const job = await finished();
+
+  expect(job).toMatchObject({ failed: 1, deleted: 0, kept: 0 });
+});
+
+test('stopping keeps the originals of what was never copied', async () => {
+  const originals = ['a.arw', 'b.arw', 'c.arw'].map((name) => place(card, name));
+  onProgress = (job) => {
+    if (job.deleted === 1) service.stop();
+  };
+
+  const job = await copyDeleting();
+
+  expect(job).toMatchObject({ status: 'stopped', copied: 1, deleted: 1 });
+  expect(originals.filter((original) => existsSync(original))).toHaveLength(2);
+});
+
+test('refuses to delete originals a library catalogues, and copies nothing', async () => {
+  const inLibrary = place(root, 'Trip/DSC1.ARW');
+  const scan = await service.scan(path.join(root, 'Trip'));
+
+  await expect(
+    service.start({
+      scan_id: scan.id,
+      library_id: library.id,
+      shoot_id: null,
+      file_ids: [0],
+      delete_originals: true,
+    }),
+  ).rejects.toThrow('in a library');
+  expect(existsSync(inLibrary)).toBe(true);
+  expect(readdirSync(root)).toEqual(['Trip']);
+});
+
+test('the same source may still be copied without deleting', async () => {
+  const inLibrary = place(root, 'Trip/DSC1.ARW');
+  const scan = await service.scan(path.join(root, 'Trip'));
+
+  await service.start({ scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] });
+  const job = await finished();
+
+  expect(job).toMatchObject({ copied: 1, deleted: 0 });
+  expect(existsSync(inLibrary)).toBe(true);
 });
 
 test('waits out a scan already running', async () => {

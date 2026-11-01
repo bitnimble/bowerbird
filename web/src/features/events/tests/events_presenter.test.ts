@@ -138,6 +138,9 @@ test('an import job reaches its presenter, and a reconnect re-reads it', () => {
       skipped: 0,
       failed: 0,
       failed_names: [],
+      deleted: 0,
+      kept: 0,
+      kept_names: [],
     }),
   );
   source?.emit('open');

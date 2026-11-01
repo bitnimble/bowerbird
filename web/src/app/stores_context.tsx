@@ -218,7 +218,8 @@ function build(): { stores: Stores; presenters: Presenters } {
   // deleted label from the grid's filter the same way.
   const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
   const backup = new BackupPresenter(stores.backup, photos, toasts);
-  const imports = new ImportPresenter(stores.imports, stores.libraries, shoots, toasts);
+  const confirm = new ConfirmPresenter(stores.confirm);
+  const imports = new ImportPresenter(stores.imports, stores.libraries, shoots, toasts, confirm);
   const events = new EventsPresenter(
     photos,
     libraries,
@@ -229,7 +230,6 @@ function build(): { stores: Stores; presenters: Presenters } {
     backup,
     imports,
   );
-  const confirm = new ConfirmPresenter(stores.confirm);
   const presenters: Presenters = {
     libraries,
     photos,

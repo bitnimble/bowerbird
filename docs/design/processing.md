@@ -655,7 +655,7 @@ removes `drafts/*` older than seven days by mtime; draft ownership is a TTL.
 
 ### 10.6.1 One place that deletes
 
-All disk removals go through `src/utils/deletions.ts`. `no-restricted-imports` in `.oxlintrc.json` bans `rm`/`unlink`/`rmdir` and sync forms from `node:fs` elsewhere except tests. Central guards prevent path refactors from confusing disposable renditions with irreplaceable RAWs.
+All disk removals go through `src/utils/deletions.ts`. `no-restricted-imports` and `deletions/no-direct-delete` in `.oxlintrc.json` ban `rm`/`unlink`/`rmdir`, their sync forms, and `Bun.file().delete()` elsewhere except tests and scripts. Central guards prevent path refactors from confusing disposable renditions with irreplaceable RAWs.
 
 Each entry point states what it will not do:
 

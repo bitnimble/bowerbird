@@ -42,7 +42,7 @@ export interface LibraryLifecycleListener {
 async function removeDataDirectory(library: Library): Promise<void> {
   const dataPath = getDataPath(library);
   try {
-    await deleteDataDirectory(dataPath);
+    await deleteDataDirectory(library.id);
   } catch (err) {
     log.error('could not remove the data directory', { dataPath, err });
   }

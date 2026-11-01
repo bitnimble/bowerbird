@@ -1,16 +1,32 @@
-import { describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { randomBytes } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { config } from '../../config';
+import type { BlobVerifyResponse } from '../../schemas/blobs';
 import {
+  copyOriginal,
   deleteBackedUpOriginal,
   deleteDataDirectory,
   deleteDraft,
   deleteEmptyStagingDirectory,
+  deleteEvictedOriginal,
   deleteGeneratedFile,
   deleteImportStaging,
   deleteStagedBlob,
   deleteUpdateStaging,
+  moveOriginal,
   unlinkMovedFile,
 } from '../deletions';
 import { contentHash } from '../hash';
@@ -169,27 +185,266 @@ describe('deleteUpdateStaging', () => {
 });
 
 describe('deleteDataDirectory', () => {
+  const LIBRARY_ID = `deletions-test-${process.pid}`;
+  const data = path.join(config.dataDir, LIBRARY_ID);
+
+  afterEach(() => {
+    rmSync(data, { recursive: true, force: true });
+  });
+
+  it('removes a tree of generated files', async () => {
+    mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
+    writeFileSync(path.join(data, 'renditions', 'grid', 'p1.avif'), '');
+    await deleteDataDirectory(LIBRARY_ID);
+    expect(existsSync(data)).toBe(false);
+  });
+
+  it('refuses while an original is still inside, however deeply buried', async () => {
+    mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
+    writeFileSync(path.join(data, 'renditions', 'grid', 'a.arw'), 'raw');
+    await expect(deleteDataDirectory(LIBRARY_ID)).rejects.toThrow(/still holds 1 original/);
+    expect(existsSync(path.join(data, 'renditions', 'grid', 'a.arw'))).toBe(true);
+  });
+
+  it.each(['.', '..', '../elsewhere', `${LIBRARY_ID}/renditions`])(
+    'refuses the id %s, which names no directory directly under DATA_DIR',
+    async (id) => {
+      mkdirSync(path.join(data, 'renditions'), { recursive: true });
+      await expect(deleteDataDirectory(id)).rejects.toThrow(/not a library's data directory/);
+      expect(existsSync(path.join(data, 'renditions'))).toBe(true);
+    },
+  );
+});
+
+describe('moveOriginal', () => {
+  const SHOT_AT = new Date('2026-03-04T05:06:07.000Z');
+
+  function shaped(
+    root: string,
+    source = 'RAW',
+    destination: string | null = null,
+  ): [string, string] {
+    const card = path.join(root, 'card.arw');
+    const copy = path.join(root, 'copy.arw');
+    writeFileSync(card, source);
+    utimesSync(card, SHOT_AT, SHOT_AT);
+    if (destination != null) writeFileSync(copy, destination);
+    return [card, copy];
+  }
+
   it(
-    'removes a tree of generated files',
+    'moves to a free name, keeping the bytes and the mtime and leaving no staging file',
     withTmp(async (root) => {
-      // Shaped like the real thing: `<DATA_DIR>/<library id>`, outside every
-      // library root (§6).
-      const data = path.join(root, 'library-id');
-      mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
-      writeFileSync(path.join(data, 'renditions', 'grid', 'p1.avif'), '');
-      await deleteDataDirectory(data);
-      expect(existsSync(data)).toBe(false);
+      const [card, copy] = shaped(root);
+
+      expect(await moveOriginal(card, copy)).toBe(true);
+
+      expect(existsSync(card)).toBe(false);
+      expect(readFileSync(copy, 'utf8')).toBe('RAW');
+      expect(statSync(copy).mtimeMs).toBe(SHOT_AT.getTime());
+      expect(readdirSync(root)).toEqual(['copy.arw']);
     }),
   );
 
   it(
-    'refuses while an original is still inside, however deeply buried',
+    'carries a file bigger than one read',
     withTmp(async (root) => {
-      const data = path.join(root, 'library-id');
-      mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
-      writeFileSync(path.join(data, 'renditions', 'grid', 'a.arw'), 'raw');
-      await expect(deleteDataDirectory(data)).rejects.toThrow(/still holds 1 original/);
-      expect(existsSync(path.join(data, 'renditions', 'grid', 'a.arw'))).toBe(true);
+      const bytes = randomBytes(9 * 1024 * 1024);
+      const card = path.join(root, 'card.arw');
+      const copy = path.join(root, 'copy.arw');
+      writeFileSync(card, bytes);
+
+      await moveOriginal(card, copy);
+
+      expect(readFileSync(copy).equals(bytes)).toBe(true);
+    }),
+  );
+
+  it(
+    'never hashes the source apart from the copy',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root);
+      const opened = spyOn(Bun, 'file');
+      try {
+        await moveOriginal(card, copy);
+        expect(opened.mock.calls.map(([file]) => file)).not.toContain(card);
+      } finally {
+        opened.mockRestore();
+      }
+    }),
+  );
+
+  it(
+    'keeps the source and lands nothing when the read-back differs from what was read',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root);
+      const corrupted = path.join(root, 'corrupted');
+      writeFileSync(corrupted, 'BAD');
+      const realFile = Bun.file.bind(Bun);
+      const opened = spyOn(Bun, 'file').mockImplementation(((target: string) =>
+        realFile(target.endsWith('.tmp') ? corrupted : target)) as never);
+      try {
+        await expect(moveOriginal(card, copy)).rejects.toThrow(/does not match/);
+      } finally {
+        opened.mockRestore();
+      }
+
+      expect(readFileSync(card, 'utf8')).toBe('RAW');
+      expect(readdirSync(root).sort()).toEqual(['card.arw', 'corrupted']);
+    }),
+  );
+
+  it(
+    'refuses a source that is not there',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root, 'RAW', 'RAW');
+      rmSync(card);
+
+      await expect(moveOriginal(card, copy)).rejects.toThrow(/is not a file/);
+      rmSync(copy);
+      await expect(moveOriginal(card, copy)).rejects.toThrow();
+      expect(existsSync(copy)).toBe(false);
+    }),
+  );
+
+  it(
+    'deletes the source when the destination already holds the same bytes',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root, 'RAW', 'RAW');
+
+      expect(await moveOriginal(card, copy)).toBe(true);
+
+      expect(existsSync(card)).toBe(false);
+      expect(readFileSync(copy, 'utf8')).toBe('RAW');
+    }),
+  );
+
+  it(
+    'refuses a directory for either path',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root, 'RAW', 'RAW');
+      const folder = path.join(root, 'folder');
+      mkdirSync(folder);
+
+      await expect(moveOriginal(card, folder)).rejects.toThrow(/is not a file/);
+      await expect(moveOriginal(folder, copy)).rejects.toThrow(/is not a file/);
+      expect(existsSync(card) && existsSync(folder)).toBe(true);
+    }),
+  );
+
+  it(
+    'refuses a destination of the same size holding other bytes',
+    withTmp(async (root) => {
+      const [card, copy] = shaped(root, 'RAW', 'BAD');
+
+      await expect(moveOriginal(card, copy)).rejects.toThrow(/does not match/);
+      expect(readFileSync(card, 'utf8')).toBe('RAW');
+      expect(readFileSync(copy, 'utf8')).toBe('BAD');
+    }),
+  );
+
+  it(
+    'refuses a path given as its own destination',
+    withTmp(async (root) => {
+      const [card] = shaped(root);
+
+      await expect(moveOriginal(card, card)).rejects.toThrow(/is the same file/);
+      expect(readFileSync(card, 'utf8')).toBe('RAW');
+    }),
+  );
+});
+
+describe('copyOriginal', () => {
+  it(
+    'leaves the source, and refuses to replace what holds the name',
+    withTmp(async (root) => {
+      const card = path.join(root, 'card.arw');
+      const copy = path.join(root, 'copy.arw');
+      writeFileSync(card, 'RAW');
+
+      await copyOriginal(card, copy);
+      expect(readFileSync(card, 'utf8')).toBe('RAW');
+      expect(readFileSync(copy, 'utf8')).toBe('RAW');
+
+      writeFileSync(card, 'new');
+      await expect(copyOriginal(card, copy)).rejects.toThrow();
+      expect(readFileSync(copy, 'utf8')).toBe('RAW');
+      expect(readdirSync(root).sort()).toEqual(['card.arw', 'copy.arw']);
+    }),
+  );
+});
+
+describe('deleteEvictedOriginal', () => {
+  function shaped(root: string, bytes = 'RAW'): string {
+    const raw = path.join(root, 'a.arw');
+    writeFileSync(raw, bytes);
+    return raw;
+  }
+  const NEVER_REACHED = (): Promise<BlobVerifyResponse> => {
+    throw new Error('asked the peer before the local file was checked');
+  };
+
+  it(
+    'deletes once the local file and a matching peer both answer',
+    withTmp(async (root) => {
+      const raw = shaped(root);
+      const hash = await contentHash(raw);
+      const granted: string[] = [];
+
+      await deleteEvictedOriginal(
+        root,
+        raw,
+        hash,
+        async () => ({ held: true, content_hash: hash }),
+        { grant: async (paths) => void granted.push(...paths) },
+      );
+
+      expect(granted).toEqual([raw]);
+      expect(existsSync(raw)).toBe(false);
+    }),
+  );
+
+  it(
+    'refuses a local file that no longer hashes what was recorded, before asking the peer',
+    withTmp(async (root) => {
+      const raw = shaped(root, 'edited');
+
+      await expect(
+        deleteEvictedOriginal(root, raw, 'recorded', NEVER_REACHED, NEVER_ASKED),
+      ).rejects.toThrow(/has changed/);
+      expect(existsSync(raw)).toBe(true);
+    }),
+  );
+
+  it.each<[string, BlobVerifyResponse]>([
+    ['holds nothing', { held: false }],
+    ['holds other bytes', { held: true, content_hash: 'other' }],
+  ])('refuses when the peer %s', (_, answer) =>
+    withTmp(async (root) => {
+      const raw = shaped(root);
+
+      await expect(
+        deleteEvictedOriginal(root, raw, await contentHash(raw), async () => answer, NEVER_ASKED),
+      ).rejects.toThrow(/could not verify possession/);
+      expect(existsSync(raw)).toBe(true);
+    })(),
+  );
+
+  it(
+    'keeps the file when the peer cannot be asked',
+    withTmp(async (root) => {
+      const raw = shaped(root);
+
+      await expect(
+        deleteEvictedOriginal(
+          root,
+          raw,
+          await contentHash(raw),
+          () => Promise.reject(new Error('unreachable')),
+          NEVER_ASKED,
+        ),
+      ).rejects.toThrow('unreachable');
+      expect(existsSync(raw)).toBe(true);
     }),
   );
 });
@@ -305,6 +560,44 @@ describe('unlinkMovedFile', () => {
         /does not exist/,
       );
       expect(existsSync(from)).toBe(true);
+    }),
+  );
+
+  it(
+    'removes the source of a copy that reads back the same',
+    withTmp(async (root) => {
+      const from = path.join(root, 'a.arw');
+      const to = path.join(root, 'b.arw');
+      writeFileSync(from, 'raw');
+      writeFileSync(to, 'raw');
+
+      await unlinkMovedFile(from, to);
+
+      expect(existsSync(from)).toBe(false);
+    }),
+  );
+
+  it(
+    'refuses a destination holding other bytes',
+    withTmp(async (root) => {
+      const from = path.join(root, 'a.arw');
+      const to = path.join(root, 'b.arw');
+      writeFileSync(from, 'raw');
+      writeFileSync(to, 'bad');
+
+      await expect(unlinkMovedFile(from, to)).rejects.toThrow(/does not match/);
+      expect(readFileSync(from, 'utf8')).toBe('raw');
+    }),
+  );
+
+  it(
+    'refuses a path given as its own destination',
+    withTmp(async (root) => {
+      const from = path.join(root, 'a.arw');
+      writeFileSync(from, 'raw');
+
+      await expect(unlinkMovedFile(from, from)).rejects.toThrow(/is the same file/);
+      expect(readFileSync(from, 'utf8')).toBe('raw');
     }),
   );
 });

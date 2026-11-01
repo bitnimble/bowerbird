@@ -248,8 +248,17 @@ function shootChoiceOf(value: string): ImportShootChoice {
 
 const JobFailures = observer(function JobFailures(): JSX.Element | null {
   const job = useImportStore().job;
-  if (job == null || job.status === 'copying' || job.failed === 0) return null;
-  return <ErrorBanner>{ImportPageStrings.failedNames(job.failed, job.failed_names)}</ErrorBanner>;
+  if (job == null || job.status === 'copying') return null;
+  return (
+    <>
+      {job.failed > 0 && (
+        <ErrorBanner>{ImportPageStrings.failedNames(job.failed, job.failed_names)}</ErrorBanner>
+      )}
+      {job.kept > 0 && (
+        <ErrorBanner>{ImportPageStrings.keptNames(job.kept, job.kept_names)}</ErrorBanner>
+      )}
+    </>
+  );
 });
 
 const ScanResults = observer(function ScanResults(): JSX.Element {
@@ -309,6 +318,14 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
           onChange={(event) => imports.setMerge(event.target.checked)}
         />
         {ImportPageStrings.showPairsAsOne()}
+      </CheckLabel>
+      <CheckLabel>
+        <input
+          type="checkbox"
+          checked={store.deleteOriginals}
+          onChange={(event) => imports.setDeleteOriginals(event.target.checked)}
+        />
+        {ImportPageStrings.deleteAfterCopying()}
       </CheckLabel>
       <Spacer />
       <Text variant="muted">

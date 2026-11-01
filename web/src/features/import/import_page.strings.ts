@@ -29,6 +29,7 @@ export const ImportPageStrings = {
   selectAll: () => 'Select all',
   selectNone: () => 'Select none',
   showPairsAsOne: () => 'Show RAW+JPEG as 1 photo',
+  deleteAfterCopying: () => 'Delete after copying',
   addToLibrary: () => 'Add to library',
   stopAdding: () => 'Stop adding',
 
@@ -41,4 +42,15 @@ export const ImportPageStrings = {
   notAllAdded: (failed: number) => `We couldn't copy ${plural(failed, 'file', 'files')}.`,
   failedNames: (failed: number, names: readonly string[]) =>
     `We couldn't copy ${plural(failed, 'file', 'files')}: ${names.join(', ')}.`,
+
+  confirmDeleteTitle: (count: number) =>
+    `Copy and delete ${plural(count, 'original', 'originals')}?`,
+  confirmDeleteBody: () =>
+    "We compare each copy with its original before deleting it. You can't undo this.",
+  confirmDeleteAction: () => 'Copy and delete',
+  addedAndDeleted: (added: number, deleted: number) =>
+    `Added ${plural(added, 'file', 'files')} to the library and deleted ${plural(deleted, 'original', 'originals')}.`,
+  notAllDeleted: (kept: number) => `We couldn't delete ${plural(kept, 'original', 'originals')}.`,
+  keptNames: (kept: number, names: readonly string[]) =>
+    `We couldn't delete ${plural(kept, 'original', 'originals')}: ${names.join(', ')}.`,
 };

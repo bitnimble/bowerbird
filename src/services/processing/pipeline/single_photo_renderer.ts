@@ -1,4 +1,5 @@
-import { replaceFile, stagingPathFor } from '../../../utils/files';
+import { replaceFile } from '../../../utils/files';
+import { stagingPathFor } from '../../../utils/staging';
 import path from 'node:path';
 import { Logger } from '../../../logger';
 import type { Job } from '../../../schemas/jobs';

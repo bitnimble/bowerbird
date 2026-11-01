@@ -17,6 +17,7 @@ import { renderNativeJob } from '../../services/processing/rawshim/rawshim_comma
 import { isUpscalable } from '../../services/processing/rawshim/rawshim_ops';
 import { developed } from '../../services/processing/pipeline/developed';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
+import { deleteScratchDirectory } from '../../utils/deletions';
 
 // Which quantizer to ship renditions at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
@@ -169,9 +170,7 @@ export class QualityCheckApi {
         await renderNativeJob(job);
         return Math.round((Bun.nanoseconds() - started) / 1e6);
       } catch (err) {
-        await Bun.file(file)
-          .delete()
-          .catch(() => {});
+        await deleteScratchDirectory(file).catch(() => {});
         throw err;
       }
     });

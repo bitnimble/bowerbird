@@ -55,6 +55,7 @@ export class ImportStore {
   @observable.ref accessor selected: ReadonlySet<number> = new Set();
 
   @observable accessor merge = true;
+  @observable accessor deleteOriginals = false;
   @observable.ref accessor filters: ImportFilters = NO_IMPORT_FILTERS;
 
   @observable accessor viewportWidth = 0;

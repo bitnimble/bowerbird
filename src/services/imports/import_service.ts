@@ -1,4 +1,4 @@
-import { copyFile, open, readdir, stat, statfs, utimes } from 'node:fs/promises';
+import { readdir, realpath, stat, statfs } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -13,8 +13,13 @@ import type {
 import type { Library } from '../../schemas/libraries';
 import type { PhotoFormat } from '../../schemas/photos';
 import type { Shoot } from '../../schemas/shoots';
-import { deleteImportStaging, isImportStaging } from '../../utils/deletions';
-import { ensureDir, moveWithoutReplacing, numberedName, stagingPathFor } from '../../utils/files';
+import {
+  copyOriginal,
+  deleteImportStaging,
+  isImportStaging,
+  moveOriginal,
+} from '../../utils/deletions';
+import { ensureDir, numberedName } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { containsPath } from '../../utils/paths';
 import { formatOf, isRendered, originalMediaType, scanLibraryTree } from '../../utils/scan';
@@ -24,7 +29,7 @@ import type { ScanScope } from '../sync/scan/scan_evidence';
 
 const log = new Logger('import');
 
-const FAILED_NAMES_KEPT = 20;
+const JOB_NAMES_KEPT = 20;
 const SCAN_LEASE_RETRIES = 60;
 const SCAN_LEASE_RETRY_MS = 1000;
 const COARSEST_MTIME_MS = 2000;
@@ -47,6 +52,10 @@ interface HeldScan {
 export type ImportPicture =
   { kind: 'file'; absPath: string; mediaType: string } | { kind: 'bytes'; bytes: Uint8Array };
 
+function withName(names: string[], name: string): string[] {
+  return names.length < JOB_NAMES_KEPT ? [...names, name] : names;
+}
+
 export class ImportService {
   private held: HeldScan | null = null;
   private job: ImportJob | null = null;
@@ -54,7 +63,7 @@ export class ImportService {
   private stopRequested = false;
 
   constructor(
-    private readonly libraries: { getById(id: string): Library | null },
+    private readonly libraries: { getById(id: string): Library | null; list(): Library[] },
     private readonly shoots: { getById(id: string): Shoot | null },
     private readonly photos: {
       filesHeld(libraryId: string): { file_hash: string; file_path: string }[];
@@ -184,6 +193,8 @@ export class ImportService {
     try {
       const held = this.heldScan(request.scan_id);
       const files = [...new Set(request.file_ids)].map((id) => this.heldFile(held, id));
+      const deleteOriginals = request.delete_originals === true;
+      if (deleteOriginals) await this.refuseCatalogued(files);
       const dir = await this.destination(request, files);
 
       this.stopRequested = false;
@@ -197,9 +208,12 @@ export class ImportService {
         skipped: 0,
         failed: 0,
         failed_names: [],
+        deleted: 0,
+        kept: 0,
+        kept_names: [],
       };
       this.job = job;
-      void this.run(job, held.files, new Set(files), dir).catch((err: unknown) => {
+      void this.run(job, held.files, new Set(files), dir, deleteOriginals).catch((err: unknown) => {
         log.error('import stopped on an unexpected error', { err: String(err) });
         this.update(job, { status: 'stopped' });
       });
@@ -211,6 +225,23 @@ export class ImportService {
 
   stop(): void {
     this.stopRequested = true;
+  }
+
+  // Deleting a library's own file would leave its row, edits, and rating pointing at nothing.
+  private async refuseCatalogued(files: HeldFile[]): Promise<void> {
+    const roots = await Promise.all(
+      this.libraries
+        .list()
+        .map((library) => realpath(library.root_path).catch(() => library.root_path)),
+    );
+    for (const file of files) {
+      const real = await realpath(file.absPath).catch(() => file.absPath);
+      if (roots.some((root) => containsPath(root, real)))
+        throw new AppError(
+          'VALIDATION_ERROR',
+          "These originals are in a library, so we can't delete them.",
+        );
+    }
   }
 
   private async destination(request: StartImportRequest, files: HeldFile[]): Promise<string> {
@@ -247,13 +278,14 @@ export class ImportService {
     files: readonly HeldFile[],
     ticked: ReadonlySet<HeldFile>,
     dir: string,
+    deleteOriginals: boolean,
   ): Promise<void> {
     const library = this.libraries.getById(job.library_id);
     const landed: string[] = [];
     for (const group of sameCaptureGroups(files)) {
       if (this.stopRequested) break;
       if (group.some((file) => ticked.has(file)))
-        await this.copyGroup(job, group, ticked, dir, landed);
+        await this.copyGroup(job, group, ticked, dir, landed, deleteOriginals);
     }
     if (library != null && landed.length > 0)
       await this.scanLanded(
@@ -272,31 +304,34 @@ export class ImportService {
     ticked: ReadonlySet<HeldFile>,
     dir: string,
     landed: string[],
+    deleteOriginals: boolean,
   ): Promise<void> {
     const targets = await freeTargets(group, dir);
     for (const [index, file] of group.entries()) {
-      const target = targets[index]!;
+      const { path: destination, identical } = targets[index]!;
       if (!ticked.has(file)) continue;
       if (this.stopRequested) return;
-      if (target.identical) {
-        this.update(job, { skipped: job.skipped + 1 });
-        landed.push(target.path);
-        continue;
-      }
+      let deleted = false;
       try {
-        await copyAtomically(file, target.path);
-        landed.push(target.path);
-        this.update(job, { copied: job.copied + 1 });
+        if (deleteOriginals) deleted = await moveOriginal(file.absPath, destination);
+        else if (!identical) await copyOriginal(file.absPath, destination);
       } catch (err) {
         log.warn('could not copy a file', { file: file.absPath, err: String(err) });
         this.update(job, {
           failed: job.failed + 1,
-          failed_names:
-            job.failed_names.length < FAILED_NAMES_KEPT
-              ? [...job.failed_names, file.relPath]
-              : job.failed_names,
+          failed_names: withName(job.failed_names, file.relPath),
         });
+        continue;
       }
+      landed.push(destination);
+      this.update(job, identical ? { skipped: job.skipped + 1 } : { copied: job.copied + 1 });
+      if (!deleteOriginals) continue;
+      this.update(
+        job,
+        deleted
+          ? { deleted: job.deleted + 1 }
+          : { kept: job.kept + 1, kept_names: withName(job.kept_names, file.relPath) },
+      );
     }
   }
 
@@ -375,33 +410,8 @@ function isSameFile(existing: Stats, file: HeldFile): boolean {
   );
 }
 
-async function flushToDisk(file: string): Promise<void> {
-  const handle = await open(file, 'r+');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
 async function sweepCrashedCopies(dir: string): Promise<void> {
   for (const name of await readdir(dir)) {
     if (isImportStaging(name)) await deleteImportStaging(path.join(dir, name));
-  }
-}
-
-async function copyAtomically(file: HeldFile, target: string): Promise<void> {
-  const staging = stagingPathFor(target);
-  try {
-    await copyFile(file.absPath, staging);
-    // The catalogue's file hash is over mtime and size: rescanning a card relies on this to
-    // recognise what is already in the library.
-    await utimes(staging, file.mtime, file.mtime);
-    // Before the claim: with the data still in cache, a power cut leaves an empty original under
-    // the real name, and by then the card may be wiped.
-    await flushToDisk(staging);
-    await moveWithoutReplacing(staging, target);
-  } finally {
-    await deleteImportStaging(staging);
   }
 }

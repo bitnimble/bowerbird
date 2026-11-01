@@ -43,6 +43,7 @@ export const StartImportRequestSchema = z.object({
   library_id: IdSchema,
   shoot_id: IdSchema.nullable(),
   file_ids: ImportFileIdsSchema.min(1),
+  delete_originals: z.boolean().optional(),
 });
 export type StartImportRequest = z.infer<typeof StartImportRequestSchema>;
 
@@ -56,6 +57,9 @@ export const ImportJobSchema = z.object({
   skipped: z.number().int(),
   failed: z.number().int(),
   failed_names: z.array(z.string()),
+  deleted: z.number().int(),
+  kept: z.number().int(),
+  kept_names: z.array(z.string()),
 });
 export type ImportJob = z.infer<typeof ImportJobSchema>;
 export const ImportJobOrNoneSchema = ImportJobSchema.nullable();

@@ -6,10 +6,12 @@ import type {
   ImportVolume,
 } from '../../../../src/schemas/imports';
 import type { Shoot } from '../../../../src/schemas/shoots';
+import { readSetting, writeSetting } from '../../app/local_setting';
 import { importsApi } from '../../api/imports';
 import { shootsApi } from '../../api/shoots';
 import { describe } from '../../errors';
 import { newFolderBrowser } from '../browse/folder_browser_presenter';
+import type { ConfirmPresenter } from '../confirm/confirm_presenter';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
@@ -23,6 +25,7 @@ import {
 } from './import_store';
 
 const HEADER_BATCH = 50;
+const DELETE_ORIGINALS_KEY = 'bowerbird.import.deleteOriginals';
 
 export class ImportPresenter {
   readonly source = newFolderBrowser();
@@ -34,7 +37,10 @@ export class ImportPresenter {
     private readonly libraries: Pick<LibrariesStore, 'libraries'>,
     private readonly shoots: Pick<ShootsPresenter, 'create'>,
     private readonly toasts: Pick<ToastsPresenter, 'show' | 'showError'>,
-  ) {}
+    private readonly confirm: Pick<ConfirmPresenter, 'ask'>,
+  ) {
+    this.restore();
+  }
 
   async loadVolumes(): Promise<void> {
     try {
@@ -83,21 +89,14 @@ export class ImportPresenter {
     if (source === '') return;
     const run = ++this.scanRun;
     this.beginScan();
-    try {
-      const scan = await importsApi.scan(source);
-      if (run !== this.scanRun) return;
-      this.landScan(scan);
-    } catch (err) {
-      if (run === this.scanRun) this.scanFailed(describe(err));
-      return;
-    }
-    await this.refreshInLibrary(this.libraryRun);
-    void this.readHeaders(run);
+    await this.fetchScan(run, source, new Set());
   }
 
   async add(): Promise<void> {
-    const { scan, libraryId, shootChoice, newShootName, selectedFileIds } = this.store;
+    const { scan, libraryId, shootChoice, newShootName, selectedFileIds, deleteOriginals } =
+      this.store;
     if (scan == null || libraryId === '' || selectedFileIds.length === 0) return;
+    if (deleteOriginals && !(await this.confirmDeletion(selectedFileIds.length))) return;
     this.setStarting(true);
     try {
       const destination = await this.resolveShoot(libraryId, shootChoice, newShootName);
@@ -107,6 +106,7 @@ export class ImportPresenter {
         library_id: libraryId,
         shoot_id: destination.shootId,
         file_ids: selectedFileIds,
+        delete_originals: deleteOriginals,
       });
       // The stream can overtake this answer, which then reads a finished run as still copying.
       if (this.store.job?.id !== job.id) this.jobProgressed(job);
@@ -131,7 +131,9 @@ export class ImportPresenter {
     this.store.job = job;
     if (previous?.status !== 'copying' || job.status === 'copying') return;
     this.announceFinish(job);
-    void this.refreshInLibrary(this.libraryRun);
+    const scan = this.store.scan;
+    if (job.deleted > 0 && scan != null) void this.rescanAfterDeletion(scan);
+    else void this.refreshInLibrary(this.libraryRun);
   }
 
   @action.bound
@@ -147,6 +149,12 @@ export class ImportPresenter {
   @action.bound
   setMerge(merge: boolean): void {
     this.store.merge = merge;
+  }
+
+  @action.bound
+  setDeleteOriginals(deleteOriginals: boolean): void {
+    this.store.deleteOriginals = deleteOriginals;
+    writeSetting(DELETE_ORIGINALS_KEY, String(deleteOriginals));
   }
 
   @action.bound
@@ -196,6 +204,41 @@ export class ImportPresenter {
   @action.bound
   setScrollTop(top: number): void {
     this.store.scrollTop = top;
+  }
+
+  private async fetchScan(
+    run: number,
+    source: string,
+    unticked: ReadonlySet<string>,
+  ): Promise<void> {
+    try {
+      const scan = await importsApi.scan(source);
+      if (run !== this.scanRun) return;
+      this.landScan(scan, unticked);
+    } catch (err) {
+      if (run === this.scanRun) this.scanFailed(describe(err));
+      return;
+    }
+    await this.refreshInLibrary(this.libraryRun);
+    void this.readHeaders(run);
+  }
+
+  // By path: a scan's ids are positions, and the deletion has moved them. A file left unticked has
+  // to stay so, since the next add would delete it too.
+  private async rescanAfterDeletion(scan: ImportScan): Promise<void> {
+    const run = ++this.scanRun;
+    const unticked = scan.files.filter((file) => !this.store.selected.has(file.id));
+    this.beginRescan();
+    await this.fetchScan(run, scan.source, new Set(unticked.map((file) => file.rel_path)));
+  }
+
+  private confirmDeletion(count: number): Promise<boolean> {
+    return this.confirm.ask({
+      title: ImportPageStrings.confirmDeleteTitle(count),
+      body: ImportPageStrings.confirmDeleteBody(),
+      action: ImportPageStrings.confirmDeleteAction(),
+      tone: 'danger',
+    });
   }
 
   // Only ticking the whole entry again on a photo the library already holds copies those files.
@@ -264,8 +307,17 @@ export class ImportPresenter {
   }
 
   private announceFinish(job: ImportJob): void {
+    const added = job.copied + job.skipped;
     if (job.failed > 0) this.toasts.showError(ImportPageStrings.notAllAdded(job.failed));
-    else this.toasts.show(ImportPageStrings.added(job.copied + job.skipped));
+    else if (job.kept > 0) this.toasts.showError(ImportPageStrings.notAllDeleted(job.kept));
+    else if (job.deleted > 0)
+      this.toasts.show(ImportPageStrings.addedAndDeleted(added, job.deleted));
+    else this.toasts.show(ImportPageStrings.added(added));
+  }
+
+  @action.bound
+  private restore(): void {
+    this.store.deleteOriginals = readSetting(DELETE_ORIGINALS_KEY) === 'true';
   }
 
   @action.bound
@@ -308,10 +360,20 @@ export class ImportPresenter {
   }
 
   @action.bound
-  private landScan(scan: ImportScan): void {
+  private beginRescan(): void {
+    this.store.scanning = true;
+    this.store.error = null;
+  }
+
+  @action.bound
+  private landScan(scan: ImportScan, unticked: ReadonlySet<string>): void {
     this.store.scanning = false;
     this.store.scan = scan;
-    this.store.selected = new Set(scan.files.map((file) => file.id));
+    this.store.headers = new Map();
+    this.store.inLibrary = new Set();
+    this.store.selected = new Set(
+      scan.files.filter((file) => !unticked.has(file.rel_path)).map((file) => file.id),
+    );
   }
 
   @action.bound

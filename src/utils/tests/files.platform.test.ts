@@ -2,7 +2,8 @@ import { describe, it, expect } from 'bun:test';
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { moveIntoDir, moveOverClaim, moveWithoutReplacing } from '../files';
+import { moveOverClaim, moveWithoutReplacing } from '../deletions';
+import { moveIntoDir } from '../files';
 import { scanLibraryTree } from '../scan';
 import { scope, withRoot } from './library_tree_test_helpers';
 

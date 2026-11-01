@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../logger';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteDraft, deleteGeneratedDirectory, deleteGeneratedFile } from '../../utils/deletions';
-import { STAGING_SUFFIX } from '../../utils/files';
+import { STAGING_SUFFIX } from '../../utils/staging';
 import { getDataPath } from '../../utils/paths';
 import {
   RENDITION_EXTENSION,

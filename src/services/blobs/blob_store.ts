@@ -4,7 +4,8 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import type { LibraryConfiguration } from '../../schemas/libraries';
 import { deleteEmptyStagingDirectory } from '../../utils/deletions';
-import { ensureDir, moveWithoutReplacing } from '../../utils/files';
+import { moveWithoutReplacing } from '../../utils/deletions';
+import { ensureDir } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
 
 // The disk half of moving originals between peers (docs/replication.md §7.3,
