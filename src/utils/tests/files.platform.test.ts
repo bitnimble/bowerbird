@@ -121,4 +121,18 @@ describe.each([
       expect(await readFile(from, 'utf8')).toBe('new');
     }),
   );
+
+  it(
+    'fails on a missing source and leaves no empty claim at the target',
+    withRoot(async (root) => {
+      const to = path.join(root, 'a.arw');
+
+      const refused = await move(path.join(root, 'gone.partial'), to).catch(
+        (err: NodeJS.ErrnoException) => err.code,
+      );
+
+      expect(refused).toBe('ENOENT');
+      expect(existsSync(to)).toBe(false);
+    }),
+  );
 });

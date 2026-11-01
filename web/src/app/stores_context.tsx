@@ -16,6 +16,8 @@ import { ExportHistoryPresenter } from '../features/exports/export_history_prese
 import { ExportHistoryStore } from '../features/exports/export_history_store';
 import { FrameTvPresenter } from '../features/frame_tv/frame_tv_presenter';
 import { FrameTvStore } from '../features/frame_tv/frame_tv_store';
+import { ImportPresenter } from '../features/import/import_presenter';
+import { ImportStore } from '../features/import/import_store';
 import { LabelEditorStore } from '../features/labels/label_editor_store';
 import { LabelsPresenter } from '../features/labels/labels_presenter';
 import { LabelsStore } from '../features/labels/labels_store';
@@ -88,6 +90,7 @@ const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
 const PrecompileStoreContext = createContext<PrecompileStore | null>(null);
 const DevicePhotosStoreContext = createContext<DevicePhotosStore | null>(null);
 const EditsClipboardStoreContext = createContext<EditsClipboardStore | null>(null);
+const ImportStoreContext = createContext<ImportStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -113,6 +116,7 @@ interface Presenters {
   precompile: PrecompilePresenter;
   devicePhotos: DevicePhotosPresenter;
   editsClipboard: EditsClipboardPresenter;
+  imports: ImportPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -162,6 +166,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     precompile: new PrecompileStore(),
     devicePhotos: new DevicePhotosStore(librariesStore),
     editsClipboard: new EditsClipboardStore(),
+    imports: new ImportStore(librariesStore),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -213,6 +218,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   // deleted label from the grid's filter the same way.
   const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
   const backup = new BackupPresenter(stores.backup, photos, toasts);
+  const imports = new ImportPresenter(stores.imports, stores.libraries, shoots, toasts);
   const events = new EventsPresenter(
     photos,
     libraries,
@@ -221,6 +227,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     exportPhotos,
     labels,
     backup,
+    imports,
   );
   const confirm = new ConfirmPresenter(stores.confirm);
   const presenters: Presenters = {
@@ -281,6 +288,7 @@ function build(): { stores: Stores; presenters: Presenters } {
       photos,
       toasts,
     ),
+    imports,
   };
   return { stores, presenters };
 }
@@ -312,6 +320,7 @@ interface Stores {
   precompile: PrecompileStore;
   devicePhotos: DevicePhotosStore;
   editsClipboard: EditsClipboardStore;
+  imports: ImportStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -354,7 +363,11 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                                         <EditsClipboardStoreContext.Provider
                                                           value={stores.editsClipboard}
                                                         >
-                                                          {children}
+                                                          <ImportStoreContext.Provider
+                                                            value={stores.imports}
+                                                          >
+                                                            {children}
+                                                          </ImportStoreContext.Provider>
                                                         </EditsClipboardStoreContext.Provider>
                                                       </DevicePhotosStoreContext.Provider>
                                                     </PrecompileStoreContext.Provider>
@@ -441,5 +454,7 @@ export const useDevicePhotosStore = (): DevicePhotosStore =>
   required(useContext(DevicePhotosStoreContext), 'DevicePhotosStore');
 export const useEditsClipboardStore = (): EditsClipboardStore =>
   required(useContext(EditsClipboardStoreContext), 'EditsClipboardStore');
+export const useImportStore = (): ImportStore =>
+  required(useContext(ImportStoreContext), 'ImportStore');
 export const usePresenters = (): Presenters =>
   required(useContext(PresentersContext), 'Presenters');

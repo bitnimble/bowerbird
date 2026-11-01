@@ -92,6 +92,15 @@ export class PhotoScanRepository {
 
   // --- scan (DESIGN §9) ---
 
+  filesHeld(libraryId: string): { file_hash: string; file_path: string }[] {
+    return this.db
+      .query(
+        `SELECT photos.file_hash, i.path AS file_path ${SCAN_FROM}
+         WHERE photos.library_id = ? AND is_missing = 0 AND file_hash IS NOT NULL AND ${IS_A_FILE}`,
+      )
+      .all(libraryId) as { file_hash: string; file_path: string }[];
+  }
+
   listForScan(libraryId: string): ScanDbPhoto[] {
     return this.mapScanRows(
       this.db

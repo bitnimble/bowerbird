@@ -1,6 +1,10 @@
 import { Logger } from '../../../logger';
-import { extractMetadata, type HeaderMetadata } from './metadata';
-import type { HeaderReply, HeaderRequest } from './header_worker';
+import {
+  answerHeaderRequest,
+  type HeaderMetadata,
+  type HeaderReply,
+  type HeaderRequest,
+} from './metadata';
 import { workerEntry } from '../../worker_entry';
 
 const log = new Logger('header-pool');
@@ -11,12 +15,12 @@ const log = new Logger('header-pool');
 const IDLE_MS = 2000;
 
 interface Waiting {
-  absPath: string;
+  request: HeaderRequest;
   settle: (reply: HeaderReply) => void;
 }
 
 /**
- * `extractMetadata` on worker threads.
+ * `extractMetadata` and `readEmbeddedJpeg` on worker threads.
  *
  * The threads live only as long as there is work: spawned on the first read and retired
  * when the last one lands, so an idle server holds none.
@@ -32,9 +36,24 @@ export class HeaderPool {
   read = (absPath: string): Promise<HeaderMetadata> =>
     new Promise<HeaderMetadata>((resolve, reject) => {
       this.queue.push({
-        absPath,
-        settle: (reply) =>
-          'error' in reply ? reject(new Error(reply.error)) : resolve(reply.metadata),
+        request: { absPath, want: 'header' },
+        settle: (reply) => {
+          if ('metadata' in reply) resolve(reply.metadata);
+          else reject(new Error('error' in reply ? reply.error : 'not a header reply'));
+        },
+      });
+      this.pump();
+    });
+
+  /** The JPEG a RAW embeds, or null where it holds none. */
+  liftEmbedded = (absPath: string): Promise<Uint8Array | null> =>
+    new Promise<Uint8Array | null>((resolve, reject) => {
+      this.queue.push({
+        request: { absPath, want: 'embedded' },
+        settle: (reply) => {
+          if ('embedded' in reply) resolve(reply.embedded);
+          else reject(new Error('error' in reply ? reply.error : 'not an embedded reply'));
+        },
       });
       this.pump();
     });
@@ -93,8 +112,7 @@ export class HeaderPool {
       done({ error: `header worker crashed: ${event.message}` });
       this.pump();
     };
-    const request: HeaderRequest = { absPath: waiting.absPath };
-    worker.postMessage(request);
+    worker.postMessage(waiting.request);
   }
 
   private spawn(): Worker | null {
@@ -110,8 +128,8 @@ export class HeaderPool {
 
   private readHere(waiting: Waiting): void {
     this.busy++;
-    void extractMetadata(waiting.absPath)
-      .then((metadata) => waiting.settle({ metadata }))
+    void answerHeaderRequest(waiting.request)
+      .then((reply) => waiting.settle(reply))
       .catch((err: unknown) => waiting.settle({ error: (err as Error).message }))
       .finally(() => {
         this.busy--;

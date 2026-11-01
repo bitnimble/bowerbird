@@ -10,7 +10,7 @@ import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
 import { contentHash } from './hash';
 import { containsPath, getBinPath } from './paths';
-import { findOriginalsAnywhere, isStrayOriginal } from './scan';
+import { findOriginalsAnywhere, isOriginal, isStrayOriginal } from './scan';
 
 // The only module allowed to remove anything from disk: the `no-restricted-imports`
 // rule in .oxlintrc.json bans the fs deletion calls everywhere else. Originals are
@@ -182,6 +182,20 @@ export async function deleteBackupFile(backupsDir: string, target: string): Prom
   // hold, a RAW in it is an original.
   if (isStrayOriginal(target)) {
     throw new AppError('IO_ERROR', `refusing to delete ${target}: it is an original`);
+  }
+  await rm(target, { force: true });
+}
+
+/** `stagingPathFor` of an original's name, which no format this app holds as an original ends in. */
+export function isImportStaging(target: string): boolean {
+  const original = /^(.+)\.[0-9a-z]{16}\.tmp$/.exec(path.basename(target))?.[1];
+  return original != null && isOriginal(original);
+}
+
+// What an import was writing, discarded when the copy failed or a crash left it behind.
+export async function deleteImportStaging(target: string): Promise<void> {
+  if (!isImportStaging(target)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not an import staging file`);
   }
   await rm(target, { force: true });
 }

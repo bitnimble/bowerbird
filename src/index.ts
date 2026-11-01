@@ -78,6 +78,8 @@ import { SidecarImportService } from './services/photo_edits/sidecar_import';
 import { PhotoEditsApi } from './api/photo_edits/photo_edits_api';
 import { EventsApi } from './api/events/events_api';
 import { ExportApi } from './api/export/export_api';
+import { ImportsApi } from './api/imports/imports_api';
+import { ImportService } from './services/imports/import_service';
 import { ExportService } from './services/processing/exports/export_service';
 import { ShareService } from './services/processing/exports/share_service';
 import { FrameArt } from 'samsung-frame-art';
@@ -583,6 +585,17 @@ const exportApi = new ExportApi(
   new ExportHistoryService(db, photoRenditionService, photoEditsRepo, settingsRepo),
   (progress) => eventsApi.announce('export', progress),
 );
+const importsApi = new ImportsApi(
+  new ImportService(
+    librariesRepo,
+    shootsRepo,
+    photoScanRepo,
+    scanService,
+    new HeaderPool(scanConcurrency),
+    scanConcurrency,
+    (job) => eventsApi.announce('import', job),
+  ),
+);
 
 // With no configured allowlist, mirror back any origin on the same host the
 // request arrived at (plus loopback). That lets the web client work on
@@ -698,6 +711,8 @@ app.route(route(PathSegment.api(), PathSegment.blobs()), blobsApi.routes);
 app.route(route(PathSegment.api(), PathSegment.frameTvs()), new FrameTvApi(frameTvService).routes);
 app.route(route(PathSegment.api()), exportApi.routes);
 app.route(route(PathSegment.image()), exportApi.imageRoutes);
+app.route(route(PathSegment.api(), PathSegment.imports()), importsApi.routes);
+app.route(route(PathSegment.image()), importsApi.imageRoutes);
 app.route(route(PathSegment.image()), assembliesApi.imageRoutes);
 app.route(route(PathSegment.image()), imageApi.routes);
 // Served by the API rather than the web client because it has to be opened

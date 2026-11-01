@@ -386,6 +386,7 @@ export interface EventHandlers {
   scan(data: string): void;
   composite(data: string): void;
   export(data: string): void;
+  import(data: string): void;
 }
 
 // Every event kind that carries a payload, so adding one is this line and a
@@ -398,6 +399,7 @@ const KINDS = [
   'scan',
   'composite',
   'export',
+  'import',
 ] as const satisfies readonly (keyof EventHandlers)[];
 
 export function subscribeEvents(handlers: EventHandlers): EventStream {

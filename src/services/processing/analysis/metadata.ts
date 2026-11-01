@@ -1,6 +1,6 @@
 import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { readCaptureOffset } from './exif_zone';
-import { readRawHeader } from '../rawshim/raw_decoder';
+import { readEmbeddedJpeg, readRawHeader } from '../rawshim/raw_decoder';
 
 // The native header parser (no pixel decode). See DESIGN §11.
 
@@ -36,4 +36,20 @@ export async function extractMetadata(filePath: string): Promise<HeaderMetadata>
   // places: `bb_read_header` for everything it parses, the raw EXIF for the one
   // tag it does not carry. Bounded to the header, so it costs a page or two.
   return { ...header, dateTakenOffset: await readCaptureOffset(filePath) };
+}
+
+export interface HeaderRequest {
+  absPath: string;
+  want: 'header' | 'embedded';
+}
+
+export type HeaderReply =
+  | { metadata: HeaderMetadata }
+  | { embedded: Uint8Array | null }
+  | { error: string };
+
+export async function answerHeaderRequest(request: HeaderRequest): Promise<HeaderReply> {
+  if (request.want === 'header') return { metadata: await extractMetadata(request.absPath) };
+  const jpeg = readEmbeddedJpeg(request.absPath);
+  return { embedded: jpeg == null ? null : new Uint8Array(jpeg) };
 }

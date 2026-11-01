@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { PANORAMA_VIEW_NAMES, panoramaViews } from '../../scripts/pano-views';
 import { PathSegment, route } from '../../src/schemas/route';
@@ -35,6 +35,11 @@ export const URL_OTHER_PHOTOS_DIR = path.join(E2E_ROOT, 'url-other-photos');
 // arrive empty of everything including itself.
 export const INDEX_PHOTOS_DIR = path.join(E2E_ROOT, 'index-photos');
 export const BACKUP_PHOTOS_DIR = path.join(E2E_ROOT, 'backup-photos');
+export const IMPORT_PHOTOS_DIR = path.join(E2E_ROOT, 'import-photos');
+export const IMPORT_CARD_DIR = path.join(E2E_ROOT, 'import-card');
+const IMPORT_CARD_FOLDER = path.join(IMPORT_CARD_DIR, 'DCIM', '100MSDCF');
+const IMPORT_CARD_NAMES = ['alpha.arw', 'card_one.arw', 'card_two.arw'];
+const IMPORT_SHOT_AT = new Date('2026-03-04T05:06:07.000Z');
 export const RELOCATE_PHOTOS_DIR = path.join(E2E_ROOT, 'relocate-photos');
 // The shell measures where a library's tiles sit against the window.
 export const SHELL_PHOTOS_DIR = path.join(E2E_ROOT, 'shell-photos');
@@ -254,10 +259,18 @@ export function prepareFixture(): void {
     ARCHIVE_PHOTOS_DIR,
     DECODE_PHOTOS_DIR,
     FALLBACK_PHOTOS_DIR,
+    IMPORT_PHOTOS_DIR,
   ]) {
     mkdirSync(dir, { recursive: true });
     for (const name of namesFor(dir)) copyFileSync(FIXTURE, path.join(dir, name));
   }
+  mkdirSync(IMPORT_CARD_FOLDER, { recursive: true });
+  for (const name of IMPORT_CARD_NAMES) {
+    copyFileSync(FIXTURE, path.join(IMPORT_CARD_FOLDER, name));
+  }
+  // `alpha.arw` as the library holds it: same size and mtime, which is what "already in library" reads.
+  utimesSync(path.join(IMPORT_PHOTOS_DIR, 'alpha.arw'), IMPORT_SHOT_AT, IMPORT_SHOT_AT);
+  utimesSync(path.join(IMPORT_CARD_FOLDER, 'alpha.arw'), IMPORT_SHOT_AT, IMPORT_SHOT_AT);
   // The X-Trans frame, which is a different sensor rather than a different subject: every root
   // above is the Bayer fixture under another name.
   mkdirSync(XTRANS_PHOTOS_DIR, { recursive: true });

@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { inMobileApp } from '../api/transport';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
 import { BinPage } from '../features/photos/grid/bin_page';
@@ -21,6 +22,7 @@ import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
 import { ExportDialog } from '../features/export/export_dialog';
 import { ExportsPage } from '../features/exports/exports_page';
+import { ImportPage } from '../features/import/import_page';
 import { ReportBugDialog } from '../features/feedback/report_bug_dialog';
 import { EditLabelsDialog } from '../features/labels/edit_labels_dialog';
 import { Sidebar, sidebarWidth } from '../features/sidebar/sidebar';
@@ -305,6 +307,10 @@ export const App = observer(function App(): JSX.Element {
               />
               <Route path={route(PathSegment.calibrateHdr())} element={<CalibrateHdrPage />} />
               <Route path={route(PathSegment.exports())} element={<ExportsPage />} />
+              <Route
+                path={route(PathSegment.imports())}
+                element={inMobileApp() ? <Navigate to={route()} replace /> : <ImportPage />}
+              />
               <Route
                 path={route(PathSegment.libraries(), PathSegment.param('libraryId'))}
                 element={<LibraryPhotosPage />}

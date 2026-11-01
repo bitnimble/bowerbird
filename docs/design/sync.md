@@ -419,6 +419,24 @@ Deleting a library aborts its run for the same reason: its rows are cascade-gone
 
 **Why the full scan stats every file.** Skipping the stat for files in directories whose mtime is unchanged was tried and removed: the stat is the _only_ cost it saves (the scan opens no file, §9.1), and skipping it also skips the `(dev, ino)` collapse that `moveIntoDir`'s non-atomic `link()`-then-`unlink()` window depends on. A cross-directory move bumps only the destination directory's mtime, so the source stays "unchanged" and is pruned; the destination is then inserted as a new photo while the source row survives, leaving a duplicate. Making it safe means restoring the stat, which leaves no saving.
 
+### 9.11 Adding photos from a card or folder
+
+The Import page (`features/import/`, `services/imports/import_service.ts`) lists originals under any folder and copies the chosen ones into a library. Not on the phone app, which has no plain paths to a card. Sources are the disks `utils/volumes.ts` finds (`/proc/self/mounts`, `/Volumes`, drive letters) on the machine running the server, or any folder.
+
+**A scan here writes no row.** It is `scanLibraryTree` over an ad hoc scope, then the stat pass (§9.1), held in memory until the next scan. The client addresses files by index under that scan's id, so a picture route over a scan cannot read any other path on the machine.
+
+**Headers and pictures come after the list.** The client asks for headers 50 files at a time on a `HeaderPool` of its own, so the list lands at the stat rate and the date, camera and lens filters fill in behind it. A tile's picture is the file itself for JPEG, PNG and AVIF, a RAW's embedded JPEG lifted on the same pool (a synchronous FFI read from a card would otherwise hold the server), and nothing for HEIF, which browsers cannot draw.
+
+**"Already in library" is the catalogue's own hash (§9.2) plus the filename.** The hash covers extension, mtime and size, so the copy sets the original's mtime on what it writes. It cannot stand alone: a burst's same-size frames share a card's 2 s timestamps, and hash alone would read frames not yet copied as held. A library row also answers for its name without a collision's `_N`. Binned rows count, so a rejected frame is not offered again; a row whose file is missing does not, so a lost frame can come back from the card. Those photos start unselected.
+
+**A library that takes only RAWs (`include_non_raw` off, §4.1) lists only RAWs.** It would never make a row for a copied JPEG, so the file would sit on disk and never appear. The page says how many files that leaves out.
+
+**The walk skips folders it cannot read, unlike a library's.** `$RECYCLE.BIN` and `System Volume Information` are excluded by name. Any other unreadable folder costs its own subtree and the page says some folders were unread. A library walk keeps failing instead, because `buildDiff` reads a subtree absent from the walk as its rows gone missing.
+
+**A RAW and its camera file are 1 tile by folder and stem.** That is looser than the library's link (§4.2.2), which needs headers that arrive after the tile is drawn. The option to show them apart only changes the tiles. A file filter narrows before pairing, so filtering JPEG out leaves a lone RAW.
+
+**The copy runs on the server, one file at a time, and survives the page.** Each file goes to a staging name the scan does not import (`stagingPathFor`), gets its mtime, is flushed to disk, then is claimed with `moveWithoutReplacing`, so nothing is overwritten, a partial file is never scanned, and a power cut cannot leave an empty original under the real name. A crash's staging file in the target folder is swept when the next run starts. Card folders are flattened into the shoot or the library root. A name held by a different file takes a numeric suffix across the whole same-stem group, because the link in §4.2.2 is by stem; a file already there with the same size and mtime is skipped, so a repeat run adds nothing. A missing library root is refused rather than created, which would land the files on the system disk under the unplugged drive's mount point. Progress reaches every client on the `import` event, and what landed is handed to a scoped scan (§9.8), retried while another scan holds the lease.
+
 ---
 
 ## 11. Metadata Extraction (`metadata.ts`)

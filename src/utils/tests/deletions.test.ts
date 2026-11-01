@@ -8,6 +8,7 @@ import {
   deleteDraft,
   deleteEmptyStagingDirectory,
   deleteGeneratedFile,
+  deleteImportStaging,
   deleteStagedBlob,
   deleteUpdateStaging,
   unlinkMovedFile,
@@ -30,6 +31,33 @@ function withTmp(run: (root: string) => Promise<void> | void): () => Promise<voi
     }
   };
 }
+
+describe('deleteImportStaging', () => {
+  it(
+    'removes what a copy was writing',
+    withTmp(async (root) => {
+      const staging = path.join(root, 'DSC1.ARW.abcdefgh12345678.tmp');
+      writeFileSync(staging, 'partial');
+
+      await deleteImportStaging(staging);
+
+      expect(existsSync(staging)).toBe(false);
+    }),
+  );
+
+  it.each(['DSC1.ARW', 'notes.abcdefgh12345678.tmp', 'DSC1.ARW.bak.tmp'])(
+    'refuses %s, and leaves it',
+    (name) =>
+      withTmp(async (root) => {
+        const file = path.join(root, name);
+        writeFileSync(file, 'theirs');
+
+        await expect(deleteImportStaging(file)).rejects.toThrow('refusing');
+
+        expect(readFileSync(file, 'utf8')).toBe('theirs');
+      })(),
+  );
+});
 
 describe('deleteDraft', () => {
   it(

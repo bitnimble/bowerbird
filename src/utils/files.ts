@@ -10,11 +10,9 @@ import { deleteEmptyClaim, unlinkMovedFile } from './deletions';
 // across devices) IS the move, so two concurrent moves of the same basename can't
 // overwrite each other the way existsSync()+rename() could.
 export async function moveIntoDir(from: string, dir: string, filename: string): Promise<string> {
-  const ext = path.extname(filename);
-  const base = path.basename(filename, ext);
   let acrossDevices = false;
   for (let n = 0; ; n++) {
-    const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
+    const candidate = path.join(dir, numberedName(filename, n));
     try {
       if (!acrossDevices) {
         await moveWithoutReplacing(from, candidate);
@@ -41,6 +39,17 @@ export async function moveIntoDir(from: string, dir: string, filename: string): 
   }
 }
 
+/** `filename` as is for 0, then `name_1.ext`, `name_2.ext` and on. */
+export function numberedName(filename: string, n: number): string {
+  if (n === 0) return filename;
+  const ext = path.extname(filename);
+  return `${path.basename(filename, ext)}_${n}${ext}`;
+}
+
+// Android refuses an app's hard links outright (SELinux), and exFAT and SMB have none to make. On
+// Windows exFAT, libuv reports ERROR_INVALID_FUNCTION as EISDIR.
+const NO_HARD_LINKS = new Set(['EPERM', 'EACCES', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EISDIR']);
+
 /**
  * Moves `from` to `to` on the same filesystem, failing with `EEXIST` rather than replacing a file
  * already there, including one another move is placing at the same moment.
@@ -50,8 +59,7 @@ export async function moveWithoutReplacing(from: string, to: string): Promise<vo
     await link(from, to);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    // Android refuses an app's hard links outright (SELinux), whatever the directory allows.
-    if (code !== 'EPERM' && code !== 'EACCES') throw err;
+    if (code == null || !NO_HARD_LINKS.has(code)) throw err;
     await moveOverClaim(from, to);
     return;
   }
