@@ -90,7 +90,7 @@ bumping it changes both and requires snapshot review, since Slang lowering can c
 ## Users run what `release.yml` builds
 
 Shipped apps come from `.github/workflows/release.yml`, each desktop platform built natively on
-its own runner (`windows-latest`, `macos-14`). `cross.Dockerfile` is only `release:check`'s local
+its own runner (`windows-latest`, `macos-15`). `cross.Dockerfile` is only `release:check`'s local
 cross-build check (DESIGN §23): Windows via cargo-xwin, macOS via osxcross, both without
 `renditions`. Reason about a platform's shipped binary from the workflow, never the Dockerfile.
 Host-only tools (Bun's `--windows-*` flags) are fine in release; the cross stages may skip them.
