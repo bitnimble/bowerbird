@@ -310,7 +310,18 @@ export async function moveOriginal(source: string, destination: string): Promise
   const existing = await stat(destination).catch(() => null);
   if (existing == null) await copyOriginal(source, destination);
   else await proveSameBytes(source, destination, existing);
-  return await removeSource(source);
+  try {
+    // A symlink's target is what was copied, and removing the link wouldn't free it.
+    if (!(await lstat(source)).isFile()) return false;
+    await unlink(source);
+    return true;
+  } catch (err) {
+    log.warn('could not remove an original after copying it', {
+      file: source,
+      err: String(err),
+    });
+    return false;
+  }
 }
 
 /**
@@ -349,21 +360,6 @@ async function proveSameBytes(source: string, destination: string, copy: Stats):
   }
   await flushFile(destination);
   await flushDirectory(path.dirname(destination));
-}
-
-async function removeSource(source: string): Promise<boolean> {
-  try {
-    // A symlink's target is what was copied, and removing the link wouldn't free it.
-    if (!(await lstat(source)).isFile()) return false;
-    await unlink(source);
-    return true;
-  } catch (err) {
-    log.warn('could not remove an original after copying it', {
-      file: source,
-      err: String(err),
-    });
-    return false;
-  }
 }
 
 /**
