@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { FileImage, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
+import { importJobDone } from '../../../../src/schemas/imports';
 import { ShootNameSchema } from '../../../../src/schemas/shoots';
 import { importsApi } from '../../api/imports';
 import { useImportStore, useLibrariesStore, usePresenters } from '../../app/stores_context';
@@ -133,17 +134,16 @@ export const ImportPage = observer(function ImportPage(): JSX.Element {
   const store = useImportStore();
   const libraries = useLibrariesStore();
   const { imports } = usePresenters();
-  const writable = libraries.libraries.filter((library) => !library.read_only);
 
   useEffect(() => void imports.loadVolumes(), [imports]);
-  useEffect(() => void imports.chooseLibrary(), [imports, writable.length]);
+  useEffect(() => void imports.chooseLibrary(), [imports, store.destinations.length]);
 
   return (
     <Page fill>
       <PageHead withSidebarButton>
         <Heading>{ImportPageStrings.importPhotos()}</Heading>
       </PageHead>
-      {!libraries.loading && writable.length === 0 ? (
+      {!libraries.loading && store.destinations.length === 0 ? (
         <EmptyState title={ImportPageStrings.noWritableLibrary()}>
           <Text as="p" variant="muted">
             {ImportPageStrings.noWritableLibraryHint()}
@@ -197,9 +197,10 @@ const ImportOptions = observer(function ImportOptions(): JSX.Element {
         <Select
           label={ImportPageStrings.destination()}
           value={store.libraryId}
-          options={libraries.libraries
-            .filter((candidate) => !candidate.read_only)
-            .map((candidate) => ({ value: candidate.id, label: candidate.name }))}
+          options={store.destinations.map((candidate) => ({
+            value: candidate.id,
+            label: candidate.name,
+          }))}
           onChange={(id) => void imports.setLibrary(id)}
         />
       </Field>
@@ -335,14 +336,11 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
         <>
           <span {...stylex.props(styles.progress)}>
             <Text variant="muted">
-              {ImportPageStrings.addingCount(job.copied + job.skipped + job.failed, job.total)}
+              {ImportPageStrings.addingCount(importJobDone(job), job.total)}
             </Text>
             <ProgressBar
-              label={ImportPageStrings.addingCount(
-                job.copied + job.skipped + job.failed,
-                job.total,
-              )}
-              value={job.copied + job.skipped + job.failed}
+              label={ImportPageStrings.addingCount(importJobDone(job), job.total)}
+              value={importJobDone(job)}
               max={job.total}
             />
           </span>

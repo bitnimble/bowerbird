@@ -66,6 +66,7 @@ async function scanAndCopyAll(shootId: string | null = null): Promise<ImportJob>
     library_id: library.id,
     shoot_id: shootId,
     file_ids: scan.files.map((file) => file.id),
+    delete_originals: false,
   });
   return await finished();
 }
@@ -162,7 +163,7 @@ test('recognises what the library holds by its stat hash and name', async () => 
   held = [{ file_hash: hash, file_path: 'Trip/HELD.ARW' }];
 
   const scan = await service.scan(card);
-  const ids = service.inLibrary(scan.id, library.id);
+  const ids = service.fileStates(scan.id, library.id).in_library;
 
   expect(ids.map((id) => scan.files[id]?.rel_path)).toEqual(['held.arw']);
 });
@@ -177,7 +178,7 @@ test('a frame of the same size and time under another name is not held', async (
   held = [{ file_hash: hash, file_path: 'burst1.arw' }];
 
   const scan = await service.scan(card);
-  const ids = service.inLibrary(scan.id, library.id);
+  const ids = service.fileStates(scan.id, library.id).in_library;
 
   expect(ids.map((id) => scan.files[id]?.rel_path)).toEqual(['burst1.arw']);
 });
@@ -192,7 +193,7 @@ test('a file the copy gave a suffix is still recognised on the card', async () =
 
   const scan = await service.scan(card);
 
-  expect(service.inLibrary(scan.id, library.id)).toEqual([0]);
+  expect(service.fileStates(scan.id, library.id).in_library).toEqual([0]);
 });
 
 test('copies into the library root with the original mtime, and scans what landed', async () => {
@@ -251,6 +252,7 @@ test('a camera file copied later follows the suffix its RAW landed under', async
       library_id: library.id,
       shoot_id: null,
       file_ids: [idOf(name)],
+      delete_originals: false,
     });
     await finished();
   };
@@ -288,6 +290,7 @@ test('with the RAW already there, its camera file alone lands under the same ste
     library_id: library.id,
     shoot_id: null,
     file_ids: [jpeg],
+    delete_originals: false,
   });
   const job = await finished();
 
@@ -347,6 +350,7 @@ test('a vanished source file is reported and the rest still copy', async () => {
     library_id: library.id,
     shoot_id: null,
     file_ids: scan.files.map((file) => file.id),
+    delete_originals: false,
   });
   const job = await finished();
 
@@ -375,6 +379,34 @@ test('deleting after copying takes the originals once their copies landed', asyn
   expect(readFileSync(path.join(root, 'DSC1.ARW'), 'utf8')).toBe('raw bytes');
   expect(job).toMatchObject({ status: 'finished', copied: 1, deleted: 1, kept: 0 });
   expect(scanned).toEqual([{ libraryId: library.id, scope: { paths: ['DSC1.ARW'] } }]);
+});
+
+test('a scan names what its run deleted, and its ids still reach the rest', async () => {
+  place(card, 'a.arw', 'first');
+  place(card, 'b.arw', 'second');
+  const scan = await service.scan(card);
+  const a = scan.files.find((file) => file.rel_path === 'a.arw')?.id ?? -1;
+  const b = scan.files.find((file) => file.rel_path === 'b.arw')?.id ?? -1;
+
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [a],
+    delete_originals: true,
+  });
+  await finished();
+
+  expect(service.fileStates(scan.id, library.id).deleted).toEqual([a]);
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [b],
+    delete_originals: false,
+  });
+  await finished();
+  expect(readFileSync(path.join(root, 'b.arw'), 'utf8')).toBe('second');
 });
 
 test('without the option no original is deleted', async () => {
@@ -531,7 +563,13 @@ test('the same source may still be copied without deleting', async () => {
   const inLibrary = place(root, 'Trip/DSC1.ARW');
   const scan = await service.scan(path.join(root, 'Trip'));
 
-  await service.start({ scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] });
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: false,
+  });
   const job = await finished();
 
   expect(job).toMatchObject({ copied: 1, deleted: 0 });
@@ -556,7 +594,13 @@ test('stopping ends the wait for a running scan', async () => {
     if (job.copied === 1) service.stop();
   };
 
-  await service.start({ scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] });
+  await service.start({
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: false,
+  });
   const job = await finished();
 
   expect(job).toMatchObject({ status: 'finished', copied: 1 });
@@ -599,6 +643,7 @@ test('the same file asked for twice counts and copies once', async () => {
     library_id: library.id,
     shoot_id: null,
     file_ids: [0, 0],
+    delete_originals: false,
   });
   const job = await finished();
 
@@ -616,6 +661,7 @@ test('names kept for a failed run stop at 20, the count does not', async () => {
     library_id: library.id,
     shoot_id: null,
     file_ids: scan.files.map((file) => file.id),
+    delete_originals: false,
   });
   const job = await finished();
 
@@ -631,7 +677,13 @@ test.each([
   const scan = await service.scan(card);
 
   await expect(
-    service.start({ scan_id: scan.id, library_id: library.id, shoot_id: shootId, file_ids: [0] }),
+    service.start({
+      scan_id: scan.id,
+      library_id: library.id,
+      shoot_id: shootId,
+      file_ids: [0],
+      delete_originals: false,
+    }),
   ).rejects.toThrow('shoot');
   expect(readdirSync(root)).toEqual([]);
   expect(existsSync(path.join(scratch, 'escaped'))).toBe(false);
@@ -643,7 +695,13 @@ test('refuses a read-only library', async () => {
   const scan = await service.scan(card);
 
   await expect(
-    service.start({ scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] }),
+    service.start({
+      scan_id: scan.id,
+      library_id: library.id,
+      shoot_id: null,
+      file_ids: [0],
+      delete_originals: false,
+    }),
   ).rejects.toThrow('read-only');
 });
 
@@ -658,6 +716,7 @@ test('refuses a library whose root is not connected, and creates nothing there',
       library_id: library.id,
       shoot_id: 'sht00001',
       file_ids: [0],
+      delete_originals: false,
     }),
   ).rejects.toThrow("isn't connected");
   expect(existsSync(root)).toBe(false);
@@ -666,7 +725,13 @@ test('refuses a library whose root is not connected, and creates nothing there',
 test('refuses a second run while one is copying', async () => {
   place(card, 'DSC1.ARW');
   const scan = await service.scan(card);
-  const request = { scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] };
+  const request = {
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: false,
+  };
 
   await service.start(request);
   await expect(service.start(request)).rejects.toThrow('already being added');
@@ -676,7 +741,13 @@ test('refuses a second run while one is copying', async () => {
 test('2 starts at once make 1 run', async () => {
   place(card, 'DSC1.ARW');
   const scan = await service.scan(card);
-  const request = { scan_id: scan.id, library_id: library.id, shoot_id: null, file_ids: [0] };
+  const request = {
+    scan_id: scan.id,
+    library_id: library.id,
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: false,
+  };
 
   const results = await Promise.allSettled([service.start(request), service.start(request)]);
   await finished();
@@ -690,7 +761,7 @@ test('a scan is only reachable by its own id', async () => {
   await service.scan(card);
 
   await expect(service.picture(stale.id, 0)).rejects.toThrow('scan not found');
-  expect(() => service.inLibrary(stale.id, library.id)).toThrow('scan not found');
+  expect(() => service.fileStates(stale.id, library.id)).toThrow('scan not found');
 });
 
 test('a picture is the JPEG file itself, or the RAW embedded one, and never a HEIF', async () => {
@@ -701,15 +772,12 @@ test('a picture is the JPEG file itself, or the RAW embedded one, and never a HE
   const scan = await service.scan(card);
   const id = (name: string): number => scan.files.find((file) => file.rel_path === name)?.id ?? -1;
 
-  expect(await service.picture(scan.id, id('a.jpg'))).toEqual({
-    kind: 'file',
-    absPath: path.join(card, 'a.jpg'),
-    mediaType: 'image/jpeg',
-  });
-  expect(await service.picture(scan.id, id('b.arw'))).toEqual({
-    kind: 'bytes',
-    bytes: new Uint8Array([0xff, 0xd8]),
-  });
+  const camera = await service.picture(scan.id, id('a.jpg'));
+  expect(camera.mediaType).toBe('image/jpeg');
+  expect(await camera.body.text()).toBe('a.jpg');
+  const embedded = await service.picture(scan.id, id('b.arw'));
+  expect(embedded.mediaType).toBe('image/jpeg');
+  expect(new Uint8Array(await embedded.body.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xd8]));
   await expect(service.picture(scan.id, id('blank.arw'))).rejects.toThrow('no embedded JPEG');
   await expect(service.picture(scan.id, id('c.heic'))).rejects.toThrow('no picture');
 });

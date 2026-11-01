@@ -25,7 +25,19 @@ export const ImportScanSchema = z.object({
 });
 export type ImportScan = z.infer<typeof ImportScanSchema>;
 
+/** Files of 1 capture share a folder and a filename stem. */
+export function captureKey(relPath: string): string {
+  const dot = relPath.lastIndexOf('.');
+  return (dot < 0 ? relPath : relPath.slice(0, dot)).toLowerCase();
+}
+
 export const ImportFileIdsSchema = z.array(z.number().int());
+
+export const ImportFileStatesSchema = z.object({
+  in_library: ImportFileIdsSchema,
+  deleted: ImportFileIdsSchema,
+});
+export type ImportFileStates = z.infer<typeof ImportFileStatesSchema>;
 
 export const ImportHeadersRequestSchema = z.object({ file_ids: ImportFileIdsSchema });
 
@@ -43,7 +55,7 @@ export const StartImportRequestSchema = z.object({
   library_id: IdSchema,
   shoot_id: IdSchema.nullable(),
   file_ids: ImportFileIdsSchema.min(1),
-  delete_originals: z.boolean().optional(),
+  delete_originals: z.boolean(),
 });
 export type StartImportRequest = z.infer<typeof StartImportRequestSchema>;
 
@@ -62,4 +74,9 @@ export const ImportJobSchema = z.object({
   kept_names: z.array(z.string()),
 });
 export type ImportJob = z.infer<typeof ImportJobSchema>;
+
+export function importJobDone(job: ImportJob): number {
+  return job.copied + job.skipped + job.failed;
+}
+
 export const ImportJobOrNoneSchema = ImportJobSchema.nullable();

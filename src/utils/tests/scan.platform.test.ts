@@ -45,7 +45,7 @@ test.skipIf(!CAN_DENY_READS)(
   async () => {
     chmodSync(locked, 0o000);
 
-    const walked = await scanLibraryTree(scope(), '', undefined, undefined, true);
+    const walked = await scanLibraryTree(scope(), { skipUnreadable: true });
 
     expect(walked.files.map((file) => file.relPath)).toEqual(['kept.arw']);
     expect(walked.complete).toBe(false);
@@ -55,7 +55,7 @@ test.skipIf(!CAN_DENY_READS)(
 test.skipIf(!CAN_DENY_READS)('an unreadable root fails even a walk that skips', async () => {
   chmodSync(root, 0o000);
 
-  await expect(scanLibraryTree(scope(), '', undefined, undefined, true)).rejects.toMatchObject({
+  await expect(scanLibraryTree(scope(), { skipUnreadable: true })).rejects.toMatchObject({
     code: 'EACCES',
   });
 });

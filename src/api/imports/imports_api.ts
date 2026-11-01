@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import {
-  ImportFileIdsSchema,
+  ImportFileStatesSchema,
   ImportHeadersRequestSchema,
   ImportHeadersSchema,
   ImportJobOrNoneSchema,
@@ -44,8 +44,8 @@ export class ImportsApi {
       (c) =>
         c.json(
           respond(
-            ImportFileIdsSchema,
-            this.imports.inLibrary(c.req.param('scanId'), c.req.param('libraryId')),
+            ImportFileStatesSchema,
+            this.imports.fileStates(c.req.param('scanId'), c.req.param('libraryId')),
           ),
         ),
     );
@@ -87,17 +87,13 @@ export class ImportsApi {
     app.get(
       route(PathSegment.imports(), PathSegment.param('scanId'), PathSegment.param('fileId')),
       async (c) => {
-        const picture = await this.imports.picture(
+        const { body, mediaType } = await this.imports.picture(
           c.req.param('scanId'),
           Number(c.req.param('fileId')),
         );
-        return picture.kind === 'file'
-          ? new Response(Bun.file(picture.absPath), {
-              headers: { 'Content-Type': picture.mediaType, 'Cache-Control': SCAN_PICTURE_CACHE },
-            })
-          : new Response(new Uint8Array(picture.bytes), {
-              headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': SCAN_PICTURE_CACHE },
-            });
+        return new Response(body, {
+          headers: { 'Content-Type': mediaType, 'Cache-Control': SCAN_PICTURE_CACHE },
+        });
       },
     );
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type {
   ImportFile,
+  ImportFileStates,
   ImportHeader,
   ImportJob,
   ImportScan,
@@ -52,6 +53,7 @@ let toasts: string[];
 let errors: string[];
 let started: Parameters<typeof importsApi.start>[0][];
 let inLibrary: number[];
+let deletedFiles: number[];
 let createdShoots: string[];
 let asked: ConfirmRequest[];
 let confirmed: boolean;
@@ -82,6 +84,13 @@ async function scanned(files: ImportFile[] = CARD): Promise<void> {
   await presenter.scan();
 }
 
+function storeOf(libraries: Library[]): ImportStore {
+  return new ImportStore({
+    libraries,
+    byId: new Map(libraries.map((library) => [library.id, library])),
+  });
+}
+
 function tileNames(): string[][] {
   return store.entries.map((entry) => entry.files.map((file) => file.rel_path.split('/').pop()!));
 }
@@ -89,17 +98,17 @@ function tileNames(): string[][] {
 beforeEach(async () => {
   globalThis.localStorage = new MemoryStorage();
   const libraries = [FIRST_LIBRARY, RAW_ONLY] as Library[];
-  store = new ImportStore({ byId: new Map(libraries.map((library) => [library.id, library])) });
+  store = storeOf(libraries);
   toasts = [];
   errors = [];
   started = [];
   inLibrary = [];
+  deletedFiles = [];
   createdShoots = [];
   asked = [];
   confirmed = true;
   presenter = new ImportPresenter(
     store,
-    { libraries },
     {
       create: async (_, name) => {
         createdShoots.push(name);
@@ -115,7 +124,7 @@ beforeEach(async () => {
     },
   );
   shootsApi.list = mock(async () => []);
-  importsApi.inLibrary = mock(async () => inLibrary);
+  importsApi.fileStates = mock(async () => ({ in_library: inLibrary, deleted: deletedFiles }));
   importsApi.headers = mock(async () => []);
   importsApi.start = mock(async (body) => {
     started.push(body);
@@ -316,20 +325,20 @@ test('a scan superseded by another never lands', async () => {
 
 test('an in-library answer for a library since changed never lands', async () => {
   await scanned();
-  let answer: (ids: number[]) => void = () => {};
-  importsApi.inLibrary = mock(
+  let answer: (states: ImportFileStates) => void = () => {};
+  importsApi.fileStates = mock(
     () =>
-      new Promise<number[]>((resolve) => {
+      new Promise<ImportFileStates>((resolve) => {
         answer = resolve;
       }),
   );
   const stale = presenter.setLibrary(RAW_ONLY.id);
   await Bun.sleep(0);
   const staleAnswer = answer;
-  importsApi.inLibrary = mock(async () => []);
+  importsApi.fileStates = mock(async () => ({ in_library: [], deleted: [] }));
 
   await presenter.setLibrary(FIRST_LIBRARY.id);
-  staleAnswer([0, 1, 2, 3]);
+  staleAnswer({ in_library: [0, 1, 2, 3], deleted: [] });
   await stale;
 
   expect(store.inLibrary.size).toBe(0);
@@ -337,7 +346,7 @@ test('an in-library answer for a library since changed never lands', async () =>
 });
 
 test('a failed in-library read still lands the scan and reads its headers', async () => {
-  importsApi.inLibrary = mock(async () => {
+  importsApi.fileStates = mock(async () => {
     throw new Error('unreachable');
   });
   importsApi.headers = mock(async () => [
@@ -357,10 +366,9 @@ test('opening the page picks the first library that can take photos', async () =
     { id: 'lib00003', read_only: true, include_non_raw: true },
     RAW_ONLY,
   ] as Library[];
-  const fresh = new ImportStore({ byId: new Map(libraries.map((l) => [l.id, l])) });
+  const fresh = storeOf(libraries);
   const page = new ImportPresenter(
     fresh,
-    { libraries },
     { create: async () => null },
     { show: () => {}, showError: () => {} },
     { ask: async () => false },
@@ -373,10 +381,9 @@ test('opening the page picks the first library that can take photos', async () =
 
 test('reopening the page moves off a library gone, and off a shoot gone', async () => {
   const libraries = [RAW_ONLY] as Library[];
-  const fresh = new ImportStore({ byId: new Map(libraries.map((l) => [l.id, l])) });
+  const fresh = storeOf(libraries);
   const page = new ImportPresenter(
     fresh,
-    { libraries },
     { create: async () => null },
     { show: () => {}, showError: () => {} },
     { ask: async () => false },
@@ -503,57 +510,62 @@ test('declining the question starts nothing and makes no shoot', async () => {
   expect(createdShoots).toHaveLength(0);
 });
 
-test('originals deleted by a run send the page back to the source for what is left', async () => {
-  await scanned();
-  presenter.setDeleteOriginals(true);
-  presenter.selectVolume('/elsewhere');
-  presenter.jobProgressed(job());
-  const sources: string[] = [];
-  importsApi.scan = mock(async (source: string) => {
-    sources.push(source);
-    return scanOf(CARD.slice(2, 3));
-  });
-
-  presenter.jobProgressed(job({ status: 'finished', copied: 3, deleted: 3 }));
-  await Bun.sleep(0);
-
-  expect(sources).toEqual(['/card']);
-  expect(tileNames()).toEqual([['DSC2.ARW']]);
-  expect(toasts).toEqual(['Added 3 files to the library and deleted 3 originals.']);
-});
-
-test('the rescan after a deletion keeps what was unticked, and the filters', async () => {
+test('what a run deleted leaves the list, without scanning, keeping ticks and filters', async () => {
   await scanned();
   presenter.toggle(store.entries.find((entry) => entry.lead.id === 3)!);
   presenter.setFilters({ search: 'DSC' });
   presenter.jobProgressed(job());
-  // DSC1's pair went, so DSC3.JPG now sits at another position.
-  importsApi.scan = mock(async () =>
-    scanOf([fileOf(0, 'DCIM/DSC2.ARW', '03'), fileOf(1, 'DCIM/DSC3.JPG', '01')]),
-  );
-  importsApi.headers = mock(async () => []);
+  const scan = mock(async () => scanOf([]));
+  importsApi.scan = scan;
+  deletedFiles = [0, 1];
 
   presenter.jobProgressed(job({ status: 'finished', copied: 2, deleted: 2 }));
   await Bun.sleep(0);
 
-  expect(store.selectedFileIds).toEqual([0]);
+  expect(scan).not.toHaveBeenCalled();
+  expect(tileNames()).toEqual([['DSC2.ARW'], ['DSC3.JPG']]);
+  expect(store.selectedFileIds).toEqual([2]);
   expect(store.filters.search).toBe('DSC');
-  expect(store.scanning).toBe(false);
+  expect(toasts).toEqual(['Added 2 files to the library and deleted 2 originals.']);
 });
 
-test('the rescan after a deletion unticks what the library now holds', async () => {
-  await scanned();
+test('an original kept after its copy stays listed, unticked, as in the library', async () => {
+  await scanned(CARD.slice(2, 3));
   presenter.jobProgressed(job());
-  importsApi.scan = mock(async () => scanOf([fileOf(0, 'DCIM/DSC2.ARW', '03')]));
-  inLibrary = [0];
+  inLibrary = [2];
 
   presenter.jobProgressed(
-    job({ status: 'finished', copied: 4, deleted: 3, kept: 1, kept_names: ['DCIM/DSC2.ARW'] }),
+    job({ status: 'finished', copied: 1, kept: 1, kept_names: ['DCIM/DSC2.ARW'] }),
   );
   await Bun.sleep(0);
 
   expect(store.selectedFileIds).toEqual([]);
   expect(store.isInLibrary(store.entries[0]!)).toBe(true);
+});
+
+test('a camera whose every file was deleted leaves the filter options', async () => {
+  importsApi.headers = mock(async () => [
+    { file_id: 2, date_taken: null, camera_model: 'A7 IV', lens_model: null },
+    { file_id: 3, date_taken: null, camera_model: 'R5', lens_model: null },
+  ]);
+  await scanned();
+  await Bun.sleep(0);
+  presenter.jobProgressed(job());
+  deletedFiles = [2];
+
+  presenter.jobProgressed(job({ status: 'finished', copied: 1, deleted: 1 }));
+  await Bun.sleep(0);
+
+  expect(store.cameraModelOptions).toEqual(['R5']);
+});
+
+test('reopening the page drops what a run deleted while nobody was told', async () => {
+  await scanned();
+  deletedFiles = [0, 1];
+
+  await presenter.chooseLibrary();
+
+  expect(tileNames()).toEqual([['DSC2.ARW'], ['DSC3.JPG']]);
 });
 
 test('delete after copying is off until asked for, then stays on', async () => {
@@ -567,28 +579,14 @@ test('delete after copying is off until asked for, then stays on', async () => {
 
   expect(store.deleteOriginals).toBe(true);
 
-  const reopened = new ImportStore({ byId: new Map() });
+  const reopened = storeOf([]);
   new ImportPresenter(
     reopened,
-    { libraries: [] },
     { create: async () => null },
     { show: () => {}, showError: () => {} },
     { ask: async () => false },
   );
   expect(reopened.deleteOriginals).toBe(true);
-});
-
-test('a run that deleted nothing keeps the list as it was', async () => {
-  await scanned();
-  const scan = mock(async () => scanOf([]));
-  importsApi.scan = scan;
-  presenter.jobProgressed(job());
-
-  presenter.jobProgressed(job({ status: 'finished', copied: 4 }));
-  await Bun.sleep(0);
-
-  expect(scan).not.toHaveBeenCalled();
-  expect(store.files).toHaveLength(4);
 });
 
 test('an original kept after its copy is reported as an error', () => {

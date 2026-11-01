@@ -1,6 +1,7 @@
 import {
+  type ImportFileStates,
+  ImportFileStatesSchema,
   type ImportHeader,
-  ImportFileIdsSchema,
   ImportHeadersRequestSchema,
   ImportHeadersSchema,
   type ImportJob,
@@ -29,9 +30,9 @@ export const importsApi = {
       `${IMPORTS}${route(PathSegment.scans())}`,
       ImportScanRequestSchema.parse({ source }),
     ),
-  inLibrary: (scanId: string, libraryId: string): Promise<number[]> =>
+  fileStates: (scanId: string, libraryId: string): Promise<ImportFileStates> =>
     request(
-      ImportFileIdsSchema,
+      ImportFileStatesSchema,
       'GET',
       `${IMPORTS}${route(PathSegment.scans(), scanId, PathSegment.libraries(), libraryId)}`,
     ),

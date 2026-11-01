@@ -6,6 +6,7 @@ import type {
   ImportScan,
   ImportVolume,
 } from '../../../../src/schemas/imports';
+import type { Library } from '../../../../src/schemas/libraries';
 import type { PhotoFormat } from '../../../../src/schemas/photos';
 import type { Shoot } from '../../../../src/schemas/shoots';
 import { visibleRows, type Span } from '../../ui/virtual_rows';
@@ -39,7 +40,7 @@ export const NO_IMPORT_FILTERS: ImportFilters = {
 export type ImportShootChoice = { kind: 'root' } | { kind: 'shoot'; id: string } | { kind: 'new' };
 
 export class ImportStore {
-  constructor(private readonly libraries: Pick<LibrariesStore, 'byId'>) {}
+  constructor(private readonly libraries: Pick<LibrariesStore, 'byId' | 'libraries'>) {}
 
   @observable.ref accessor volumes: ImportVolume[] = [];
   @observable accessor libraryId = '';
@@ -64,6 +65,10 @@ export class ImportStore {
 
   @observable.ref accessor job: ImportJob | null = null;
   @observable accessor starting = false;
+
+  @computed get destinations(): Library[] {
+    return this.libraries.libraries.filter((library) => !library.read_only);
+  }
 
   @computed get copying(): boolean {
     return this.job?.status === 'copying';

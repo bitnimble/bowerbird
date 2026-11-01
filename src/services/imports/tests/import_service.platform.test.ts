@@ -47,7 +47,13 @@ test('a photo read-only on the card copies, and the copy can be written', async 
   const service = serviceFor({ id: 'lib00001', root_path: root, read_only: false } as Library);
   const scan = await service.scan(card);
 
-  await service.start({ scan_id: scan.id, library_id: 'lib00001', shoot_id: null, file_ids: [0] });
+  await service.start({
+    scan_id: scan.id,
+    library_id: 'lib00001',
+    shoot_id: null,
+    file_ids: [0],
+    delete_originals: false,
+  });
   while (service.currentJob()?.status === 'copying') await Bun.sleep(1);
 
   expect(service.currentJob()).toMatchObject({ copied: 1, failed: 0 });

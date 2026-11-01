@@ -1,4 +1,4 @@
-import type { ImportFile } from '../../../../src/schemas/imports';
+import { captureKey, type ImportFile } from '../../../../src/schemas/imports';
 import type { PhotoFormat } from '../../../../src/schemas/photos';
 
 const CAMERA_FILE_FORMATS: readonly PhotoFormat[] = ['jpeg', 'heif'];
@@ -11,7 +11,6 @@ export function isRawFormat(format: PhotoFormat): boolean {
 /** 1 tile: a single file, or a RAW with the camera files written beside it. */
 export interface ImportEntry {
   key: string;
-  raw: ImportFile | null;
   /** The RAW where there is one, else the file. Filters read this one's date and camera. */
   lead: ImportFile;
   files: ImportFile[];
@@ -28,7 +27,7 @@ export function buildEntries(files: readonly ImportFile[], merge: boolean): Impo
 
   const byStem = new Map<string, ImportFile[]>();
   for (const file of files) {
-    const key = stemKey(file.rel_path);
+    const key = captureKey(file.rel_path);
     const held = byStem.get(key);
     if (held == null) byStem.set(key, [file]);
     else held.push(file);
@@ -56,7 +55,6 @@ export function buildEntries(files: readonly ImportFile[], merge: boolean): Impo
 function single(file: ImportFile): ImportEntry {
   return {
     key: String(file.id),
-    raw: isRawFormat(file.format) ? file : null,
     lead: file,
     files: [file],
     thumbnail: file.format === 'heif' ? null : file,
@@ -67,17 +65,11 @@ function single(file: ImportFile): ImportEntry {
 function merged(raw: ImportFile, cameraFiles: ImportFile[]): ImportEntry {
   return {
     key: String(raw.id),
-    raw,
     lead: raw,
     files: [raw, ...cameraFiles],
     thumbnail: cameraFiles.find((file) => file.format === 'jpeg') ?? raw,
     mergedFormats: [...new Set(cameraFiles.map((file) => file.format))],
   };
-}
-
-function stemKey(relPath: string): string {
-  const dot = relPath.lastIndexOf('.');
-  return (dot < 0 ? relPath : relPath.slice(0, dot)).toLowerCase();
 }
 
 export function filenameOf(file: ImportFile): string {

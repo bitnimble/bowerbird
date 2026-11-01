@@ -1,5 +1,6 @@
 import { action } from 'mobx';
 import type {
+  ImportFileStates,
   ImportHeader,
   ImportJob,
   ImportScan,
@@ -12,7 +13,6 @@ import { shootsApi } from '../../api/shoots';
 import { describe } from '../../errors';
 import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import type { ConfirmPresenter } from '../confirm/confirm_presenter';
-import type { LibrariesStore } from '../libraries/libraries_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import type { ImportEntry } from './import_entries';
@@ -34,7 +34,6 @@ export class ImportPresenter {
 
   constructor(
     private readonly store: ImportStore,
-    private readonly libraries: Pick<LibrariesStore, 'libraries'>,
     private readonly shoots: Pick<ShootsPresenter, 'create'>,
     private readonly toasts: Pick<ToastsPresenter, 'show' | 'showError'>,
     private readonly confirm: Pick<ConfirmPresenter, 'ask'>,
@@ -69,12 +68,12 @@ export class ImportPresenter {
    * or shoot can be deleted, and photos added, while it is away.
    */
   async chooseLibrary(): Promise<void> {
-    const writable = this.libraries.libraries.filter((library) => !library.read_only);
-    if (writable.some((library) => library.id === this.store.libraryId)) {
+    const { destinations } = this.store;
+    if (destinations.some((library) => library.id === this.store.libraryId)) {
       await this.reloadLibrary(++this.libraryRun, this.store.libraryId);
       return;
     }
-    const first = writable[0];
+    const first = destinations[0];
     if (first != null) await this.setLibrary(first.id);
   }
 
@@ -89,7 +88,16 @@ export class ImportPresenter {
     if (source === '') return;
     const run = ++this.scanRun;
     this.beginScan();
-    await this.fetchScan(run, source, new Set());
+    try {
+      const scan = await importsApi.scan(source);
+      if (run !== this.scanRun) return;
+      this.landScan(scan);
+    } catch (err) {
+      if (run === this.scanRun) this.scanFailed(describe(err));
+      return;
+    }
+    await this.refreshFileStates(this.libraryRun);
+    void this.readHeaders(run);
   }
 
   async add(): Promise<void> {
@@ -131,9 +139,7 @@ export class ImportPresenter {
     this.store.job = job;
     if (previous?.status !== 'copying' || job.status === 'copying') return;
     this.announceFinish(job);
-    const scan = this.store.scan;
-    if (job.deleted > 0 && scan != null) void this.rescanAfterDeletion(scan);
-    else void this.refreshInLibrary(this.libraryRun);
+    void this.refreshFileStates(this.libraryRun);
   }
 
   @action.bound
@@ -206,32 +212,6 @@ export class ImportPresenter {
     this.store.scrollTop = top;
   }
 
-  private async fetchScan(
-    run: number,
-    source: string,
-    unticked: ReadonlySet<string>,
-  ): Promise<void> {
-    try {
-      const scan = await importsApi.scan(source);
-      if (run !== this.scanRun) return;
-      this.landScan(scan, unticked);
-    } catch (err) {
-      if (run === this.scanRun) this.scanFailed(describe(err));
-      return;
-    }
-    await this.refreshInLibrary(this.libraryRun);
-    void this.readHeaders(run);
-  }
-
-  // By path: a scan's ids are positions, and the deletion has moved them. A file left unticked has
-  // to stay so, since the next add would delete it too.
-  private async rescanAfterDeletion(scan: ImportScan): Promise<void> {
-    const run = ++this.scanRun;
-    const unticked = scan.files.filter((file) => !this.store.selected.has(file.id));
-    this.beginRescan();
-    await this.fetchScan(run, scan.source, new Set(unticked.map((file) => file.rel_path)));
-  }
-
   private confirmDeletion(count: number): Promise<boolean> {
     return this.confirm.ask({
       title: ImportPageStrings.confirmDeleteTitle(count),
@@ -277,17 +257,18 @@ export class ImportPresenter {
     } catch (err) {
       if (run === this.libraryRun) this.fail(describe(err));
     }
-    await this.refreshInLibrary(run);
+    await this.refreshFileStates(run);
   }
 
-  private async refreshInLibrary(run: number): Promise<void> {
+  private async refreshFileStates(run: number): Promise<void> {
     const { scan, libraryId } = this.store;
     if (scan == null || libraryId === '') return;
+    const isCurrent = (): boolean => run === this.libraryRun && scan.id === this.store.scan?.id;
     try {
-      const ids = await importsApi.inLibrary(scan.id, libraryId);
-      if (run === this.libraryRun && scan === this.store.scan) this.landInLibrary(ids);
+      const states = await importsApi.fileStates(scan.id, libraryId);
+      if (isCurrent()) this.landFileStates(states);
     } catch (err) {
-      if (run === this.libraryRun && scan === this.store.scan) this.fail(describe(err));
+      if (isCurrent()) this.fail(describe(err));
     }
   }
 
@@ -360,31 +341,32 @@ export class ImportPresenter {
   }
 
   @action.bound
-  private beginRescan(): void {
-    this.store.scanning = true;
-    this.store.error = null;
-  }
-
-  @action.bound
-  private landScan(scan: ImportScan, unticked: ReadonlySet<string>): void {
+  private landScan(scan: ImportScan): void {
     this.store.scanning = false;
     this.store.scan = scan;
-    this.store.headers = new Map();
-    this.store.inLibrary = new Set();
-    this.store.selected = new Set(
-      scan.files.filter((file) => !unticked.has(file.rel_path)).map((file) => file.id),
-    );
+    this.store.selected = new Set(scan.files.map((file) => file.id));
   }
 
   @action.bound
-  private landInLibrary(ids: number[]): void {
-    const inLibrary = new Set(ids);
+  private landFileStates(states: ImportFileStates): void {
+    const inLibrary = new Set(states.in_library);
     const selected = new Set(this.store.selected);
-    for (const id of ids) if (!this.store.inLibrary.has(id)) selected.delete(id);
+    for (const id of states.in_library) if (!this.store.inLibrary.has(id)) selected.delete(id);
     // What another destination held isn't held here, so its untick no longer stands.
     for (const id of this.store.inLibrary) if (!inLibrary.has(id)) selected.add(id);
+    for (const id of states.deleted) selected.delete(id);
     this.store.inLibrary = inLibrary;
     this.store.selected = selected;
+    this.dropDeleted(new Set(states.deleted));
+  }
+
+  private dropDeleted(deleted: ReadonlySet<number>): void {
+    const { scan } = this.store;
+    if (scan == null || deleted.size === 0) return;
+    this.store.scan = { ...scan, files: scan.files.filter((file) => !deleted.has(file.id)) };
+    this.store.headers = new Map(
+      [...this.store.headers].filter(([fileId]) => !deleted.has(fileId)),
+    );
   }
 
   @action.bound

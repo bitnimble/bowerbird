@@ -3,13 +3,13 @@ import {
   link,
   lstat,
   open,
+  readdir,
   realpath,
   rename,
   rm,
   rmdir,
   stat,
   unlink,
-  type FileHandle,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,7 +21,7 @@ import { Logger } from '../logger';
 import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
 import { flushDirectory, flushFile } from './flush';
-import { contentHash } from './hash';
+import { contentHash, copyHashing } from './hash';
 import { containsPath, dataPathForLibraryId, getBinPath } from './paths';
 import { findOriginalsAnywhere, isOriginal, isStrayOriginal } from './scan';
 import { stagedName, stagingPathFor } from './staging';
@@ -39,7 +39,6 @@ import { stagedName, stagingPathFor } from './staging';
 // there - a stray the user left - is not ours to remove.
 const GENERATED_DIRS = ['renditions', 'hdr', 'drafts', 'analysis'];
 const log = new Logger('deletions');
-const COPY_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
  * A scratch directory this process made under the OS temp directory, and everything in it.
@@ -211,17 +210,24 @@ export async function deleteBackupFile(backupsDir: string, target: string): Prom
 }
 
 /** `stagingPathFor` of an original's name, which no format this app holds as an original ends in. */
-export function isImportStaging(target: string): boolean {
+function isImportStaging(target: string): boolean {
   const original = stagedName(target);
   return original != null && isOriginal(original);
 }
 
-// What an import was writing, discarded when the copy failed or a crash left it behind.
+// What an import was writing, discarded when the copy failed.
 export async function deleteImportStaging(target: string): Promise<void> {
   if (!isImportStaging(target)) {
     throw new AppError('IO_ERROR', `refusing to delete ${target}: not an import staging file`);
   }
   await rm(target, { force: true });
+}
+
+// What a crash left behind in a folder an import is about to write to.
+export async function sweepImportStaging(dir: string): Promise<void> {
+  for (const name of await readdir(dir)) {
+    if (isImportStaging(name)) await deleteImportStaging(path.join(dir, name));
+  }
 }
 
 // A partial blob download, discarded on hash mismatch or cancel. Staged files
@@ -323,46 +329,6 @@ export async function copyOriginal(source: string, destination: string): Promise
     await flushDirectory(path.dirname(destination));
   } finally {
     await deleteImportStaging(staging);
-  }
-}
-
-async function copyHashing(source: string, staging: string): Promise<string> {
-  const input = await open(source, 'r');
-  try {
-    const { mtime, size } = await input.stat();
-    const output = await open(staging, 'wx');
-    try {
-      const hasher = new Bun.CryptoHasher('sha256');
-      const chunk = Buffer.allocUnsafe(COPY_CHUNK_BYTES);
-      let copied = 0;
-      for (;;) {
-        const { bytesRead } = await input.read(chunk, 0, COPY_CHUNK_BYTES);
-        if (bytesRead === 0) break;
-        const bytes = chunk.subarray(0, bytesRead);
-        hasher.update(bytes);
-        await writeAll(output, bytes);
-        copied += bytesRead;
-      }
-      // A failing card can end a read early, and the hash and the read-back would both agree.
-      if (copied !== size) {
-        throw new AppError('IO_ERROR', `read ${copied} of ${size} bytes of ${source}`);
-      }
-      // The catalogue's file hash is over mtime and size: rescanning a card relies on this to
-      // recognise what is already in the library.
-      await output.utimes(mtime, mtime);
-      await output.sync();
-      return hasher.digest('hex');
-    } finally {
-      await output.close();
-    }
-  } finally {
-    await input.close();
-  }
-}
-
-async function writeAll(output: FileHandle, bytes: Uint8Array): Promise<void> {
-  for (let written = 0; written < bytes.length;) {
-    written += (await output.write(bytes, written)).bytesWritten;
   }
 }
 

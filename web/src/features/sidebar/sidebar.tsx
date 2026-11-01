@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   Settings,
 } from 'lucide-react';
+import { importJobDone } from '../../../../src/schemas/imports';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { inMobileApp } from '../../api/transport';
 import { drawer } from '../../app/drawer.stylex';
@@ -238,7 +239,7 @@ const ImportLink = observer(function ImportLink(): JSX.Element | null {
   const store = useImportStore();
   if (inMobileApp()) return null;
   const job = store.job;
-  const done = job == null ? 0 : job.copied + job.skipped + job.failed;
+  const done = job == null ? 0 : importJobDone(job);
 
   return (
     <SidebarLink to={route(PathSegment.imports())} icon={FolderInput}>

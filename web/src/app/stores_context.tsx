@@ -219,7 +219,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
   const backup = new BackupPresenter(stores.backup, photos, toasts);
   const confirm = new ConfirmPresenter(stores.confirm);
-  const imports = new ImportPresenter(stores.imports, stores.libraries, shoots, toasts, confirm);
+  const imports = new ImportPresenter(stores.imports, shoots, toasts, confirm);
   const events = new EventsPresenter(
     photos,
     libraries,

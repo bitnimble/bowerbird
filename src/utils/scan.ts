@@ -178,10 +178,17 @@ export interface TreeScan {
 // dotfolder to skip - it is the tree being walked (§9.1.1).
 export async function scanLibraryTree(
   scope: LibraryScope,
-  startDir = '',
-  onDir?: () => void,
-  descend: (relDir: string) => boolean = (relDir) => isDirInScope(scope, relDir),
-  skipUnreadable = false,
+  {
+    startDir = '',
+    onDir,
+    descend = (relDir) => isDirInScope(scope, relDir),
+    skipUnreadable = false,
+  }: {
+    startDir?: string;
+    onDir?: () => void;
+    descend?: (relDir: string) => boolean;
+    skipUnreadable?: boolean;
+  } = {},
 ): Promise<TreeScan> {
   const files: ScannedFile[] = [];
   const dirs: ScannedDir[] = [];
@@ -196,7 +203,11 @@ export async function scanLibraryTree(
       (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
         // Never for a library: the diff reads a subtree absent from the walk as its rows gone missing.
-        if (skipUnreadable && (err.code === 'EACCES' || err.code === 'EPERM') && absDir !== absStart)
+        if (
+          skipUnreadable &&
+          (err.code === 'EACCES' || err.code === 'EPERM') &&
+          absDir !== absStart
+        )
           return null;
         throw err;
       },

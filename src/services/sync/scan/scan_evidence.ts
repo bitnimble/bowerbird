@@ -134,7 +134,7 @@ export async function collectEvidence(
     dirs = await reconciler.scopedDirs(scope, scopePaths ?? []);
   } else {
     dbPhotos = photoScan.listForScan(libraryId);
-    ({ files, dirs, complete: walkComplete } = await scanLibraryTree(scope, '', keepLease));
+    ({ files, dirs, complete: walkComplete } = await scanLibraryTree(scope, { onDir: keepLease }));
   }
 
   // A merged move the drain above could not make - a file the editor holds
