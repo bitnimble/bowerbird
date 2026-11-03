@@ -2,7 +2,6 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Timer } from 'lucide-react';
-import { type Library } from '../../../../src/schemas/libraries';
 import {
   isOptional,
   RENDER_STAGES,
@@ -11,7 +10,7 @@ import {
   type RenderStage,
   type RenderedRendition,
 } from '../../../../src/schemas/render_stages';
-import { useAppSettingsStore, usePresenters } from '../../app/stores_context';
+import { useAppSettingsStore, useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { renditionLabel } from '../photos/renditions';
 import { DENOISERS } from '../raw_edit/denoisers';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
@@ -63,28 +62,32 @@ const RENDITION_TABS: Option<RenderedRendition>[] = RENDERED_RENDITIONS.map((ren
 }));
 
 /**
- * What this library's renders run, stage by stage, and what each one costs here.
+ * What renders run, stage by stage, and what each one costs here.
+ *
+ * Stored per library, shown as one setting: this reads the first library, or the defaults with no
+ * library to read, and a change goes to every library.
  *
  * Per rendition because the two are looked at differently: `full` is what the viewer opens and
- * `max` is what gets pixel-peeped, so a library may keep the camera match on one and trade it away
- * on the other. A stage with no checkbox is one a render cannot do without.
+ * `max` is what gets pixel-peeped, so the camera match can stay on for one and be traded away on
+ * the other. A stage with no checkbox is one a render cannot do without.
  *
- * What the stages run is this library's; what they cost is the machine's, measured once against a
- * full-frame sensor rather than once per catalogue.
+ * What the stages cost is the machine's, measured once against a full-frame sensor rather than once
+ * per catalogue.
  */
-export const RenderStagesPanel = observer(function RenderStagesPanel({
-  library,
-}: {
-  library: Library;
-}): JSX.Element {
+export const RenderStagesPanel = observer(function RenderStagesPanel(): JSX.Element | null {
   const [rendition, setRendition] = useState<RenderedRendition>('full');
   const settings = useAppSettingsStore();
+  const store = useLibrariesStore();
   const { appSettings, libraries } = usePresenters();
   useEffect(() => void appSettings.loadRenderTimings(), [appSettings]);
-  const measured = settings.timingOf(rendition, library.denoiser);
-  const ms = stageMs(rendition, library.denoiser, measured);
-  const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-  const busy = settings.isBenchmarking(rendition, library.denoiser);
+  const current = store.libraries[0] ?? store.defaults;
+  if (current == null) return null;
+
+  const noLibraries = store.libraries.length === 0;
+  const measured = settings.timingOf(rendition, current.denoiser);
+  const ms = stageMs(rendition, current.denoiser, measured);
+  const skipped = rendition === 'full' ? current.render_skip_full : current.render_skip_max;
+  const busy = settings.isBenchmarking(rendition, current.denoiser);
   const cameraMatching = settings.settings?.match_embedded_jpeg !== false;
   const runs = (stage: RenderStage): boolean =>
     (!['lens', 'colour'].includes(stage) || cameraMatching) &&
@@ -92,7 +95,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({
   const total = RENDER_STAGES.filter(runs).reduce((sum, stage) => sum + ms[stage], 0);
 
   return (
-    <Panel title={SettingsStrings.renderStages()}>
+    <Panel>
       <SegmentedControl
         as="radio"
         stretch
@@ -109,16 +112,18 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({
           stage={stage}
           ms={ms[stage]}
           disabledReason={
-            (stage === 'lens' || stage === 'colour') && !cameraMatching
-              ? SettingsStrings.cameraMatchingOff()
-              : stage === 'colour' && skipped.includes('lens')
-                ? SettingsStrings.colourNeedsLens()
-                : undefined
+            noLibraries && isOptional(stage)
+              ? SettingsStrings.renderStagesNeedLibrary()
+              : (stage === 'lens' || stage === 'colour') && !cameraMatching
+                ? SettingsStrings.cameraMatchingOff()
+                : stage === 'colour' && skipped.includes('lens')
+                  ? SettingsStrings.colourNeedsLens()
+                  : undefined
           }
           runs={runs(stage)}
           onChange={
             isOptional(stage)
-              ? (next) => void libraries.setRenderStage(library.id, rendition, stage, next)
+              ? (next) => void libraries.setRenderStage(rendition, stage, next)
               : undefined
           }
           control={
@@ -126,8 +131,9 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({
               <Select
                 label={RawEditPanelStrings.denoiser()}
                 options={DENOISERS}
-                value={library.denoiser}
-                onChange={(next) => void libraries.setDenoiser(library.id, next)}
+                value={current.denoiser}
+                disabled={noLibraries}
+                onChange={(next) => void libraries.setDenoiser(next)}
               />
             ) : undefined
           }
@@ -150,7 +156,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({
           disabled={busy}
           aria-busy={busy}
           tooltip={busy ? SettingsStrings.measureStagesBusy() : undefined}
-          onClick={() => void appSettings.benchmarkRender(rendition, library.denoiser)}
+          onClick={() => void appSettings.benchmarkRender(rendition, current.denoiser)}
         >
           <Timer size={ICON} />
           {busy ? SettingsStrings.measuringStages() : SettingsStrings.measureStages()}

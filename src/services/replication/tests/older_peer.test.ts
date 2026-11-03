@@ -36,8 +36,6 @@ describe('a change from a peer that predates a column', () => {
           include_subfolders: 1,
           bin_name: 'Bin',
           auto_stack: 1,
-          auto_stack_similarity: 0.78,
-          auto_stack_window_seconds: 60,
         },
         stamps: { library: arriving },
       },
@@ -75,5 +73,28 @@ describe('a change from a peer that predates a column', () => {
       bin_name: string | null;
     };
     expect(row.bin_name).toBeNull();
+  });
+
+  it('ignores a column this peer no longer replicates', () => {
+    const peer = makePeer('newer');
+    applyChanges(peer.db, LIB, [
+      {
+        kind: 'library' as const,
+        rowId: LIB,
+        deleted: false as const,
+        sidecar: null,
+        row: {
+          id: LIB,
+          name: 'Renamed elsewhere',
+          auto_stack_similarity: 0.5,
+          auto_stack_window_seconds: 5,
+        },
+        stamps: { library: stamp(peer.db) },
+      },
+    ]);
+
+    expect(peer.db.query('SELECT name FROM libraries WHERE id = ?').get(LIB)).toEqual({
+      name: 'Renamed elsewhere',
+    });
   });
 });

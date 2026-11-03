@@ -14,6 +14,7 @@ export function Select<T extends string>({
   onChange,
   label,
   icon,
+  disabled = false,
   style,
 }: {
   options: Option<T>[];
@@ -26,12 +27,14 @@ export function Select<T extends string>({
   label: string;
   /** Drawn in place of the value, for a control that can spend a square and not a sentence. */
   icon?: ReactNode;
+  disabled?: boolean;
   /** On the trigger. */
   style?: stylex.StyleXStyles;
 }): JSX.Element {
   const selectedIndex = options.findIndex((option) => option.value === value);
   return (
     <BaseSelect.Root
+      disabled={disabled}
       value={value}
       onValueChange={(next) => next != null && onChange(next as T)}
       // Without this the trigger renders the raw value, not the label.

@@ -11,7 +11,7 @@ import { StacksService } from '../stacks_service';
 
 const LIBRARY = 'lib00001';
 
-function context(): {
+function context(takenAtSeconds = [0, 1, 120, 121]): {
   db: Database;
   activity: LibraryActivity;
   stacks: StacksService;
@@ -26,7 +26,7 @@ function context(): {
   );
   const descriptor = Buffer.alloc(descriptorSize());
   descriptor[0] = descriptorFormat();
-  for (const [index, seconds] of [0, 1, 120, 121].entries()) {
+  for (const [index, seconds] of takenAtSeconds.entries()) {
     const taken = new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
     db.query(
       `INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor)
@@ -44,6 +44,17 @@ function context(): {
   );
   return { db, activity, stacks, repository };
 }
+
+test('frames 60 seconds apart stack and frames 61 seconds apart do not', async () => {
+  const { db, stacks, repository } = context([0, 60, 121]);
+  try {
+    expect(await stacks.detectAsync(LIBRARY)).toBe(1);
+    const [stack] = repository.autoStackIds(LIBRARY);
+    expect(repository.memberIds(stack!, 'taken_asc')).toEqual(['photo000', 'photo001']);
+  } finally {
+    db.close();
+  }
+});
 
 test('manual detection stays visible while a worker groups, then clears after the result', async () => {
   const { db, activity, stacks, repository } = context();
@@ -109,28 +120,3 @@ test('a descriptor rebuilt during detection is compared before its stack is writ
     db.close();
   }
 });
-
-for (const change of [
-  { column: 'auto_stack_similarity', value: 0.99, stackCount: 2, members: [2, 2] },
-  { column: 'auto_stack_window_seconds', value: 180, stackCount: 1, members: [4] },
-]) {
-  test(`${change.column} changed during detection is applied to coalesced requests`, async () => {
-    const { db, activity, stacks, repository } = context();
-    try {
-      const first = stacks.detectAsync(LIBRARY);
-      db.query(`UPDATE libraries SET ${change.column} = ? WHERE id = ?`).run(change.value, LIBRARY);
-      const second = stacks.detectAsync(LIBRARY);
-      expect(await first).toBe(change.stackCount);
-      expect(await second).toBe(change.stackCount);
-      expect(
-        repository
-          .autoStackIds(LIBRARY)
-          .map((id) => repository.memberIds(id, 'taken_desc').length)
-          .sort(),
-      ).toEqual(change.members);
-      expect(activity.current(LIBRARY)).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-}

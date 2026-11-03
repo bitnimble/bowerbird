@@ -29,8 +29,6 @@ interface LibraryConfigurationRow {
   include_subfolders: number;
   include_non_raw: number;
   auto_stack: number;
-  auto_stack_similarity: number;
-  auto_stack_window_seconds: number;
   last_synced_at: string | null;
 }
 
@@ -54,7 +52,7 @@ const ORIGINAL_ON_PEER = `(
 // the Bin has its own count in the UI.
 const COLUMNS = `l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
   l.render_skip_full, l.render_skip_max, l.denoiser,
-  l.include_subfolders, l.include_non_raw, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds,
+  l.include_subfolders, l.include_non_raw, l.auto_stack,
   l.last_synced_at`;
 const SELECT = `SELECT ${COLUMNS},
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
@@ -241,22 +239,6 @@ export class LibrariesRepository {
     );
   }
 
-  setAutoStackSimilarity(id: string, similarity: number): boolean {
-    return (
-      this.db
-        .query('UPDATE libraries SET auto_stack_similarity = ?, stamp = ? WHERE id = ?')
-        .run(similarity, stamp(this.db), id).changes > 0
-    );
-  }
-
-  setAutoStackWindow(id: string, seconds: number): boolean {
-    return (
-      this.db
-        .query('UPDATE libraries SET auto_stack_window_seconds = ?, stamp = ? WHERE id = ?')
-        .run(seconds, stamp(this.db), id).changes > 0
-    );
-  }
-
   setReadOnly(id: string, readOnly: boolean): boolean {
     return (
       this.db.query('UPDATE libraries SET read_only = ? WHERE id = ?').run(readOnly ? 1 : 0, id)
@@ -320,8 +302,6 @@ function mapConfiguration(row: LibraryConfigurationRow): LibraryConfiguration {
     include_subfolders: row.include_subfolders === 1,
     include_non_raw: row.include_non_raw === 1,
     auto_stack: row.auto_stack === 1,
-    auto_stack_similarity: row.auto_stack_similarity,
-    auto_stack_window_seconds: row.auto_stack_window_seconds,
     last_synced_at: row.last_synced_at,
   };
 }

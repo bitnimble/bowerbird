@@ -86,7 +86,7 @@ renders unwanted folders. It remains editable in per-library Settings.
 
 A new shoot's dialog asks for its name, an optional parent shoot and its ordering (§18.3.4).
 
-The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. The libraries come first, each a tile whose own settings open in a dialog at an address of its own (`/settings/libraries/<id>`, and `/sync` after it to open at Synced devices), then how photos open; the encoder sizes, qualities, HDR grade and server knobs are numbers tuned once, so they sit behind the later tabs - Rendering, Scanning, System - which lay their groups out in two columns wherever the page is wide enough. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
+The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. The libraries come first, each a tile whose own settings open in a dialog at an address of its own (`/settings/libraries/<id>`, and `/sync` after it to open at Synced devices), then how photos open; render stages, encoder sizes, qualities, HDR grade and server knobs are tuned once, so they sit behind the later tabs - Rendering, Advanced, System - which lay their groups out in two columns wherever the page is wide enough. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
 
 No title bar: the sidebar identifies the library, preserving photograph height.
 

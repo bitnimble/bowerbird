@@ -219,8 +219,6 @@ export const REPLICATED_ENTITIES: readonly ReplicatedEntity[] = [
         'include_non_raw',
         'bin_name',
         'auto_stack',
-        'auto_stack_similarity',
-        'auto_stack_window_seconds',
       ],
     }),
   },

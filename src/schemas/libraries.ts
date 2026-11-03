@@ -77,17 +77,8 @@ export const LibrarySchema = z.object({
   include_non_raw: z.boolean().default(false),
   // Automatic photo stacking (§19.4). Per library rather than global because one
   // catalogue may be burst-heavy sport and another a studio where every frame is
-  // deliberate, and the two want different answers. Matching the column defaults
-  // (§19.2): stacking is on, at the threshold and window the labelled folder settled on.
+  // deliberate, and the two want different answers.
   auto_stack: z.boolean().default(true),
-  // How alike two frames must be, in [0, 1]. 0.78 rather than a rounder number
-  // because that is where the labelled folder the descriptor was tuned against
-  // reproduces (§19.9).
-  auto_stack_similarity: z.number().min(0).max(1).default(0.78),
-  // How far apart two frames may be and still be considered adjacent. It gates
-  // adjacency only: a stack chains as far as it likes, bounded instead by every
-  // member matching every other.
-  auto_stack_window_seconds: z.number().int().min(1).default(60),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
   missing_photo_count: z.number().int().nonnegative(),
@@ -121,8 +112,6 @@ export const LibrarySettingsSchema = LibrarySchema.pick({
   render_skip_max: true,
   denoiser: true,
   auto_stack: true,
-  auto_stack_similarity: true,
-  auto_stack_window_seconds: true,
 }).extend({
   // A new library's default, which is on; the column's stays off for the rows made before.
   include_non_raw: CreateLibraryRequestSchema.shape.include_non_raw,
@@ -185,8 +174,6 @@ export const UpdateLibraryRequestSchema = z.object({
   include_subfolders: z.boolean().optional(),
   include_non_raw: z.boolean().optional(),
   auto_stack: z.boolean().optional(),
-  auto_stack_similarity: z.number().min(0).max(1).optional(),
-  auto_stack_window_seconds: z.number().int().min(1).optional(),
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 

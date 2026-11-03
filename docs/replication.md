@@ -159,7 +159,7 @@ requires every seed to leave every binned photo a destination.
 | `shoots`        | `shoot`: `name`, `description`, `ordering`, `parent_id`. `shoot.folder`: `folder_path`. `shoot.hidden`: `is_hidden`. Each on its own stamp                                          | `folder_dev`, `folder_ino`, `folder_birthtime` (disk identity is per-disk)                                                                                                                          |
 | `folder_rules`  | one stamp per row                                                                                                                                                                   | none                                                                                                                                                                                                |
 | `shoot_banners` | one stamp per row                                                                                                                                                                   | none                                                                                                                                                                                                |
-| `libraries`     | one stamp over `name`, `ordering`, `include_subfolders`, `bin_name`, `auto_stack`, `auto_stack_similarity`, `auto_stack_window_seconds`                                             | `root_path`, `read_only`, `bin_dev/ino/birthtime`, `last_synced_at`, `rendition_source`, `rendition_hdr` (what to build is a per-device choice; a laptop may build SDR where the server builds HDR) |
+| `libraries`     | one stamp over `name`, `ordering`, `include_subfolders`, `bin_name`, `auto_stack`                                             | `root_path`, `read_only`, `bin_dev/ino/birthtime`, `last_synced_at`, `rendition_source`, `rendition_hdr` (what to build is a per-device choice; a laptop may build SDR where the server builds HDR) |
 | `labels`        | `label`: `name`, `colour`. `label.position`: `position`. Each on its own stamp, so a reorder, which rewrites every label's position at once, cannot clobber a rename made elsewhere | none                                                                                                                                                                                                |
 | `photo_labels`  | one stamp per row, like `stack_members`: the row _is_ the labelling, and a removal is a tombstone                                                                                   | none                                                                                                                                                                                                |
 | `settings`      | not replicated: per-install (HDR viewing on a device that can't, backup schedule)                                                                                                   | everything                                                                                                                                                                                          |
@@ -931,8 +931,10 @@ can rebuild it (§7.9).
 
 Each peer records the build the other last named in a handshake, refused ones included, so both
 ends say which device to update. A change an older build's rows cannot be merged under - a
-column renamed, removed, or given a new meaning - is a breaking protocol change, as is any change
-to stamp widths: it bumps the protocol version, and the handshake refuses both directions.
+column renamed or given a new meaning - is a breaking protocol change, as is any change to stamp
+widths: it bumps the protocol version, and the handshake refuses both directions. A column removed
+is not one, provided nothing still depends on it: apply reads the columns of its own units, so an
+older build's value for it is ignored.
 
 ### 8.6 Visibility of failure
 

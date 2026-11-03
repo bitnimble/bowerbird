@@ -161,8 +161,8 @@ export function replicatedRows(db: Database): Map<string, string> {
   // this the rename ran on every seed and nothing ever looked at the result.
   dump(
     'library',
-    `SELECT id, name, ordering, bin_name, include_subfolders, auto_stack,
-            auto_stack_similarity, auto_stack_window_seconds, rendition_source, rendition_hdr, stamp
+    `SELECT id, name, ordering, bin_name, include_subfolders, include_non_raw, auto_stack,
+            rendition_source, rendition_hdr, stamp
        FROM libraries ORDER BY id`,
     (row) => String(row.id),
   );
@@ -269,8 +269,8 @@ export function replicatedState(db: Database): string {
   dump('photo_edit_history', 'SELECT photo_id, deltas FROM photo_edit_history ORDER BY photo_id');
   dump(
     'libraries',
-    `SELECT id, name, ordering, bin_name, include_subfolders, auto_stack,
-            auto_stack_similarity, auto_stack_window_seconds, rendition_source, rendition_hdr, stamp
+    `SELECT id, name, ordering, bin_name, include_subfolders, include_non_raw, auto_stack,
+            rendition_source, rendition_hdr, stamp
        FROM libraries ORDER BY id`,
   );
   dump(

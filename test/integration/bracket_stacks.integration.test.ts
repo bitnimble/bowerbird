@@ -91,17 +91,19 @@ describe('bracket stacks', () => {
     expect(stackOf(before)?.id).toBe(stackOf(after)?.id);
   });
 
-  test('a looser likeness pass leaves the bracket stack exactly as it was', () => {
+  test('a photo arriving beside a bracket stack stacks without touching it', () => {
     const burst = [1, 2, 3, 4].map((index) => pixelShift(index, index, index));
-    insertPhoto(9, 5);
+    const lone = insertPhoto(9, 5);
     stacks.detect(LIBRARY);
     const stack = stackOf(burst[0]!)!;
 
-    db.query('UPDATE libraries SET auto_stack_similarity = 0 WHERE id = ?').run(LIBRARY);
+    const late = insertPhoto(10, 6);
     stacks.detect(LIBRARY);
 
     expect(stackOf(burst[0]!)).toEqual(stack);
     expect(repo.memberIds(stack.id, ORDERING)).toHaveLength(4);
+    expect(stackOf(late)?.origin).toBe('auto');
+    expect(stackOf(late)?.id).toBe(stackOf(lone)?.id);
   });
 
   test('a second pass over a settled library writes nothing', () => {

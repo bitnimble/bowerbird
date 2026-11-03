@@ -43,8 +43,6 @@ export const libraries = sqliteTable(
     renderSkipMax: text('render_skip_max').notNull().default(''),
     denoiser: text('denoiser').notNull().default('galosh'),
     autoStack: integer('auto_stack').notNull().default(1),
-    autoStackSimilarity: real('auto_stack_similarity').notNull().default(0.78),
-    autoStackWindowSeconds: integer('auto_stack_window_seconds').notNull().default(60),
     stamp: text('stamp'),
   },
   (t) => [

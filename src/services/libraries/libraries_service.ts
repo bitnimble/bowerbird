@@ -347,10 +347,6 @@ export class LibrariesService {
     if (updates.include_non_raw != null)
       this.repo.setIncludeNonRaw(libraryId, updates.include_non_raw);
     if (updates.auto_stack != null) this.repo.setAutoStack(libraryId, updates.auto_stack);
-    if (updates.auto_stack_similarity != null)
-      this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
-    if (updates.auto_stack_window_seconds != null)
-      this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
   }
 
   // The new root may not exist yet: the folder can be moved there afterwards.

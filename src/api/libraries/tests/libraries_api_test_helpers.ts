@@ -26,8 +26,6 @@ export const library: Library = {
   include_subfolders: true,
   include_non_raw: false,
   auto_stack: true,
-  auto_stack_similarity: 0.78,
-  auto_stack_window_seconds: 60,
   last_synced_at: null,
   photo_count: 0,
   missing_photo_count: 0,

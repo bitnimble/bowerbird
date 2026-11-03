@@ -21,28 +21,47 @@ const LIBRARY = {
   denoiser: 'galosh',
 } as unknown as Library;
 
+const PHONE = {
+  id: 'phone',
+  render_skip_full: ['dust'],
+  render_skip_max: ['dust'],
+  denoiser: 'pmrid',
+} as unknown as Library;
+
+function presenterOver(
+  libraries: Library[],
+  update: typeof librariesApi.update,
+): { presenter: LibrariesPresenter; store: LibrariesStore } {
+  const store = new LibrariesStore();
+  store.libraries = libraries;
+  librariesApi.update = update;
+  librariesApi.list = () => Promise.resolve(libraries);
+  librariesApi.getDefaults = () => Promise.resolve({} as never);
+  return { presenter: new LibrariesPresenter(store, { showError: () => {} } as never), store };
+}
+
+async function sentToEach(
+  libraries: Library[],
+  rendition: RenderedRendition,
+  stage: OptionalStage,
+  runs: boolean,
+): Promise<Record<string, UpdateLibraryRequest>> {
+  const asked: Record<string, UpdateLibraryRequest> = {};
+  const { presenter } = presenterOver(libraries, (id, body) => {
+    asked[id] = body;
+    return Promise.resolve(LIBRARY);
+  });
+  await presenter.setRenderStage(rendition, stage, runs);
+  return asked;
+}
+
 async function sent(
   library: Library,
   rendition: RenderedRendition,
   stage: OptionalStage,
   runs: boolean,
-): Promise<UpdateLibraryRequest> {
-  const store = new LibrariesStore();
-  store.libraries = [library];
-  let asked: UpdateLibraryRequest = {};
-  librariesApi.update = (_id, body) => {
-    asked = body;
-    return Promise.resolve(library);
-  };
-  librariesApi.list = () => Promise.resolve([library]);
-  librariesApi.getDefaults = () => Promise.resolve({} as never);
-  await new LibrariesPresenter(store, { showError: () => {} } as never).setRenderStage(
-    library.id,
-    rendition,
-    stage,
-    runs,
-  );
-  return asked;
+): Promise<UpdateLibraryRequest | undefined> {
+  return (await sentToEach([library], rendition, stage, runs))[library.id];
 }
 
 test('unticking a stage adds it to that rendition alone', async () => {
@@ -72,4 +91,52 @@ test('disabling lens also disables colour and colour cannot enable it', async ()
   expect(await sent(LIBRARY, 'full', 'colour', true)).toEqual({
     render_skip_full: ['lens', 'colour'],
   });
+});
+
+test('a stage change reaches every library and leaves the stages each already differs on', async () => {
+  expect(await sentToEach([LIBRARY, PHONE], 'full', 'sharpen', false)).toEqual({
+    lib: { render_skip_full: ['lens', 'colour', 'sharpen'] },
+    phone: { render_skip_full: ['dust', 'sharpen'] },
+  });
+});
+
+test('a second tick before the first has saved keeps both', async () => {
+  let held = LIBRARY;
+  const { presenter } = presenterOver([LIBRARY], (_id, body) => {
+    held = { ...held, ...body } as Library;
+    return Promise.resolve(held);
+  });
+  librariesApi.list = () => Promise.resolve([held]);
+
+  await Promise.all([
+    presenter.setRenderStage('max', 'denoise', false),
+    presenter.setRenderStage('max', 'sharpen', false),
+  ]);
+
+  expect(held.render_skip_max).toEqual(['denoise', 'sharpen']);
+});
+
+test('a denoiser change reaches every library', async () => {
+  const asked: Record<string, UpdateLibraryRequest> = {};
+  const { presenter } = presenterOver([LIBRARY, PHONE], (id, body) => {
+    asked[id] = body;
+    return Promise.resolve(LIBRARY);
+  });
+
+  await presenter.setDenoiser('upscaler');
+
+  expect(asked).toEqual({ lib: { denoiser: 'upscaler' }, phone: { denoiser: 'upscaler' } });
+});
+
+test('one library refusing still writes the rest and says what went wrong', async () => {
+  const asked: string[] = [];
+  const { presenter, store } = presenterOver([LIBRARY, PHONE], (id) => {
+    asked.push(id);
+    return id === 'lib' ? Promise.reject(new Error('Library is busy.')) : Promise.resolve(PHONE);
+  });
+
+  await presenter.setDenoiser('pmrid');
+
+  expect(asked).toEqual(['lib', 'phone']);
+  expect(store.error).toBe('Library is busy.');
 });

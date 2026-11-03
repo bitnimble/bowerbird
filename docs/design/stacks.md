@@ -52,10 +52,10 @@ both together rather than a `CHECK` spanning them, because a library delete
 cascades `stacks` and `photos` in an order SQLite does not define and such a
 constraint would fire mid-cascade.
 
-On `libraries`: `auto_stack`, `auto_stack_similarity` (0.78) and
-`auto_stack_window_seconds` (60). Per library because one catalogue may be
+On `libraries`: `auto_stack`. Per library because one catalogue may be
 burst-heavy sport where the stack is the unit of work and another a studio where
-every frame is deliberate.
+every frame is deliberate. The likeness threshold (0.78) and window (60 seconds)
+are constants in `stacks_service.ts`.
 
 ### 19.3 The descriptor (`native/stacks/src/lib.rs`)
 
@@ -128,10 +128,10 @@ already generates descriptors.
 #### 19.4.3 The rule
 
 Candidates are walked once in time order, **within a shoot**, growing one stack
-at a time. The next photo joins when **both** hold: it is no more than
-`auto_stack_window_seconds` after the photo before it, _not_ after the stack's
-first photo; and it clears `auto_stack_similarity` against **every** photo
-already in the stack, not merely against its neighbour.
+at a time. The next photo joins when **both** hold: it is no more than the
+window after the photo before it, _not_ after the stack's first photo; and it
+clears the threshold against **every** photo already in the stack, not merely
+against its neighbour.
 
 A stack never spans two shoots. A shoot lists the whole of one that reaches out
 of it, dimming the members filed elsewhere (§19.6.1), and no gesture on that page

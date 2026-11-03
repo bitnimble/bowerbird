@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   CircleStop,
@@ -53,8 +53,7 @@ import { Row } from '../../ui/row';
 import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
-import { RenderStagesPanel } from './render_stages_panel';
-import { resetTo, SettingRow, settingStyles, showNumber } from './settings_controls';
+import { resetTo, SettingRow, settingStyles } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
 
 const styles = stylex.create({
@@ -273,20 +272,17 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
                 <SyncedDevicesPanel library={library} />
               </div>
             </div>
-            <div>
-              <RenderStagesPanel library={library} />
-              {!thin && (
-                <div
-                  ref={backupSection}
-                  role="region"
-                  aria-label={BackupStrings.heading()}
-                  tabIndex={-1}
-                  {...stylex.props(styles.focusTarget)}
-                >
-                  <BackupPanel library={library} />
-                </div>
-              )}
-            </div>
+            {!thin && (
+              <div
+                ref={backupSection}
+                role="region"
+                aria-label={BackupStrings.heading()}
+                tabIndex={-1}
+                {...stylex.props(styles.focusTarget)}
+              >
+                <BackupPanel library={library} />
+              </div>
+            )}
           </DialogColumns>
         </DialogBody>
       </Modal>
@@ -617,89 +613,7 @@ const StackSettings = observer(function StackSettings({
           onChange={(e) => void libraries.setAutoStack(library.id, e.currentTarget.checked)}
         />
       </SettingRow>
-
-      {library.auto_stack && (
-        <>
-          <LibraryNumberField
-            libraryId={library.id}
-            field="auto_stack_similarity"
-            label={SettingsStrings.autoStackSimilarity()}
-            min={0}
-            max={1}
-            step={0.01}
-            onCommit={(next) => libraries.setAutoStackSimilarity(library.id, next)}
-          />
-
-          <LibraryNumberField
-            libraryId={library.id}
-            field="auto_stack_window_seconds"
-            label={SettingsStrings.autoStackWindow()}
-            suffix="s"
-            hint={SettingsStrings.autoStackWindowHint()}
-            min={1}
-            onCommit={(next) => libraries.setAutoStackWindow(library.id, next)}
-          />
-        </>
-      )}
     </Panel>
-  );
-});
-
-// Same draft/commit shape as NumberSetting: typing "0." must not fire a write of 0
-// mid-keystroke, and a refused value snaps back to whatever the library still holds.
-const LibraryNumberField = observer(function LibraryNumberField({
-  libraryId,
-  field,
-  label,
-  hint,
-  min,
-  max,
-  step,
-  suffix,
-  onCommit,
-}: {
-  libraryId: string;
-  field: 'auto_stack_similarity' | 'auto_stack_window_seconds';
-  label: string;
-  hint?: ReactNode;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-  onCommit: (next: number) => void | Promise<void>;
-}): JSX.Element {
-  const store = useLibrariesStore();
-  const value = store.byId.get(libraryId)?.[field] ?? 0;
-  const [draft, setDraft] = useState(showNumber(value, step));
-
-  useEffect(() => setDraft(showNumber(value, step)), [value, step]);
-
-  async function commit(): Promise<void> {
-    const next = Number(draft);
-    if (draft.trim() !== '' && Number.isFinite(next) && next !== value) await onCommit(next);
-    setDraft(showNumber(store.byId.get(libraryId)?.[field] ?? value, step));
-  }
-
-  return (
-    <SettingRow
-      label={label}
-      hint={hint}
-      onReset={resetTo(value, store.defaults?.[field], (v) => void onCommit(v))}
-    >
-      <TextField
-        style={settingStyles.field}
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        label={label}
-        suffix={suffix}
-        value={draft}
-        onChange={setDraft}
-        onBlur={() => void commit()}
-        onKeyDown={(e) => e.key === 'Enter' && void commit()}
-      />
-    </SettingRow>
   );
 });
 

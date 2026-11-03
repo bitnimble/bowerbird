@@ -50,6 +50,7 @@ import { SegmentedControl } from '../../ui/segmented_control';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { LibrariesError, LibraryList } from './library_list';
+import { RenderStagesPanel } from './render_stages_panel';
 import {
   GroupTitle,
   NumberSetting,
@@ -752,11 +753,27 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
   );
 });
 
-type Tab = 'libraries' | 'general' | 'advanced' | 'system';
+function RenderingTab(): JSX.Element {
+  return (
+    <SettingsColumns
+      left={
+        <>
+          <LibrariesError />
+          <GroupTitle>{SettingsStrings.renderStages()}</GroupTitle>
+          <RenderStagesPanel />
+        </>
+      }
+      right={null}
+    />
+  );
+}
+
+type Tab = 'libraries' | 'general' | 'rendering' | 'advanced' | 'system';
 
 const TAB_OPTIONS: Option<Tab>[] = [
   { value: 'libraries', label: SettingsStrings.libraries() },
   { value: 'general', label: SettingsStrings.groupGeneral() },
+  { value: 'rendering', label: SettingsStrings.groupRendering() },
   { value: 'advanced', label: SettingsStrings.groupAdvanced() },
   { value: 'system', label: SettingsStrings.groupSystem() },
 ];
@@ -836,6 +853,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
       )}
 
       {tab === 'general' && <GeneralTab />}
+      {tab === 'rendering' && <RenderingTab />}
       {tab === 'advanced' && <AdvancedTab />}
       {tab === 'system' && <SystemTab />}
     </Page>

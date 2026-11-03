@@ -54,6 +54,7 @@ export const SettingsStrings = {
 
   renderStages: () => 'Render stages',
   renderStagesFor: () => 'Rendition to set stages for',
+  renderStagesNeedLibrary: () => 'Add a library to change this',
   stageRead: () => 'Read',
   stageDenoise: () => 'Denoise',
   // The one row naming what the stage does rather than what it is called: "demosaic" is the
@@ -76,9 +77,6 @@ export const SettingsStrings = {
   stacks: () => 'Stacks',
   autoStack: () => 'Group similar photos automatically',
   autoStackHint: () => 'Takes effect after the next library scan',
-  autoStackSimilarity: () => 'Similarity threshold',
-  autoStackWindow: () => 'Similarity window',
-  autoStackWindowHint: () => 'Maximum time between frames to consider them similar',
 
   libraryJobs: () => 'Library jobs',
   jobBusy: () => 'A job is already running',
@@ -220,6 +218,7 @@ export const SettingsStrings = {
   /** The mobile app's, which has no folder to pick. */
   noPhoneLibrariesHint: () => "Add your phone's photos, or sync a library from another device.",
   groupGeneral: () => 'General',
+  groupRendering: () => 'Rendering',
   groupAdvanced: () => 'Advanced',
   groupSystem: () => 'System',
 };

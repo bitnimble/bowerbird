@@ -32,6 +32,31 @@ function beforePhotoLinks(db: Database): void {
 }
 
 describe('opening a catalogue', () => {
+  it('drops the stack tuning columns and keeps the rest of the library', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0022_drop_stack_tuning'");
+    db.exec('ALTER TABLE libraries ADD COLUMN auto_stack_similarity REAL NOT NULL DEFAULT 0.78');
+    db.exec(
+      'ALTER TABLE libraries ADD COLUMN auto_stack_window_seconds INTEGER NOT NULL DEFAULT 60',
+    );
+    db.query(
+      'INSERT INTO libraries (id, root_path, name, auto_stack, auto_stack_similarity) VALUES (?, ?, ?, ?, ?)',
+    ).run('tuned', '/tuned', 'Tuned', 0, 0.5);
+
+    runMigrations(db);
+
+    expect(db.query('SELECT * FROM libraries WHERE id = ?').get('tuned')).toMatchObject({
+      name: 'Tuned',
+      auto_stack: 0,
+    });
+    const columns = (db.query('PRAGMA table_info(libraries)').all() as { name: string }[]).map(
+      (column) => column.name,
+    );
+    expect(columns).not.toContain('auto_stack_similarity');
+    expect(columns).not.toContain('auto_stack_window_seconds');
+  });
+
   it('preserves disabled camera matching across the render-stage migration', () => {
     const db = new Database(':memory:');
     runMigrations(db);

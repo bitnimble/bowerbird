@@ -16,6 +16,9 @@ import type { StackCandidate, StacksRepository } from './stacks_repository';
 
 const log = new Logger('stacks');
 
+const STACK_SIMILARITY_THRESHOLD = 0.78;
+const STACK_WINDOW_SECONDS = 60;
+
 type GroupingInput = Parameters<RawshimCommandWorker['group']>[0] & { descriptors: Buffer[] };
 
 /**
@@ -293,7 +296,7 @@ export class StacksService {
     // of megabytes to answer a question already settled by their timestamps.
     const size = descriptorSize();
     const members: string[][] = [];
-    for (const run of runs(candidates, library.auto_stack_window_seconds)) {
+    for (const run of runs(candidates, STACK_WINDOW_SECONDS)) {
       if (run.length < 2) continue;
       const descriptors = this.stacks.descriptorsOf(
         run.map((candidate) => candidate.id),
@@ -307,8 +310,8 @@ export class StacksService {
       const groups = yield {
         descriptors: usable.map((candidate) => descriptors.get(candidate.id)!),
         timestamps: BigInt64Array.from(usable.map((candidate) => BigInt(candidate.timestamp))),
-        threshold: library.auto_stack_similarity,
-        windowSeconds: library.auto_stack_window_seconds,
+        threshold: STACK_SIMILARITY_THRESHOLD,
+        windowSeconds: STACK_WINDOW_SECONDS,
       };
       const byGroup = new Map<number, string[]>();
       for (const [index, group] of groups.entries()) {
@@ -323,12 +326,7 @@ export class StacksService {
     const made = this.stacks.transaction(() => {
       const current = this.libraries.getById(libraryId);
       if (current == null || !current.auto_stack) return 0;
-      if (
-        this.descriptorRevision.get(libraryId) !== revision ||
-        current.auto_stack_similarity !== library.auto_stack_similarity ||
-        current.auto_stack_window_seconds !== library.auto_stack_window_seconds
-      )
-        return null;
+      if (this.descriptorRevision.get(libraryId) !== revision) return null;
       const eligible = this.stacks.candidates(libraryId);
       if (
         eligible.length !== candidates.length ||

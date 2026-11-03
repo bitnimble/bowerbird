@@ -1,13 +1,14 @@
 // What the panel offers: a row per stage, a checkbox only on the ones a render can do without,
 // and a cost beside each. The tab decides which rendition's list the checkboxes read, and what a
-// stage costs is the machine's rather than this library's.
+// stage costs is the machine's rather than a library's.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
-import { type Library } from '../../../../../src/schemas/libraries';
+import { DEFAULT_LIBRARY_SETTINGS, type Library } from '../../../../../src/schemas/libraries';
 import { type RenderTiming, type RenderTimings } from '../../../../../src/schemas/render_stages';
 import { ESTIMATED_MS, ESTIMATED_PMRID_DENOISE_MS } from '../../../../../src/schemas/render_stages';
 import { DEFAULT_SETTINGS } from '../../../../../src/schemas/settings';
+import { librariesApi } from '../../../api/libraries';
 import { settingsApi } from '../../../api/settings';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
@@ -15,7 +16,8 @@ import { registerDom } from '../../../test_dom';
 registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { RenderStagesPanel } = await import('../render_stages_panel');
-const { StoresProvider, useAppSettingsStore } = await import('../../../app/stores_context');
+const { StoresProvider, useAppSettingsStore, useLibrariesStore } =
+  await import('../../../app/stores_context');
 
 restoreApiAfterTests();
 afterEach(cleanup);
@@ -35,31 +37,34 @@ beforeEach(() => {
 
 function Harness({
   matchEmbeddedJpeg,
-  library,
+  libraries,
 }: {
   matchEmbeddedJpeg: boolean;
-  library: Library;
+  libraries: Library[];
 }): JSX.Element {
   const settings = useAppSettingsStore();
+  const store = useLibrariesStore();
   useEffect(
     () =>
       runInAction(() => {
         settings.settings = { ...DEFAULT_SETTINGS, match_embedded_jpeg: matchEmbeddedJpeg };
+        store.libraries = libraries;
+        store.defaults = DEFAULT_LIBRARY_SETTINGS;
       }),
-    [matchEmbeddedJpeg, settings],
+    [matchEmbeddedJpeg, settings, store, libraries],
   );
-  return <RenderStagesPanel library={library} />;
+  return <RenderStagesPanel />;
 }
 
 async function open(
   timings: RenderTimings = {},
   matchEmbeddedJpeg = true,
-  library = LIBRARY,
+  libraries = [LIBRARY],
 ): Promise<void> {
   settingsApi.renderTimings = () => Promise.resolve(timings);
   render(
     <StoresProvider>
-      <Harness matchEmbeddedJpeg={matchEmbeddedJpeg} library={library} />
+      <Harness matchEmbeddedJpeg={matchEmbeddedJpeg} libraries={libraries} />
     </StoresProvider>,
   );
   await act(async () => {});
@@ -164,10 +169,9 @@ test("a library on the other denoiser quotes that denoiser's cost, and measures 
     return Promise.resolve(measuredNow({ denoise: 77 }));
   };
   // A GALOSH measurement says nothing about what PMRID costs here.
-  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, {
-    ...LIBRARY,
-    denoiser: 'pmrid',
-  });
+  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, [
+    { ...LIBRARY, denoiser: 'pmrid' },
+  ]);
   expect(screen.getByText('Estimated')).toBeTruthy();
   expect(screen.getByText(`~${ESTIMATED_PMRID_DENOISE_MS} ms`)).toBeTruthy();
   expect(screen.getByRole('combobox', { name: 'Denoiser' }).textContent).toContain(
@@ -179,6 +183,47 @@ test("a library on the other denoiser quotes that denoiser's cost, and measures 
   });
   expect(runs).toEqual(['full pmrid']);
   expect(screen.getByText('~77 ms')).toBeTruthy();
+});
+
+test('it shows the first library and a tick goes to all of them', async () => {
+  const asked: Record<string, unknown> = {};
+  librariesApi.update = (id, body) => {
+    asked[id] = body;
+    return Promise.resolve(LIBRARY);
+  };
+  librariesApi.list = () => Promise.reject(new Error('unused'));
+  librariesApi.getDefaults = () => Promise.reject(new Error('unused'));
+  const second = { ...LIBRARY, id: 'second', render_skip_full: ['dust'] } as Library;
+  await open({}, true, [LIBRARY, second]);
+
+  expect(ticked('Match lens')).toBe(false);
+  expect(ticked('Dust removal')).toBe(true);
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Denoise' }));
+  });
+
+  expect(asked).toEqual({
+    lib: { render_skip_full: ['denoise', 'lens', 'colour'] },
+    second: { render_skip_full: ['dust', 'denoise'] },
+  });
+});
+
+test('with no libraries it shows the defaults and nothing can be changed', async () => {
+  await open({}, true, []);
+
+  for (const checkbox of screen.getAllByRole('checkbox') as HTMLInputElement[]) {
+    expect(checkbox.checked).toBe(true);
+    expect(checkbox.disabled).toBe(true);
+  }
+  const denoiser = screen.getByRole('combobox', { name: 'Denoiser' });
+  expect(denoiser.textContent).toContain('Fast (GALOSH)');
+  expect(denoiser.hasAttribute('data-disabled')).toBe(true);
+  expect(screen.getByText('Dust removal').parentElement?.getAttribute('aria-description')).toBe(
+    'Add a library to change this',
+  );
+  expect(screen.getByText('Encode').parentElement?.getAttribute('aria-description')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Measure' }).hasAttribute('disabled')).toBe(false);
 });
 
 test('the button says it is working and refuses a second run while one is in flight', async () => {

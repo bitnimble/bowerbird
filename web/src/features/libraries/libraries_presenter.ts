@@ -44,6 +44,7 @@ function remainingCounts(snapshot: ActivitySnapshot): Map<string, number> {
 export class LibrariesPresenter {
   private readRevision = 0;
   private readonly remaining = new RemainingRates();
+  private writingAll = Promise.resolve();
 
   constructor(
     private readonly store: LibrariesStore,
@@ -198,55 +199,36 @@ export class LibrariesPresenter {
     await this.update(libraryId, { rendition_hdr });
   }
 
-  async setDenoiser(libraryId: string, denoiser: Denoiser): Promise<void> {
-    await this.update(libraryId, { denoiser });
+  async setDenoiser(denoiser: Denoiser): Promise<void> {
+    await this.updateAll(() => ({ denoiser }));
   }
 
   /**
-   * Whether that rendition runs that stage. Not retroactive, like everything else in this panel:
-   * it decides what gets built next, and rebuilding a catalogue is a job you ask for.
+   * Whether that rendition runs that stage, in every library. Not retroactive: it decides what
+   * gets built next, and rebuilding a catalogue is a job you ask for.
    *
    * Stored as what is left *out*, so the row is empty for a library that has traded nothing away
    * and a stage added in a later version arrives switched on.
    */
   async setRenderStage(
-    libraryId: string,
     rendition: RenderedRendition,
     stage: OptionalStage,
     runs: boolean,
   ): Promise<void> {
-    const library = this.store.byId.get(libraryId);
-    if (library == null) return;
-    const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-    const next = setStage(skipped, stage, runs);
-    await this.update(
-      libraryId,
-      rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next },
-    );
+    await this.updateAll((library) => {
+      const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
+      const next = setStage(skipped, stage, runs);
+      return rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next };
+    });
   }
 
-  // Automatic photo stacking (§19.4). None of the three is retroactive: they
-  // decide what the next detection pass does, and that pass runs when a sync
-  // brings something in.
+  // Automatic photo stacking (§19.4). Not retroactive: it decides what the next
+  // detection pass does, and that pass runs when a sync brings something in.
   async setAutoStack(libraryId: string, auto_stack: boolean): Promise<void> {
     await this.update(libraryId, { auto_stack });
   }
 
-  async setAutoStackSimilarity(libraryId: string, auto_stack_similarity: number): Promise<void> {
-    if (!Number.isFinite(auto_stack_similarity)) return;
-    await this.update(libraryId, {
-      auto_stack_similarity: Math.min(1, Math.max(0, auto_stack_similarity)),
-    });
-  }
-
-  async setAutoStackWindow(libraryId: string, auto_stack_window_seconds: number): Promise<void> {
-    if (!Number.isFinite(auto_stack_window_seconds)) return;
-    await this.update(libraryId, {
-      auto_stack_window_seconds: Math.max(1, Math.round(auto_stack_window_seconds)),
-    });
-  }
-
-  // The pass the three settings above decide, run now instead of at the next sync.
+  // The pass the setting above decides, run now instead of at the next sync.
   // It finishes without moving anything on this page, so the count is the only sign
   // it ran at all.
   async detectStacks(libraryId: string): Promise<void> {
@@ -319,6 +301,24 @@ export class LibrariesPresenter {
       return;
     }
     await this.load();
+  }
+
+  private updateAll(bodyFor: (library: Library) => UpdateLibraryRequest): Promise<void> {
+    // One at a time: a body built before the last write reloads sends a skip list missing its stage.
+    this.writingAll = this.writingAll.then(() => this.writeAll(bodyFor));
+    return this.writingAll;
+  }
+
+  private async writeAll(bodyFor: (library: Library) => UpdateLibraryRequest): Promise<void> {
+    const results = await Promise.allSettled(
+      this.store.libraries.map((library) => librariesApi.update(library.id, bodyFor(library))),
+    );
+    // Before the failure, because a load clears the error.
+    await this.load();
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failed != null) this.fail(describe(failed.reason));
   }
 
   async remove(libraryId: string): Promise<void> {
