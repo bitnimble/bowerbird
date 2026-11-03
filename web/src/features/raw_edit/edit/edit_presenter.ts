@@ -72,6 +72,7 @@ export class EditPresenter {
     this.store.asShot = null;
     this.store.libraryDenoiser = 'galosh';
     this.store.upscalable = true;
+    this.store.imported = null;
     this.openedAt = null;
     this.written = false;
   }
@@ -81,6 +82,7 @@ export class EditPresenter {
     this.openedAt = checkpoint;
     this.store.libraryDenoiser = checkpoint?.library_denoiser ?? 'galosh';
     this.store.upscalable = checkpoint?.upscalable ?? true;
+    this.store.imported = checkpoint?.imported ?? null;
   }
 
   @action.bound
@@ -200,12 +202,16 @@ export class EditPresenter {
     this.settle(cameraMatchReset(tone));
   }
 
-  /** Fills the camera match into a photo that opened with no document, or one awaiting it. */
+  /**
+   * Fills the camera match into a photo that opened with no document, or one awaiting it, where
+   * its colour profile is the camera's.
+   */
   async applyCameraMatch(tone: CameraTone): Promise<void> {
     const photoId = this.photoId;
     const doc = this.store.doc;
     if (photoId == null || doc == null) return;
     if (this.openedAt?.rev !== 0 && !doc.awaitsCameraMatch) return;
+    if (!doc.lensCorrection || doc.colourProfile !== 'matched') return;
     // Locally first, or a slider moved during the write is saved over the unmatched document.
     this.adopt(withCameraMatch(doc, tone));
     await this.exclusively(async () => {

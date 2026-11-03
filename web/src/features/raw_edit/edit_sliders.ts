@@ -122,6 +122,14 @@ export const DETAIL: readonly SliderSpec[] = [
     step: 1,
     follows: 'denoiser',
   },
+  {
+    key: 'defringe',
+    label: RawEditPanelStrings.colourFringeRemoval(),
+    min: 0,
+    max: 100,
+    step: 1,
+    neutral: 100,
+  },
 ];
 
 /**

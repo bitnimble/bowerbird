@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
+import { neutralEdits, type EditDoc } from '../../../../../../src/schemas/photo_edits';
 import type { CropStore } from '../../crop/crop_store';
 import type { EditStore } from '../../edit/edit_store';
 import type { KeystoneStore } from '../../keystone/keystone_store';
@@ -183,6 +183,7 @@ describe('the loupe', () => {
       colourNoise: 65,
       highlightRecovery: 35,
       sharpening: 70,
+      defringe: 50,
       clarity: 40,
     };
 
@@ -193,7 +194,6 @@ describe('the loupe', () => {
         open: {
           longEdge: 0,
           grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-          defringe: 0.5,
         },
         photoAnalysis: [7, 7, 7],
       },
@@ -210,9 +210,8 @@ describe('the loupe', () => {
     expect(request.denoiseLuminance).toBe(55);
     expect(request.denoiseColour).toBe(65);
     expect(request.highlightRecovery).toBe(35);
-    // The sharpen comes off the document rather than the open, since the reader can move it
-    // between the two, with GALOSH's lift on top; the defringe is the library's and rides through
-    // untouched.
+    // Both come off the document rather than the open, since the reader can move them between the
+    // two, the sharpen with GALOSH's lift on top.
     expect(request.strengths).toEqual({ sharpen: 0.95, defringe: 0.5 });
     expect(request.photoAnalysis).toEqual([7, 7, 7]);
     // The presence sliders, which decide how far past the rectangle the window has to reach.
@@ -253,5 +252,23 @@ describe('the loupe', () => {
     presenter.moveLoupe({ x: 502, y: 377 }, BOX);
     await drawn();
     expect(decoder.tiles).toHaveLength(built);
+  });
+
+  test('builds the tile again for a defringe or a lens the stage has moved to', async () => {
+    void fitted();
+    Object.assign(presenter, { photoId: 'a-photo-id' });
+    presenter.setLoupe(true);
+    const moved = async (doc: Partial<EditDoc>): Promise<void> => {
+      edit.doc = { ...(edit.doc ?? neutralEdits()), ...doc };
+      presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+      await Bun.sleep(TILE_QUIET_MS + 50);
+      await drawn();
+    };
+
+    await moved({});
+    await moved({ defringe: 40 });
+    await moved({ lensCorrection: false });
+
+    expect(decoder.tiles).toHaveLength(3);
   });
 });

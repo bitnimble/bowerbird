@@ -54,7 +54,7 @@ describe('PhotoEditsApi', () => {
     expect(service.get).toHaveBeenCalledWith('p1');
   });
 
-  it("answers a checkpoint with the undo history, the stamp behind the document and the library's denoiser", async () => {
+  it("answers a checkpoint with the undo history, the stamp behind the document, the library's denoiser and the imported document", async () => {
     const checkpoint = {
       ...state,
       cursor: 1,
@@ -62,6 +62,7 @@ describe('PhotoEditsApi', () => {
       stamp: 'stamp',
       library_denoiser: 'pmrid' as const,
       upscalable: false,
+      imported: { ...state.doc, exposure: 0 },
     };
     const { app, service } = buildApp({ checkpoint: jest.fn(() => checkpoint) });
 

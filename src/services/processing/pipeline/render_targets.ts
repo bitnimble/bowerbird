@@ -171,16 +171,6 @@ export class RenderTargets {
     };
   }
 
-  // What the render itself gets, before any rendition is cut from it (§10.9).
-  //
-  // The denoise and the sharpen are not here: they belong to the photograph rather than to the
-  // library, since a frame at 12800 and one at base ISO want different answers and a single
-  // setting could only be right for one of them. They ride with the rest of the document,
-  // through `developed`.
-  render(): { defringe: number } {
-    return { defringe: this.settings.get().raw_defringe };
-  }
-
   grade(): HdrGrade {
     const settings = this.settings.get();
     return {

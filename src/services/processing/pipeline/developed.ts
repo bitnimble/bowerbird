@@ -4,6 +4,7 @@ import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { reflectionSettings } from '../../../schemas/reflection_settings';
+import { cameraMatchOf } from '../../../schemas/render_stages';
 import { sharpenOf } from '../../../schemas/sharpening';
 import type { Developed } from '../workers/processing_types';
 
@@ -16,13 +17,8 @@ import type { Developed } from '../workers/processing_types';
  */
 export const AS_METERED = asMetered('galosh', () => false);
 
-function asMetered(denoiser: Denoiser, upscalable: () => boolean): FromDocument {
-  return {
-    ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser, upscalable),
-    // Off, against the document's own default: finding the particles costs a whole-frame read, and
-    // a photo nobody has edited has not asked for one.
-    dust: dustSettings(undefined),
-  };
+function asMetered(denoiser: Denoiser, upscalable: () => boolean): Developed {
+  return developedFrom(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser, upscalable);
 }
 
 /**
@@ -34,10 +30,10 @@ function asMetered(denoiser: Denoiser, upscalable: () => boolean): FromDocument 
  * past. Converting it here means converting it again in the editor, which is one rule with an
  * implementation on each path; `colour.slang` raises the stops once, for both.
  *
- * An unedited photo has no row, which is the common case and reads as no adjustment. A
- * document this build cannot parse reads the same way rather than failing the batch: a
- * rendition of the picture as the camera metered it is a worse rendition than the reader
- * asked for and a far better outcome than a photo that never builds one.
+ * A photo with no row reads as no adjustment. A document this build cannot parse reads the same
+ * way rather than failing the batch: a rendition of the picture as the camera metered it is a
+ * worse rendition than the reader asked for and a far better outcome than a photo that never
+ * builds one.
  */
 export function developed(
   edits: string | null,
@@ -45,8 +41,8 @@ export function developed(
   // Lazy: it opens the original, which the queue would otherwise do for every photo it stages.
   upscalable: () => boolean,
   previewing?: PrepareDevelop,
-): FromDocument {
-  const metered = (): FromDocument => asMetered(libraryDenoiser, upscalable);
+): Developed {
+  const metered = (): Developed => asMetered(libraryDenoiser, upscalable);
   if (edits == null && previewing == null) return metered();
   try {
     const stored: unknown = edits == null ? {} : JSON.parse(edits);
@@ -54,16 +50,17 @@ export function developed(
       previewing == null ? stored : { ...(stored as object), ...previewing },
     );
     if (!parsed.success) return metered();
-    return asJob(parsed.data, libraryDenoiser, upscalable);
+    return developedFrom(parsed.data, libraryDenoiser, upscalable);
   } catch {
     return metered();
   }
 }
 
-/** Everything a job's develop settings hold except the defringe, which is the library's. */
-type FromDocument = Omit<Developed, 'defringe'>;
-
-function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: () => boolean): FromDocument {
+export function developedFrom(
+  doc: EditDoc,
+  libraryDenoiser: Denoiser,
+  upscalable: () => boolean,
+): Developed {
   const requested = doc.denoiser ?? libraryDenoiser;
   const denoiser = denoiserFor(requested, requested === 'upscaler' && upscalable());
   return {
@@ -73,8 +70,8 @@ function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: () => boolea
     denoiser,
     highlightRecovery: doc.highlightRecovery,
     sharpen: sharpenOf(doc.sharpening, denoiser),
-    // The one field here that is not passed through unchanged, and the editor's open calls the
-    // same function for the same reason.
+    defringe: doc.defringe / 100,
+    cameraMatch: cameraMatchOf(doc),
     dust: dustSettings(doc),
     repairs: doc.repairs,
     reflection: reflectionSettings(doc),

@@ -49,7 +49,7 @@ test('disk usage failure stays in the status region and can be retried', async (
 
 test('a settings tab is a link, and survives a reload and the back button', async ({ page }) => {
   await page.goto(route(PathSegment.settings(), 'advanced'));
-  await expect(page.getByLabel('Colour fringing removal')).toBeVisible();
+  await expect(page.getByLabel('HDR reference white')).toBeVisible();
 
   await page.getByRole('radio', { name: 'General' }).click();
   await expect(page).toHaveURL(new RegExp(`${route(PathSegment.settings(), 'general')}$`));
@@ -59,7 +59,7 @@ test('a settings tab is a link, and survives a reload and the back button', asyn
   await expect(page.getByLabel('Daily full scan at')).toBeVisible();
 
   await page.goBack();
-  await expect(page.getByLabel('Colour fringing removal')).toBeVisible();
+  await expect(page.getByLabel('HDR reference white')).toBeVisible();
 
   // The bare path is still a link people have, and it opens what it always did.
   await page.goto(route(PathSegment.settings()));

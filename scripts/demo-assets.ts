@@ -516,10 +516,8 @@ function swatchesPath(matching: SdrMatch): string {
  * than headroom, so the pair has to read correctly on the ordinary screen most visitors have,
  * and a PQ file on one of those is painted about a quarter dim.
  *
- * `match_embedded_jpeg` stays on in both: it decides whether the profile is *fitted*, and the
- * document's `colourProfile` decides whether the fit is used. Turning the setting off instead
- * would compare a fitted render against one that never measured anything, which is not the
- * switch the editor offers.
+ * The profile is fitted in both, and the grade's `colourProfile` decides whether the fit is used,
+ * which is the switch the editor offers.
  */
 async function buildColour(): Promise<void> {
   const raw = rawFor(COLOUR);
@@ -556,8 +554,6 @@ async function buildPanorama(): Promise<void> {
   }));
   const job: Omit<Job, 'targets'> = {
     rawFilePath: sources[0]!.rawFilePath,
-    cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
-    defringe: SETTINGS.raw_defringe,
     ...AS_METERED,
     grade: {
       referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
@@ -640,8 +636,6 @@ async function buildDust(): Promise<void> {
     const out = join(LANDING_OUT, `${slug}.avif`);
     runJob({
       rawFilePath: raw,
-      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
-      defringe: SETTINGS.raw_defringe,
       ...AS_METERED,
       dust,
       geometry: { ...AS_METERED.geometry, crop: DUST_CROP },
@@ -675,8 +669,6 @@ async function buildDenoise(arms: readonly DenoiseArm[]): Promise<void> {
     const out = join(LANDING_OUT, `${slug}.avif`);
     runJob({
       rawFilePath: raw,
-      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
-      defringe: SETTINGS.raw_defringe,
       ...develop,
       geometry: { ...develop.geometry, crop: DENOISE_CROP },
       grade: {
@@ -701,8 +693,6 @@ function renderSrgb(
 ): void {
   runJob({
     rawFilePath: raw,
-    cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
-    defringe: SETTINGS.raw_defringe,
     ...AS_METERED,
     exposure,
     adjust: { ...AS_METERED.adjust, colourProfile },
@@ -719,8 +709,6 @@ async function build(scene: string): Promise<void> {
   try {
     runJob({
       rawFilePath: rawFor(scene),
-      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
-      defringe: SETTINGS.raw_defringe,
       // The page shows the shipped look, so the frames carry no develop settings - the
       // denoise included, `AS_METERED` carrying the document's own defaults for it.
       ...AS_METERED,

@@ -71,7 +71,7 @@ through.
 
 **A camera match.** The match is fitted by comparing our render against the camera's own JPEG; a
 JPEG _is_ that render, so there is no second rendering of the frame to compare it to and the grade
-takes its neutral arm exactly as a rendition with `match_embedded_jpeg` off does.
+takes its neutral arm exactly as a rendition with lens correction off does.
 
 **An embedded preview, and any need of one.** The viewer's `embedded` rendition of a JPEG, a PNG, a
 HEIC or an AVIF is the file itself, streamed as it is (`scan::isRendered`), and it is what the viewer

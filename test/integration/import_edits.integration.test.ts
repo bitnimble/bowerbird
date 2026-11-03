@@ -1,6 +1,7 @@
-// A Lightroom sidecar has to arrive with the photograph, through a real scan.
+// A Lightroom sidecar, or the library's defaults, has to arrive with the photograph, through a
+// real scan.
 //
-// The service that reads one is unit-tested beside it; what only this can say is that
+// The service that writes them is unit-tested beside it; what only this can say is that
 // scan calls it at all, for the rows it just inserted, and not again afterwards - the
 // wiring, which is where an import that works in isolation silently never runs.
 //   docker exec bowerbird-dev bun test test/integration
@@ -12,7 +13,7 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotoEditsRepository } from '../../src/services/photo_edits/photo_edits_repository';
-import { SidecarImportService } from '../../src/services/photo_edits/sidecar_import';
+import { ImportEditsService } from '../../src/services/photo_edits/import_edits';
 import {
   photoMetadata,
   photoPaths,
@@ -25,6 +26,7 @@ import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
+const PLAIN = path.join(import.meta.dir, '../fixtures/DSC05726.ARW');
 const LIB = 'lib000fb';
 
 const SIDECAR = `<x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -44,12 +46,10 @@ let edits: PhotoEditsRepository;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-sidecar-scan-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
-    LIB,
-    root,
-    'lib',
-    'taken_desc',
-  );
+  db.query(
+    `INSERT INTO libraries (id, root_path, name, ordering, render_skip_full, denoiser)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(LIB, root, 'lib', 'taken_desc', 'lens,colour', 'pmrid');
   const processing = photoProcessing(db);
   edits = new PhotoEditsRepository(db);
   scan = new ScanService(
@@ -63,11 +63,19 @@ beforeAll(() => {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    new SidecarImportService(edits),
+    new ImportEditsService(edits),
   );
   copyFileSync(FIXTURE, path.join(root, 'edited.arw'));
   writeFileSync(path.join(root, 'edited.xmp'), SIDECAR);
+  copyFileSync(PLAIN, path.join(root, 'plain.arw'));
 });
+
+const idOf = (file: string): string =>
+  (
+    db.query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`).get(file) as {
+      id: string;
+    }
+  ).id;
 
 afterAll(() => {
   db.close();
@@ -77,26 +85,35 @@ afterAll(() => {
 test('a scan imports the sidecar beside a photo, once', async () => {
   await scan.scanLibrary(LIB);
 
-  const photo = db
-    .query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`)
-    .get('edited.arw') as { id: string };
-  expect(photo).not.toBeNull();
-
-  const imported = edits.get(photo.id);
+  const photo = idOf('edited.arw');
+  const imported = edits.get(photo);
   expect(imported.doc.exposure).toBe(-0.75);
   expect(imported.doc.contrast).toBe(30);
   expect(imported.doc.clarity).toBe(12);
   // A revision, so the reader can undo an import they did not want.
-  expect(imported.rev).toBeGreaterThan(0);
+  expect(imported.canUndo).toBe(true);
+  // A sidecar is the photo's own edit, so the library's defaults stay out of it.
+  expect(imported.doc.lensCorrection).toBe(true);
 
   // The reader's own edit, on top of what Lightroom said.
-  const mine = edits.save(photo.id, { ...imported.doc, exposure: 2 }, imported.rev);
+  const mine = edits.save(photo, { ...imported.doc, exposure: 2 }, imported.rev);
 
   // Second scan: the file is unchanged and the row is not new, so nothing re-reads
   // the sidecar. Were it to, this would be back at -0.75 and the reader's own work
   // would be gone - which is the whole reason the import is keyed on the insert.
   await scan.scanLibrary(LIB);
-  const after = edits.get(photo.id);
+  const after = edits.get(photo);
   expect(after.doc.exposure).toBe(2);
   expect(after.rev).toBe(mine.rev);
+});
+
+test("a scan starts a photo with no sidecar at the library's defaults", () => {
+  const plain = edits.get(idOf('plain.arw'));
+  expect(plain.doc).toMatchObject({
+    lensCorrection: false,
+    colourProfile: 'none',
+    denoiser: 'pmrid',
+    awaitsCameraMatch: true,
+  });
+  expect(plain.canUndo).toBe(false);
 });

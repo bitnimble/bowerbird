@@ -184,6 +184,41 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
   });
 });
 
+describe('PhotoEditsRepository.writeImported', () => {
+  const tone = {
+    exposure: 0.35,
+    saturation: 17.4,
+    toneCurve: { kind: TONE_CURVE_KIND, points: [] as [number, number][] },
+    balance: null,
+  };
+
+  it('starts the photo at the defaults, with nothing to undo back past them', () => {
+    const imported = { awaitsCameraMatch: true, lensCorrection: false, defringe: 0 };
+    repo.writeImported(PHOTO, imported);
+
+    const state = repo.get(PHOTO);
+    expect(state.doc).toEqual(edited(imported));
+    expect(state.canUndo).toBe(false);
+    expect(repo.checkpoint(PHOTO).cursor).toBe(0);
+  });
+
+  it('leaves the camera match to fill in beneath them', () => {
+    repo.writeImported(PHOTO, { awaitsCameraMatch: true, luminanceNoise: 0 });
+
+    expect(repo.applyCameraMatch(PHOTO, tone)?.state.doc).toMatchObject({
+      exposure: 0.35,
+      luminanceNoise: 0,
+    });
+  });
+
+  it('never writes over a document that is already there', () => {
+    const theirs = save({ exposure: 1.5 });
+    repo.writeImported(PHOTO, { awaitsCameraMatch: true, lensCorrection: false });
+
+    expect(repo.get(PHOTO)).toMatchObject({ rev: theirs.rev, doc: theirs.doc });
+  });
+});
+
 describe('PhotoEditsRepository undo and redo', () => {
   it('steps back and forward over the same array without losing the redo tail', () => {
     save({ exposure: 1.0 });

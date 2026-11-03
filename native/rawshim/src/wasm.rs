@@ -113,6 +113,9 @@ pub struct HeldRaw {
     /// The aberration the open's defringe took off, for the same reason and with the same failure:
     /// the fit is whole-frame, so a strip fitting its own is corrected by its own edges.
     defocus: std::cell::Cell<Option<(f32, f32)>>,
+    /// The camera match the last whole prepare applied, which every band and tile after it takes
+    /// its lens through.
+    camera_match: std::cell::Cell<fit::hdr::CameraMatch>,
     /// The reflection the network last found, with the model and strokes it was found by:
     /// whole-frame like the fit, so found once per set of strokes and taken out of every band and
     /// tile after.
@@ -408,6 +411,15 @@ fn reporting(to: &Reporter) -> impl Fn(decode::open_stage::Stage) + '_ {
     move |stage| to.call(&JsValue::NULL, stage.name())
 }
 
+/// The editor's lens switch as a camera match: the colour rides with the lens, a tick turning it on
+/// and off for itself.
+fn camera_match_of(lens: bool) -> fit::hdr::CameraMatch {
+    match lens {
+        true => fit::hdr::CameraMatch::LensAndColour,
+        false => fit::hdr::CameraMatch::None,
+    }
+}
+
 fn request_of(request: &str) -> Result<crate::edit::EditRequest, JsValue> {
     serde_json::from_str(request)
         .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))
@@ -426,6 +438,7 @@ impl HeldRaw {
             bytes,
             mosaic,
             fit,
+            camera_match: std::cell::Cell::new(request.camera_match),
             request,
             levels: std::cell::Cell::new(None),
             analysis: std::cell::RefCell::new(None),
@@ -965,6 +978,8 @@ impl HeldRaw {
         denoiser: &str,
         highlight_recovery: f64,
         sharpen: f64,
+        defringe: f64,
+        lens: bool,
         dust_enabled: bool,
         dust_sensitivity: f64,
         dust_intensity: f64,
@@ -999,6 +1014,8 @@ impl HeldRaw {
             repairs,
             found: self.found(&by),
             reflection,
+            defringe,
+            camera_match: camera_match_of(lens),
             ..self.opened_as()
         };
         let stored = request.stored();
@@ -1027,6 +1044,7 @@ impl HeldRaw {
             floor: opened.header.floor,
         }));
         self.defocus.set(Some(opened.header.defocus));
+        self.camera_match.set(request.camera_match);
         if opened.header.photo_analysis.is_some() {
             self.analysis.replace(opened.header.photo_analysis.clone());
         }
@@ -1209,7 +1227,7 @@ impl HeldRaw {
         })?;
         let reflection = reflection_of(reflection)?;
         let held = self.mosaic_held()?;
-        let mut request = self.off_the_held_mosaic(request);
+        let mut request = self.off_the_held_mosaic(request, self.camera_match.get());
         request.removal = self
             .removal(&reflection, request.detail(), request.dust)
             .await?;
@@ -1328,6 +1346,8 @@ impl HeldRaw {
         denoiser: &str,
         highlight_recovery: f64,
         sharpen: f64,
+        defringe: f64,
+        lens: bool,
         dust_enabled: bool,
         dust_sensitivity: f64,
         dust_intensity: f64,
@@ -1363,7 +1383,8 @@ impl HeldRaw {
             colour,
             denoiser,
             highlight_recovery,
-            sharpen,
+            render::detail::Strengths { sharpen, defringe },
+            camera_match_of(lens),
             dust,
             top,
             rows,
@@ -1461,7 +1482,8 @@ impl HeldRaw {
         colour: Option<f64>,
         denoiser: denoise::galosh::Denoiser,
         highlight_recovery: f64,
-        sharpen: f64,
+        strengths: render::detail::Strengths,
+        camera_match: fit::hdr::CameraMatch,
         dust: denoise::dust::Settings,
         top: usize,
         rows: usize,
@@ -1473,7 +1495,7 @@ impl HeldRaw {
             .levels
             .get()
             .ok_or_else(|| JsValue::from_str("rawshim: this photograph has not been prepared"))?;
-        Ok(self.off_the_held_mosaic(crate::tile::TileRequest {
+        let request = crate::tile::TileRequest {
             tile: [
                 0,
                 top,
@@ -1482,10 +1504,7 @@ impl HeldRaw {
             ],
             frame: [frame_width, frame_height],
             grade: self.request.grade,
-            strengths: render::detail::Strengths {
-                sharpen,
-                defringe: self.request.defringe,
-            },
+            strengths,
             denoise_luminance: luminance,
             denoise_colour: colour,
             denoiser,
@@ -1507,10 +1526,11 @@ impl HeldRaw {
             repairs,
             drawn: None,
             removal: None,
-        }))
+        };
+        Ok(self.off_the_held_mosaic(request, camera_match))
     }
 
-    /// The one field a window cut from *this* mosaic cannot be told by the page.
+    /// The fields a window cut from *this* mosaic cannot be told by the page.
     ///
     /// **The sensor's long edge above all.** `capture_sigma` is a blur in the sensor's own pixels
     /// and `render::detail::deconvolve_split` composes it for whatever scale the target is at, so a window
@@ -1518,11 +1538,24 @@ impl HeldRaw {
     /// the wrong sigma - and a loupe is where that shows, being the one place the glass and the
     /// export it predicts are compared. The page names the photograph it is cutting from, which is
     /// the halved size; the held mosaic is the sensor's, and it is on this side.
+    ///
+    /// And the lens: a window gathers through whatever match its analysis holds, which keeps the
+    /// fit whether or not the reader has the lens on.
     fn off_the_held_mosaic(
         &self,
         mut request: crate::tile::TileRequest,
+        camera_match: fit::hdr::CameraMatch,
     ) -> crate::tile::TileRequest {
         request.sensor_long = self.held.as_ref().map(decode::Held::picture_long);
+        if camera_match != fit::hdr::CameraMatch::LensAndColour {
+            request.photo_analysis = request.photo_analysis.as_deref().map(|bytes| {
+                let Some(mut stored) = fit::photo_analysis::decode(bytes) else {
+                    return bytes.to_vec();
+                };
+                stored.from_raw.matched = camera_match.apply(stored.from_raw.matched);
+                fit::photo_analysis::encode(&stored)
+            });
+        }
         request
     }
 

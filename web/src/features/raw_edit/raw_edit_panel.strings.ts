@@ -35,7 +35,8 @@ export const RawEditPanelStrings = {
 
   noWhiteBalanceMode: () => '-',
   noCameraNeutral: () => 'Camera white balance unavailable for this file',
-  noMosaic: () => 'Denoise and highlight recovery unavailable for developed photos',
+  noMosaic: () =>
+    'Denoise, highlight recovery, and colour fringe removal unavailable for developed photos',
   noReflectionRemoval: () => 'Reflection removal unavailable for merged or developed photos',
   // Said of the sensor rather than of the photograph: every frame from this body answers the same
   // way, and a reader who has just watched two sliders disappear wants to know it is the camera.
@@ -96,6 +97,10 @@ export const RawEditPanelStrings = {
   colourProfile: () => 'Colour profile',
   colourProfileNone: () => 'None',
   colourProfileMatched: () => 'Matched',
+  colourNeedsLens: () => 'Turn on Correct lens distortion first',
+
+  lensCorrection: () => 'Correct lens distortion',
+  colourFringeRemoval: () => 'Colour fringe removal',
 
   denoiser: () => 'Denoiser',
   /** The filters by what each is for, here and in the render stages. */

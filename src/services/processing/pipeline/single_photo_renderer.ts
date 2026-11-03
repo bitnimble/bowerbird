@@ -4,14 +4,12 @@ import path from 'node:path';
 import { Logger } from '../../../logger';
 import type { Job } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
-import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
+import { EditDocSchema, type CameraTone, type Denoiser } from '../../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath } from '../../../utils/paths';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
-import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
-import { renditionSkips, withStagesOff } from '../renditions/render_stages';
-import type { OptionalStage } from '../../../schemas/render_stages';
+import { importedEdits, type OptionalStage } from '../../../schemas/render_stages';
 import type { HeaderMetadata } from '../analysis/metadata';
 import { isUpscalable } from '../rawshim/rawshim_ops';
 import { toCommand } from '../rawshim/worker_command';
@@ -19,6 +17,7 @@ import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type { RenderBudget } from '../workers/render_budget';
 import type {
+  Developed,
   ProcessingMessage,
   Ran,
   RenditionJob,
@@ -26,7 +25,7 @@ import type {
   RenditionTarget,
   RenditionWritten,
 } from '../workers/processing_types';
-import { developed } from './developed';
+import { developed, developedFrom } from './developed';
 import type { RenderTargets } from './render_targets';
 
 const log = new Logger('processing');
@@ -34,7 +33,6 @@ const log = new Logger('processing');
 export class SinglePhotoRenderer {
   constructor(
     private readonly photoProcessing: PhotoProcessingRepository,
-    private readonly settings: SettingsRepository,
     private readonly editsFor: (photoId: string) => { doc: string; stamp: string | null } | null,
     private readonly targets: RenderTargets,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
@@ -121,6 +119,7 @@ export class SinglePhotoRenderer {
     return this.runOneOff({ ...job, rendered }, builtFrom);
   }
 
+  /** A job with `skip` turned off in the document the import would write, at fixed Detail. */
   benchmarkJob({
     rawFilePath,
     photoId,
@@ -136,24 +135,20 @@ export class SinglePhotoRenderer {
     skip: readonly OptionalStage[];
     denoiser: Denoiser;
   }): RenditionJob {
-    const { job } = this.jobFor(rawFilePath, photoId, rendition, {
-      hdr: true,
-      source: 'render',
-      remeasure: true,
-      skip,
-      dataPath,
-      denoiser,
+    const doc = EditDocSchema.parse({
+      luminanceNoise: 20,
+      colourNoise: 30,
+      ...importedEdits(skip, denoiser),
     });
-    return withStagesOff(
-      {
-        ...job,
-        cameraMatch: 'lensAndColour',
-        denoiseLuminance: 20,
-        denoiseColour: 30,
-        defringe: 1,
-      },
-      skip,
-    );
+    return {
+      ...this.jobFor(rawFilePath, photoId, rendition, {
+        hdr: true,
+        source: 'render',
+        remeasure: true,
+        dataPath,
+      }),
+      ...developedFrom(doc, denoiser, () => isUpscalable(rawFilePath)),
+    };
   }
 
   private oneRendition(
@@ -165,15 +160,21 @@ export class SinglePhotoRenderer {
     source: RenditionSource,
     remeasure: boolean,
   ): { job: RenditionJob; builtFrom: string | null } {
-    const skip = renditionSkips(library, rendition);
-    return this.jobFor(rawFilePath, photoId, rendition, {
-      hdr,
-      source,
-      remeasure,
-      skip,
-      dataPath: getDataPath(library),
-      denoiser: library.denoiser,
-    });
+    const edits = this.editsFor(photoId);
+    return {
+      job: {
+        ...this.jobFor(rawFilePath, photoId, rendition, {
+          hdr,
+          source,
+          remeasure,
+          dataPath: getDataPath(library),
+        }),
+        // This is the path a `max` export takes, so without the document the one rendition a
+        // reader asks for by name is the one that ignores what they did to the picture.
+        ...developed(edits?.doc ?? null, library.denoiser, () => isUpscalable(rawFilePath)),
+      },
+      builtFrom: edits?.stamp ?? null,
+    };
   }
 
   private jobFor(
@@ -184,42 +185,22 @@ export class SinglePhotoRenderer {
       hdr,
       source,
       remeasure,
-      skip,
       dataPath,
-      denoiser,
     }: {
       hdr: boolean;
       source: RenditionSource;
       remeasure: boolean;
-      skip: readonly OptionalStage[];
       dataPath: string;
-      denoiser: Denoiser;
     },
-  ): { job: RenditionJob; builtFrom: string | null } {
-    const edits = this.editsFor(photoId);
+  ): Omit<RenditionJob, keyof Developed> {
     return {
-      job: withStagesOff(
-        {
-          kind: 'rendition',
-          photoId,
-          rawFilePath,
-          dataPath,
-          targets: [this.targets.target(dataPath, photoId, rendition, hdr, source)],
-          grade: this.targets.grade(),
-          remeasure,
-          // The on-demand rendition has to agree with the ones built at import, so it
-          // obeys the same settings. The fit is deterministic, so refitting here lands
-          // on the same transform rather than a second opinion.
-          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-          // And the same edits, for the same reason. This is the path a `max` export takes,
-          // so without it the one rendition a reader asks for by name is the one that ignores
-          // what they did to the picture.
-          ...developed(edits?.doc ?? null, denoiser, () => isUpscalable(rawFilePath)),
-          ...this.targets.render(),
-        } satisfies RenditionJob,
-        skip,
-      ),
-      builtFrom: edits?.stamp ?? null,
+      kind: 'rendition',
+      photoId,
+      rawFilePath,
+      dataPath,
+      targets: [this.targets.target(dataPath, photoId, rendition, hdr, source)],
+      grade: this.targets.grade(),
+      remeasure,
     };
   }
 
@@ -260,9 +241,7 @@ export class SinglePhotoRenderer {
       targets: [],
       measure: true,
       grade: this.targets.grade(),
-      cameraMatch: 'lensAndColour',
       ...developed(null, library.denoiser, () => isUpscalable(rawFilePath)),
-      ...this.targets.render(),
     };
     // Nothing to record either way: a job with no target writes no copy, and the analysis it
     // answers with is written by the worker that measured it.

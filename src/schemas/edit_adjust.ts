@@ -28,7 +28,7 @@ export function adjustOf(doc: EditDoc): JobAdjust {
     temperature: doc.temperature,
     tint: doc.tint,
     cameraBalance: doc.awaitsCameraMatch,
-    colourProfile: doc.colourProfile,
+    colourProfile: doc.lensCorrection ? doc.colourProfile : 'none',
     colourNodes: doc.colourNodes,
   };
 }

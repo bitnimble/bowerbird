@@ -58,11 +58,7 @@ test('the sanitization reader rejects an unknown TIFF field type', () => {
 });
 
 function service(): ProcessingService {
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    processing_concurrency: 1,
-    match_embedded_jpeg: true,
-  };
+  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1 };
   return new ProcessingService(
     { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCopyBuilt: () => {} } as never,
     {} as PhotoPathsRepository,

@@ -19,7 +19,7 @@ import {
 } from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
-import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
+import type { EditImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import type { ProcessingTrigger } from '../../src/services/sync/scan/scan_rebuilds';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
@@ -34,7 +34,7 @@ interface Hooks {
   /** Asked just before the stat pass. */
   scanConcurrency?: () => number;
   /** Asked after each committed batch of new photos. */
-  sidecars?: SidecarImporter;
+  edits?: EditImporter;
   /** Asked once the stat pass is done, before anything it found is kept. */
   media?: MediaListing;
 }
@@ -52,7 +52,7 @@ function build(processing: ProcessingTrigger, hooks: Hooks = {}): ScanService {
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     processing,
-    hooks.sidecars,
+    hooks.edits,
     hooks.scanConcurrency,
     undefined,
     undefined,
@@ -70,7 +70,7 @@ function afterStatting(then: () => void): MediaListing {
   };
 }
 
-function afterEachBatch(then: () => void): SidecarImporter {
+function afterEachBatch(then: () => void): EditImporter {
   return {
     importFor: () => {
       then();
@@ -137,7 +137,7 @@ test('a stopped first scan keeps the photos it did reach', async () => {
   addBatchOfFiles();
   const scan: ScanService = build(
     { processUnprocessed: () => {} },
-    { sidecars: afterEachBatch(() => scan.cancelScan(LIB)) },
+    { edits: afterEachBatch(() => scan.cancelScan(LIB)) },
   );
 
   const status = await scan.scanLibrary(LIB);
@@ -161,7 +161,7 @@ test('stopping a rescan keeps the new photos it reached and applies nothing else
 
   const stopped: ScanService = build(
     { processUnprocessed: () => {} },
-    { sidecars: afterEachBatch(() => stopped.cancelScan(LIB)) },
+    { edits: afterEachBatch(() => stopped.cancelScan(LIB)) },
   );
   const status = await stopped.scanLibrary(LIB);
 

@@ -229,7 +229,7 @@ describe('print viewing', () => {
     openedWith(editor, {
       local: {
         decoder: editor.decoder,
-        open: { longEdge: 0, grade: GRADE, defringe: 0.5 },
+        open: { longEdge: 0, grade: GRADE },
         onTheBackend: true,
       },
     });
@@ -280,7 +280,7 @@ describe('print viewing', () => {
     openedWith(editor, {
       local: {
         decoder: editor.decoder,
-        open: { longEdge: 0, grade: GRADE, defringe: 0.5 },
+        open: { longEdge: 0, grade: GRADE },
         onTheBackend: true,
       },
     });

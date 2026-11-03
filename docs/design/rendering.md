@@ -312,7 +312,7 @@ A recorded or measured curve on a frame with no point sources - a portrait, a fl
 
 It fits an intercept and keeps only the slope. Forcing the line through the origin does not reject a flat term, it launders one - 0.6px at every radius comes out as a 0.93px correction at the corner, because a line through zero has nowhere else to put it. A lateral aberration is a magnification difference and must vanish on axis, so the flat part is given somewhere to go and then discarded. That discard is also the whole of the shortfall above: the innermost bin reads slightly high, the line charges it to the flat term, and about a tenth of a genuine injection goes with it. Costs 11ms on an ordinary 24MP frame and 78ms on a 32MP astro frame dense with stars.
 
-**Longitudinal aberration needs defringe, not a warp** (`base::defringe`, `raw_defringe`). Unlike lateral magnification error, channels remain registered but focus at different distances. Unequal sharpness creates purple or green rims; no geometry moved.
+**Longitudinal aberration needs defringe, not a warp** (`base::defringe`, `EditDoc.defringe`). Unlike lateral magnification error, channels remain registered but focus at different distances. Unequal sharpness creates purple or green rims; no geometry moved.
 
 **Which is exactly what it is corrected as.** With `σ_R = σ_G + δ` and the heat equation `∂g/∂σ = σ∇²g`, an achromatic edge imaged through the two channels comes out as
 
@@ -328,7 +328,7 @@ Three guards, and the second is only correct because of the third. The coefficie
 
 **Measured on the frames this project already knew were bad.** IMG_8408 is backlit foliage against a blown sky, the textbook purple-fringing case: rendered at 0 and at full strength, the violet cast on the twigs visibly lifts and the leaves come back green, and mean ΔE76 against the body's own JPEG over the pixels it moved goes 8.615 → 8.408. IMG_0116, the 16mm f/2.8 astro frame, goes **4.731 → 3.533**. Both fit blue as much the softer channel - +0.148 and +0.234 - which is what a lens does and what no edge mask could have told you.
 
-**Reject gradient heuristics.** Pulling colour toward a box mean at dilated steep edges, even capped at 85%, also greys street lamps and flame-print outlines. Without a defect model, `raw_defringe` bounds one global correction rather than scaling a measured estimate.
+**Reject gradient heuristics.** Pulling colour toward a box mean at dilated steep edges, even capped at 85%, also greys street lamps and flame-print outlines. Without a defect model, a strength can only bound one global correction rather than scale a measured estimate.
 
 That is visible in the sweep it forced. Scored against each body's own JPEG over 214 frames from 104 shoots - the camera being the only reference that penalises _both_ leaving a rim magenta and greying a lamp - the old stage's per-frame optimum came out **bimodal**: 57 frames wanted 0 and 61 wanted full strength, with the middle thinly spread. That is two populations, frames whose hard edges are aberration and frames whose hard edges are objects, and no global constant serves both. The best available compromise was 0.6, realising 71% of the benefit while visibly harming nothing - and even there the frames it hurt were a _kind of picture_ rather than a body or a lens, costume and studio shoots with saturated props.
 
@@ -356,7 +356,7 @@ Two things the re-sweep does not settle. The per-frame argmin is still split, 68
 
 The mask went with it: no `DEFRINGE_EDGE`, no dilation, no box mean. The stage now reads a five-point Laplacian and nothing else, so its strip halo went from **10 pixels to 1**.
 
-`raw_defringe` survives as a ceiling on a measurement rather than the amount itself, the way the sharpen blends a computed deconvolution rather than scaling a guess, and defaults to 1.
+The edit's `defringe` is a ceiling on a measurement rather than the amount itself, the way the sharpen blends a computed deconvolution rather than scaling a guess, and defaults to full.
 **Two defects in the estimator, found by review and reproduced. Both are now fixed, and both are pinned by tests that fail if the fix is removed.**
 
 _Per-channel noise had a positive bias with a closed form, and it is now subtracted._ The regressor and the response are built from the same pixels: the stencil's `-4c` term and the response's `-luma(c)` share one, so their noise is correlated by construction, and green's enters the two with opposite signs. The residue was positive for **both** channels, which cleared the sign veto (that veto exists to catch things which flip sign), and being a ratio of variances it did not shrink as the noise did. A flat frame with independent per-channel grain fitted (0.124, 0.175), the blue figure _larger_ than the 0.148 measured on IMG_8408, the worst real frame in the library.
@@ -380,7 +380,7 @@ Discarding slope conservatively loses some genuine correction: field curvature m
 | 0.5      | -0.051 | 2              | 0             | +0.26       | -1.93      |
 | 1.0      | -0.071 | 4              | 0             | +0.26       | -2.83      |
 
-Nothing is harmed by more than a JND at any strength, the mean improvement is 40% larger at 1 than at 0.5, and the large wins appear only at 1 - so `raw_defringe` defaults to **1**.
+Nothing is harmed by more than a JND at any strength, the mean improvement is 40% larger at 1 than at 0.5, and the large wins appear only at 1 - so `defringe` defaults to full, **100**.
 
 **It fires on 37 of 215 frames**, versus 143 before the split. The extra 106 were noise and lateral-CA confounds. Blue is softer on 30 of 37, consistent with a lens measurement unavailable to a mask-based stage.
 
@@ -621,7 +621,7 @@ Across JSON boundaries, a stored curve is `{ "kind": "pchipCbrt3", "points": [[x
 
 **Mosaic denoise precedes demosaic** (§10.9.1), separately from this section's post-resample defringe and sharpen. Both stop at 0 and apply only to **rendered** RAWs; embedded-JPEG tiles are already camera-sharpened. Defringe is a lens correction (§10.8) and runs before the sharpen.
 
-`raw_defringe` is a library setting because it is a ceiling on a per-frame measurement. The sharpen is not: how much deconvolution a photograph wants depends on the photograph, so it is `EditDoc`'s `sharpening`, beside the Detail panel's denoise pair.
+Both belong to the photograph, beside the Detail panel's denoise pair: `EditDoc`'s `defringe`, a ceiling on a per-frame measurement, and its `sharpening`, since how much deconvolution a photograph wants depends on the photograph.
 
 The library supplies the denoiser for documents naming none (§10.9.1). Strength belongs to each photograph in `EditDoc`'s two Detail sliders: 12800 and base ISO need different amounts. Stage ordering below applies to all.
 

@@ -16,13 +16,13 @@ const log = new Logger('scan');
 const SCAN_PROGRESS_EVERY = 500;
 
 /**
- * Lightroom's develop settings for the photos a run just inserted.
+ * The first documents of the photos a run just inserted, returning how many came from sidecars.
  *
  * A seam rather than the service, defaulted to nothing, so a scan test is not also a
  * test about XMP - the same shape `ProcessingTrigger` above uses.
  */
-export interface SidecarImporter {
-  importFor(rootPath: string, photos: readonly { id: string; filePath: string }[]): number;
+export interface EditImporter {
+  importFor(library: Library, photos: readonly { id: string; filePath: string }[]): number;
 }
 
 export class ScanBatch {
@@ -32,7 +32,7 @@ export class ScanBatch {
   private readonly scoped: boolean;
   added = 0;
   importedEdits = 0;
-  private readonly awaitingSidecars: { id: string; filePath: string }[] = [];
+  private readonly awaitingEdits: { id: string; filePath: string }[] = [];
   private mirrored = false;
   private rate: number | null = null;
   private committedAt: number | null = null;
@@ -49,7 +49,7 @@ export class ScanBatch {
     shoots: ShootsRepository,
     private readonly reconciler: ScanReconciler,
     private readonly leases: ScanLeases,
-    private readonly sidecars: SidecarImporter,
+    private readonly edits: EditImporter,
     private readonly status: ScanStatus,
   ) {
     // Mutex holds them still for whole run (§9.9).
@@ -100,16 +100,20 @@ export class ScanBatch {
       addedAt,
     );
     this.touched?.push(id);
-    this.awaitingSidecars.push({ id, filePath: entry.filePath });
+    this.awaitEdits(id, entry.filePath);
     return id;
   }
 
-  // Lightroom edits are imported only for rows this run inserted, after commit and before
+  awaitEdits(id: string, filePath: string): void {
+    this.awaitingEdits.push({ id, filePath });
+  }
+
+  // Edits are imported only for rows this run inserted, after commit and before
   // processing count. File I/O inside insert transaction would hold write lock per photo.
-  importSidecars(): void {
-    if (this.awaitingSidecars.length === 0) return;
-    this.importedEdits += this.sidecars.importFor(this.library.root_path, this.awaitingSidecars);
-    this.awaitingSidecars.length = 0;
+  importEdits(): void {
+    if (this.awaitingEdits.length === 0) return;
+    this.importedEdits += this.edits.importFor(this.library, this.awaitingEdits);
+    this.awaitingEdits.length = 0;
   }
 
   // An import commits additions in batches, so a killed one resumes where it reached.
@@ -134,7 +138,7 @@ export class ScanBatch {
         );
       }
     });
-    this.importSidecars();
+    this.importEdits();
     this.added += files.length;
     const now = Date.now();
     const seconds = (now - (this.committedAt ?? now)) / 1000;

@@ -165,7 +165,6 @@ async function preparedThere(
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
     grade: gradeOf(settings),
-    defringe: settings.raw_defringe,
   };
   const prepared = await decoder.holdPicture(
     await preparedPicture(photoId, undefined, undefined, onStep),
@@ -193,8 +192,6 @@ async function renditionHere(
   const open: LocalOpen = {
     longEdge: 0,
     grade: gradeOf(settings),
-    // Every edit is already in the file, so it is shown as it was encoded.
-    defringe: 0,
     statedWhite: true,
   };
   return {
@@ -286,7 +283,6 @@ async function preparedHere(
     longEdge: Math.round(longEdge),
     photoAnalysis,
     grade: gradeOf(settings),
-    defringe: settings.raw_defringe,
   };
   await decoder.hold(raw);
   return {
@@ -334,6 +330,8 @@ export function prepareOf(
     denoiser,
     highlightRecovery: doc?.highlightRecovery ?? DEFAULT_HIGHLIGHT_RECOVERY,
     sharpening: sharpeningOf(doc?.sharpening ?? null, denoiser),
+    defringe: (doc?.defringe ?? 100) / 100,
+    lensCorrection: doc?.lensCorrection ?? true,
     dust: dustSettings(doc),
     repairs: doc?.repairs ?? [],
     reflection: reflectionSettings(doc),
@@ -364,6 +362,8 @@ export function developOf(prepare: LocalPrepare): PrepareDevelop {
     denoiser: prepare.denoiser,
     highlightRecovery: prepare.highlightRecovery,
     sharpening: prepare.sharpening,
+    defringe: Math.round(prepare.defringe * 100),
+    lensCorrection: prepare.lensCorrection,
     dustRemoval: prepare.dust.enabled,
     dustSensitivity: Math.round(prepare.dust.sensitivity * 100),
     dustIntensity: Math.round(prepare.dust.intensity * 100),
@@ -373,9 +373,15 @@ export function developOf(prepare: LocalPrepare): PrepareDevelop {
   };
 }
 
+/** Whether two settings open the frame the same way, which a band of a re-prepare cannot change. */
+export function sameOpen(at: LocalPrepare | null, next: LocalPrepare): boolean {
+  return at != null && at.defringe === next.defringe && at.lensCorrection === next.lensCorrection;
+}
+
 /** `samePrepare` short of the repairs: the settings that run before the frame is coded. */
 export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolean {
   return (
+    sameOpen(at, next) &&
     at != null &&
     at.luminance === next.luminance &&
     at.colour === next.colour &&

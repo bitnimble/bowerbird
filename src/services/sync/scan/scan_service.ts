@@ -20,7 +20,7 @@ import { ScanRebuilds, type ProcessingTrigger } from './scan_rebuilds';
 import { ScanStatus } from './scan_status';
 import { ScanRunner, type ScanTrigger } from './scan_run';
 import type { ScanScope } from './scan_evidence';
-import type { SidecarImporter } from './scan_batch';
+import type { EditImporter } from './scan_batch';
 
 const log = new Logger('scan');
 
@@ -42,7 +42,7 @@ export class ScanService implements LibraryLifecycleListener {
     private readonly folderRules: FolderRulesRepository,
     syncLocks: SyncLocksRepository,
     private readonly processing: ProcessingTrigger,
-    private readonly sidecars: SidecarImporter = { importFor: () => 0 },
+    private readonly edits: EditImporter = { importFor: () => 0 },
     // Read per scan rather than held, so a change on the settings page lands on the
     // next scan.
     private readonly scanConcurrency: () => number = () => 1,
@@ -50,7 +50,7 @@ export class ScanService implements LibraryLifecycleListener {
      * Merged moves this peer has not made on disk yet (docs/replication.md §7.4).
      *
      * A seam rather than the runner, and defaulted, because a scan test must not
-     * also be a replication test - the same shape `sidecars` takes.
+     * also be a replication test - the same shape `edits` takes.
      */
     private readonly materialise: (libraryId: string) => Promise<number> = () => Promise.resolve(0),
     /**
@@ -91,7 +91,7 @@ export class ScanService implements LibraryLifecycleListener {
       shoots,
       folderRules,
       processing,
-      sidecars,
+      edits,
       materialise,
       pendingMoves,
       reconciler,

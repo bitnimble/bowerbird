@@ -4,6 +4,7 @@ import {
   TONE_CURVE_KIND,
   applyEdits,
   diffEdits,
+  editsBefore,
   neutralEdits,
   sameEditValue,
   type EditDoc,
@@ -237,6 +238,25 @@ describe('what a delta carries', () => {
     const delta = diffEdits(from, to);
     expect(delta?.to).toEqual({ filmGrain: 60 });
     expect(delta?.from).toEqual({ filmGrain: 30 });
+  });
+});
+
+describe('the document before its history', () => {
+  const first = doc({ lensCorrection: false });
+  const second = doc({ lensCorrection: false, exposure: 1 });
+  const third = doc({ lensCorrection: false, exposure: 2, contrast: 10 });
+  const history = [diffEdits(first, second)!, diffEdits(second, third)!];
+
+  it('undoes every step behind the cursor, newest first', () => {
+    expect(editsBefore(third, history, 2)).toEqual(first);
+  });
+
+  it('leaves a redo tail alone', () => {
+    expect(editsBefore(second, history, 1)).toEqual(first);
+  });
+
+  it('is the document itself with nothing to undo', () => {
+    expect(editsBefore(first, [], 0)).toEqual(first);
   });
 });
 

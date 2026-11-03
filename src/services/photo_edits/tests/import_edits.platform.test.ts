@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { sidecarFor } from '../sidecar_import';
+import { sidecarFor } from '../import_edits';
 
 describe('sidecarFor', () => {
   let root: string;

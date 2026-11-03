@@ -34,14 +34,6 @@ export type LocalOpen = {
    */
   photoAnalysis?: number[];
   grade: JobGrade;
-  /**
-   * The library's defringe strength, which is the only filter an open decides.
-   *
-   * The sharpen is in [`LocalPrepare`] with the denoise pair, for the reason that type gives: a
-   * Detail slider moves without reopening anything, so a copy here could only ever be the position
-   * the photograph happened to be opened at.
-   */
-  defringe: number;
   /** Diffuse white where a rendition states it, so the picture is shown as it was encoded. */
   statedWhite?: boolean;
 };
@@ -69,6 +61,9 @@ export type LocalPrepare = {
   highlightRecovery: number;
   /** The slider's position; `sharpenOf` is the strength the module is handed for it. */
   sharpening: number;
+  /** The ceiling as a fraction, as a job's `defringe`. */
+  defringe: number;
+  lensCorrection: boolean;
   dust: DustSettings;
   /**
    * The reader's repairs, which come after the sharpen and so after everything above - here with
@@ -194,6 +189,8 @@ const PrepareCrossingSchema = z.object({
   denoiser: DenoiserSchema,
   highlightRecovery: z.number(),
   sharpening: z.number(),
+  defringe: z.number(),
+  lensCorrection: z.boolean(),
   dust: DustSettingsSchema,
   repairs: JsonSchema,
   reflection: JsonSchema,

@@ -53,7 +53,6 @@ export class ExportRenderer {
      */
     progressId?: number,
   ): Promise<void> {
-    const settings = this.settings.get();
     const edits = options.includeEdits ? this.editsFor(photoId) : null;
     return this.singlePhoto.runOneOff(
       {
@@ -65,10 +64,8 @@ export class ExportRenderer {
         targets: this.targets.exportTargets(outputPath, options, thumbnailPath),
         grade: this.targets.grade(),
         remeasure: false,
-        cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
         halfSize: options.halfSize,
         ...developed(edits?.doc ?? null, library.denoiser, () => isUpscalable(rawFilePath)),
-        ...this.targets.render(),
       },
       edits?.stamp ?? null,
     );
@@ -121,15 +118,14 @@ export class ExportRenderer {
       ],
       grade: this.targets.grade(),
       remeasure: true,
-      cameraMatch: 'none',
       preserveSourceOrientation: true,
       ...AS_METERED,
+      cameraMatch: 'none',
       // The picture being read has been sharpened and denoised once already, and a base whose
       // detail differs from the alternate beside it is a gain map with haloes along every edge.
       denoiseLuminance: 0,
       denoiseColour: 0,
       sharpen: 0,
-      ...this.targets.render(),
     });
   }
 
@@ -155,7 +151,6 @@ export class ExportRenderer {
     const edits = options.includeEdits ? this.editsFor(photoId) : null;
     await this.composites.runComposite({
       kind: 'composite',
-      cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
       want: 'render',
       photoId,
       sources,
@@ -167,7 +162,6 @@ export class ExportRenderer {
       // The canvas's own document, which holds the framing the align found: an export of a
       // panorama is the picture, wedges of nothing trimmed, rather than the canvas behind it.
       ...developed(edits?.doc ?? null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
   }
 }

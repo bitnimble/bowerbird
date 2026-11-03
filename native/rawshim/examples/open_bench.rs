@@ -147,6 +147,7 @@ fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
         long_edge: 0,
         grade: support::GRADE,
         defringe: support::STRENGTHS.defringe,
+        camera_match: fit::hdr::CameraMatch::LensAndColour,
         photo_analysis,
         dust: Default::default(),
         repairs: Vec::new(),

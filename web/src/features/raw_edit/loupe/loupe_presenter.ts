@@ -293,7 +293,7 @@ export class LoupePresenter {
         grade: local.open.grade,
         strengths: {
           sharpen: sharpenOf(doc.sharpening, this.edit.denoiser),
-          defringe: local.open.defringe,
+          defringe: doc.defringe / 100,
         },
         denoiseLuminance: doc.luminanceNoise,
         denoiseColour: doc.colourNoise,
@@ -329,7 +329,7 @@ export class LoupePresenter {
       doc == null
         ? ''
         : `${doc.luminanceNoise},${doc.colourNoise},${this.edit.denoiser},${doc.highlightRecovery},` +
-          `${doc.sharpening},${doc.clarity},` +
+          `${doc.sharpening},${doc.defringe},${doc.lensCorrection},${doc.clarity},` +
           `${doc.texture},${doc.dehaze},${doc.dustRemoval},${doc.dustSensitivity},` +
           `${doc.dustIntensity},${JSON.stringify(doc.repairs)},` +
           JSON.stringify(reflectionSettings(doc));

@@ -145,6 +145,21 @@ export class PhotoEditsRepository {
     return { state, from: row?.stamp ?? null };
   }
 
+  /**
+   * The document import starts a photo at, under no step of its history: undoing every edit comes
+   * back to it. Nothing for a photo that already has a document.
+   */
+  writeImported(photoId: string, defaults: Partial<EditDoc>): void {
+    if (this.row(photoId) != null) return;
+    this.write(
+      photoId,
+      0,
+      (current, history, cursor) => ({ doc: { ...current, ...defaults }, history, cursor }),
+      undefined,
+      'auto',
+    );
+  }
+
   undo(photoId: string, rev: number): EditState {
     return this.write(photoId, rev, (current, history, cursor) => {
       if (cursor <= 0) return null;

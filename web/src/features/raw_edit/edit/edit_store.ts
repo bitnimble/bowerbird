@@ -49,6 +49,9 @@ export class EditStore {
 
   @observable accessor upscalable = true;
 
+  /** What Reset all goes back to: the document before its oldest kept edit. */
+  @observable accessor imported: EditDoc | null = null;
+
   @computed get denoiser(): Denoiser {
     return denoiserFor(this.doc?.denoiser ?? this.libraryDenoiser, this.upscalable);
   }

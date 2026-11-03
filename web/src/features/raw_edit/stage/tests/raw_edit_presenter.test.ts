@@ -237,6 +237,7 @@ describe('a slider reaching the picture', () => {
       stamp: null,
       library_denoiser: 'galosh',
       upscalable: true,
+      imported: neutralEdits(),
     };
     const matched: EditOpening = {
       ...unedited,
@@ -360,6 +361,8 @@ describe('a slider reaching the picture', () => {
       denoiser: 'pmrid',
       highlightRecovery: neutral.highlightRecovery,
       sharpening: sharpeningOf(neutral.sharpening, 'pmrid'),
+      defringe: neutral.defringe / 100,
+      lensCorrection: neutral.lensCorrection,
       dust: {
         enabled: neutral.dustRemoval,
         sensitivity: neutral.dustSensitivity / 100,
@@ -405,6 +408,8 @@ describe('a slider reaching the picture', () => {
         denoiser: 'galosh',
         highlightRecovery: 50,
         sharpening: 50,
+        defringe: 1,
+        lensCorrection: true,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],
         reflection: { enabled: false, strength: 1, strokes: [] },
@@ -515,6 +520,7 @@ describe('a slider reaching the picture', () => {
       stamp: null,
       library_denoiser: 'pmrid',
       upscalable: true,
+      imported: neutralEdits(),
     });
     expect(edit.denoiser).toBe('pmrid');
 
@@ -567,6 +573,7 @@ describe('a slider reaching the picture', () => {
       stamp: null,
       library_denoiser: 'upscaler',
       upscalable: false,
+      imported: neutralEdits(),
     });
     expect(edit.denoiser).toBe('galosh');
     expect(edit.denoiserDefaults).toEqual({ sharpening: 50 });
@@ -595,6 +602,46 @@ describe('a slider reaching the picture', () => {
       { top: 2048, rows: 952 },
     ]);
     expect(decoder.detailRebuilds).toBe(1);
+  });
+
+  test('prepares the whole frame again for the lens or the defringe, never a band of it', async () => {
+    const settled = async (): Promise<void> => {
+      for (let turn = 0; turn < 16; turn++) await Promise.resolve();
+    };
+    presenter.settle({ defringe: 40 });
+    await settled();
+    presenter.settle({ lensCorrection: false });
+    await settled();
+
+    expect(
+      decoder.prepares.map(({ defringe, lensCorrection }) => ({ defringe, lensCorrection })),
+    ).toEqual([
+      { defringe: 0.4, lensCorrection: true },
+      { defringe: 0.4, lensCorrection: false },
+    ]);
+    expect(decoder.bands).toEqual([]);
+  });
+
+  test('a whole prepare overtaken by a return to where the frame was is still undone', async () => {
+    const settled = async (): Promise<void> => {
+      for (let turn = 0; turn < 16; turn++) await Promise.resolve();
+    };
+    const waiting: (() => void)[] = [];
+    const prepare = decoder.prepare.bind(decoder);
+    decoder.prepare = async (open, mosaic) => {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+      return prepare(open, mosaic);
+    };
+
+    presenter.settle({ defringe: 40 });
+    await settled();
+    presenter.settle({ defringe: 100 });
+    while (waiting.length > 0) {
+      waiting.shift()?.();
+      await settled();
+    }
+
+    expect(decoder.prepares.map(({ defringe }) => defringe)).toEqual([0.4, 1]);
   });
 
   test('sends the geometry the reader chose, not the one the tool is showing', async () => {
@@ -1134,7 +1181,7 @@ describe('a picture prepared on the server', () => {
 
   test('the grade still ticks without asking the server for anything', async () => {
     opened({
-      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+      local: { decoder, open: { longEdge: 0, grade: GRADE }, onTheBackend: true },
     });
     stage.preparedElsewhere = true;
 
@@ -1241,7 +1288,7 @@ describe('the level a zoom is served at', () => {
     stage.region = { x: 0, y: 0, width: PAN_ROW.width, height: PAN_ROW.height };
     opened({
       photoId: 'pan001',
-      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+      local: { decoder, open: { longEdge: 0, grade: GRADE }, onTheBackend: true },
       shown: { width: PAN_ROW.width, height: PAN_ROW.height },
       levelScale: 0.5,
     });
@@ -1350,7 +1397,7 @@ describe('the level a zoom is served at', () => {
   test('maps a framed zoom into the held level before asking for picture coverage', async () => {
     opened({
       photoId: 'pan001',
-      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+      local: { decoder, open: { longEdge: 0, grade: GRADE }, onTheBackend: true },
       levelScale: 0.25,
     });
     stage.level = { number: 2, canvas: [2000, 1500] };
@@ -1635,6 +1682,7 @@ describe('leaving the editor', () => {
       stamp: 'opened-stamp',
       library_denoiser: 'galosh',
       upscalable: true,
+      imported: { ...neutralEdits(), lensCorrection: false, defringe: 0, awaitsCameraMatch: true },
     };
     presenter.edit.opened(opening);
     presenter.edit.applyState(opening);
@@ -1645,6 +1693,21 @@ describe('leaving the editor', () => {
     photoEditsApi.save = saveEdits;
     photoEditsApi.restore = restoreEdits;
     photoEditsApi.finish = finishEdits;
+  });
+
+  test('resets every edit to the document import wrote rather than to neutral', async () => {
+    const saved: EditState['doc'][] = [];
+    photoEditsApi.save = (_photoId, doc): Promise<EditState> => {
+      saved.push(doc);
+      return Promise.resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
+    };
+    presenter.settle({ contrast: 40 });
+    await Bun.sleep(0);
+
+    presenter.resetAllEdits();
+    await Bun.sleep(0);
+
+    expect(saved.at(-1)).toMatchObject({ contrast: 0, lensCorrection: false, defringe: 0 });
   });
 
   test('previews a curve in the next tick, settles once, and resets to the camera curve', async () => {

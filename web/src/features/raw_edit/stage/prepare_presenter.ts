@@ -1,10 +1,12 @@
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
+import { readPreparedHeader } from '../../../../../src/schemas/prepared';
 import { describe } from '../../../errors';
 import type { LocalPrepare } from '../local_decode/local_open';
 import {
   developOf,
   keepPhotoAnalysis,
   sameDevelop,
+  sameOpen,
   samePrepare,
   type LocalSource,
 } from '../local_decode/open_photo';
@@ -153,6 +155,21 @@ export class PreparePresenter {
           this.stage.draw();
           continue;
         }
+        // **The defringe and the lens are the open's**, read over the whole frame: a band cannot
+        // fit a match or measure the aberration, so the photograph is prepared again whole.
+        if (!sameOpen(this.mosaicAt, next)) {
+          const header = await local.decoder.prepare(local.open, next, null);
+          if (this.stage.isClosed()) return;
+          this.stage.reprepared(readPreparedHeader(header));
+          this.mixedRows = null;
+          this.mosaicAt = next;
+          if (this.mosaicPending == null) {
+            await this.keepMeasured(local);
+            if (this.stage.isClosed()) return;
+          }
+          this.stage.draw();
+          continue;
+        }
         const frame = { width: this.stageStore.width, height: this.stageStore.height };
         if (frame.width === 0 || frame.height === 0) return;
         // **Repairs alone are redrawn over the frame, not prepared again.** Moving a fill or
@@ -188,28 +205,8 @@ export class PreparePresenter {
         if (this.mosaicPending == null) {
           this.mixedRows = null;
           this.mosaicAt = next;
-          // **What the sweep had to measure, which only the worker knows.** A reader who switches
-          // dust on after the open makes the first band detect this photograph's particles, and a
-          // band carries no header to say so - so without this the loupe would go on asking for
-          // tiles built from an analysis with no particles in it, and magnify a spot the stage
-          // underneath had already removed.
-          //
-          // Kept only where it *gained* something, or every release of a Detail slider would write
-          // the same sidecar to the server again. Longer, not merely different: the blob shrinks
-          // whenever a build that cannot read one of its sections re-encodes it, and this write is
-          // a whole-file replace, so taking a shorter one would let an older reader truncate what a
-          // newer one had stored.
-          const measured = await local.decoder.analysis();
+          await this.keepMeasured(local);
           if (this.stage.isClosed()) return;
-          const held = local.photoAnalysis?.length ?? 0;
-          const photoId = this.stage.openedPhotoId();
-          if (measured != null && measured.length > held && photoId != null) {
-            local.photoAnalysis = measured;
-            keepPhotoAnalysis(photoId, measured);
-            // The loupe's tiles were built from the analysis that did not have these particles in
-            // it, and the cache key cannot see that it moved.
-            this.loupe.clearTiles();
-          }
           // Once, on the whole frame: the blur is a whole-frame reduction and one built against a
           // half-replaced frame would be fitted to two denoise strengths at once.
           await local.decoder.refreshDetail();
@@ -222,6 +219,31 @@ export class PreparePresenter {
       this.repreparing = false;
       this.mosaicRunning = null;
       this.stage.setRepreparing(false);
+    }
+  }
+
+  /**
+   * **What the sweep had to measure, which only the worker knows.** A reader who switches dust on
+   * after the open makes the first band detect this photograph's particles, and a band carries no
+   * header to say so - so without this the loupe would go on asking for tiles built from an
+   * analysis with no particles in it, and magnify a spot the stage underneath had already removed.
+   *
+   * Kept only where it *gained* something, or every release of a Detail slider would write the same
+   * sidecar to the server again. Longer, not merely different: the blob shrinks whenever a build
+   * that cannot read one of its sections re-encodes it, and this write is a whole-file replace, so
+   * taking a shorter one would let an older reader truncate what a newer one had stored.
+   */
+  private async keepMeasured(local: LocalSource): Promise<void> {
+    const measured = await local.decoder.analysis();
+    if (this.stage.isClosed()) return;
+    const held = local.photoAnalysis?.length ?? 0;
+    const photoId = this.stage.openedPhotoId();
+    if (measured != null && measured.length > held && photoId != null) {
+      local.photoAnalysis = measured;
+      keepPhotoAnalysis(photoId, measured);
+      // The loupe's tiles were built from the analysis that did not have these particles in it,
+      // and the cache key cannot see that it moved.
+      this.loupe.clearTiles();
     }
   }
 

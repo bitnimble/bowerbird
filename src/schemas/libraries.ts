@@ -63,11 +63,9 @@ export const LibrarySchema = z.object({
   // has and the embedded JPEG throws away.
   rendition_source: RenditionSourceSchema.default('render'),
   rendition_hdr: z.boolean().default(true),
-  // Which stages the two rendered renditions leave out (§10.1). Empty is every stage running,
-  // which is what a library gets until somebody trades one away for the time it costs. Per
-  // rendition because the two are looked at differently: `full` is what the viewer opens and
-  // `max` is what gets pixel-peeped. Not retroactive, like every setting in this panel.
+  // The stages a photo's first document switches off at import (§10.1).
   render_skip_full: OptionalStagesSchema.default([]),
+  // Nothing reads it.
   render_skip_max: OptionalStagesSchema.default([]),
   // What a photo whose edit names no denoiser is denoised with, in every rendition of it.
   denoiser: DenoiserSchema.default('galosh'),

@@ -27,6 +27,7 @@ import {
 } from '../../app/stores_context';
 import { FolderBrowser } from '../browse/folder_browser';
 import { newFolderBrowser } from '../browse/folder_browser_presenter';
+import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { libraryLabel } from '../libraries/library_label';
 import { commonParent } from '../libraries/common_parent';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
@@ -84,6 +85,9 @@ const styles = stylex.create({
   jobs: {
     marginTop: '8px',
     marginBottom: 0,
+  },
+  advanced: {
+    marginTop: '8px',
   },
   rules: {
     display: 'grid',
@@ -265,24 +269,24 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
           <LibrariesError />
           <DialogColumns>
             <div>
-              {!thin && <FolderSettings library={library} />}
-              <RenditionSettings library={library} />
-              {!thin && <StackSettings library={library} />}
+              <LibraryPanels library={library} thin={thin} />
+            </div>
+            <div>
+              {!thin && (
+                <div
+                  ref={backupSection}
+                  role="region"
+                  aria-label={BackupStrings.heading()}
+                  tabIndex={-1}
+                  {...stylex.props(styles.focusTarget)}
+                >
+                  <BackupPanel library={library} />
+                </div>
+              )}
               <div ref={syncSection} tabIndex={-1} {...stylex.props(styles.focusTarget)}>
                 <SyncedDevicesPanel library={library} />
               </div>
             </div>
-            {!thin && (
-              <div
-                ref={backupSection}
-                role="region"
-                aria-label={BackupStrings.heading()}
-                tabIndex={-1}
-                {...stylex.props(styles.focusTarget)}
-              >
-                <BackupPanel library={library} />
-              </div>
-            )}
           </DialogColumns>
         </DialogBody>
       </Modal>
@@ -317,82 +321,144 @@ const LibraryName = observer(function LibraryName({ library }: { library: Librar
   );
 });
 
-// What the library is, as opposed to what it builds: how much of the folder tree
-// belongs to it. Standing rules rather than decisions taken at import, so a
-// folder made next month is in or out for the same reason today's are (§4.1).
-const FolderSettings = observer(function FolderSettings({
+const LibraryPanels = observer(function LibraryPanels({
   library,
+  thin,
 }: {
   library: Library;
+  thin: boolean;
 }): JSX.Element {
-  const { libraries } = usePresenters();
-  const defaults = useLibrariesStore().defaults;
-  // Held here rather than in the field, because the checkbox above sends it too.
+  // Held here rather than in the field, because the read-only checkbox sends it too.
   const [binDraft, setBinDraft] = useState(library.bin_name ?? 'Bin');
   useEffect(() => setBinDraft(library.bin_name ?? 'Bin'), [library.bin_name]);
+
+  return (
+    <>
+      {!thin && <FolderSettings library={library} binDraft={binDraft} onBinDraft={setBinDraft} />}
+      <RenditionSettings library={library} />
+      {!thin && <StackSettings library={library} />}
+      <AdvancedLibrarySettings library={library} thin={thin} binDraft={binDraft} />
+    </>
+  );
+});
+
+const FolderSettings = observer(function FolderSettings({
+  library,
+  binDraft,
+  onBinDraft,
+}: {
+  library: Library;
+  binDraft: string;
+  onBinDraft: (value: string) => void;
+}): JSX.Element {
   const hasRules = (useLibrariesStore().folderRules.get(library.id) ?? []).length > 0;
 
   return (
     <Panel title={SettingsStrings.folders()} flush={!hasRules}>
       <RootPathField key={library.root_path} library={library} />
-
-      <SettingRow
-        label={SettingsStrings.includeSubfolders()}
-        onReset={resetTo(
-          library.include_subfolders,
-          defaults?.include_subfolders,
-          (v) => void libraries.setIncludeSubfolders(library.id, v),
-        )}
-      >
-        <input
-          {...stylex.props(focusRing.ring)}
-          type="checkbox"
-          aria-label={SettingsStrings.includeSubfolders()}
-          checked={library.include_subfolders}
-          onChange={(e) => void libraries.setIncludeSubfolders(library.id, e.currentTarget.checked)}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label={SettingsStrings.includeNonRaw()}
-        hint={SettingsStrings.includeNonRawHint()}
-        onReset={resetTo(
-          library.include_non_raw,
-          defaults?.include_non_raw,
-          (v) => void libraries.setIncludeNonRaw(library.id, v),
-        )}
-      >
-        <input
-          {...stylex.props(focusRing.ring)}
-          type="checkbox"
-          aria-label={SettingsStrings.includeNonRaw()}
-          checked={library.include_non_raw}
-          onChange={(e) => void libraries.setIncludeNonRaw(library.id, e.currentTarget.checked)}
-        />
-      </SettingRow>
-
-      <SettingRow label={SettingsStrings.readOnly()} hint={SettingsStrings.readOnlyHint()}>
-        <input
-          {...stylex.props(focusRing.ring)}
-          type="checkbox"
-          aria-label={SettingsStrings.readOnly()}
-          checked={library.read_only}
-          // Letting the app write again means making a bin, so the name goes with
-          // the request - whatever is in the field below, which is where the
-          // reader picks another when the root already holds one of that name.
-          onChange={(e) =>
-            void libraries.setReadOnly(
-              library.id,
-              e.currentTarget.checked,
-              binDraft.trim() || 'Bin',
-            )
-          }
-        />
-      </SettingRow>
-
-      <BinNameField library={library} draft={binDraft} onDraft={setBinDraft} />
+      <BinNameField library={library} draft={binDraft} onDraft={onBinDraft} />
       <FolderRuleList library={library} />
     </Panel>
+  );
+});
+
+const AdvancedLibrarySettings = observer(function AdvancedLibrarySettings({
+  library,
+  thin,
+  binDraft,
+}: {
+  library: Library;
+  thin: boolean;
+  binDraft: string;
+}): JSX.Element {
+  const { libraries } = usePresenters();
+  const defaults = useLibrariesStore().defaults;
+
+  return (
+    <Disclosure title={AddLibraryStrings.advancedSettings()}>
+      <Panel flush style={styles.advanced}>
+        {!thin && (
+          <SettingRow label={SettingsStrings.readOnly()} hint={SettingsStrings.readOnlyHint()}>
+            <input
+              {...stylex.props(focusRing.ring)}
+              type="checkbox"
+              aria-label={SettingsStrings.readOnly()}
+              checked={library.read_only}
+              // Letting the app write again means making a bin, so the name goes with
+              // the request - whatever is in the bin folder name field, which is where
+              // the reader picks another when the root already holds one of that name.
+              onChange={(e) =>
+                void libraries.setReadOnly(
+                  library.id,
+                  e.currentTarget.checked,
+                  binDraft.trim() || 'Bin',
+                )
+              }
+            />
+          </SettingRow>
+        )}
+
+        <SettingRow
+          label={SettingsStrings.buildHdrRenditions()}
+          onReset={resetTo(
+            library.rendition_hdr,
+            defaults?.rendition_hdr,
+            (v) => void libraries.setRenditionHdr(library.id, v),
+          )}
+        >
+          <input
+            {...stylex.props(focusRing.ring)}
+            type="checkbox"
+            aria-label={SettingsStrings.buildHdrRenditions()}
+            checked={library.rendition_hdr}
+            onChange={(e) => void libraries.setRenditionHdr(library.id, e.currentTarget.checked)}
+          />
+        </SettingRow>
+
+        {!thin && (
+          <>
+            <SettingRow
+              label={SettingsStrings.includeSubfolders()}
+              onReset={resetTo(
+                library.include_subfolders,
+                defaults?.include_subfolders,
+                (v) => void libraries.setIncludeSubfolders(library.id, v),
+              )}
+            >
+              <input
+                {...stylex.props(focusRing.ring)}
+                type="checkbox"
+                aria-label={SettingsStrings.includeSubfolders()}
+                checked={library.include_subfolders}
+                onChange={(e) =>
+                  void libraries.setIncludeSubfolders(library.id, e.currentTarget.checked)
+                }
+              />
+            </SettingRow>
+
+            <SettingRow
+              label={SettingsStrings.includeNonRaw()}
+              hint={SettingsStrings.includeNonRawHint()}
+              onReset={resetTo(
+                library.include_non_raw,
+                defaults?.include_non_raw,
+                (v) => void libraries.setIncludeNonRaw(library.id, v),
+              )}
+            >
+              <input
+                {...stylex.props(focusRing.ring)}
+                type="checkbox"
+                aria-label={SettingsStrings.includeNonRaw()}
+                checked={library.include_non_raw}
+                onChange={(e) =>
+                  void libraries.setIncludeNonRaw(library.id, e.currentTarget.checked)
+                }
+              />
+            </SettingRow>
+          </>
+        )}
+      </Panel>
+    </Disclosure>
   );
 });
 
@@ -458,7 +524,7 @@ const BinNameField = observer(function BinNameField({
   function commit(): void {
     const next = draft.trim();
     // Nothing to rename while there is no folder: the name is only a choice for
-    // the checkbox above to send when it makes one.
+    // the read-only checkbox to send when it makes one.
     if (next === '' || next === library.bin_name || noBinYet) {
       if (next === '') onDraft(library.bin_name ?? 'Bin');
       return;
@@ -561,23 +627,6 @@ const RenditionSettings = observer(function RenditionSettings({
               e.currentTarget.checked ? 'render' : 'embedded',
             )
           }
-        />
-      </SettingRow>
-
-      <SettingRow
-        label={SettingsStrings.buildHdrRenditions()}
-        onReset={resetTo(
-          library.rendition_hdr,
-          defaults?.rendition_hdr,
-          (v) => void libraries.setRenditionHdr(library.id, v),
-        )}
-      >
-        <input
-          {...stylex.props(focusRing.ring)}
-          type="checkbox"
-          aria-label={SettingsStrings.buildHdrRenditions()}
-          checked={library.rendition_hdr}
-          onChange={(e) => void libraries.setRenditionHdr(library.id, e.currentTarget.checked)}
         />
       </SettingRow>
     </Panel>

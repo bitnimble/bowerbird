@@ -186,7 +186,7 @@ pub struct Job {
     /// sets it (§10.9). Read against `render::detail::SHARPEN_GAIN`, so 1 is the top of that track and
     /// the deconvolution as computed is its middle.
     pub sharpen: f64,
-    /// How hard to take the colour off a fringing edge (`raw_defringe`, §10.9). Longitudinal
+    /// How hard to take the colour off a fringing edge (`EditDoc.defringe`, §10.9). Longitudinal
     /// aberration is a focus difference rather than a magnification one, so the warp cannot
     /// reach it and this is the only stage that does.
     pub defringe: f64,

@@ -282,13 +282,40 @@ const ColourProfileChoice = observer(function ColourProfileChoice({
   edit: EditStore;
   presenter: RawEditPresenter;
 }): JSX.Element {
+  const lens = edit.doc?.lensCorrection ?? true;
   return (
     <SelectControl
       label={RawEditPanelStrings.colourProfile()}
       options={COLOUR_PROFILES}
-      value={edit.doc?.colourProfile ?? 'matched'}
+      value={lens ? (edit.doc?.colourProfile ?? 'matched') : 'none'}
       onChange={presenter.setColourProfile}
+      disabledReason={lens ? undefined : RawEditPanelStrings.colourNeedsLens()}
     />
+  );
+});
+
+const LensCorrection = observer(function LensCorrection({
+  edit,
+  stage,
+  presenter,
+}: {
+  edit: EditStore;
+  stage: StageStore;
+  presenter: RawEditPresenter;
+}): JSX.Element {
+  return (
+    <CheckLabel style={styles.check}>
+      <input
+        type="checkbox"
+        {...stylex.props(focusRing.ring)}
+        checked={edit.doc?.lensCorrection ?? true}
+        disabled={!stage.editable}
+        onChange={(event) => presenter.settle({ lensCorrection: event.currentTarget.checked })}
+      />
+      <Text as="span" style={styles.name}>
+        {RawEditPanelStrings.lensCorrection()}
+      </Text>
+    </CheckLabel>
   );
 });
 
@@ -490,7 +517,10 @@ export const RawEditPanel = observer(function RawEditPanel({
               {sliders(
                 DETAIL.filter(
                   (spec) =>
-                    (stage.mosaic && (stage.denoises || spec.key === 'highlightRecovery')) ||
+                    (stage.mosaic &&
+                      (stage.denoises ||
+                        spec.key === 'highlightRecovery' ||
+                        spec.key === 'defringe')) ||
                     spec.key === 'sharpening',
                 ),
               )}
@@ -547,13 +577,17 @@ export const RawEditPanel = observer(function RawEditPanel({
           panelGroup(
             'geometry',
             RawEditPanelStrings.groupGeometry(),
-            <GeometryControls
-              edit={edit}
-              stage={stage}
-              store={crop}
-              presenter={presenter}
-              styles={styles}
-            />,
+            <>
+              {stage.mosaic && <LensCorrection edit={edit} stage={stage} presenter={presenter} />}
+              <GeometryControls
+                edit={edit}
+                stage={stage}
+                store={crop}
+                presenter={presenter}
+                styles={styles}
+              />
+            </>,
+            stage.repreparing,
           ),
         ],
       },

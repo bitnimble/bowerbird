@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { PhotoEditsRepository } from '../photo_edits_repository';
-import { SidecarImportService, sidecarFor } from '../sidecar_import';
+import { ImportEditsService, sidecarFor, type ImportingLibrary } from '../import_edits';
 
 const NS = [
   'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"',
@@ -23,14 +23,16 @@ function sidecar(attrs: string): string {
 const EDITED =
   'crs:ProcessVersion="15.4" crs:Version="18.5" crs:HasSettings="True" crs:Exposure2012="+1.25" crs:Contrast2012="+20"';
 
-describe('SidecarImportService', () => {
+describe('ImportEditsService', () => {
   let root: string;
+  let library: ImportingLibrary;
   let db: Database;
   let edits: PhotoEditsRepository;
-  let service: SidecarImportService;
+  let service: ImportEditsService;
 
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'bb-sidecar-'));
+    library = { root_path: root, render_skip_full: [], denoiser: 'galosh' };
     db = new Database(':memory:');
     // The edits table has a foreign key onto photos, and the cascade is the whole
     // reason it does; without this the insert below is accepted against nothing.
@@ -38,7 +40,7 @@ describe('SidecarImportService', () => {
     runMigrations(db);
     db.run("INSERT INTO libraries (id, name, root_path) VALUES ('lib', 'Library', ?)", [root]);
     edits = new PhotoEditsRepository(db);
-    service = new SidecarImportService(edits);
+    service = new ImportEditsService(edits);
   });
 
   afterEach(() => {
@@ -59,7 +61,7 @@ describe('SidecarImportService', () => {
     writeFileSync(path.join(root, 'IMG_1.xmp'), sidecar(EDITED));
     const photo = addPhoto('p1', 'IMG_1.CR3');
 
-    expect(service.importFor(root, [photo])).toBe(1);
+    expect(service.importFor(library, [photo])).toBe(1);
 
     const state = edits.get('p1');
     expect(state.doc.exposure).toBe(1.25);
@@ -81,43 +83,88 @@ describe('SidecarImportService', () => {
     const raw = addPhoto('raw', 'IMG_2.CR3');
     const jpeg = addPhoto('jpeg', 'IMG_2.JPG');
 
-    expect(service.importFor(root, [raw, jpeg])).toBe(1);
+    expect(service.importFor(library, [raw, jpeg])).toBe(1);
     expect(edits.get('raw').doc.exposure).toBe(1.25);
-    expect(edits.get('jpeg').rev).toBe(0);
+    expect(edits.get('jpeg').doc.exposure).toBe(0);
+    expect(edits.get('jpeg').canUndo).toBe(false);
   });
 
-  it('imports nothing for a photo with no sidecar, and says nothing about it', () => {
-    expect(service.importFor(root, [addPhoto('p3', 'IMG_3.CR3')])).toBe(0);
-    expect(edits.get('p3').rev).toBe(0);
+  it("starts a photo with no sidecar at the library's defaults, under no undo step", () => {
+    library = {
+      root_path: root,
+      render_skip_full: ['dust', 'denoise', 'lens', 'defringe', 'sharpen'],
+      denoiser: 'pmrid',
+    };
+
+    expect(service.importFor(library, [addPhoto('p3', 'IMG_3.CR3')])).toBe(0);
+
+    const state = edits.get('p3');
+    expect(state.doc).toMatchObject({
+      awaitsCameraMatch: true,
+      denoiser: 'pmrid',
+      dustRemoval: false,
+      luminanceNoise: 0,
+      colourNoise: 0,
+      lensCorrection: false,
+      colourProfile: 'none',
+      defringe: 0,
+      sharpening: 0,
+    });
+    expect(state.rev).toBe(1);
+    expect(state.canUndo).toBe(false);
   });
 
-  it('carries on past a sidecar it cannot read', () => {
+  it('leaves the stages a library keeps at their document defaults', () => {
+    service.importFor(library, [addPhoto('p8', 'IMG_8.CR3')]);
+
+    expect(edits.get('p8').doc).toMatchObject({
+      denoiser: 'galosh',
+      dustRemoval: true,
+      luminanceNoise: null,
+      colourNoise: null,
+      lensCorrection: true,
+      colourProfile: 'matched',
+      defringe: 100,
+      sharpening: null,
+    });
+  });
+
+  it('carries on past a sidecar it cannot read, starting that photo at the defaults', () => {
     // A sync that failed because one file in three hundred thousand held malformed XML
     // would be a worse trade than the edit it dropped.
+    library = { ...library, render_skip_full: ['lens'] };
     writeFileSync(path.join(root, 'IMG_4.xmp'), '<x:xmpmeta><not closed');
+    mkdirSync(path.join(root, 'IMG_9.xmp'));
     writeFileSync(path.join(root, 'IMG_5.xmp'), sidecar(EDITED));
 
     expect(
-      service.importFor(root, [addPhoto('p4', 'IMG_4.CR3'), addPhoto('p5', 'IMG_5.CR3')]),
+      service.importFor(library, [
+        addPhoto('p4', 'IMG_4.CR3'),
+        addPhoto('p9', 'IMG_9.CR3'),
+        addPhoto('p5', 'IMG_5.CR3'),
+      ]),
     ).toBe(1);
+    expect(edits.get('p4').doc.lensCorrection).toBe(false);
+    expect(edits.get('p9').doc.lensCorrection).toBe(false);
     expect(edits.get('p5').doc.exposure).toBe(1.25);
   });
 
-  it('takes nothing from a sidecar that holds only a rating', () => {
+  it('takes nothing from a sidecar that holds only a rating, starting the photo at the defaults', () => {
+    library = { ...library, render_skip_full: ['defringe'] };
     writeFileSync(
       path.join(root, 'IMG_6.xmp'),
       sidecar('xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"'),
     );
 
-    expect(service.importFor(root, [addPhoto('p6', 'IMG_6.CR3')])).toBe(0);
-    expect(edits.get('p6').rev).toBe(0);
+    expect(service.importFor(library, [addPhoto('p6', 'IMG_6.CR3')])).toBe(0);
+    expect(edits.get('p6')).toMatchObject({ rev: 1, canUndo: false, doc: { defringe: 0 } });
   });
 
   it('finds a sidecar in a subfolder, where the library keeps most of them', () => {
     mkdirSync(path.join(root, '2025-04-12'));
     writeFileSync(path.join(root, '2025-04-12', 'IMG_7.xmp'), sidecar(EDITED));
 
-    expect(service.importFor(root, [addPhoto('p7', '2025-04-12/IMG_7.CR3')])).toBe(1);
+    expect(service.importFor(library, [addPhoto('p7', '2025-04-12/IMG_7.CR3')])).toBe(1);
     expect(edits.get('p7').doc.exposure).toBe(1.25);
   });
 });

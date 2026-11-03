@@ -222,6 +222,9 @@ export const EditDocSchema = z
     // Null is the denoiser's default (`sharpeningOf`), so an unmoved slider follows a change of
     // denoiser.
     sharpening: z.number().int().min(0).max(100).nullable().default(null),
+    // A ceiling on the colour fringe correction, not its amount (§10.8): the coefficient is fitted
+    // per frame, so 100 takes off what the frame was measured to carry.
+    defringe: z.number().int().min(0).max(100).default(100),
 
     // Dust. The particles on the sensor's cover glass, divided back out of the mosaic beside
     // the denoise (`denoise::dust`).
@@ -263,6 +266,9 @@ export const EditDocSchema = z
       .nullable()
       .default(null),
     tint: z.number().int().min(TINT.min).max(TINT.max).nullable().default(null),
+
+    // Off also turns the camera colour profile off: the profile is fitted through the lens.
+    lensCorrection: z.boolean().default(true),
 
     // Geometry. Fractions of the frame rather than pixels, because one document grades an
     // 800px tile, a 3840px `full` and a native-resolution `max`, and a pixel rectangle
@@ -450,6 +456,8 @@ export type EditCheckpoint = z.infer<typeof EditCheckpointSchema>;
 export const EditOpeningSchema = EditCheckpointSchema.extend({
   library_denoiser: DenoiserSchema,
   upscalable: z.boolean(),
+  /** The document before the oldest step its history keeps, which Reset all goes back to. */
+  imported: EditDocSchema,
 });
 export type EditOpening = z.infer<typeof EditOpeningSchema>;
 
@@ -603,4 +611,9 @@ export function diffEdits(from: EditDoc, to: EditDoc): EditDelta | null {
 export function applyEdits(doc: EditDoc, patch: Record<string, unknown>): EditDoc {
   const parsed = EditDocSchema.safeParse({ ...doc, ...patch });
   return parsed.success ? parsed.data : doc;
+}
+
+/** `doc` with every step behind `cursor` undone. */
+export function editsBefore(doc: EditDoc, history: EditHistory, cursor: number): EditDoc {
+  return history.slice(0, cursor).reduceRight((undone, step) => applyEdits(undone, step.from), doc);
 }

@@ -72,6 +72,10 @@ const styles = stylex.create({
   tabs: {
     marginBottom: '16px',
   },
+  sublabel: {
+    marginTop: 0,
+    marginBottom: '10px',
+  },
 });
 
 // The three renditions under the names the viewer gives them, then the modes
@@ -303,24 +307,6 @@ const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
     <SettingsColumns
       left={
         <>
-          <GroupTitle>{SettingsStrings.groupProcessing()}</GroupTitle>
-          <Panel flush>
-            <RenderOnThisDevice />
-            <ToggleSetting
-              field="match_embedded_jpeg"
-              label={SettingsStrings.matchEmbeddedJpeg()}
-              hint={SettingsStrings.matchEmbeddedJpegHint()}
-            />
-            <NumberSetting
-              field="raw_defringe"
-              label={SettingsStrings.rawDefringe()}
-              hint={SettingsStrings.rawDefringeHint()}
-              min={0}
-              max={1}
-              step={0.05}
-            />
-          </Panel>
-
           <GroupTitle>{SettingsStrings.groupHdr()}</GroupTitle>
           <Panel flush>
             <NumberSetting
@@ -759,7 +745,13 @@ function RenderingTab(): JSX.Element {
       left={
         <>
           <LibrariesError />
+          <Panel flush>
+            <RenderOnThisDevice />
+          </Panel>
           <GroupTitle>{SettingsStrings.renderStages()}</GroupTitle>
+          <Text variant="muted" as="p" style={styles.sublabel}>
+            {SettingsStrings.renderStagesHint()}
+          </Text>
           <RenderStagesPanel />
         </>
       }

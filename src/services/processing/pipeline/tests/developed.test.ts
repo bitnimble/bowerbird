@@ -34,6 +34,8 @@ describe('developed', () => {
       denoiser: 'galosh',
       highlightRecovery: 40,
       sharpening: 80,
+      defringe: 50,
+      lensCorrection: false,
       dustRemoval: false,
       dustSensitivity: 25,
       dustIntensity: 100,
@@ -44,6 +46,8 @@ describe('developed', () => {
     expect(job.sharpen).toBeCloseTo(1.05);
     expect(job.denoiseLuminance).toBe(30);
     expect(job.highlightRecovery).toBe(40);
+    expect(job.defringe).toBe(0.5);
+    expect(job.cameraMatch).toBe('none');
     expect(developed(stored, 'galosh', () => true).highlightRecovery).toBe(50);
     expect(job.dust.enabled).toBe(false);
     expect(job.exposure).toBe(1.5);
@@ -69,6 +73,8 @@ describe('developed', () => {
       denoiser: 'galosh',
       highlightRecovery: 100,
       sharpening: null,
+      defringe: 100,
+      lensCorrection: true,
       dustRemoval: true,
       dustSensitivity: 25,
       dustIntensity: 100,
@@ -77,6 +83,22 @@ describe('developed', () => {
       reflectionStrokes: [],
     });
     expect(previewed.reflection).toEqual({ enabled: true, strength: 1.5, strokes: [] });
+  });
+
+  it('takes the camera match and the defringe from the document', () => {
+    expect(developed(null, 'galosh', () => true)).toMatchObject({
+      cameraMatch: 'lensAndColour',
+      defringe: 1,
+      dust: { enabled: true },
+    });
+    const off = (doc: object): ReturnType<typeof developed> =>
+      developed(JSON.stringify(doc), 'galosh', () => true);
+    expect(off({ colourProfile: 'none' }).cameraMatch).toBe('lens');
+    expect(off({ lensCorrection: false }).cameraMatch).toBe('none');
+    expect(off({ lensCorrection: false, colourProfile: 'matched' }).adjust.colourProfile).toBe(
+      'none',
+    );
+    expect(off({ defringe: 0 }).defringe).toBe(0);
   });
 
   it("denoises with the library's filter unless the edit names one", () => {

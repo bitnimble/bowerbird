@@ -155,7 +155,6 @@ test('a rendition of either range is opened in the browser', async ({ page }) =>
           {
             longEdge: 0,
             grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-            defringe: 0,
             statedWhite: true,
           },
           null,

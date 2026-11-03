@@ -3,10 +3,10 @@ import type { LibraryConfiguration as Library } from '../../../schemas/libraries
 import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { isComposite } from '../../../schemas/recipes';
+import type { CameraMatch } from '../../../schemas/render_stages';
 import { getDataPath, originalPathOf } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
-import type { SettingsRepository } from '../../settings/settings_repository';
 import { isUpscalable } from '../rawshim/rawshim_ops';
 import {
   openPrepareWorker,
@@ -26,7 +26,6 @@ export class PrepareRenderer {
   constructor(
     private readonly photoPaths: PhotoPathsRepository,
     private readonly photoListing: PhotoListingRepository,
-    private readonly settings: SettingsRepository,
     private readonly editsFor: (photoId: string) => { doc: string; stamp: string | null } | null,
     private readonly libraryOf: (libraryId: string) => Library | null,
     private readonly compositeOf: (
@@ -96,6 +95,15 @@ export class PrepareRenderer {
     }
     const { level, size, window, parts } = at;
 
+    const developing = developed(
+      this.editsFor(photoId)?.doc ?? null,
+      library.denoiser,
+      () => original != null && isUpscalable(original),
+      develop,
+    );
+    // The colour whenever the lens is on: the editor turns the profile on and off per tick, so a
+    // picture prepared without it could not be shown with it.
+    const cameraMatch: CameraMatch = developing.cameraMatch === 'none' ? 'none' : 'lensAndColour';
     const shared = {
       photoId,
       dataPath,
@@ -103,25 +111,18 @@ export class PrepareRenderer {
       // composite the photographs rather than the cameras' own pictures.
       targets: [],
       grade: this.targets.grade(),
-      ...developed(
-        this.editsFor(photoId)?.doc ?? null,
-        library.denoiser,
-        () => original != null && isUpscalable(original),
-        develop,
-      ),
-      ...this.targets.render(),
+      ...developing,
+      cameraMatch,
     };
     const job: WorkerJob =
       composite == null
         ? {
             kind: 'rendition',
             rawFilePath: original ?? '',
-            cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
             ...shared,
           }
         : {
             kind: 'composite',
-            cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
             want: 'render',
             sources: composite.sources,
             recipe: composite.recipe,

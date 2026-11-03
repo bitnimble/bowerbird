@@ -5,6 +5,7 @@ import type { PastedEdits } from '../../schemas/photos';
 import {
   EditDocSchema,
   diffEdits,
+  editsBefore,
   pastableEdits,
   type CameraTone,
   type Denoiser,
@@ -73,10 +74,12 @@ export class PhotoEditsService {
 
   checkpoint(photoId: string): EditOpening {
     const photo = this.require(photoId);
+    const checkpoint = this.edits.checkpoint(photoId);
     return {
-      ...this.edits.checkpoint(photoId),
+      ...checkpoint,
       library_denoiser: this.denoiserOf(photo.library_id),
       upscalable: this.upscalable(photoId),
+      imported: editsBefore(checkpoint.doc, checkpoint.history, checkpoint.cursor),
     };
   }
 

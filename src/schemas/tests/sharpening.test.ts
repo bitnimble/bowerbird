@@ -11,8 +11,14 @@ test("an unset sharpening is the denoiser's default, and a set one is kept", () 
 
 test('GALOSH sharpens 25 past its slider, so its default reads as sharp as Best at its own', () => {
   expect(sharpenOf(null, 'galosh')).toBe(0.75);
-  expect(sharpenOf(0, 'galosh')).toBe(0.25);
+  expect(sharpenOf(1, 'galosh')).toBe(0.26);
   expect(sharpenOf(100, 'galosh')).toBe(1.25);
   expect(sharpenOf(null, 'upscaler')).toBe(0.35);
   expect(sharpenOf(null, 'pmrid')).toBe(0.5);
+});
+
+test('a slider at 0 sharpens nothing, under every denoiser', () => {
+  expect(sharpenOf(0, 'galosh')).toBe(0);
+  expect(sharpenOf(0, 'pmrid')).toBe(0);
+  expect(sharpenOf(0, 'upscaler')).toBe(0);
 });

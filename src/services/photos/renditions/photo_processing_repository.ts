@@ -34,8 +34,6 @@ export interface PendingPhoto {
   // column of the same name: what it was built with, against what to build next.
   library_rendition_source: RenditionSource;
   rendition_hdr: number;
-  /** The library's `full` skip list as the column holds it; only that one, the queue building no `max`. */
-  render_skip_full: string;
   denoiser: Denoiser;
   // The photographer's develop settings as stored JSON, or NULL where they have
   // none. Carried on the row rather than read per photo for the reason the join
@@ -107,7 +105,7 @@ export class PhotoProcessingRepository {
                 MAX(r.variant = 'grid') AS needs_tile,
                 MAX(r.variant = ${FULL_VARIANT_OF_LIBRARY}) AS needs_renditions,
                 l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,
-                l.render_skip_full, l.denoiser,
+                l.denoiser,
                 e.doc AS edits, e.stamp AS edits_stamp, COALESCE(${EDITED('e')}, 0) AS edited,
                 -- The frames' documents, for a row composed out of other rows. A subquery rather
                 -- than a join: it is one row per composite and none at all for a photograph, where

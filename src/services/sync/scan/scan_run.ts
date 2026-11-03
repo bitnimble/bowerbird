@@ -15,7 +15,7 @@ import { ScanCancelled, type ScanFileReader } from './scan_file_reader';
 import type { ScanLeases } from './scan_leases';
 import type { ProcessingTrigger, ScanRebuilds } from './scan_rebuilds';
 import { idleScanStatus, type ScanStatus } from './scan_status';
-import { ScanBatch, type SidecarImporter } from './scan_batch';
+import { ScanBatch, type EditImporter } from './scan_batch';
 import { collectEvidence, type ScanScope } from './scan_evidence';
 import { readAndClassify } from './scan_classification';
 import { applyChanges } from './scan_apply';
@@ -38,7 +38,7 @@ export class ScanRunner {
     private readonly shoots: ShootsRepository,
     private readonly folderRules: FolderRulesRepository,
     private readonly processing: ProcessingTrigger,
-    private readonly sidecars: SidecarImporter,
+    private readonly edits: EditImporter,
     private readonly materialise: (libraryId: string) => Promise<number>,
     private readonly pendingMoves: (
       libraryId: string,
@@ -198,7 +198,7 @@ export class ScanRunner {
       this.shoots,
       this.reconciler,
       this.leases,
-      this.sidecars,
+      this.edits,
       this.status,
     );
     const classified = await readAndClassify(

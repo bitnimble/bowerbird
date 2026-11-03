@@ -179,7 +179,7 @@ describe('the repair tool', () => {
 
   test('draws its repairs over a picture prepared elsewhere, with no mosaic to re-run', async () => {
     openedWith(editor, {
-      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+      local: { decoder, open: { longEdge: 0, grade: GRADE }, onTheBackend: true },
     });
     stage.preparedElsewhere = true;
 

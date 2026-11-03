@@ -14,6 +14,9 @@ export function sharpeningOf(sharpening: number | null, denoiser: Denoiser): num
 
 /** The strength a render's sharpen takes, `Job.sharpen`, for the slider's position under this denoiser. */
 export function sharpenOf(sharpening: number | null, denoiser: Denoiser): number {
+  const position = sharpeningOf(sharpening, denoiser);
+  // 0 is the Rendering tab's sharpen switched off, which must skip the stage.
+  if (position === 0) return 0;
   const lift = denoiser === 'galosh' ? GALOSH_SHARPENING_LIFT : 0;
-  return (sharpeningOf(sharpening, denoiser) + lift) / 100;
+  return (position + lift) / 100;
 }

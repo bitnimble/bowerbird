@@ -9,7 +9,7 @@ import type { AlignShape } from '../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import type { CompositeKind } from '../../schemas/photos';
 import type { CameraTone } from '../../schemas/photo_edits';
-import type { CameraMatch } from '../../schemas/render_stages';
+import { importedEdits } from '../../schemas/render_stages';
 import {
   AnalysedSchema,
   MOST_SOURCES,
@@ -104,15 +104,10 @@ const PHASES = [
  * the geometry every layer is drawn in. A layer is one frame over the whole canvas, so the tiles
  * are not in it, and neither is a frame's edit, §3.0's planes taking no grade.
  */
-export function layerKeyOf(
-  library: Library,
-  recipe: AssemblyRecipe,
-  cameraMatch: CameraMatch,
-): string {
+export function layerKeyOf(library: Library, recipe: AssemblyRecipe): string {
   const of = {
     source: library.rendition_source,
     hdr: library.rendition_hdr,
-    cameraMatch,
     sources: recipe.sources,
     projection: recipe.projection,
     canvas: recipe.canvas,
@@ -344,7 +339,7 @@ export class CompositesService {
       // The framing on the row rather than only in the recipe, so every render of this
       // photograph - a rendition, an export, the editor's own tick - trims the wedges of nothing
       // a hand-held pan leaves at the corners, and the reader can move it like any other crop.
-      this.frame(photoId, recipe);
+      this.firstFrame(photoId, recipe, library);
       log.info('merged a composite', { photo: photoId, kind, sources: recipe.sources.length });
 
       const made = { ...watching, photoId };
@@ -513,11 +508,7 @@ export class CompositesService {
           'the analysis answered tiles this build cannot read',
         );
       }
-      const seamVolume = layerKeyOf(
-        library,
-        parsed.data.recipe,
-        this.processing.cameraMatchFor(library, 'full'),
-      );
+      const seamVolume = layerKeyOf(library, parsed.data.recipe);
       const volumePath = draftVolumePath(getDataPath(library), seamVolume);
       await mkdir(path.dirname(volumePath), { recursive: true });
       await replaceFile(pendingVolume, volumePath);
@@ -559,7 +550,7 @@ export class CompositesService {
     progressed: (share: number) => void = () => undefined,
   ): Promise<string[]> {
     const sources = recipe.sources.map((source) => this.sourceOf(source.photoId, library));
-    const layerKey = layerKeyOf(library, recipe, this.processing.cameraMatchFor(library, 'full'));
+    const layerKey = layerKeyOf(library, recipe);
     const dataPath = getDataPath(library);
     const layers: string[] = [];
     for (let at = 0; at < sources.length; at++) {
@@ -643,7 +634,7 @@ export class CompositesService {
             this.seamed(recipe, library),
           );
     const dataPath = getDataPath(library);
-    const layerKey = layerKeyOf(library, ready, this.processing.cameraMatchFor(library, 'full'));
+    const layerKey = layerKeyOf(library, ready);
     const outputPath = draftPreviewPath(dataPath, layerKey, pictureKeyOf(ready));
     if (!existsSync(outputPath)) {
       await this.serially(
@@ -735,7 +726,7 @@ export class CompositesService {
       reference: recipe.sources[recipe.base]?.photoId ?? sources[0]!.photoId,
     });
     try {
-      this.frame(photoId, recipe);
+      this.firstFrame(photoId, recipe, library);
       log.info('assembled a photograph', { photo: photoId, sources: recipe.sources.length });
       await this.assembled(photoId, recipe, sources, library);
       return { photoId };
@@ -775,20 +766,22 @@ export class CompositesService {
     return { photoId };
   }
 
+  private firstFrame(
+    photoId: string,
+    recipe: Composition | AssemblyRecipe,
+    library: Library,
+  ): void {
+    this.edits.writeImported(photoId, importedEdits(library.render_skip_full, library.denoiser));
+    this.frame(photoId, recipe);
+  }
+
   /** The recipe's crop into the composite's document, which is otherwise left as it stands. */
   private frame(photoId: string, recipe: Composition | AssemblyRecipe): void {
     const { doc, rev } = this.edits.get(photoId);
     const { cropLeft, cropTop, cropRight, cropBottom } = framingEdits(recipe);
     this.edits.save(
       photoId,
-      {
-        ...doc,
-        cropLeft,
-        cropTop,
-        cropRight,
-        cropBottom,
-        awaitsCameraMatch: rev === 0 || doc.awaitsCameraMatch,
-      },
+      { ...doc, cropLeft, cropTop, cropRight, cropBottom },
       rev,
       undefined,
       'auto',

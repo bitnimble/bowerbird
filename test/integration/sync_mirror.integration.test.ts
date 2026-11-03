@@ -19,7 +19,7 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
 import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
-import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
+import type { EditImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 
@@ -68,7 +68,7 @@ function makeLibrary(over: { include_subfolders?: number } = {}): void {
   ).run(LIB, root, 'lib', 'taken_desc', over.include_subfolders ?? 1);
 }
 
-function scanService(sidecars?: SidecarImporter): ScanService {
+function scanService(edits?: EditImporter): ScanService {
   const processing = photoProcessing(db);
   return new ScanService(
     photoScan(db, processing),
@@ -81,7 +81,7 @@ function scanService(sidecars?: SidecarImporter): ScanService {
     rules,
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    sidecars,
+    edits,
   );
 }
 
@@ -132,14 +132,14 @@ test('a folder holding photos becomes a shoot, and the photos belong to it', asy
   expect(shootOf('root.arw')).toBeNull();
 });
 
-// The sidecar seam runs after each batch commits, so it sees what the grid shows mid-import.
+// The edit import seam runs after each batch commits, so it sees what the grid shows mid-import.
 test('a first import places each photo in its shoot as its batch commits', async () => {
   makeLibrary();
   put('Trip/top.arw');
   put('Trip/Day1/a.arw');
   const placed = new Map<string, string | null>();
   await scanService({
-    importFor: (_root, photos) => {
+    importFor: (_library, photos) => {
       for (const photo of photos) placed.set(photo.filePath, shootOf(photo.filePath));
       return 0;
     },

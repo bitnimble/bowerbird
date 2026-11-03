@@ -41,7 +41,7 @@ export async function finishScan(
   const { present, livePresent, diff, relocations, nowUtc } = classified;
   const { removed, moved, modified } = counts;
 
-  batch.importSidecars();
+  batch.importEdits();
 
   // Outside the transaction, so a listener cannot hold the write lock, and
   // only once it has committed: the watcher would otherwise re-arm against a

@@ -36,9 +36,7 @@ export const libraries = sqliteTable(
     binDev: integer('bin_dev'),
     binIno: integer('bin_ino'),
     binBirthtime: real('bin_birthtime'),
-    // Which stages a `full` or a `max` render leaves out, comma-separated and empty for none
-    // (`schemas/render_stages.ts`). One column per rendition, because the query that carries
-    // these onto a pending row picks the one it needs by name.
+    // Stage names, comma-separated and empty for none (`schemas/render_stages.ts`).
     renderSkipFull: text('render_skip_full').notNull().default(''),
     renderSkipMax: text('render_skip_max').notNull().default(''),
     denoiser: text('denoiser').notNull().default('galosh'),

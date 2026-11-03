@@ -1050,6 +1050,7 @@ mod decode_geometry {
                 white_quantile: 0.995,
             },
             defringe: 0.5,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             // **Seeded with particles, because this fixture has none to find** - it was shot at
             // f/2.8, where the pupil spreads a speck's shadow into nothing. Arriving this way is
             // also the ordinary case: a photograph that has been opened before carries its spots
@@ -4322,6 +4323,7 @@ mod pictures {
                     white_quantile: 0.995,
                 },
                 defringe: 1.0,
+                camera_match: fit::hdr::CameraMatch::LensAndColour,
                 photo_analysis: None,
                 denoise_luminance: Some(0.0),
                 denoise_colour: Some(0.0),
@@ -4480,6 +4482,7 @@ mod one_open_at_a_time {
                 white_quantile: 0.9,
             },
             defringe: 0.5,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             photo_analysis: None,
             dust: Default::default(),
             repairs: Vec::new(),

@@ -4,23 +4,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../db/driver';
 import { runMigrations } from '../../../../db/migrate';
-import { AS_METERED } from '../../pipeline/developed';
+import { EditDocSchema } from '../../../../schemas/photo_edits';
+import { AS_METERED, developedFrom } from '../../pipeline/developed';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
 import {
   ESTIMATED_MS,
   ESTIMATED_PMRID_DENOISE_MS,
   REFERENCE_PIXELS,
+  cameraMatchOf,
+  importedEdits,
   scaledToReference,
   stageMs,
+  type OptionalStage,
 } from '../../../../schemas/render_stages';
-import { readStages, renditionSkips, withStagesOff, writeStages } from '../render_stages';
+import type { Developed } from '../../workers/processing_types';
+import { readStages, writeStages } from '../render_stages';
 import { RenderTimingsFile } from '../render_timings_file';
 
 const LIB = 'lib';
 
-const job = { ...AS_METERED, defringe: 1, cameraMatch: 'lensAndColour' as const };
-
-describe('the stages a library leaves out of a render', () => {
+describe('the stages a library starts new photos without', () => {
   it('drops a name this build does not know, rather than refusing the render', () => {
     expect(readStages('denoise,warp,sharpen')).toEqual(['denoise', 'sharpen']);
     expect(readStages('')).toEqual([]);
@@ -39,43 +42,51 @@ describe('the stages a library leaves out of a render', () => {
     ]);
     expect(writeStages(['sharpen', 'lens', 'denoise'])).toBe('denoise,lens,colour,sharpen');
   });
+});
 
-  it('derives only valid camera matches without enabling a disabled match', () => {
-    expect(withStagesOff(job, ['colour']).cameraMatch).toBe('lens');
-    expect(withStagesOff(job, ['lens']).cameraMatch).toBe('none');
-    expect(withStagesOff({ ...job, cameraMatch: 'none' as const }, []).cameraMatch).toBe('none');
-    expect(withStagesOff({ ...job, cameraMatch: 'lens' as const }, []).cameraMatch).toBe('lens');
+describe('the edits import starts a photo at', () => {
+  const imported = (skip: readonly OptionalStage[]): Developed =>
+    developedFrom(EditDocSchema.parse(importedEdits(skip, 'galosh')), 'galosh', () => false);
+
+  it('turns the colour profile off with the lens, and never on without it', () => {
+    expect(cameraMatchOf({ lensCorrection: true, colourProfile: 'matched' })).toBe('lensAndColour');
+    expect(cameraMatchOf({ lensCorrection: true, colourProfile: 'none' })).toBe('lens');
+    expect(cameraMatchOf({ lensCorrection: false, colourProfile: 'matched' })).toBe('none');
+    expect(imported(['colour']).cameraMatch).toBe('lens');
+    expect(imported(['lens']).cameraMatch).toBe('none');
   });
 
   // Each of these is a value the renderer already refuses to act on, so what the setting does is
   // turn one down rather than take a second path. A stage that stopped being gated on the far side
   // would leave the checkbox doing nothing, which is the failure this pins.
   it('turns each stage down to the value the renderer skips it at', () => {
-    expect(withStagesOff(job, ['denoise'])).toMatchObject({
-      denoiseLuminance: 0,
-      denoiseColour: 0,
+    expect(imported(['denoise'])).toMatchObject({ denoiseLuminance: 0, denoiseColour: 0 });
+    expect(imported(['dust']).dust.enabled).toBe(false);
+    expect(imported(['defringe']).defringe).toBe(0);
+    expect(imported(['sharpen']).sharpen).toBe(0);
+  });
+
+  it('turns the colour profile off with the lens, and leaves the lens on without it', () => {
+    expect(importedEdits(['lens'], 'galosh')).toEqual({
+      awaitsCameraMatch: true,
+      denoiser: 'galosh',
+      lensCorrection: false,
+      colourProfile: 'none',
     });
-    expect(withStagesOff(job, ['dust']).dust.enabled).toBe(false);
-    expect(withStagesOff(job, ['lens']).cameraMatch).toBe('none');
-    expect(withStagesOff(job, ['defringe']).defringe).toBe(0);
-    expect(withStagesOff(job, ['sharpen']).sharpen).toBe(0);
+    expect(importedEdits(['dust', 'colour'], 'galosh')).toEqual({
+      awaitsCameraMatch: true,
+      denoiser: 'galosh',
+      dustRemoval: false,
+      colourProfile: 'none',
+    });
   });
 
-  it('leaves everything alone when nothing is turned off', () => {
-    expect(withStagesOff(job, [])).toEqual(job);
+  it('is the unedited render when nothing is turned off', () => {
+    expect(imported([])).toEqual(AS_METERED);
   });
 
-  // The grid tile is the camera's own JPEG wherever there is one, and the render it falls back to
-  // is cut from the `full` job's frame - so it has no list of its own to read.
-  it('states stages for the two rendered renditions and for neither of the others', () => {
-    const library = {
-      render_skip_full: ['colour' as const],
-      render_skip_max: ['sharpen' as const],
-    } as never;
-    expect(renditionSkips(library, 'full')).toEqual(['colour']);
-    expect(renditionSkips(library, 'max')).toEqual(['sharpen']);
-    expect(renditionSkips(library, 'grid')).toEqual([]);
-    expect(renditionSkips(library, 'embedded')).toEqual([]);
+  it("records the library's denoiser", () => {
+    expect(importedEdits([], 'pmrid').denoiser).toBe('pmrid');
   });
 });
 

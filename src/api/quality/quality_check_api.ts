@@ -100,7 +100,7 @@ export class QualityCheckApi {
           // would make it a picture of something nobody ships.
           encodeMs = await this.encode(library.id, photo.id, file, {
             rawFilePath,
-            cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
+            cameraMatch: metered.cameraMatch,
             // The photograph's own, which is the document's default: this page compares
             // quantizers against what the library actually ships, and a denoise named here
             // would be a strength no rendition of this photograph is ever taken at.
@@ -112,7 +112,7 @@ export class QualityCheckApi {
             // removed a few discs from whichever photograph was chosen is a second variable.
             dust: dustSettings(undefined),
             sharpen: metered.sharpen,
-            defringe: settings.raw_defringe,
+            defringe: metered.defringe,
             exposure: metered.exposure,
             adjust: metered.adjust,
             geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },

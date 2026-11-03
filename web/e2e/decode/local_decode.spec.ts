@@ -45,7 +45,6 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
         {
           longEdge: 0,
           grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-          defringe: 1,
         },
         // The dust switch off: what this asks is whether a decode reaches the sensor's own size and
         // measures its own numbers, and a search of the cover glass is a second thing to wait for.
@@ -55,6 +54,8 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
           denoiser: 'galosh',
           highlightRecovery: 100,
           sharpening: 30,
+          defringe: 1,
+          lensCorrection: true,
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
           reflection: { enabled: false, strength: 1, strokes: [] },
@@ -124,7 +125,6 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
         {
           longEdge: 0,
           grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-          defringe: 1,
         },
         {
           luminance: 100,
@@ -132,6 +132,8 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
           denoiser: 'pmrid',
           highlightRecovery: 100,
           sharpening: 30,
+          defringe: 1,
+          lensCorrection: true,
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
           reflection: { enabled: false, strength: 1, strokes: [] },

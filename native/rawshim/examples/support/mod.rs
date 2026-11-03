@@ -15,7 +15,7 @@ pub const GRADE: Grade = Grade {
     white_quantile: 0.9,
 };
 
-/// `EditDoc.sharpening`'s 50 over 100, as `developed.ts` sends it, and `raw_defringe`.
+/// `EditDoc.sharpening`'s 50 and `EditDoc.defringe`'s 100, over 100, as `developed.ts` sends them.
 pub const STRENGTHS: Strengths = Strengths {
     sharpen: 0.5,
     defringe: 1.0,

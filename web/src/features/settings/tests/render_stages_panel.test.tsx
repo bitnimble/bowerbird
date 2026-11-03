@@ -1,6 +1,5 @@
-// What the panel offers: a row per stage, a checkbox only on the ones a render can do without,
-// and a cost beside each. The tab decides which rendition's list the checkboxes read, and what a
-// stage costs is the machine's rather than a library's.
+// What the panel offers: a checkbox and a cost for each stage a `full` render can do without, and
+// one Misc row for the rest. What a stage costs is the machine's rather than a library's.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
@@ -35,36 +34,26 @@ beforeEach(() => {
   settingsApi.renderTimings = () => Promise.resolve({});
 });
 
-function Harness({
-  matchEmbeddedJpeg,
-  libraries,
-}: {
-  matchEmbeddedJpeg: boolean;
-  libraries: Library[];
-}): JSX.Element {
+function Harness({ libraries }: { libraries: Library[] }): JSX.Element {
   const settings = useAppSettingsStore();
   const store = useLibrariesStore();
   useEffect(
     () =>
       runInAction(() => {
-        settings.settings = { ...DEFAULT_SETTINGS, match_embedded_jpeg: matchEmbeddedJpeg };
+        settings.settings = DEFAULT_SETTINGS;
         store.libraries = libraries;
         store.defaults = DEFAULT_LIBRARY_SETTINGS;
       }),
-    [matchEmbeddedJpeg, settings, store, libraries],
+    [settings, store, libraries],
   );
   return <RenderStagesPanel />;
 }
 
-async function open(
-  timings: RenderTimings = {},
-  matchEmbeddedJpeg = true,
-  libraries = [LIBRARY],
-): Promise<void> {
+async function open(timings: RenderTimings = {}, libraries = [LIBRARY]): Promise<void> {
   settingsApi.renderTimings = () => Promise.resolve(timings);
   render(
     <StoresProvider>
-      <Harness matchEmbeddedJpeg={matchEmbeddedJpeg} libraries={libraries} />
+      <Harness libraries={libraries} />
     </StoresProvider>,
   );
   await act(async () => {});
@@ -79,52 +68,40 @@ const measuredNow = (stages: RenderTiming['stages']): RenderTiming => ({
 const ticked = (name: string): boolean =>
   (screen.getByRole('checkbox', { name }) as HTMLInputElement).checked;
 
-test('a stage a render cannot do without has a cost and nothing to press', async () => {
+test('the stages a render cannot do without share one Misc row with nothing to press', async () => {
   await open();
-  expect(screen.queryByRole('checkbox', { name: 'Reconstruct colour' })).toBeNull();
-  expect(screen.queryByRole('checkbox', { name: 'Encode' })).toBeNull();
-  expect(screen.getByText('Reconstruct colour')).toBeTruthy();
+  for (const name of ['Read', 'Reconstruct colour', 'Encode']) {
+    expect(screen.queryByText(name)).toBeNull();
+  }
+  expect(screen.queryByRole('checkbox', { name: 'Misc' })).toBeNull();
+  const { read, demosaic, encode } = ESTIMATED_MS.full;
+  expect(screen.getByText('Misc').parentElement?.textContent).toBe(
+    `Misc~${read + demosaic + encode} ms`,
+  );
 });
 
-test('an unticked box is a stage this rendition leaves out', async () => {
+test('an unticked box is a stage the full rendition leaves out', async () => {
   await open();
-  expect(ticked('Match lens')).toBe(false);
-  expect(ticked('Match camera colour')).toBe(false);
+  expect(ticked('Correct lens distortion')).toBe(false);
+  expect(ticked('Auto-detect camera colour profile')).toBe(false);
   expect(
-    screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled'),
+    screen
+      .getByRole('checkbox', { name: 'Auto-detect camera colour profile' })
+      .hasAttribute('disabled'),
   ).toBe(true);
   expect(ticked('Denoise')).toBe(true);
 });
 
-test('encode includes the grade and a measured zero states the measurement limit', async () => {
+test('a measured zero states the measurement limit', async () => {
   await open({ full: { galosh: measuredNow({ denoise: 0, defringe: 0 }) } });
   expect(screen.queryByText('Colour grade')).toBeNull();
-  expect(screen.getByText('~188 ms')).toBeTruthy();
   expect(screen.getAllByText('No measurable saving')).toHaveLength(2);
 });
 
-test('the other rendition reads its own list', async () => {
+test('only the full rendition is offered', async () => {
   await open();
-  await act(async () => {
-    fireEvent.click(screen.getByRole('radio', { name: 'Rendered RAW (max quality)' }));
-  });
-  expect(ticked('Match lens')).toBe(true);
-  expect(ticked('Match camera colour')).toBe(true);
-  expect(
-    screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled'),
-  ).toBe(false);
-});
-
-test('global camera matching off shows both dependent stages inactive', async () => {
-  await open({}, false);
-  for (const name of ['Match lens', 'Match camera colour']) {
-    const checkbox = screen.getByRole('checkbox', { name }) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
-    expect(checkbox.disabled).toBe(true);
-    expect(screen.getByText(name).parentElement?.getAttribute('aria-description')).toBe(
-      'Camera matching is off in Advanced settings',
-    );
-  }
+  expect(screen.queryByRole('radio', { name: 'Rendered RAW (max quality)' })).toBeNull();
+  expect(screen.queryByRole('radiogroup')).toBeNull();
 });
 
 test('the total is what the stages this rendition runs cost together', async () => {
@@ -142,6 +119,7 @@ test('the total is what the stages this rendition runs cost together', async () 
   await open({ full: { galosh: measuredNow(stages) } });
   // `full` leaves out the lens and the colour match.
   expect(screen.getByText('Total').parentElement?.textContent).toBe('Total~280 ms');
+  expect(screen.getByText('Misc').parentElement?.textContent).toBe('Misc~120 ms');
 });
 
 test('a stage quotes the estimate until this device has measured one', async () => {
@@ -154,12 +132,6 @@ test('a measurement displaces the estimate, and says so', async () => {
   await open({ full: { galosh: measuredNow({ colour: 512 }) } });
   expect(screen.getByText(/^Measured /)).toBeTruthy();
   expect(screen.getByText('~512 ms')).toBeTruthy();
-  // The rendition with nothing measured still quotes estimates, rather than the other tab's.
-  await act(async () => {
-    fireEvent.click(screen.getByRole('radio', { name: 'Rendered RAW (max quality)' }));
-  });
-  expect(screen.getByText('Estimated')).toBeTruthy();
-  expect(screen.getByText(`~${ESTIMATED_MS.max.colour} ms`)).toBeTruthy();
 });
 
 test("a library on the other denoiser quotes that denoiser's cost, and measures with it", async () => {
@@ -169,7 +141,7 @@ test("a library on the other denoiser quotes that denoiser's cost, and measures 
     return Promise.resolve(measuredNow({ denoise: 77 }));
   };
   // A GALOSH measurement says nothing about what PMRID costs here.
-  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, [
+  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, [
     { ...LIBRARY, denoiser: 'pmrid' },
   ]);
   expect(screen.getByText('Estimated')).toBeTruthy();
@@ -194,9 +166,9 @@ test('it shows the first library and a tick goes to all of them', async () => {
   librariesApi.list = () => Promise.reject(new Error('unused'));
   librariesApi.getDefaults = () => Promise.reject(new Error('unused'));
   const second = { ...LIBRARY, id: 'second', render_skip_full: ['dust'] } as Library;
-  await open({}, true, [LIBRARY, second]);
+  await open({}, [LIBRARY, second]);
 
-  expect(ticked('Match lens')).toBe(false);
+  expect(ticked('Correct lens distortion')).toBe(false);
   expect(ticked('Dust removal')).toBe(true);
 
   await act(async () => {
@@ -210,7 +182,7 @@ test('it shows the first library and a tick goes to all of them', async () => {
 });
 
 test('with no libraries it shows the defaults and nothing can be changed', async () => {
-  await open({}, true, []);
+  await open({}, []);
 
   for (const checkbox of screen.getAllByRole('checkbox') as HTMLInputElement[]) {
     expect(checkbox.checked).toBe(true);
@@ -222,7 +194,7 @@ test('with no libraries it shows the defaults and nothing can be changed', async
   expect(screen.getByText('Dust removal').parentElement?.getAttribute('aria-description')).toBe(
     'Add a library to change this',
   );
-  expect(screen.getByText('Encode').parentElement?.getAttribute('aria-description')).toBeNull();
+  expect(screen.getByText('Misc').parentElement?.getAttribute('aria-description')).toBeNull();
   expect(screen.getByRole('button', { name: 'Measure' }).hasAttribute('disabled')).toBe(false);
 });
 

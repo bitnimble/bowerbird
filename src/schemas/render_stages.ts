@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DenoiserSchema, type Denoiser } from './photo_edits';
+import { DenoiserSchema, type Denoiser, type EditDoc } from './photo_edits';
 
 export const RENDER_STAGES = [
   'read',
@@ -46,13 +46,27 @@ export function setStage(
 export const CameraMatchSchema = z.enum(['none', 'lens', 'lensAndColour']);
 export type CameraMatch = z.infer<typeof CameraMatchSchema>;
 
-export function cameraMatchWithStages(
-  cameraMatch: CameraMatch,
+export function cameraMatchOf(doc: Pick<EditDoc, 'lensCorrection' | 'colourProfile'>): CameraMatch {
+  if (!doc.lensCorrection) return 'none';
+  return doc.colourProfile === 'matched' ? 'lensAndColour' : 'lens';
+}
+
+/** The document import writes for a photo, from the stages the library leaves out. */
+export function importedEdits(
   skipped: readonly OptionalStage[],
-): CameraMatch {
-  if (cameraMatch === 'none' || skipped.includes('lens')) return 'none';
-  if (cameraMatch === 'lens' || skipped.includes('colour')) return 'lens';
-  return 'lensAndColour';
+  denoiser: Denoiser,
+): Partial<EditDoc> {
+  const off = normaliseStages(skipped);
+  return {
+    awaitsCameraMatch: true,
+    denoiser,
+    ...(off.includes('dust') ? { dustRemoval: false } : {}),
+    ...(off.includes('denoise') ? { luminanceNoise: 0, colourNoise: 0 } : {}),
+    ...(off.includes('lens') ? { lensCorrection: false } : {}),
+    ...(off.includes('colour') ? { colourProfile: 'none' as const } : {}),
+    ...(off.includes('defringe') ? { defringe: 0 } : {}),
+    ...(off.includes('sharpen') ? { sharpening: 0 } : {}),
+  };
 }
 
 export function isOptional(stage: RenderStage): stage is OptionalStage {

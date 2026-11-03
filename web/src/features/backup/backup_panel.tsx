@@ -37,7 +37,7 @@ const styles = stylex.create({
   summary: { minWidth: 0, overflowWrap: 'anywhere' },
   details: { marginBlock: '8px' },
   disclosure: { cursor: 'pointer' },
-  chooser: { border: 0, margin: 0, padding: 0 },
+  chooser: { borderWidth: 0, margin: 0, padding: 0, minWidth: 0 },
 });
 
 const GB = 1_000_000_000;

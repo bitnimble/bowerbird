@@ -52,19 +52,13 @@ export const SettingsStrings = {
   preRenderImported: () => 'Automatically pre-render imported RAWs',
   buildHdrRenditions: () => 'Render photos in HDR',
 
-  renderStages: () => 'Render stages',
-  renderStagesFor: () => 'Rendition to set stages for',
+  renderStages: () => 'Automatic pre-rendering',
+  renderStagesHint: () =>
+    "Select which features new RAW photos start with when they're imported, to choose a trade-off between quality and performance. You can change each one per photo in the editor.",
   renderStagesNeedLibrary: () => 'Add a library to change this',
-  stageRead: () => 'Read',
   stageDenoise: () => 'Denoise',
-  // The one row naming what the stage does rather than what it is called: "demosaic" is the
-  // pipeline's word and not a photographer's.
-  stageDemosaic: () => 'Reconstruct colour',
-  stageLens: () => 'Match lens',
-  stageColour: () => 'Match camera colour',
-  cameraMatchingOff: () => 'Camera matching is off in Advanced settings',
-  colourNeedsLens: () => 'Turn on Match lens first',
-  stageEncode: () => 'Encode',
+  stageColour: () => 'Auto-detect camera colour profile',
+  stagesMisc: () => 'Misc',
   stageCost: (ms: number) => (ms === 0 ? 'No measurable saving' : `~${ms} ms`),
   stagesTotal: () => 'Total',
   totalCost: (ms: number) => `~${ms} ms`,
@@ -122,9 +116,6 @@ export const SettingsStrings = {
   uiScalePercent: (percent: number) => `${percent}%`,
   couldNotSetUiScale: () => "We couldn't change the interface scale. Try again.",
 
-  groupProcessing: () => 'Processing',
-  matchEmbeddedJpeg: () => 'Match lens correction and camera colour profile',
-  matchEmbeddedJpegHint: () => 'Matches renditions to embedded JPEGs',
   renderOnThisDevice: () => 'Render on this device',
   renderOnThisDeviceHint: () => 'Builds photo viewer renditions on this device',
 
@@ -143,8 +134,6 @@ export const SettingsStrings = {
   processingConcurrencyHint: () => 'Each thread holds 1 RAW file in memory.',
 
   groupHdr: () => 'HDR',
-  rawDefringe: () => 'Colour fringing removal',
-  rawDefringeHint: () => 'Removes purple and green rims from hard edges',
   hdrReferenceWhite: () => 'HDR reference white',
   hdrReferenceWhiteHint: () => 'How bright plain white is rendered',
   hdrWhiteQuantile: () => 'HDR white threshold',

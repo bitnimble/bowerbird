@@ -74,7 +74,7 @@ import { ReplicationService } from './services/replication/replication_service';
 import { ReplicationRunner } from './services/replication/replication_runner';
 import { PhotoEditsService } from './services/photo_edits/photo_edits_service';
 import { PhotoEditsRepository } from './services/photo_edits/photo_edits_repository';
-import { SidecarImportService } from './services/photo_edits/sidecar_import';
+import { ImportEditsService } from './services/photo_edits/import_edits';
 import { PhotoEditsApi } from './api/photo_edits/photo_edits_api';
 import { EventsApi } from './api/events/events_api';
 import { ExportApi } from './api/export/export_api';
@@ -358,7 +358,7 @@ const scanService = new ScanService(
   folderRulesRepo,
   syncLocksRepo,
   processingService,
-  new SidecarImportService(photoEditsRepo),
+  new ImportEditsService(photoEditsRepo),
   scanConcurrency,
   (libraryId) => replicationRunner.materialise(libraryId),
   (libraryId) => replicationRunner.stillToMove(libraryId),

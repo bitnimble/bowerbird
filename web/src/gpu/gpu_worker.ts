@@ -379,6 +379,8 @@ class Open {
           ask.mosaic.denoiser,
           ask.mosaic.highlightRecovery,
           sharpenOf(ask.mosaic.sharpening, ask.mosaic.denoiser),
+          ask.mosaic.defringe,
+          ask.mosaic.lensCorrection,
           enabled,
           sensitivity,
           intensity,
@@ -553,6 +555,8 @@ class Open {
       mosaic.denoiser,
       mosaic.highlightRecovery,
       sharpenOf(mosaic.sharpening, mosaic.denoiser),
+      mosaic.defringe,
+      mosaic.lensCorrection,
       enabled,
       sensitivity,
       intensity,
@@ -594,12 +598,15 @@ class Open {
     report('decoding');
     const held = await heldRendition(file, request, report);
     this.release();
+    // Every edit is already in the file, so it is shown as it was encoded.
     return (await this.keep(held, request, adoptStage)).prepare(
       undefined,
       undefined,
       'galosh',
       100,
       0,
+      0,
+      false,
       false,
       0,
       0,

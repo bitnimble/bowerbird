@@ -78,8 +78,9 @@ export interface Developed {
    * cannot disagree.
    *
    * The denoise pair are the Detail panel's slider positions, the sharpen is the strength
-   * `sharpenOf` gives its slider, and the defringe is a library setting. A null of the pair is
-   * the document not having said, resolved against the frame's own fit inside the decode.
+   * `sharpenOf` gives its slider, and the defringe is the document's ceiling as a fraction. A
+   * null of the pair is the document not having said, resolved against the frame's own fit
+   * inside the decode.
    */
   denoiseLuminance: number | null;
   denoiseColour: number | null;
@@ -93,6 +94,7 @@ export interface Developed {
   reflection: ReflectionSettings;
   sharpen: number;
   defringe: number;
+  cameraMatch: CameraMatch;
   /** The photographer's exposure in stops, as the document stores it. */
   exposure: number | null;
   /** The rest of the reader's sliders, on Camera Raw's -100..100 scales (`JobAdjustSchema`). */
@@ -110,7 +112,6 @@ export interface RenditionJob extends Developed {
   dataPath: string;
   targets: RenditionTarget[];
   grade: HdrGrade;
-  cameraMatch: CameraMatch;
   preserveSourceOrientation?: boolean;
   /** Also read the file's header off the same open, for a row whose scan took it from the media index. */
   header?: true;
@@ -177,7 +178,6 @@ export type CompositeJob = CompositeJobBase & CompositeWant;
 
 interface CompositeJobBase extends Developed {
   kind: 'composite';
-  cameraMatch: CameraMatch;
   /** The composite being rendered, or the library being searched where there is no row yet. */
   photoId: string;
   sources: CompositeJobSource[];

@@ -19,7 +19,7 @@ import {
 } from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
-import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
+import type { EditImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import type { ProcessingTrigger } from '../../src/services/sync/scan/scan_rebuilds';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
@@ -29,7 +29,7 @@ const LIB = 'lib000ce';
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 
-function build(processing: ProcessingTrigger, sidecars?: SidecarImporter): ScanService {
+function build(processing: ProcessingTrigger, edits?: EditImporter): ScanService {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -42,7 +42,7 @@ function build(processing: ProcessingTrigger, sidecars?: SidecarImporter): ScanS
     new FolderRulesRepository(db),
     new SyncLocksRepository(db),
     processing,
-    sidecars,
+    edits,
   );
 }
 
@@ -50,12 +50,12 @@ function count(): number {
   return (db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n;
 }
 
-// The sidecar import runs once after each commit of inserted rows, so it sees each batch land.
-function recordingCommits(): { committed: number[]; sidecars: SidecarImporter } {
+// The edit import runs once after each commit of inserted rows, so it sees each batch land.
+function recordingCommits(): { committed: number[]; edits: EditImporter } {
   const committed: number[] = [];
   return {
     committed,
-    sidecars: {
+    edits: {
       importFor: () => {
         committed.push(count());
         return 0;
@@ -85,8 +85,8 @@ test('a first scan writes its photos down as it goes, not all at the end', async
   // running. A kill at this point costs the tail, not the hours before it.
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const { committed, sidecars } = recordingCommits();
-  const status = await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
+  const { committed, edits } = recordingCommits();
+  const status = await build({ processUnprocessed: () => {} }, edits).scanLibrary(LIB);
 
   expect(committed).toEqual([1000, 1001]);
   expect(status.photos_added).toBe(1001);
@@ -98,8 +98,8 @@ test('an import resumed after a stop still writes its photos down as it goes', a
   await build({ processUnprocessed: () => {} }).scanLibrary(LIB);
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const { committed, sidecars } = recordingCommits();
-  const status = await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
+  const { committed, edits } = recordingCommits();
+  const status = await build({ processUnprocessed: () => {} }, edits).scanLibrary(LIB);
 
   expect(committed).toEqual([1003, 1004]);
   expect(status.photos_added).toBe(1001);
@@ -113,8 +113,8 @@ test('a scan that misses a row holds its new files back for the move they may be
   renameSync(path.join(root, 'a.arw'), path.join(root, 'moved.arw'));
   for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
 
-  const { committed, sidecars } = recordingCommits();
-  await build({ processUnprocessed: () => {} }, sidecars).scanLibrary(LIB);
+  const { committed, edits } = recordingCommits();
+  await build({ processUnprocessed: () => {} }, edits).scanLibrary(LIB);
 
   expect(committed).toEqual([1002]);
   expect(count()).toBe(1002);

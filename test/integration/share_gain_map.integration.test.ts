@@ -51,16 +51,13 @@ const stamps = {
 // No camera match: it is a second of fitting that every picture here pays equally, and every
 // claim below is one render against another rather than either against an absolute.
 function processing(): ProcessingService {
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    processing_concurrency: 1,
-    match_embedded_jpeg: false,
-  };
+  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1 };
   return new ProcessingService(
     stamps,
     {} as ConstructorParameters<typeof ProcessingService>[1],
     {} as ConstructorParameters<typeof ProcessingService>[2],
     { get: () => settings } as SettingsRepository,
+    () => ({ doc: JSON.stringify({ lensCorrection: false }), stamp: null }),
   );
 }
 

@@ -74,7 +74,6 @@ describe('ProcessingService.processUnprocessed', () => {
       needs_renditions: 1,
       library_rendition_source: 'render',
       rendition_hdr: 0,
-      render_skip_full: '',
       denoiser: 'galosh',
       // Unedited, which is what every test in this file is about: the photo grades as the
       // camera metered it. `edits` is exercised in `exposure` below.
@@ -482,48 +481,20 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(written).toEqual([true, true, true]);
   });
 
-  it('passes the embedded-JPEG matching setting through to the worker', async () => {
-    // The worker cannot read config, so a job that does not carry the flag leaves
-    // the feature permanently off however the server is configured.
-    const repo = {
-      listPendingProcessing: jest.fn(() => [pending('a')]),
-      markTileBuilt: jest.fn(),
-      markRenditionsBuilt: jest.fn(),
-      markProcessingFailed: jest.fn(),
-    } as unknown as PhotoProcessingRepository;
-
-    // Two jobs per photo now - the grid tile, then the renditions - and the flag has
-    // to reach both, since the tile can fall back to a render and needs the match too.
-    await makeProcessingService(
-      repo,
-      settingsWith({ match_embedded_jpeg: true }),
-    ).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual([
-      'lensAndColour',
-      'lensAndColour',
-    ]);
-
-    posted.length = 0;
-    await makeProcessingService(
-      repo,
-      settingsWith({ match_embedded_jpeg: false }),
-    ).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual([
-      'none',
-      'none',
-    ]);
-  });
-
-  it('leaves out the stages the library has turned off, whatever the photograph asked for', async () => {
-    // The library's trade overrides the document: a frame somebody sharpened renders unsharpened
-    // into a library that has turned the sharpen off, which is the whole of what the setting is.
-    // Silent otherwise - the rendition still builds, at the right size, and only looks different.
+  it('runs every stage the way the document says, the tile and the renditions alike', async () => {
+    // The document is the only thing a render reads its stages from, so the viewer, the editor
+    // and an export of one photograph cannot disagree about which ran.
     const repo = {
       listPendingProcessing: jest.fn(() => [
         {
           ...pending('a'),
-          render_skip_full: 'denoise,lens,colour,sharpen',
-          edits: JSON.stringify({ sharpening: 70 }),
+          edits: JSON.stringify({
+            sharpening: 70,
+            luminanceNoise: 0,
+            colourNoise: 0,
+            lensCorrection: false,
+            defringe: 40,
+          }),
         },
       ]),
       markTileBuilt: jest.fn(),
@@ -531,18 +502,15 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(
-      repo,
-      settingsWith({ match_embedded_jpeg: true }),
-    ).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
 
+    expect(posted).toHaveLength(2);
     for (const job of posted) {
       expect(job.kind === 'rendition' && job.cameraMatch).toBe('none');
-      expect(job.kind === 'rendition' && job.sharpen).toBe(0);
+      expect(job.kind === 'rendition' && job.sharpen).toBeCloseTo(0.95);
       expect(job.kind === 'rendition' && job.denoiseLuminance).toBe(0);
       expect(job.kind === 'rendition' && job.denoiseColour).toBe(0);
-      // Untouched, being a stage nobody turned off.
-      expect(job.kind === 'rendition' && job.defringe).toBe(1);
+      expect(job.kind === 'rendition' && job.defringe).toBe(0.4);
     }
   });
 

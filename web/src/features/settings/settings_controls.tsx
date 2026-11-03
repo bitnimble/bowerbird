@@ -100,6 +100,7 @@ export function SettingRow({
   hint,
   wideHint = false,
   disabledReason,
+  inactive = false,
   onReset,
   children,
 }: {
@@ -108,13 +109,19 @@ export function SettingRow({
   /** Runs the hint under the control too, for one too long for the label's column. */
   wideHint?: boolean;
   disabledReason?: string;
+  /** Greys the row while leaving its control usable, for a feature that is switched off. */
+  inactive?: boolean;
   onReset?: () => void;
   children: ReactNode;
 }): JSX.Element {
   return (
     <Tooltip label={disabledReason}>
       <div
-        {...stylex.props(styles.row, disabledReason != null && styles.off, stylex.defaultMarker())}
+        {...stylex.props(
+          styles.row,
+          (disabledReason != null || inactive) && styles.off,
+          stylex.defaultMarker(),
+        )}
       >
         <span {...stylex.props(styles.left)}>{label}</span>
         <div {...stylex.props(styles.value)}>

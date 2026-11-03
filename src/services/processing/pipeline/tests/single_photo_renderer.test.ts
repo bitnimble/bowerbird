@@ -172,7 +172,7 @@ describe('single-photo rendering', () => {
         {} as PhotoProcessingRepository,
         {} as PhotoPathsRepository,
         {} as PhotoListingRepository,
-        settingsWith({ match_embedded_jpeg: false, raw_defringe: 0 }),
+        settingsWith({}),
       );
       const timing = await service.benchmarkRender(
         'full',
@@ -287,11 +287,9 @@ describe('single-photo rendering', () => {
     expect(markCopyBuilt.mock.calls[0]?.[1]).toBe(announced[0]!.version);
   });
 
-  it('reads the rendition it is building its own stage list, not the other one', async () => {
-    // The two lists differ on purpose - `full` is what the viewer opens, `max` is what gets
-    // pixel-peeped - so a wiring that read `render_skip_full` for both, or that only ever applied
-    // `full`'s, would still build a rendition of the right size from the right file and show up
-    // only as a picture that has quietly lost a stage it was meant to keep.
+  it("renders the document's stages, not the library's lists", async () => {
+    // The lists only shape what import writes into a new photo's document. A render that read
+    // them as well would show a photograph without a stage its own edit asks for.
     const repo = {
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
@@ -301,22 +299,17 @@ describe('single-photo rendering', () => {
     const library = {
       id: 'lib',
       root_path: root,
-      render_skip_full: ['sharpen'],
+      render_skip_full: ['sharpen', 'lens', 'colour'],
       render_skip_max: ['colour', 'denoise'],
     } as never;
 
-    await service.renderOne('/lib/a.arw', 'p1', library, 'max', false);
-    const max = posted.at(-1)!;
-    expect(max.kind === 'rendition' && max.cameraMatch).toBe('lens');
-    expect(max.kind === 'rendition' && max.denoiseLuminance).toBe(0);
-    // `full`'s stage, which this rendition never asked to lose.
-    expect(max.kind === 'rendition' && max.sharpen).toBeGreaterThan(0);
-
-    await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
-    const full = posted.at(-1)!;
-    expect(full.kind === 'rendition' && full.sharpen).toBe(0);
-    expect(full.kind === 'rendition' && full.cameraMatch).toBe('lensAndColour');
-    expect(full.kind === 'rendition' && full.denoiseLuminance).not.toBe(0);
+    for (const rendition of ['max', 'full'] as const) {
+      await service.renderOne('/lib/a.arw', 'p1', library, rendition, false);
+      const job = posted.at(-1)!;
+      expect(job.kind === 'rendition' && job.cameraMatch).toBe('lensAndColour');
+      expect(job.kind === 'rendition' && job.sharpen).toBeGreaterThan(0);
+      expect(job.kind === 'rendition' && job.denoiseLuminance).toBeNull();
+    }
   });
 
   it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {

@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../logger';
+import type { Library } from '../../schemas/libraries';
+import { importedEdits } from '../../schemas/render_stages';
 import { parseXmp } from '../processing/xmp/xmp';
 import { editsFromXmp } from './from_xmp';
 import type { PhotoEditsRepository } from './photo_edits_repository';
 
-const log = new Logger('sidecar');
+const log = new Logger('import-edits');
 
 /** A photo this sync added, as much of it as finding its sidecar needs. */
 export interface ImportTarget {
@@ -14,8 +16,14 @@ export interface ImportTarget {
   filePath: string;
 }
 
+export type ImportingLibrary = Pick<Library, 'root_path' | 'render_skip_full' | 'denoiser'>;
+
 /**
- * Lightroom's develop settings, taken at import.
+ * Each new photo's first document: Lightroom's develop settings where a sidecar holds them, and
+ * otherwise the library's Rendering defaults (`importedEdits`).
+ *
+ * Only the importing device writes them, and the library's settings are read here and nowhere
+ * else: changing them later leaves the photos already imported alone.
  *
  * **No UI and no endpoint: a sidecar beside a photo is part of what the photo *is*.**
  * A reader who has spent years editing a library in Lightroom and points this at the
@@ -30,28 +38,34 @@ export interface ImportTarget {
  * for now, and the honest place to put a choice about whose edit wins, when there is
  * something to choose between.
  *
- * Recorded as an ordinary edit rather than a special state: it lands through the same
- * `save` a slider release does, at revision 0, so it has a history entry and the first
- * thing a reader can do with an import they dislike is undo it.
+ * A sidecar is recorded as an ordinary edit rather than a special state: it lands through
+ * the same `save` a slider release does, at revision 0, so it has a history entry and the
+ * first thing a reader can do with an import they dislike is undo it. The defaults have
+ * none: undoing every edit comes back to them.
  */
-export class SidecarImportService {
+export class ImportEditsService {
   constructor(private readonly edits: PhotoEditsRepository) {}
 
   /**
-   * Imports for each photo that has a sidecar. Returns how many took.
+   * Writes each photo's first document. Returns how many sidecars took.
    *
-   * Never throws. A sync that failed because one file in three hundred thousand held
-   * malformed XML would be a worse trade than the edit it dropped, and the sidecar
+   * A sidecar that fails to import never fails the sync: one file in three hundred thousand
+   * holding malformed XML would be a worse trade than the edit it dropped, and the sidecar
    * stays on disk either way.
    */
-  importFor(rootPath: string, photos: readonly ImportTarget[]): number {
+  importFor(library: ImportingLibrary, photos: readonly ImportTarget[]): number {
+    const defaults = importedEdits(library.render_skip_full, library.denoiser);
     let taken = 0;
     for (const photo of photos) {
       try {
-        if (this.importOne(rootPath, photo)) taken++;
+        if (this.importOne(library.root_path, photo)) {
+          taken++;
+          continue;
+        }
       } catch (err) {
         log.warn('could not import a sidecar', { photo: photo.id, file: photo.filePath, err });
       }
+      this.edits.writeImported(photo.id, defaults);
     }
     return taken;
   }

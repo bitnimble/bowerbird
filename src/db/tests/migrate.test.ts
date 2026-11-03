@@ -32,6 +32,23 @@ function beforePhotoLinks(db: Database): void {
 }
 
 describe('opening a catalogue', () => {
+  it('drops the camera match and defringe settings and keeps the rest', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0023_drop_render_settings'");
+    const keep = db.query('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    keep.run('match_embedded_jpeg', 'false');
+    keep.run('raw_defringe', '0.5');
+    keep.run('avif_speed', '7');
+
+    runMigrations(db);
+
+    expect(settingsFor(db, ['match_embedded_jpeg', 'raw_defringe', 'avif_speed'])).toEqual({
+      avif_speed: '7',
+    });
+    db.close();
+  });
+
   it('drops the stack tuning columns and keeps the rest of the library', () => {
     const db = new Database(':memory:');
     runMigrations(db);

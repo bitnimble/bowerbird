@@ -4,13 +4,10 @@ import type { AlignShape } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { CameraTone } from '../../../schemas/photo_edits';
-import { cameraMatchWithStages } from '../../../schemas/render_stages';
 import { getDataPath } from '../../../utils/paths';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
-import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
-import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import { openCompositeWorker, type CompositeWorker } from '../workers/composite_worker';
 import type {
   CompositeJob,
@@ -31,7 +28,6 @@ export class CompositeRenderer {
       photoId: string,
     ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
-    private readonly settings: SettingsRepository,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
     private readonly cameraMatched: (photoId: string, tone: CameraTone) => void,
   ) {}
@@ -56,7 +52,6 @@ export class CompositeRenderer {
   ): Promise<string> {
     const { composite: recipe } = await on.run({
       kind: 'composite',
-      cameraMatch: 'lensAndColour',
       want: 'align',
       shape,
       photoId: libraryId,
@@ -66,7 +61,6 @@ export class CompositeRenderer {
       targets: [],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
     if (recipe == null) throw new AppError('VALIDATION_ERROR', 'these photographs did not align');
     return recipe;
@@ -88,7 +82,6 @@ export class CompositeRenderer {
   ): Promise<string> {
     const { composite: analysed } = await on.run({
       kind: 'composite',
-      cameraMatch: 'lensAndColour',
       want: 'analyse',
       photoId: libraryId,
       sources,
@@ -98,7 +91,6 @@ export class CompositeRenderer {
       targets: [],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
     // A native refusal already arrives as a rejection carrying its own reason; this is the belt
     // for a worker that somehow answered with nothing at all.
@@ -127,7 +119,6 @@ export class CompositeRenderer {
     this.seaming ??= this.openComposite();
     const { composite: solved } = await this.seaming.run({
       kind: 'composite',
-      cameraMatch: 'lensAndColour',
       want: 'seams',
       photoId: '',
       sources: [],
@@ -138,7 +129,6 @@ export class CompositeRenderer {
       targets: [],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
     if (solved == null) throw new AppError('VALIDATION_ERROR', 'the seams could not be solved');
     return solved;
@@ -166,13 +156,8 @@ export class CompositeRenderer {
     on: CompositeWorker,
   ): Promise<void> {
     const dataPath = getDataPath(library);
-    const cameraMatch = cameraMatchWithStages(
-      this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-      renditionSkips(library, 'full'),
-    );
     await on.run({
       kind: 'composite',
-      cameraMatch,
       want: 'render',
       // No row to key it by, as a prepare of a draft has none.
       photoId: '',
@@ -203,7 +188,6 @@ export class CompositeRenderer {
       ],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
   }
 
@@ -221,13 +205,8 @@ export class CompositeRenderer {
     on: CompositeWorker,
   ): Promise<void> {
     const dataPath = getDataPath(library);
-    const cameraMatch = cameraMatchWithStages(
-      this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-      renditionSkips(library, 'full'),
-    );
     await on.run({
       kind: 'composite',
-      cameraMatch,
       want: 'render',
       // No row to key it by, as a draft has none.
       photoId: '',
@@ -250,7 +229,6 @@ export class CompositeRenderer {
       ],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, () => false),
-      ...this.targets.render(),
     });
   }
 
@@ -336,29 +314,22 @@ export class CompositeRenderer {
     progressId?: number,
   ): Promise<CameraTone | undefined> {
     const dataPath = getDataPath(library);
-    const { cameraTone } = await on.run(
-      withStagesOff(
-        {
-          kind: 'composite',
-          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-          want: 'render',
-          photoId,
-          sources,
-          recipe,
-          dataPath,
-          progressId,
-          targets: [
-            this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source),
-          ],
-          grade: this.targets.grade(),
-          // The composite's own document, which the merge wrote the align's framing into: a panorama
-          // is a photograph, so what frames it is the field that frames every other one.
-          ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser, () => false),
-          ...this.targets.render(),
-        } satisfies CompositeJob,
-        renditionSkips(library, rendition),
-      ),
-    );
+    const { cameraTone } = await on.run({
+      kind: 'composite',
+      want: 'render',
+      photoId,
+      sources,
+      recipe,
+      dataPath,
+      progressId,
+      targets: [
+        this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source),
+      ],
+      grade: this.targets.grade(),
+      // The composite's own document, which the merge wrote the align's framing into: a panorama
+      // is a photograph, so what frames it is the field that frames every other one.
+      ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser, () => false),
+    } satisfies CompositeJob);
     return cameraTone;
   }
 

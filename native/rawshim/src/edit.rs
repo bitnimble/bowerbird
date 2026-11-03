@@ -21,12 +21,18 @@ pub struct EditRequest {
     /// Longest edge the decode is fitted to, which is the size every tick then grades.
     pub long_edge: u32,
     pub grade: hdr_args::Grade,
-    /// The library's defringe strength, which is the only filter this request decides.
+    /// The document's defringe ceiling, as a fraction. Absent is none, which a finished picture
+    /// wants: its fringes were taken off when it was rendered.
     ///
     /// The sharpen is an argument to [`from_frame`] instead. It belongs to the Detail panel with
     /// the denoise pair, and those are already arguments here for the same reason: a request is
     /// what an open is *held* at, and a Detail slider moves without reopening anything.
+    #[serde(default)]
     pub defringe: f64,
+    /// Which of the camera match the frame is prepared with. The editor asks for the colour
+    /// whenever it asks for the lens, since a tick turns the colour on and off for itself.
+    #[serde(default = "lens_and_colour")]
+    pub camera_match: fit::hdr::CameraMatch,
     /// What has already been measured about this photograph, where the caller kept it.
     ///
     /// The camera match is half a second, the noise fit a quarter of one, and neither depends on
@@ -71,6 +77,10 @@ pub struct EditRequest {
     /// a rendition shown as it was encoded.
     #[serde(default)]
     pub stated_white: bool,
+}
+
+fn lens_and_colour() -> fit::hdr::CameraMatch {
+    fit::hdr::CameraMatch::LensAndColour
 }
 
 impl EditRequest {
@@ -433,7 +443,7 @@ pub async fn from_frame(
             _ => None,
         };
         let opening = crate::open::Opening {
-            camera_match: fit::hdr::CameraMatch::LensAndColour,
+            camera_match: request.camera_match,
             grade: request.grade,
             strengths,
             stored: &stored,
@@ -728,7 +738,7 @@ async fn payload(
         floor: prepared.levels.floor,
         grade: request.grade,
         strengths,
-        camera_match: fit::hdr::CameraMatch::LensAndColour,
+        camera_match: request.camera_match,
         matched: matched.is_some(),
         mosaic,
         as_shot,

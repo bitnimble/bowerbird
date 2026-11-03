@@ -861,7 +861,7 @@ export class RawEditPresenter {
   }
 
   resetAllEdits(): void {
-    this.edit.settle(neutralEdits());
+    this.edit.settle(this.editStore.imported ?? neutralEdits());
   }
 
   flushReprepare(): void {
@@ -1402,6 +1402,11 @@ export class RawEditPresenter {
     // has only just arrived, so this is the first shape there has been and it seeds the region.
     this.shown = { width: 0, height: 0 };
     this.followGeometry();
+  }
+
+  /** What a whole re-prepare of the photograph this tab holds measured. */
+  reprepared(header: PreparedHeader): void {
+    if (!this.closed) this.describe(header, false);
   }
 
   @action.bound

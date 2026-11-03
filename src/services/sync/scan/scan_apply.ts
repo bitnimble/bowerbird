@@ -94,9 +94,10 @@ export function applyChanges(
     // where it would restore to read off the mirrored layout: `<bin>/A/B/c.arw`
     // came from `A/B/c.arw`, and `<bin>/c.arw` from the library root.
     for (const ad of imported) {
-      reconciler.insertAdded(libraryId, ad, null, nowUtc, {
+      const id = reconciler.insertAdded(libraryId, ad, null, nowUtc, {
         deleted_from_path: ad.filePath.slice(binRoot!.length + 1),
       });
+      batch.awaitEdits(id, ad.filePath);
       batch.added++;
     }
     for (const photoId of diff.reappeared) {

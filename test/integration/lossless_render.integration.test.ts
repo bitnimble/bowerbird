@@ -60,11 +60,7 @@ const stamps = {
 // a plain `decodeRaw` the two differ by a whole tone curve, which says nothing about
 // whether the pixels are right.
 function service(): ProcessingService {
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    processing_concurrency: 1,
-    match_embedded_jpeg: true,
-  };
+  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1 };
   return new ProcessingService(
     stamps,
     {} as ConstructorParameters<typeof ProcessingService>[1],

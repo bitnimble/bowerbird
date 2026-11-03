@@ -12,7 +12,6 @@ import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_reposi
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import type { Rendition } from '../renditions/renditions';
-import { renditionSkips } from '../renditions/render_stages';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type { Missing, Shown } from '../workers/prepare_pool';
 import { RenderBudget } from '../workers/render_budget';
@@ -21,12 +20,7 @@ import type {
   RenditionSource,
   RenditionWritten,
 } from '../workers/processing_types';
-import {
-  cameraMatchWithStages,
-  type CameraMatch,
-  type RenderTiming,
-  type RenderedRendition,
-} from '../../../schemas/render_stages';
+import { type RenderTiming, type RenderedRendition } from '../../../schemas/render_stages';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { RenderTargets } from './render_targets';
 import { RenderBenchmark } from './render_benchmark';
@@ -67,14 +61,12 @@ export abstract class RenderService {
       editsFor,
       compositeOf,
       this.targets,
-      settings,
       (photoId, written) => this.announce(photoId, written),
       (photoId, tone) => this.matchedCamera(photoId, tone),
     );
     this.prepareRenderer = new PrepareRenderer(
       photoPaths,
       photoListing,
-      settings,
       editsFor,
       libraryOf,
       compositeOf,
@@ -83,7 +75,6 @@ export abstract class RenderService {
     );
     this.singlePhoto = new SinglePhotoRenderer(
       photoProcessing,
-      settings,
       editsFor,
       this.targets,
       (photoId, written) => this.announce(photoId, written),
@@ -113,11 +104,6 @@ export abstract class RenderService {
     return this.activity.track(null, 'measuring', `${rendition}:${denoiser}`, () =>
       this.benchmark.run(rendition, denoiser, into),
     );
-  }
-
-  cameraMatchFor(library: Library, rendition: Rendition): CameraMatch {
-    const base = this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none';
-    return cameraMatchWithStages(base, renditionSkips(library, rendition));
   }
 
   /** Called with the header a grid tile job read off its own open. */

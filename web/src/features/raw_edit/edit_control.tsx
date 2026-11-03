@@ -16,25 +16,30 @@ export function SelectControl<T extends string>({
   options,
   value,
   onChange,
+  disabledReason,
 }: {
   label: string;
   options: Option<T>[];
   value: T;
   onChange: (value: T) => void;
+  disabledReason?: string;
 }): JSX.Element {
   return (
-    <div {...stylex.props(styles.control, styles.selectRow)}>
-      <Text as="span" style={styles.name}>
-        {label}
-      </Text>
-      <Select
-        style={styles.selectEnd}
-        label={label}
-        options={options}
-        value={value}
-        onChange={onChange}
-      />
-    </div>
+    <Tooltip label={disabledReason}>
+      <div {...stylex.props(styles.control, styles.selectRow)}>
+        <Text as="span" style={styles.name}>
+          {label}
+        </Text>
+        <Select
+          style={styles.selectEnd}
+          label={label}
+          options={options}
+          value={value}
+          onChange={onChange}
+          disabled={disabledReason != null}
+        />
+      </div>
+    </Tooltip>
   );
 }
 

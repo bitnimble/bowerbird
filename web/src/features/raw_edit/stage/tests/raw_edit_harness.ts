@@ -14,6 +14,7 @@ import type {
   WheelDrawn,
 } from '../../local_decode/local_open';
 import type { ReachMask } from '../../local_decode/local_decoder';
+import { prepareOf } from '../../local_decode/open_photo';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
 import { ReflectionStore } from '../../reflection/reflection_store';
@@ -243,6 +244,38 @@ export class FakeDecoder {
   releaseTile(): Promise<void> {
     this.holding = false;
     return Promise.resolve();
+  }
+
+  /** Every whole re-prepare, as the settings it was asked at. */
+  readonly prepares: LocalPrepare[] = [];
+
+  prepare(_open: unknown, mosaic: LocalPrepare): Promise<string> {
+    this.prepares.push(mosaic);
+    const { width, height } = this.keystone.output;
+    return Promise.resolve(
+      JSON.stringify({
+        width,
+        height,
+        picture: [width, height],
+        level: 0,
+        finest: true,
+        white: 0.18,
+        peak: 1,
+        floor: null,
+        grade: GRADE,
+        strengths: { sharpen: 0.5, defringe: mosaic.defringe },
+        matched: mosaic.lensCorrection,
+        cameraMatch: mosaic.lensCorrection ? 'lensAndColour' : 'none',
+        mosaic: true,
+        asShot: null,
+        detail: [0, 0],
+        cameraExposure: null,
+        cameraSaturation: null,
+        cameraCurve: null,
+        cameraBalance: null,
+        defocus: [0, 0],
+      }),
+    );
   }
 
   bandInto(mosaic: LocalPrepare, top: number, rows: number): Promise<void> {
@@ -539,6 +572,7 @@ export function openEditor(): Editor {
   // and a mounted element. The box is the stage's CSS size, which the resize observer would
   // have reported.
   openedWith(editor);
+  editor.presenter.prepare.seed(prepareOf(edit.doc ?? undefined, 'galosh', true));
   return editor;
 }
 
@@ -548,7 +582,7 @@ export function openedWith(
   overrides: Record<string, unknown> = {},
 ): void {
   Object.assign(presenter, {
-    local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 } },
+    local: { decoder, open: { longEdge: 0, grade: GRADE } },
     drawable: true,
     maxTexture: 8192,
     box: { width: 1000, height: 750 },

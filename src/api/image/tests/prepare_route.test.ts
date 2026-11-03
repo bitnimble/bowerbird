@@ -106,6 +106,8 @@ describe('GET /image/:photoId/prepare', () => {
       denoiser: 'pmrid',
       highlightRecovery: 60,
       sharpening: 80,
+      defringe: 40,
+      lensCorrection: false,
       dustRemoval: false,
       dustSensitivity: 25,
       dustIntensity: 100,

@@ -599,7 +599,7 @@ export const LibrarySchema = z.object({
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
-  render_skip_full: OptionalStagesSchema, // stages left out of each render (§10.1)
+  render_skip_full: OptionalStagesSchema, // stages new photos import switched off (§10.1)
   render_skip_max: OptionalStagesSchema,
   include_subfolders: z.boolean(),
   include_non_raw: z.boolean(),

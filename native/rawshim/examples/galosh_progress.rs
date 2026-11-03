@@ -174,6 +174,7 @@ fn request() -> rawshim::edit::EditRequest {
             white_quantile: 0.995,
         },
         defringe: 1.0,
+        camera_match: fit::hdr::CameraMatch::LensAndColour,
         photo_analysis: None,
         dust: Default::default(),
         repairs: Vec::new(),

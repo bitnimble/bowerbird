@@ -322,8 +322,11 @@ describe('the edit panel', () => {
     showTab('Detail');
     expect(screen.queryByRole('slider', { name: 'Luminance' })).toBeNull();
     expect(screen.queryByRole('slider', { name: 'Highlight recovery' })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Colour fringe removal' })).toBeNull();
     expect(
-      screen.getByText('Denoise and highlight recovery unavailable for developed photos'),
+      screen.getByText(
+        'Denoise, highlight recovery, and colour fringe removal unavailable for developed photos',
+      ),
     ).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Sharpening' })).not.toBeNull();
   });

@@ -17,6 +17,7 @@ fn main() -> Result<(), String> {
             long_edge: 1600,
             grade: support::GRADE,
             defringe: support::STRENGTHS.defringe,
+            camera_match: fit::hdr::CameraMatch::LensAndColour,
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
