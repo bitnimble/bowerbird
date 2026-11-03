@@ -48,10 +48,10 @@ than padding a list.
 Never mention commits, code, internal names, file names, or build details.
 
 The commit messages are written by developers about what the code does. The changelog is
-written for the reader about what they can do or see. Never paraphrase a commit subject: work
+written for the reader about what changed for them. Never paraphrase a commit subject: work
 out what changed for the reader, then write that in their words. "feat(grid): mark bracket
-stacks with their capture's icon" is "Different bracket stack types now have their own icons",
-never "Marks bracket stacks with an icon for each capture type".
+stacks with their capture's icon" is "Added an icon for each bracket stack type", never
+"Marks bracket stacks with an icon for each capture type".
 
 <copywriting_guide>
 ${readFileSync(join(ROOT, 'COPYWRITING.md'), 'utf8')}
@@ -74,7 +74,7 @@ ${readFileSync(join(ROOT, 'COPYWRITING.md'), 'utf8')}
 - No abstract metaphor nouns: substrate, vector, primitive, surface, paradigm, and the like.
 - Say what it does, not how it feels. Name the mechanism or a number.
 - 1 idea per item.
-- Active voice. The actor is the reader or the feature, never Bowerbird.
+- Active voice, with no subject. Never name Bowerbird, the app, or "we".
 - No adverbs propping up a weak verb: "quickly", "easily", "seamlessly", "significantly".
 - Plain words: "use" over "utilise" or "leverage", "help" over "facilitate", "many" over
   "numerous", "if" over "in the event that".
@@ -88,21 +88,24 @@ where the rules below override them. Each item follows these rules:
 - It is 1 clause of 10 words or fewer.
 - It does not end in a full stop, even when it is a sentence. This overrides the guide's
   full stops.
-- It describes what the reader can do or sees in this release. It may compare with the old
-  behaviour: "now", "no longer", "instead", "anymore", and "used to" are fine in a changelog.
-  The guide's ban on correction framing is about contrasting with something the reader never
-  assumed. The reader knew the old behaviour, so the ban doesn't apply to it.
+- It describes what changed for the reader in this release. It may name the old behaviour:
+  "instead" and "used to" are fine in a changelog. The guide's ban on correction framing is
+  about contrasting with something the reader never assumed. The reader knew the old behaviour,
+  so the ban doesn't apply to it.
 - It has no reason or consequence tail: nothing after "so", "which", "meaning", or a comma.
-- Bowerbird or the app is never its implied subject. Items such as "Adds", "Shows", or "Marks"
-  narrate what the code does and read as a commit log.
-- Items in "new" start with the verb for what the reader can now do, as an imperative with the
-  reader as the actor: "Add", "Straighten", "Export".
-- Items in "improved" name the thing the reader sees as the subject and say how it looks or
-  behaves now.
-- Items in "fixed" name the feature as the subject and say how it behaves correctly.
-- The 3 rules above override the guide's rules for feature descriptions, its ban on
-  imperatives, "Lead with the verb" for "improved" and "fixed", and "Strings shown side by side
-  share 1 shape" across lists. Those rules are for the landing page and the app's controls.
+- It starts with a past tense verb and has no subject. Items such as "Adds", "Add", "Shows", or
+  "The grid scrolls" are in the wrong tense or shape.
+- Items in "new" start with "Added" or a past tense verb that names the new thing: "Added a
+  straighten tool".
+- Items in "improved" start with a past tense verb that says what got better: "Improved",
+  "Sped up", "Reduced", "Moved".
+- Items in "fixed" start with "Fixed" and name what was wrong: "Fixed JPEG exports losing their
+  colour profile".
+- "Added" is only for a thing that didn't exist before. When something the reader already has
+  gained an ability, in any list, name that thing and say what it became: "Made side panels in
+  the viewer and editor resizable".
+- The 4 rules above override the guide's rules for feature descriptions, which are for the
+  landing page and the app's controls.
 - It uses the guide's glossary term for every concept it names.
 - It uses no technical word a photographer wouldn't know, such as symlink, worker, server
   console, process, staging, cache, watcher, database, filesystem, case-sensitive, or server.
@@ -110,17 +113,21 @@ where the rules below override them. Each item follows these rules:
 Examples of items that break the rules, and how to write them:
 
 - "Adds several libraries from another device at once" becomes
-  "Add multiple libraries from another device at the same time"
+  "Enabled adding several libraries from another device at once"
 - "Marks bracket stacks with an icon for each capture type" becomes
-  "Different bracket stack types now have their own icons"
-- "Fixed JPEG exports dropping the colour profile" becomes
-  "JPEG exports no longer lose their colour profile"
+  "Added an icon for each bracket stack type"
+- "JPEG exports no longer lose their colour profile" becomes
+  "Fixed JPEG exports losing their colour profile"
 - "Adds a straighten tool, making it easy to level your horizons." becomes
-  "Straighten photos against a guide"
+  "Added a straighten tool"
+- "Added resizable side panels in the viewer and editor" becomes
+  "Made side panels in the viewer and editor resizable"
+- "Added folding for edit groups" becomes
+  "Made edit groups foldable"
 - "The grid now scrolls much more smoothly in really large libraries." becomes
-  "The grid scrolls at full frame rate in large libraries"
+  "Improved grid scrolling to full frame rate in large libraries"
 - "Fixed an issue where ratings sometimes weren't saved." becomes
-  "Ratings now save every time"
+  "Fixed ratings sometimes not saving"
 
 Before you answer, check each item against every rule and rewrite any item that breaks one.`;
 

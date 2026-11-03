@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 const CLAUDE = `#!/bin/sh
 cat > "$(dirname "$0")/input"
-echo '{"structured_output":{"new":["Straighten photos"],"improved":[],"fixed":[]}}'
+echo '{"structured_output":{"new":["Added a straighten tool"],"improved":[],"fixed":[]}}'
 `;
 
 test('commits from a merged branch reach claude grouped under its merge', () => {
@@ -45,7 +45,7 @@ test('commits from a merged branch reach claude grouped under its merge', () => 
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
     });
 
-    expect(result.stdout).toBe('### New\n\n- Straighten photos\n');
+    expect(result.stdout).toBe('### New\n\n- Added a straighten tool\n');
     const input = readFileSync(join(bin, 'input'), 'utf8').replace(/\b[0-9a-f]{7,}\b/g, 'HASH');
     expect(input).toBe(
       [
