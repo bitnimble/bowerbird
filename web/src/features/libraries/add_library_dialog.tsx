@@ -10,7 +10,8 @@ import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { CheckLabel } from '../../ui/check_label';
-import { DialogActions, DialogBody, DialogColumns, DialogStack } from '../../ui/dialog_layout';
+import { DialogActions, DialogBody, DialogStack } from '../../ui/dialog_layout';
+import { Disclosure } from '../../ui/disclosure';
 import { ErrorBanner } from '../../ui/error_banner';
 import { Field } from '../../ui/field';
 import { Modal } from '../../ui/modal';
@@ -18,7 +19,7 @@ import { ModalStrings } from '../../ui/modal.strings';
 import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
-import { FolderBrowser } from '../browse/folder_browser';
+import { FolderBrowser, FolderChooser } from '../browse/folder_browser';
 import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import { ORDERINGS } from '../photos/grid/grid_controls';
 import { DENOISERS } from '../raw_edit/denoisers';
@@ -28,85 +29,52 @@ import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
 import { commonParent } from './common_parent';
 
+const styles = stylex.create({
+  advanced: {
+    marginTop: '12px',
+  },
+});
+
 const NEW_LIBRARY = CreateLibraryRequestSchema.omit({ root_path: true }).parse({});
 
-// Everything a library needs before it exists, in one place: where its photos
-// are, what to call it, and how its gallery is ordered to begin with.
-//
-// The folder is walked as well as typed because the path is read on the server,
-// which may not be the machine this page is open on, so a path that exists here
-// is not necessarily one the server can open.
-export const AddLibraryDialog = observer(function AddLibraryDialog({
-  open,
-  onOpenChange,
-  preset,
-}: {
+interface AddLibraryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** A library whose folder is already chosen: its root is fixed, and the rest starts from it. */
   preset?: CreateLibraryRequest;
-}): JSX.Element {
+}
+
+export function AddLibraryDialog(props: AddLibraryDialogProps): JSX.Element | null {
+  return props.open ? <AddLibraryFlow {...props} /> : null;
+}
+
+const AddLibraryFlow = observer(function AddLibraryFlow({
+  onOpenChange,
+  preset,
+}: AddLibraryDialogProps): JSX.Element {
   const store = useLibrariesStore();
   const { libraries, scan } = usePresenters();
-  const [browser, setBrowser] = useState(newFolderBrowser);
-  // From the preset as well as the reset below: a dialog mounted open runs the
-  // name inference in the same commit, which would blank the preset's name.
-  const [path, setPath] = useState(preset?.root_path ?? '');
-  const [name, setName] = useState(preset?.name ?? '');
-  const [nameTouched, setNameTouched] = useState(preset?.name != null);
-  const [binName, setBinName] = useState(DEFAULT_BIN_NAME);
-  const [readOnly, setReadOnly] = useState(NEW_LIBRARY.read_only);
-  const [ordering, setOrdering] = useState(NEW_LIBRARY.ordering);
-  const [includeSubfolders, setIncludeSubfolders] = useState(NEW_LIBRARY.include_subfolders);
-  const [includeNonRaw, setIncludeNonRaw] = useState(NEW_LIBRARY.include_non_raw);
-  const [renditionSource, setRenditionSource] = useState(NEW_LIBRARY.rendition_source);
-  const [autoStack, setAutoStack] = useState(NEW_LIBRARY.auto_stack);
-  const [denoiser, setDenoiser] = useState(NEW_LIBRARY.denoiser);
+  const start = preset ?? NEW_LIBRARY;
+  const [browser] = useState(newFolderBrowser);
+  const [asking, setAsking] = useState(preset == null);
+  const [typedName, setTypedName] = useState<string | null>(preset?.name ?? null);
+  const [binName, setBinName] = useState(start.bin_name ?? DEFAULT_BIN_NAME);
+  const [readOnly, setReadOnly] = useState(start.read_only);
+  const [ordering, setOrdering] = useState(start.ordering);
+  const [includeSubfolders, setIncludeSubfolders] = useState(start.include_subfolders);
+  const [includeNonRaw, setIncludeNonRaw] = useState(start.include_non_raw);
+  const [renditionSource, setRenditionSource] = useState(start.rendition_source);
+  const [autoStack, setAutoStack] = useState(start.auto_stack);
+  const [denoiser, setDenoiser] = useState(start.denoiser);
   const [saving, setSaving] = useState(false);
 
-  // Reopening starts over rather than resuming wherever the last attempt was
-  // browsing, which is rarely where the next library lives. A fresh walk rather
-  // than a re-`open()` of the old one, so the picker holds no answer at all
-  // until the first listing lands.
-  useEffect(() => {
-    if (!open) return;
-    const start = preset ?? NEW_LIBRARY;
-    setName(start.name ?? '');
-    setNameTouched(start.name != null);
-    setBinName(start.bin_name ?? DEFAULT_BIN_NAME);
-    setReadOnly(start.read_only);
-    setOrdering(start.ordering);
-    setIncludeSubfolders(start.include_subfolders);
-    setIncludeNonRaw(start.include_non_raw);
-    setRenditionSource(start.rendition_source);
-    setAutoStack(start.auto_stack);
-    setDenoiser(start.denoiser);
-    // Including whatever the last attempt failed with, which is answered by
-    // this attempt rather than still standing over it.
-    libraries.clearError();
-    if (preset != null) {
-      setPath(preset.root_path);
-      return;
-    }
-    const next = newFolderBrowser();
-    setBrowser(next);
-    void next.presenter.open(commonParent(store.libraries.map((library) => library.root_path)));
-  }, [open, libraries, store, preset]);
+  // Whatever the last attempt failed with is answered by this attempt rather
+  // than still standing over it.
+  useEffect(() => libraries.clearError(), [libraries]);
 
-  // The folder name is the library's name until the user types one of their own.
-  useEffect(() => {
-    if (!nameTouched) setName(path === '' ? '' : inferredLibraryName(path));
-  }, [path, nameTouched]);
+  const root = preset?.root_path ?? browser.store.selectedPath;
+  const name = typedName ?? inferredLibraryName(root);
 
-  // A folder already sitting at this name becomes the bin, so the photographs
-  // inside it import as deleted rather than as part of the collection. Said here
-  // rather than left to the create, so the reader can pick another name while the
-  // name is still being chosen.
-  //
-  // Only answerable while the walk is standing on the folder the box names, which
-  // is every path reached by clicking. A path typed but not opened goes ahead
-  // unwarned.
-  const root = path;
   const bin = binName.trim();
   const listing = browser.store.listing;
   const binExists =
@@ -117,6 +85,12 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   // is ticked and locked for it rather than letting the create fail.
   const unwritable = listing?.path === root && listing.writable === false;
   const readOnlyLibrary = readOnly || unwritable;
+
+  function answered(): void {
+    // On error too: a failed native picker has nowhere else to say so.
+    if (browser.store.selection != null || browser.store.error != null) setAsking(false);
+    else onOpenChange(false);
+  }
 
   async function submit(): Promise<void> {
     setSaving(true);
@@ -134,10 +108,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
       denoiser,
     });
     setSaving(false);
-    // The server found the root unwritable after all - `access(2)` can be wrong,
-    // and the listing may be of a different folder from the one typed. Ticking
-    // the box is the answer, so tick it: the reader can press Add again rather
-    // than work out what an error about permissions wants from them.
+    // The listing's `writable` comes from `access(2)`, which can be wrong.
     if (readOnlyRoot) setReadOnly(true);
     if (created == null) return;
     onOpenChange(false);
@@ -147,174 +118,175 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     void scan.watch(created.id);
   }
 
+  if (asking) {
+    return (
+      <FolderChooser
+        store={browser.store}
+        presenter={browser.presenter}
+        label={AddLibraryStrings.libraryRootPath()}
+        placeholder={AddLibraryStrings.rootPlaceholder()}
+        start={commonParent(store.libraries.map((library) => library.root_path))}
+        open
+        onClose={answered}
+      />
+    );
+  }
+
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title={AddLibraryStrings.title()}>
-      <DialogBody wide height="fixed">
-        <DialogColumns>
+    <Modal open onOpenChange={onOpenChange} title={AddLibraryStrings.title()}>
+      <DialogBody height="capped">
+        <Field>
+          <Text variant="label" as="span">
+            {AddLibraryStrings.folder()}
+          </Text>
+          {preset == null ? (
+            <FolderBrowser
+              store={browser.store}
+              presenter={browser.presenter}
+              label={AddLibraryStrings.libraryRootPath()}
+              placeholder={AddLibraryStrings.rootPlaceholder()}
+            />
+          ) : (
+            <Text variant="mono" as="p">
+              {preset.root_path}
+            </Text>
+          )}
+          {unwritable && (
+            <Text variant="mono" as="p">
+              {AddLibraryStrings.unwritableHint()}
+            </Text>
+          )}
+        </Field>
+
+        <Field>
+          <Text variant="label" as="span">
+            {SettingsStrings.libraryName()}
+          </Text>
+          <TextField
+            grow
+            label={SettingsStrings.libraryName()}
+            value={name}
+            onChange={setTypedName}
+          />
+        </Field>
+
+        <Field>
+          <Text variant="label" as="span">
+            {AddLibraryStrings.sortPhotosBy()}
+          </Text>
+          <Select
+            label={AddLibraryStrings.sortPhotosBy()}
+            options={ORDERINGS}
+            value={ordering}
+            onChange={setOrdering}
+          />
+        </Field>
+
+        {!readOnlyLibrary && (
           <Field>
             <Text variant="label" as="span">
-              {AddLibraryStrings.folder()}
+              {SettingsStrings.binFolderName()}
             </Text>
-            {preset == null ? (
-              <>
-                <FolderBrowser
-                  store={browser.store}
-                  presenter={browser.presenter}
-                  label={AddLibraryStrings.libraryRootPath()}
-                  placeholder={AddLibraryStrings.rootPlaceholder()}
-                  onPathChange={setPath}
-                />
-                <Text variant="mono" as="p">
-                  {AddLibraryStrings.folderHint()}
-                </Text>
-              </>
-            ) : (
-              <Text variant="mono" as="p">
-                {preset.root_path}
-              </Text>
-            )}
+            <TextField
+              grow
+              label={SettingsStrings.binFolderName()}
+              value={binName}
+              onChange={setBinName}
+            />
+            <Text variant="mono" as="p" tone={binExists ? 'warning' : undefined}>
+              {binExists
+                ? AddLibraryStrings.binExistsWarning(root, bin)
+                : SettingsStrings.binNameHint()}
+            </Text>
           </Field>
+        )}
 
-          <DialogStack>
-            <Field>
-              <Text variant="label" as="span">
-                {AddLibraryStrings.name()}
-              </Text>
-              <TextField
-                grow
-                label={SettingsStrings.libraryName()}
-                value={name}
-                onChange={(value) => {
-                  setNameTouched(true);
-                  setName(value);
-                }}
-              />
-            </Field>
-
-            <Field>
-              <Text variant="label" as="span">
-                {AddLibraryStrings.sortPhotosBy()}
-              </Text>
-              <Select
-                label={AddLibraryStrings.sortPhotosBy()}
-                options={ORDERINGS}
-                value={ordering}
-                onChange={setOrdering}
-              />
-            </Field>
-
-            <Field>
-              <Text variant="label" as="span">
-                {RawEditPanelStrings.denoiser()}
-              </Text>
-              <Select
-                label={RawEditPanelStrings.denoiser()}
-                options={DENOISERS}
-                value={denoiser}
-                onChange={setDenoiser}
-              />
-            </Field>
-
-            {/* Asked here rather than left to Settings because every one of them
-                decides what the first import does, and the import starts as the
-                library lands. A library that has already spent an hour building
-                renditions for a folder of decade-old rejects, or that has already
-                stacked them, has answered the question the expensive way. */}
-            <Field>
-              <CheckLabel>
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  checked={renditionSource === 'render'}
-                  onChange={(e) =>
-                    setRenditionSource(e.currentTarget.checked ? 'render' : 'embedded')
-                  }
-                />
-                {SettingsStrings.preRenderImported()}
-              </CheckLabel>
-            </Field>
-          </DialogStack>
-        </DialogColumns>
-
-        <DialogColumns ruled>
-          <DialogStack>
-            <Field>
-              <CheckLabel>
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  checked={includeSubfolders}
-                  onChange={(e) => setIncludeSubfolders(e.currentTarget.checked)}
-                />
-                {SettingsStrings.includeSubfolders()}
-              </CheckLabel>
-            </Field>
-
-            <Field>
-              <CheckLabel>
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  checked={includeNonRaw}
-                  onChange={(e) => setIncludeNonRaw(e.currentTarget.checked)}
-                />
-                {SettingsStrings.includeNonRaw()}
-              </CheckLabel>
-              <Text variant="mono" as="p">
-                {SettingsStrings.includeNonRawHint()}
-              </Text>
-            </Field>
-
-            <Field>
-              <CheckLabel>
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  checked={autoStack}
-                  onChange={(e) => setAutoStack(e.currentTarget.checked)}
-                />
-                {SettingsStrings.autoStack()}
-              </CheckLabel>
-            </Field>
-          </DialogStack>
-
-          <DialogStack>
-            <Field>
-              <CheckLabel>
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  checked={readOnlyLibrary}
-                  disabled={unwritable}
-                  onChange={(e) => setReadOnly(e.currentTarget.checked)}
-                />
-                {SettingsStrings.readOnly()}
-              </CheckLabel>
-              <Text variant="mono" as="p">
-                {unwritable ? AddLibraryStrings.unwritableHint() : SettingsStrings.readOnlyHint()}
-              </Text>
-            </Field>
-
-            {!readOnlyLibrary && (
+        <Disclosure title={AddLibraryStrings.advancedSettings()}>
+          <div {...stylex.props(styles.advanced)}>
+            <DialogStack>
               <Field>
                 <Text variant="label" as="span">
-                  {SettingsStrings.binFolderName()}
+                  {RawEditPanelStrings.denoiser()}
                 </Text>
-                <TextField
-                  grow
-                  label={SettingsStrings.binFolderName()}
-                  value={binName}
-                  onChange={setBinName}
+                <Select
+                  label={RawEditPanelStrings.denoiser()}
+                  options={DENOISERS}
+                  value={denoiser}
+                  onChange={setDenoiser}
                 />
-                <Text variant="mono" as="p" tone={binExists ? 'warning' : undefined}>
-                  {binExists
-                    ? AddLibraryStrings.binExistsWarning(root, bin)
-                    : AddLibraryStrings.binNameHint()}
+              </Field>
+
+              <Field>
+                <CheckLabel>
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    checked={renditionSource === 'render'}
+                    onChange={(e) =>
+                      setRenditionSource(e.currentTarget.checked ? 'render' : 'embedded')
+                    }
+                  />
+                  {SettingsStrings.preRenderImported()}
+                </CheckLabel>
+              </Field>
+
+              <Field>
+                <CheckLabel>
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    checked={includeSubfolders}
+                    onChange={(e) => setIncludeSubfolders(e.currentTarget.checked)}
+                  />
+                  {SettingsStrings.includeSubfolders()}
+                </CheckLabel>
+              </Field>
+
+              <Field>
+                <CheckLabel>
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    checked={includeNonRaw}
+                    onChange={(e) => setIncludeNonRaw(e.currentTarget.checked)}
+                  />
+                  {SettingsStrings.includeNonRaw()}
+                </CheckLabel>
+                <Text variant="mono" as="p">
+                  {SettingsStrings.includeNonRawHint()}
                 </Text>
               </Field>
-            )}
-          </DialogStack>
-        </DialogColumns>
+
+              <Field>
+                <CheckLabel>
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    checked={autoStack}
+                    onChange={(e) => setAutoStack(e.currentTarget.checked)}
+                  />
+                  {SettingsStrings.autoStack()}
+                </CheckLabel>
+              </Field>
+
+              <Field>
+                <CheckLabel>
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    checked={readOnlyLibrary}
+                    disabled={unwritable}
+                    onChange={(e) => setReadOnly(e.currentTarget.checked)}
+                  />
+                  {SettingsStrings.readOnly()}
+                </CheckLabel>
+                <Text variant="mono" as="p">
+                  {SettingsStrings.readOnlyHint()}
+                </Text>
+              </Field>
+            </DialogStack>
+          </div>
+        </Disclosure>
 
         {store.error != null && <ErrorBanner>{store.error}</ErrorBanner>}
 

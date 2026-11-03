@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CornerLeftUp, Folder, FolderPlus } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { DialogActions, DialogBody } from '../../ui/dialog_layout';
@@ -13,6 +13,7 @@ import { TextField } from '../../ui/text_field';
 import { color, size } from '../../ui/tokens.stylex';
 import { FolderBrowserStrings } from './folder_browser.strings';
 import { type FolderBrowserParts, newFolderBrowser } from './folder_browser_presenter';
+import { type FolderBrowserStore } from './folder_browser_store';
 
 const styles = stylex.create({
   browse: {
@@ -28,11 +29,18 @@ const styles = stylex.create({
   picker: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-start',
     gap: '6px',
     minWidth: 0,
   },
+  selection: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
   path: {
+    flexGrow: 1,
+    flexBasis: 0,
+    minWidth: 0,
     overflowWrap: 'anywhere',
   },
   bar: {
@@ -84,41 +92,89 @@ export const FolderBrowser = observer(function FolderBrowser({
   start,
 }: FolderBrowserProps): JSX.Element {
   const selection = store.selection;
-  const [browser, setBrowser] = useState(newFolderBrowser);
-  const [choosing, setChoosing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [path, setPath] = useState('');
-  const opening = useRef(0);
-
-  useEffect(() => {
-    opening.current++;
-    setChoosing(false);
-    setConfirming(false);
-  }, [store]);
+  // Which store it was opened for, so a fresh store finds it shut.
+  const [choosingIn, setChoosingIn] = useState<FolderBrowserStore | null>(null);
 
   useEffect(() => {
     onPathChange?.(selection?.path ?? '');
   }, [selection, store]);
 
-  function open(): void {
+  return (
+    <div role="group" aria-label={label} aria-busy={store.loading} {...stylex.props(styles.picker)}>
+      <div {...stylex.props(styles.selection)}>
+        {store.selectedPath !== '' && (
+          <Text variant="mono" as="p" style={styles.path}>
+            {store.selectedPath}
+          </Text>
+        )}
+        <Button disabled={store.loading} onClick={() => setChoosingIn(store)}>
+          <Folder size={ICON} />
+          {FolderBrowserStrings.chooseFolder()}
+        </Button>
+      </div>
+      {store.error != null && (
+        <Text variant="mono" tone="error">
+          {store.error}
+        </Text>
+      )}
+      <FolderChooser
+        store={store}
+        presenter={presenter}
+        label={label}
+        placeholder={placeholder}
+        canCreate={canCreate}
+        start={start}
+        open={choosingIn === store}
+        onClose={() => setChoosingIn(null)}
+      />
+    </div>
+  );
+});
+
+/**
+ * Asks for a folder as soon as it is open: the native picker where there is one, otherwise the tree
+ * in a dialog. `onClose` fires with the answer already in `store`, which keeps its selection when
+ * the reader backs out.
+ */
+export const FolderChooser = observer(function FolderChooser({
+  store,
+  presenter,
+  label,
+  placeholder,
+  canCreate = false,
+  start,
+  open,
+  onClose,
+}: Omit<FolderBrowserProps, 'onPathChange'> & {
+  open: boolean;
+  onClose: () => void;
+}): JSX.Element | null {
+  const [browser, setBrowser] = useState(newFolderBrowser);
+  const [confirming, setConfirming] = useState(false);
+  const [path, setPath] = useState('');
+  const opening = useRef(0);
+
+  // Layout: a later effect would paint the previous walk in the reopened tree for a frame.
+  useLayoutEffect(() => {
+    if (!open) return;
     if (presenter.native) {
-      void presenter.pick();
-      return;
+      let current = true;
+      void presenter.pick().then(() => {
+        if (current) onClose();
+      });
+      return () => {
+        current = false;
+      };
     }
     const next = newFolderBrowser();
-    opening.current++;
     setBrowser(next);
     setPath('');
     setConfirming(false);
-    setChoosing(true);
     void next.presenter.open(start ?? (store.selectedPath || store.listing?.path));
-  }
-
-  function close(): void {
-    opening.current++;
-    setChoosing(false);
-    setConfirming(false);
-  }
+    return () => {
+      opening.current++;
+    };
+  }, [open, store, presenter]);
 
   async function choose(): Promise<void> {
     const mine = opening.current;
@@ -131,58 +187,41 @@ export const FolderBrowser = observer(function FolderBrowser({
       const listing = browser.store.listing;
       if (listing == null) return;
       presenter.confirm(listing);
-      close();
+      onClose();
     } finally {
       if (mine === opening.current) setConfirming(false);
     }
   }
 
+  if (presenter.native) return null;
   return (
-    <div role="group" aria-label={label} aria-busy={store.loading} {...stylex.props(styles.picker)}>
-      <Button disabled={store.loading} onClick={open}>
-        <Folder size={ICON} />
-        {FolderBrowserStrings.chooseFolder()}
-      </Button>
-      {store.selectedPath !== '' && (
-        <Text variant="mono" as="p" style={styles.path}>
-          {store.selectedPath}
-        </Text>
-      )}
-      {store.error != null && (
-        <Text variant="mono" tone="error">
-          {store.error}
-        </Text>
-      )}
-      {!presenter.native && (
-        <Modal
-          open={choosing}
-          onOpenChange={(next) => !next && close()}
-          title={FolderBrowserStrings.chooseFolder()}
-        >
-          <DialogBody height="capped">
-            <FolderTree
-              store={browser.store}
-              presenter={browser.presenter}
-              label={label}
-              placeholder={placeholder}
-              canCreate={canCreate}
-              onPathChange={setPath}
-              disabled={confirming}
-            />
-            <DialogActions>
-              <Button onClick={close}>{ModalStrings.cancel()}</Button>
-              <Button
-                variant="primary"
-                disabled={path.trim() === '' || browser.store.loading}
-                onClick={() => void choose()}
-              >
-                {FolderBrowserStrings.chooseFolder()}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </Modal>
-      )}
-    </div>
+    <Modal
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      title={FolderBrowserStrings.chooseFolder()}
+    >
+      <DialogBody height="capped">
+        <FolderTree
+          store={browser.store}
+          presenter={browser.presenter}
+          label={label}
+          placeholder={placeholder}
+          canCreate={canCreate}
+          onPathChange={setPath}
+          disabled={confirming}
+        />
+        <DialogActions>
+          <Button onClick={onClose}>{ModalStrings.cancel()}</Button>
+          <Button
+            variant="primary"
+            disabled={path.trim() === '' || browser.store.loading}
+            onClick={() => void choose()}
+          >
+            {FolderBrowserStrings.chooseFolder()}
+          </Button>
+        </DialogActions>
+      </DialogBody>
+    </Modal>
   );
 });
 

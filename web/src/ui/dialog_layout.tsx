@@ -27,12 +27,6 @@ const styles = stylex.create({
     gap: '12px 20px',
     alignItems: 'start',
   },
-  ruled: {
-    borderTopWidth: '1px',
-    borderTopStyle: 'solid',
-    borderTopColor: color.slate,
-    paddingTop: '12px',
-  },
   stack: {
     display: 'flex',
     flexDirection: 'column',
@@ -76,14 +70,8 @@ export function DialogBody({
   );
 }
 
-export function DialogColumns({
-  ruled = false,
-  children,
-}: {
-  ruled?: boolean;
-  children: ReactNode;
-}): JSX.Element {
-  return <div {...stylex.props(styles.columns, ruled && styles.ruled)}>{children}</div>;
+export function DialogColumns({ children }: { children: ReactNode }): JSX.Element {
+  return <div {...stylex.props(styles.columns)}>{children}</div>;
 }
 
 export function DialogStack({ children }: { children: ReactNode }): JSX.Element {

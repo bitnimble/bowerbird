@@ -40,6 +40,7 @@ import { ToastsStrings } from '../toasts/toasts.strings';
 import { ActivityStrips } from '../activity/activity_strips';
 import { Button } from '../../ui/button';
 import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
+import { Disclosure } from '../../ui/disclosure';
 import { ErrorBanner } from '../../ui/error_banner';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
@@ -52,7 +53,6 @@ import { Row } from '../../ui/row';
 import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
-import { color, font } from '../../ui/tokens.stylex';
 import { RenderStagesPanel } from './render_stages_panel';
 import { resetTo, SettingRow, settingStyles, showNumber } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
@@ -85,13 +85,6 @@ const styles = stylex.create({
   jobs: {
     marginTop: '8px',
     marginBottom: 0,
-  },
-  summary: {
-    cursor: 'pointer',
-    fontFamily: font.display,
-    fontSize: '14.3px',
-    paddingBlock: '2px',
-    color: { default: color.boneDim, ':hover': color.bone },
   },
   rules: {
     display: 'grid',
@@ -738,10 +731,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const thin = isSyncedCopy(library, useDevicePhotosStore());
 
   return (
-    <details>
-      <summary {...stylex.props(styles.summary, focusRing.ring)}>
-        {SettingsStrings.libraryJobs()}
-      </summary>
+    <Disclosure title={SettingsStrings.libraryJobs()}>
       <Panel flush style={styles.jobs}>
         {replication.hasPeers(library.id) && (
           <SettingRow
@@ -835,6 +825,6 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </SettingRow>
         )}
       </Panel>
-    </details>
+    </Disclosure>
   );
 });

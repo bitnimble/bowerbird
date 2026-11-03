@@ -22,47 +22,27 @@ test('the add-library dialog warns that a bin name the root already uses will be
   await page.getByRole('button', { name: 'Add library' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Add library' });
-  await expect(dialog.getByRole('textbox', { name: 'Library root' })).toHaveCount(0);
-  const height = (await dialog.boundingBox())!.height;
-  await dialog.getByRole('button', { name: 'Choose folder' }).click();
   const chooser = page.getByRole('dialog', { name: 'Choose folder' });
   const root = chooser.getByLabel('Library root');
   await expect(root).not.toHaveValue('');
+  await expect(dialog).toHaveCount(0);
   await root.fill(ROOT_WITH_BIN);
   await root.press('Enter');
   await expect(chooser.getByRole('button', { name: 'Bin', exact: true })).toBeVisible();
   await chooser.getByRole('button', { name: 'Choose folder' }).click();
   await expect(chooser).toHaveCount(0);
 
+  await expect(dialog.getByRole('textbox', { name: 'Library root' })).toHaveCount(0);
   const binName = dialog.getByLabel('Bin folder name');
   const confirm = dialog.getByRole('button', { name: 'Add library' });
   const warning = dialog.getByText('already has a folder called "Bin"');
   await expect(warning).toBeVisible();
   // A warning, not a refusal: the reader can go ahead with it.
   await expect(confirm).toBeEnabled();
-  // Walking the picker is what makes the warning appear, and a dialog that grew
-  // to hold it would take Add out from under the pointer that is over it.
-  expect((await dialog.boundingBox())!.height).toBe(height);
 
   await binName.fill('Deleted');
   await expect(warning).toHaveCount(0);
   await expect(confirm).toBeEnabled();
-
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
-});
-
-// Asked in the dialog rather than left to Settings, because the import begins as the row lands
-// (§9.8) - so a library added with it left alone has already walked past every JPEG beside its
-// RAWs by the time anyone could switch it off.
-test('the add-library dialog offers the finished formats, switched on', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await page.getByRole('button', { name: 'Add library' }).click();
-
-  const dialog = page.getByRole('dialog', { name: 'Add library' });
-  const nonRaw = dialog.getByRole('checkbox', { name: 'Import JPEG, PNG, HEIC, and AVIF too' });
-  await expect(nonRaw).toBeChecked();
-  await nonRaw.uncheck();
-  await expect(nonRaw).not.toBeChecked();
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -74,7 +54,6 @@ test('a path closed with a slash walks the picker into it without an Enter', asy
   await page.getByRole('button', { name: 'Add library' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Add library' });
-  await dialog.getByRole('button', { name: 'Choose folder' }).click();
   const chooser = page.getByRole('dialog', { name: 'Choose folder' });
   const root = chooser.getByLabel('Library root');
   await expect(root).not.toHaveValue('');
@@ -87,4 +66,30 @@ test('a path closed with a slash walks the picker into it without an Enter', asy
   ).toBeVisible();
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
+});
+
+test('the chosen folder can be changed from the add-library dialog', async ({ page }) => {
+  mkdirSync(path.join(ROOT_WITH_BIN, 'Bin'), { recursive: true });
+
+  await page.goto(route(PathSegment.settings()));
+  await page.getByRole('button', { name: 'Add library' }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose folder' });
+  const root = chooser.getByLabel('Library root');
+  await expect(root).not.toHaveValue('');
+  await chooser.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(chooser).toHaveCount(0);
+
+  const dialog = page.getByRole('dialog', { name: 'Add library' });
+  await expect(dialog.locator(':focus')).toHaveCount(1);
+  await dialog.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(root).not.toHaveValue('');
+  await root.fill(`${ROOT_WITH_BIN}/`);
+  await expect(chooser.getByRole('button', { name: 'Bin', exact: true })).toHaveCount(1);
+  await chooser.getByRole('button', { name: 'Choose folder' }).click();
+
+  await expect(chooser).toHaveCount(0);
+  await expect(dialog.getByText(ROOT_WITH_BIN, { exact: true })).toBeVisible();
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
 });

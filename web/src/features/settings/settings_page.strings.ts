@@ -41,7 +41,7 @@ export const SettingsStrings = {
 
   binFolderName: () => 'Bin folder name',
   binNameHintNoBin: () => 'Bowerbird creates this folder when you turn off read-only mode.',
-  binNameHint: () => 'Photos that are Binned will be moved to this subfolder',
+  binNameHint: () => 'Binned photos are moved to this subfolder',
   binNameLocked: () => 'Turn off read-only mode to rename the Bin folder.',
 
   foldersSetAside: () => 'Folders set aside',

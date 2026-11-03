@@ -19,6 +19,7 @@ export function newFolderBrowser(): FolderBrowserParts {
 export class FolderBrowserPresenter {
   readonly native = canPickFolder();
   private walk = 0;
+  private picking: Promise<void> | null = null;
 
   constructor(private readonly store: FolderBrowserStore) {}
 
@@ -27,8 +28,32 @@ export class FolderBrowserPresenter {
     return await this.land(() => browseApi.get(path));
   }
 
-  async pick(): Promise<void> {
-    if (!this.native || this.store.loading) return;
+  /** Settles once the folder is answered for; asking again meanwhile waits on the same picker. */
+  pick(): Promise<void> {
+    if (!this.native) return Promise.resolve();
+    this.picking ??= this.askNative().finally(() => {
+      this.picking = null;
+    });
+    return this.picking;
+  }
+
+  @action.bound
+  confirm(listing: BrowseResponse): void {
+    this.walk++;
+    this.store.selection = { path: listing.path };
+    this.store.listing = listing;
+    this.store.loading = false;
+    this.store.error = null;
+  }
+
+  /** Makes a folder inside the one listed and walks into it. False where it was refused. */
+  async createFolder(name: string): Promise<boolean> {
+    const parent = this.store.listing?.path;
+    if (parent == null || name.trim() === '') return false;
+    return await this.land(() => browseApi.createFolder(parent, name.trim()));
+  }
+
+  private async askNative(): Promise<void> {
     this.beginLoad();
     try {
       const folder = await pickFolder();
@@ -47,22 +72,6 @@ export class FolderBrowserPresenter {
     } catch (err) {
       this.fail(describe(err));
     }
-  }
-
-  @action.bound
-  confirm(listing: BrowseResponse): void {
-    this.walk++;
-    this.store.selection = { path: listing.path };
-    this.store.listing = listing;
-    this.store.loading = false;
-    this.store.error = null;
-  }
-
-  /** Makes a folder inside the one listed and walks into it. False where it was refused. */
-  async createFolder(name: string): Promise<boolean> {
-    const parent = this.store.listing?.path;
-    if (parent == null || name.trim() === '') return false;
-    return await this.land(() => browseApi.createFolder(parent, name.trim()));
   }
 
   private async land(read: () => Promise<BrowseResponse>): Promise<boolean> {

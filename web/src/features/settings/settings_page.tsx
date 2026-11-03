@@ -45,7 +45,6 @@ import { ICON } from '../../ui/icon';
 import type { Option } from '../../ui/option';
 import { Page, PageHead } from '../../ui/page';
 import { Panel } from '../../ui/panel';
-import { Spacer } from '../../ui/row';
 import { Select } from '../../ui/select';
 import { SegmentedControl } from '../../ui/segmented_control';
 import { Text } from '../../ui/text';
@@ -807,7 +806,12 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           {!libraryDialogOpen && <LibrariesError />}
 
           <PageHead>
-            <Spacer />
+            {!thin && (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <FolderPlus size={ICON} />
+                {AddLibraryStrings.title()}
+              </Button>
+            )}
             <DevicePhotosActions primary />
             <Button
               variant={thin && !devicePhotos.canAddLibrary ? 'primary' : 'default'}
@@ -816,12 +820,6 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
               <Link2 size={ICON} />
               {AddReplicaStrings.title()}
             </Button>
-            {!thin && (
-              <Button variant="primary" onClick={() => setAdding(true)}>
-                <FolderPlus size={ICON} />
-                {AddLibraryStrings.title()}
-              </Button>
-            )}
           </PageHead>
           <AddLibraryDialog open={adding} onOpenChange={setAdding} />
           <AddReplicaDialog open={joining} onOpenChange={setJoining} />
