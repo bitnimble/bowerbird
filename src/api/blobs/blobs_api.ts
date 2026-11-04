@@ -127,7 +127,6 @@ export class BlobsApi {
     });
     app.post(route(PathSegment.pull()), async (c) => {
       const body = PushBlobsRequestSchema.parse(await c.req.json());
-      this.assertKeepsOriginals(this.library(body.library_id));
       const queued = await this.transfers.pullDiff(body.library_id, body.peer_id, body.scope);
       this.transfers.kick();
       return c.json(respond(BlobQueueResponseSchema, { queued }));
@@ -475,7 +474,7 @@ export class BlobsApi {
     if (this.keepsOriginals(library.id)) return;
     throw new AppError(
       'CONFLICT',
-      `this device is set not to keep the RAW files of "${library.name}". Turn on "Sync RAWs to this device" ` +
+      `this device is set not to keep the RAW files of "${library.name}". Choose "Sync original RAWs" ` +
         "under the library's synced devices to accept them.",
     );
   }
@@ -490,12 +489,6 @@ export class BlobsApi {
     const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
     return { photo, library };
-  }
-
-  private library(libraryId: string): Library {
-    const library = this.libraries.getConfiguration(libraryId);
-    if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    return library;
   }
 
   private originalPath(library: Library, photo: BasicPhoto): string {

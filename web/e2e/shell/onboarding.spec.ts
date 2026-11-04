@@ -29,7 +29,7 @@ test('the home page opens the welcome wizard until it is finished', async ({ pag
 });
 
 for (const entry of ['welcome', 'settings'] as const) {
-  test(`${entry} opens shared connect flow with automatic originals enabled`, async ({ page }) => {
+  test(`${entry} opens shared connect flow syncing original RAWs`, async ({ page }) => {
     await setOnboardingComplete(page.request, entry === 'settings');
     await page.route(
       `**${route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas(), PathSegment.browse())}`,
@@ -66,12 +66,6 @@ for (const entry of ['welcome', 'settings'] as const) {
     await expect(dialog.getByText('12 photos', { exact: true })).toBeVisible();
     await dialog.getByRole('checkbox', { name: 'Trip' }).check();
     await dialog.getByRole('button', { name: 'Next' }).click();
-
-    await expect(
-      dialog.getByRole('checkbox', { name: 'Keep originals on this device' }),
-    ).toBeChecked();
-    await expect(
-      dialog.getByRole('checkbox', { name: 'Automatically send and fetch originals' }),
-    ).toBeChecked();
+    await expect(dialog.getByRole('radio', { name: 'Sync original RAWs' })).toBeChecked();
   });
 }

@@ -879,17 +879,20 @@ describe('a device that does not keep RAW files', () => {
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(false);
   });
 
-  it('refuses to queue a bulk fetch of what a peer holds', async () => {
+  it('still queues a fetch of what a peer holds, asked for by hand', async () => {
+    const a = makePeer('a');
     const b = makePeer('b');
+    addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
     addPhoto(b, 'photo1', 'one.arw');
+    knowsHolder(b, 'photo1', a.id);
 
     const res = await viewer(b).request(route(PathSegment.pull()), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ library_id: LIB, peer_id: b.id, scope: { library: true } }),
+      body: JSON.stringify({ library_id: LIB, peer_id: a.id, scope: { library: true } }),
     });
 
-    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ queued: 1 });
   });
 
   it('drops what was already queued to arrive, rather than delivering it anyway', async () => {

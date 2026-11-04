@@ -8,7 +8,6 @@ export class ReplicationStore {
   @observable.shallow accessor peersByLibrary = new Map<string, PairedPeer[]>();
   /** §7.10, per library this device replicates. */
   @observable.shallow accessor syncOriginalsByLibrary = new Map<string, boolean>();
-  @observable.shallow accessor autoTransferByLibrary = new Map<string, boolean>();
   @observable.shallow accessor transfers: Transfer[] = [];
   /** Photos whose fetch has been asked for and not yet answered with a queue entry. */
   @observable accessor requestingPulls: ReadonlySet<string> = new Set();
@@ -33,7 +32,7 @@ export class ReplicationStore {
   }
 
   // A library with no peers renders none of the replication UI (§10): this is
-  // the gate every strip, badge and panel reads.
+  // the gate every device list, badge and panel reads.
   hasPeers(libraryId: string): boolean {
     return this.peersOf(libraryId).length > 0;
   }
@@ -53,10 +52,6 @@ export class ReplicationStore {
 
   originalsElsewhere(libraryId: string): boolean {
     return this.hasPeers(libraryId) && !this.syncsOriginals(libraryId);
-  }
-
-  autoTransfersOriginals(libraryId: string): boolean {
-    return this.autoTransferByLibrary.get(libraryId) ?? false;
   }
 
   transfersOf(libraryId: string): Transfer[] {

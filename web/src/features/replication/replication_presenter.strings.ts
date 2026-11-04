@@ -37,17 +37,10 @@ export const ReplicationPresenterStrings = {
   couldNotReadConflicts: () => "We couldn't load edits from both devices. Try again.",
   couldNotResolveConflicts: () => "We couldn't save your chosen edits. Try again.",
 
-  otherDeviceHoldsEverything: (name: string) =>
-    `${name} already holds every original this device has.`,
-  queuedToSend: (queued: number, name: string) =>
-    `Queued ${plural(queued, 'original', 'originals')} to send to ${name}.`,
-  couldNotQueueForDevice: (name: string) => `We couldn't queue originals for ${name}. Try again.`,
-
-  thisDeviceHoldsEverything: (name: string) =>
-    `This device already holds every original ${name} has.`,
-  queuedToFetch: (queued: number, name: string) =>
-    `Queued ${plural(queued, 'original', 'originals')} to fetch from ${name}.`,
-  couldNotQueueFromDevice: (name: string) => `We couldn't queue originals from ${name}. Try again.`,
+  rawsInSync: (name: string) => `This device and ${name} already hold the same RAWs.`,
+  queuedRaws: (queued: number, name: string) =>
+    `Queued ${plural(queued, 'RAW', 'RAWs')} to sync with ${name}.`,
+  couldNotSyncRaws: (name: string) => `We couldn't sync RAWs with ${name}. Try again.`,
 
   couldNotRemoveLocalCopies: () => "We couldn't remove those local copies. Try again.",
   removedLocalCopies: (gone: number, name: string) =>

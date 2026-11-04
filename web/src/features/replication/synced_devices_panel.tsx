@@ -3,13 +3,18 @@ import { observer } from 'mobx-react-lite';
 import { type Library } from '../../../../src/schemas/libraries';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
 import { isThinShell } from '../../app/thin_shell';
-import { focusRing } from '../../ui/focus_ring';
 import { Panel } from '../../ui/panel';
 import { Text } from '../../ui/text';
 import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
-import { SettingRow } from '../settings/settings_controls';
-import { ReplicationStrip } from './replication_strip';
+import { OriginalsChoice } from './originals_choice';
+import { SyncedDeviceList } from './synced_device_list';
 import { SyncedDevicesStrings } from './synced_devices_panel.strings';
+
+const styles = stylex.create({
+  originals: {
+    paddingBlock: '8px',
+  },
+});
 
 // Which devices sync this library, and what this one keeps of it (§7.10).
 export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
@@ -19,11 +24,10 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
 }): JSX.Element {
   const store = useReplicationStore();
   const { replication, confirm } = usePresenters();
-  const readOnlyReason = library.read_only ? BulkBarStrings.libraryIsReadOnly() : undefined;
 
   return (
-    <Panel title={SyncedDevicesStrings.heading()} flush={store.hasPeers(library.id)}>
-      <ReplicationStrip library={library} store={store} presenter={replication} confirm={confirm} />
+    <Panel title={SyncedDevicesStrings.heading()}>
+      <SyncedDeviceList library={library} store={store} presenter={replication} confirm={confirm} />
 
       {store.peersOf(library.id).length === 0 && (
         <Text variant="muted" as="p">
@@ -34,45 +38,14 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
       {/* §7.10. Only where there is another device to hold them: on a library
           nobody else has, "don't keep the RAWs" names nowhere for them to be. */}
       {store.hasPeers(library.id) && !isThinShell() && (
-        <>
-          <SettingRow
-            label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
-            // What is true now, in the same words the add dialog uses: a hint that
-            // describes the *other* state reads as a description of this one.
-            hint={
-              store.syncsOriginals(library.id)
-                ? SyncedDevicesStrings.keepsOriginals()
-                : SyncedDevicesStrings.catalogueOnly()
-            }
-            disabledReason={readOnlyReason}
-          >
-            <input
-              {...stylex.props(focusRing.ring)}
-              type="checkbox"
-              aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
-              disabled={library.read_only}
-              checked={store.syncsOriginals(library.id)}
-              onChange={(e) =>
-                void replication.setSyncOriginals(library.id, e.currentTarget.checked)
-              }
-            />
-          </SettingRow>
-          <SettingRow
-            label={SyncedDevicesStrings.autoTransferOriginals()}
-            disabledReason={readOnlyReason}
-          >
-            <input
-              {...stylex.props(focusRing.ring)}
-              type="checkbox"
-              aria-label={SyncedDevicesStrings.autoTransferOriginals()}
-              disabled={library.read_only}
-              checked={store.autoTransfersOriginals(library.id)}
-              onChange={(e) =>
-                void replication.setAutoTransferOriginals(library.id, e.currentTarget.checked)
-              }
-            />
-          </SettingRow>
-        </>
+        <div {...stylex.props(styles.originals)}>
+          <OriginalsChoice
+            keeps={store.syncsOriginals(library.id)}
+            disabled={library.read_only}
+            tooltip={library.read_only ? BulkBarStrings.libraryIsReadOnly() : undefined}
+            onChange={(keeps) => void replication.setSyncOriginals(library.id, keeps)}
+          />
+        </div>
       )}
     </Panel>
   );

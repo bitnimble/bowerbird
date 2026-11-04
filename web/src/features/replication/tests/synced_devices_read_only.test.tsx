@@ -19,10 +19,11 @@ afterEach(cleanup);
 
 blobsApi.listTransfers = (): Promise<Transfer[]> => Promise.resolve([]);
 
-function Seed(): null {
+function Seed({ keepsOriginals, readOnly }: { keepsOriginals: boolean; readOnly: boolean }): null {
   const replication = useReplicationStore();
   useEffect(() => {
     runInAction(() => {
+      replication.syncOriginalsByLibrary = new Map([['lib', keepsOriginals]]);
       replication.peersByLibrary = new Map([
         [
           'lib',
@@ -33,48 +34,64 @@ function Seed(): null {
               paired_at: '2026-01-01T00:00:00.000Z',
               last_replicated_at: null,
               last_error: null,
-              wants_originals: true,
+              wants_originals: !readOnly,
+              reachable: true,
               outdated: null,
             },
           ],
         ],
       ]);
     });
-  }, [replication]);
+  }, [replication, keepsOriginals, readOnly]);
   return null;
 }
 
-async function openPanel(readOnly: boolean): Promise<void> {
+async function openPanel(readOnly: boolean, keepsOriginals = true): Promise<void> {
   render(
     <StoresProvider>
-      <Seed />
+      <Seed keepsOriginals={keepsOriginals} readOnly={readOnly} />
       <SyncedDevicesPanel library={{ id: 'lib', name: 'Reef', read_only: readOnly } as Library} />
     </StoresProvider>,
   );
   await act(async () => {});
 }
 
-function refusal(name: string): string | null {
-  const button = screen.getByRole('button', { name }) as HTMLButtonElement;
-  return button.disabled ? button.getAttribute('aria-description') : null;
+function syncRaws(): { greyed: boolean; description: string | null } {
+  const button = screen.getByRole('button', { name: 'Sync RAWs' });
+  return {
+    greyed: button.getAttribute('aria-disabled') === 'true',
+    description: button.getAttribute('aria-description'),
+  };
 }
 
-test('a read-only library greys fetching, and says why', async () => {
+test('a read-only library greys syncing RAWs, and says why', async () => {
   await openPanel(true);
-  expect(refusal('Fetch originals')).toBe('This library is read-only.');
+  expect(syncRaws()).toEqual({ greyed: true, description: 'This library is read-only.' });
 });
 
-test('a writable library offers it', async () => {
-  await openPanel(false);
-  expect(refusal('Fetch originals')).toBeNull();
-});
+test.each([true, false])(
+  'a writable library offers it, keeping originals %s',
+  async (keepsOriginals) => {
+    await openPanel(false, keepsOriginals);
+    expect(syncRaws().greyed).toBe(false);
+    expect(
+      screen
+        .getByRole('radio', {
+          name: keepsOriginals ? 'Sync original RAWs' : 'Sync thumbnails only',
+        })
+        .getAttribute('aria-checked'),
+    ).toBe('true');
+  },
+);
 
 test.each([
   [true, true],
   [false, false],
-])('read-only %s greys the originals settings: %s', async (readOnly, greyed) => {
+])('read-only %s greys the originals choice: %s', async (readOnly, greyed) => {
   await openPanel(readOnly);
-  for (const name of ['Keep originals on this device', 'Automatically send and fetch originals']) {
-    expect(screen.getByRole('checkbox', { name }).matches(':disabled')).toBe(greyed);
+  for (const name of ['Sync original RAWs', 'Sync thumbnails only']) {
+    expect(screen.getByRole('radio', { name }).getAttribute('aria-disabled') === 'true').toBe(
+      greyed,
+    );
   }
 });

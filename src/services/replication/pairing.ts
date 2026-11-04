@@ -134,21 +134,6 @@ export function setSyncsOriginals(db: Database, libraryId: string, value: boolea
   if (changed === 0) throw new AppError('NOT_FOUND', `library ${libraryId} is not replicated`);
 }
 
-/** Whether every session with a device also queues the originals either side lacks. */
-export function autoTransfersOriginals(db: Database, libraryId: string): boolean {
-  const row = db
-    .query('SELECT auto_transfer_originals FROM replication_libraries WHERE library_id = ?')
-    .get(libraryId) as { auto_transfer_originals: number } | null;
-  return row != null && row.auto_transfer_originals !== 0;
-}
-
-export function setAutoTransfersOriginals(db: Database, libraryId: string, value: boolean): void {
-  const changed = db
-    .query('UPDATE replication_libraries SET auto_transfer_originals = ? WHERE library_id = ?')
-    .run(value ? 1 : 0, libraryId).changes;
-  if (changed === 0) throw new AppError('NOT_FOUND', `library ${libraryId} is not replicated`);
-}
-
 /**
  * What a peer said about its own disk at the last handshake (§7.10), so this
  * side can stop offering to send bytes it would refuse. Advisory only: the
@@ -211,12 +196,15 @@ export function assertPaired(db: Database, libraryId: string, peerId: string): v
 export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
   const rows = db
     .query(
-      `SELECT peer_id, name, paired_at, last_replicated_at, last_error, wants_originals, protocol, schema_version
-         FROM replication_peers
+      `SELECT peer_id, name, paired_at, last_replicated_at, last_error, wants_originals, protocol, schema_version,
+              EXISTS (SELECT 1 FROM replication_peers other
+                       WHERE other.peer_id = p.peer_id AND other.address IS NOT NULL) AS reachable
+         FROM replication_peers p
         WHERE library_id = ? AND kind = 'active' ORDER BY paired_at, peer_id`,
     )
-    .all(libraryId) as (Omit<PairedPeer, 'wants_originals' | 'outdated'> & {
+    .all(libraryId) as (Omit<PairedPeer, 'wants_originals' | 'reachable' | 'outdated'> & {
     wants_originals: number;
+    reachable: number;
     protocol: number | null;
     schema_version: number | null;
   })[];
@@ -224,6 +212,7 @@ export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
   return rows.map(({ protocol, schema_version, ...row }) => ({
     ...row,
     wants_originals: row.wants_originals !== 0,
+    reachable: row.reachable !== 0,
     outdated:
       protocol == null || schema_version == null
         ? null
@@ -256,15 +245,12 @@ export function recordPeerVersion(
  */
 export function everyPairing(db: Database): AllPeersResponse['libraries'] {
   const rows = db
-    .query(
-      'SELECT library_id, sync_originals, auto_transfer_originals FROM replication_libraries ORDER BY library_id',
-    )
-    .all() as { library_id: string; sync_originals: number; auto_transfer_originals: number }[];
+    .query('SELECT library_id, sync_originals FROM replication_libraries ORDER BY library_id')
+    .all() as { library_id: string; sync_originals: number }[];
   return rows.map((row) => ({
     library_id: row.library_id,
     peers: pairedPeers(db, row.library_id),
     sync_originals: row.sync_originals !== 0,
-    auto_transfer_originals: row.auto_transfer_originals !== 0,
   }));
 }
 

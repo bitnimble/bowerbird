@@ -18,10 +18,8 @@ import { StackMembership } from '../../../services/stacks/stack_membership';
 import { DEFAULT_SKEW_MS } from '../../../services/replication/clock';
 import { forgetLibrary } from '../../../services/replication/gc';
 import {
-  autoTransfersOriginals,
   pairedPeers,
   peerAddress,
-  setAutoTransfersOriginals,
   setDeviceName,
   setSyncsOriginals,
   syncsOriginals,
@@ -117,7 +115,7 @@ describe('clone (§9)', () => {
     });
     expect(created.status).toBe(201);
     expect(await created.json()).toMatchObject({ library_id: LIB, peer_id: peerIdOf(origin.db) });
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
+    expect(syncsOriginals(clone.db, LIB)).toBe(true);
     expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
 
     // The address pairing recorded is what a later session dials, so "sync now"
@@ -158,7 +156,6 @@ describe('clone (§9)', () => {
       clone.db.query('SELECT read_only, bin_name FROM libraries WHERE id = ?').get(LIB),
     ).toEqual({ read_only: 1, bin_name: null });
     expect(syncsOriginals(clone.db, LIB)).toBe(false);
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
     expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
 
     // Each side says it takes no originals, so neither queues a send the other refuses,
@@ -740,17 +737,16 @@ describe('browse, then add (§9.1)', () => {
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: false,
-      auto_transfer_originals: false,
       denoiser: 'pmrid',
+      render_skip_full: ['sharpen', 'dust'],
     });
     expect(added.status).toBe(201);
     expect(await added.json()).toMatchObject({ library_id: LIB });
     // The body's own field, rather than the default, decides what this keeps.
     expect(syncsOriginals(clone.db, LIB)).toBe(false);
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
-    expect(clone.db.query('SELECT denoiser FROM libraries WHERE id = ?').get(LIB)).toEqual({
-      denoiser: 'pmrid',
-    });
+    expect(
+      clone.db.query('SELECT denoiser, render_skip_full FROM libraries WHERE id = ?').get(LIB),
+    ).toEqual({ denoiser: 'pmrid', render_skip_full: 'dust,sharpen' });
   });
 
   // A replica is created under the remote's library id, verbatim, so deleting one
@@ -856,8 +852,8 @@ describe('browse, then add (§9.1)', () => {
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: true,
-      auto_transfer_originals: false,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
 
     expect(announced).toEqual([LIB]);
@@ -899,13 +895,13 @@ describe('browse, then add (§9.1)', () => {
         library_id: LIB,
         root_path: cloneRoot(),
         sync_originals: true,
-        auto_transfer_originals: true,
         denoiser: 'galosh',
+        render_skip_full: [],
       }),
     ).rejects.toThrow('already running');
 
     expect(announced).toEqual([LIB]);
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
+    expect(syncsOriginals(clone.db, LIB)).toBe(true);
   });
 
   // A listener is somebody else's code, and it runs over a replica that is
@@ -934,8 +930,8 @@ describe('browse, then add (§9.1)', () => {
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: true,
-      auto_transfer_originals: false,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
 
     expect(summary.library_id).toBe(LIB);
@@ -996,6 +992,14 @@ describe('pairing (§6.5)', () => {
     expect(floor.n).toBe(0);
 
     await expect(pullFromRemote(clone.replica, origin.url)).rejects.toThrow('not paired');
+  });
+
+  it('says only the side that dials can reach the other (§6.4)', async () => {
+    const { origin, clone } = await pairedClone(1);
+    await pullFromRemote(clone.replica, origin.url);
+
+    expect(pairedPeers(clone.db, LIB)[0]!.reachable).toBe(true);
+    expect(pairedPeers(origin.db, LIB)[0]!.reachable).toBe(false);
   });
 
   // What a page opens with. The gate on every strip, badge and panel is whether a
@@ -1094,67 +1098,65 @@ describe('originals moved by a session', () => {
     );
   }
 
-  it.each([true, false])(
-    'exchanges originals once during setup with keep originals %s',
-    async (keepOriginals) => {
-      const origin = serve(catalogue());
-      seedLibrary(origin.db, 1);
-      const clone = serve(catalogue());
-      const asked: string[] = [];
-
-      await recordingRunner(clone.db, asked).add({
-        address: origin.url,
-        library_id: LIB,
-        root_path: cloneRoot(),
-        sync_originals: keepOriginals,
-        auto_transfer_originals: true,
-        denoiser: 'galosh',
-      });
-
-      expect(asked).toEqual([
-        ...(keepOriginals ? [`pull ${LIB} ${peerIdOf(origin.db)}`] : []),
-        `push ${LIB} ${peerIdOf(origin.db)}`,
-      ]);
-    },
-  );
-
-  it('fetches the originals of a replica that keeps them, from the device it joined', async () => {
+  it('sends originals during setup either way, and fetches them only when it keeps them', async () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
-    const clone = serve(catalogue());
-    const asked: string[] = [];
+    const kept: string[] = [];
+    const thumbnails: string[] = [];
 
-    await recordingRunner(clone.db, asked).add({
+    await recordingRunner(serve(catalogue()).db, kept).add({
       address: origin.url,
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: true,
-      auto_transfer_originals: false,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
-
-    expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
-  });
-
-  it('fetches nothing for a replica that keeps only the catalogue', async () => {
-    const origin = serve(catalogue());
-    seedLibrary(origin.db, 1);
-    const clone = serve(catalogue());
-    const asked: string[] = [];
-
-    await recordingRunner(clone.db, asked).add({
+    await recordingRunner(serve(catalogue()).db, thumbnails).add({
       address: origin.url,
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: false,
-      auto_transfer_originals: false,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
 
-    expect(asked).toEqual([]);
+    expect(kept).toEqual([
+      `pull ${LIB} ${peerIdOf(origin.db)}`,
+      `push ${LIB} ${peerIdOf(origin.db)}`,
+    ]);
+    expect(thumbnails).toEqual([`push ${LIB} ${peerIdOf(origin.db)}`]);
   });
 
-  it('sends and fetches on every session once the library is set to', async () => {
+  it('fetches on every session once the library keeps originals', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+    const runner = recordingRunner(clone.db, asked);
+    await runner.add({
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: false,
+      denoiser: 'galosh',
+      render_skip_full: [],
+    });
+
+    asked.length = 0;
+    await runner.replicate(LIB);
+    expect(asked).toEqual([`push ${LIB} ${peerIdOf(origin.db)}`]);
+
+    asked.length = 0;
+    setSyncsOriginals(clone.db, LIB, true);
+    await runner.replicate(LIB);
+    expect(asked).toEqual([
+      `pull ${LIB} ${peerIdOf(origin.db)}`,
+      `push ${LIB} ${peerIdOf(origin.db)}`,
+    ]);
+  });
+
+  it('sends nothing to a peer that takes no originals', async () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
     const clone = serve(catalogue());
@@ -1165,24 +1167,40 @@ describe('originals moved by a session', () => {
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: true,
-      auto_transfer_originals: false,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
 
     asked.length = 0;
+    setSyncsOriginals(origin.db, LIB, false);
     await runner.replicate(LIB);
-    expect(asked).toEqual([]);
 
-    setAutoTransfersOriginals(clone.db, LIB, true);
-    await runner.replicate(LIB);
-    expect(asked).toEqual([
-      `pull ${LIB} ${peerIdOf(origin.db)}`,
-      `push ${LIB} ${peerIdOf(origin.db)}`,
-    ]);
+    expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
   });
 
-  // A page reads the transfer queue when it hears a session ended, and polls only while it finds one moving.
-  it('turns automatic transfer on by itself, and refuses a request that changes nothing', async () => {
+  it('moves no originals for a read-only library, whatever it was set to', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    origin.db.query('UPDATE libraries SET read_only = 1, bin_name = NULL WHERE id = ?').run(LIB);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+    const runner = recordingRunner(clone.db, asked);
+    await runner.add({
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: true,
+      denoiser: 'galosh',
+      render_skip_full: [],
+    });
+
+    setSyncsOriginals(clone.db, LIB, true);
+    await runner.replicate(LIB);
+
+    expect(asked).toEqual([]);
+  });
+
+  it('refuses a request that names nothing to keep', async () => {
     const { clone } = await pairedClone(1);
     const patch = (body: unknown): Promise<Response> =>
       fetch(
@@ -1195,11 +1213,10 @@ describe('originals moved by a session', () => {
       );
 
     expect((await patch({})).ok).toBe(false);
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
-
-    expect(await (await patch({ auto_transfer_originals: true })).json()).toEqual({ cancelled: 0 });
-    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
     expect(syncsOriginals(clone.db, LIB)).toBe(true);
+
+    expect(await (await patch({ sync_originals: false })).json()).toEqual({ cancelled: 0 });
+    expect(syncsOriginals(clone.db, LIB)).toBe(false);
   });
 
   it('announces the session only once its originals are queued', async () => {
@@ -1225,16 +1242,15 @@ describe('originals moved by a session', () => {
       address: origin.url,
       library_id: LIB,
       root_path: cloneRoot(),
-      sync_originals: false,
-      auto_transfer_originals: false,
+      sync_originals: true,
       denoiser: 'galosh',
+      render_skip_full: [],
     });
-    setAutoTransfersOriginals(clone.db, LIB, true);
 
     happened.length = 0;
     await runner.replicate(LIB);
 
-    expect(happened).toEqual(['push', 'announced']);
+    expect(happened).toEqual(['pull', 'push', 'announced']);
   });
 });
 

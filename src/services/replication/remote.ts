@@ -29,6 +29,8 @@ import {
 import { assertNoDataDirectoryOverlap, isWritable } from '../libraries/libraries_service';
 import { DEFAULT_BIN_NAME } from '../../schemas/libraries';
 import type { Denoiser } from '../../schemas/photo_edits';
+import type { OptionalStage } from '../../schemas/render_stages';
+import { writeStages } from '../processing/renditions/render_stages';
 import { PathSegment, route } from '../../schemas/route';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import {
@@ -181,8 +183,10 @@ export function addReplica(
   libraryId: string,
   rootPath: string,
   syncOriginals = true,
-  autoTransferOriginals = false,
-  denoiser: Denoiser = 'galosh',
+  rendering: { denoiser: Denoiser; renderSkipFull: readonly OptionalStage[] } = {
+    denoiser: 'galosh',
+    renderSkipFull: [],
+  },
 ): Promise<ClonedLibrary> {
   return libraryMutex.run(libraryId, async () => {
     if (db.query('SELECT 1 FROM libraries WHERE id = ?').get(libraryId) != null) {
@@ -246,7 +250,7 @@ export function addReplica(
         // would be imported as this library's own and replicated to every peer.
         assertEmptyRoot(rootPath);
         db.query(
-          'INSERT INTO libraries (id, root_path, name, bin_name, read_only, denoiser) VALUES (?, ?, ?, ?, ?, ?)',
+          'INSERT INTO libraries (id, root_path, name, bin_name, read_only, denoiser, render_skip_full) VALUES (?, ?, ?, ?, ?, ?, ?)',
         ).run(
           libraryId,
           rootPath,
@@ -258,18 +262,15 @@ export function addReplica(
           // first page and overwrites this.
           paired.read_only ? null : DEFAULT_BIN_NAME,
           paired.read_only ? 1 : 0,
-          denoiser,
+          rendering.denoiser,
+          writeStages(rendering.renderSkipFull),
         );
         // Linked bare, without the genesis walk the server ran when it paired: a
         // clone is born holding nothing, and genesis-stamping its default-valued
         // library row would let those defaults beat the server's real settings.
         db.query(
-          'INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)',
-        ).run(
-          libraryId,
-          syncOriginals && !paired.read_only ? 1 : 0,
-          autoTransferOriginals && !paired.read_only ? 1 : 0,
-        );
+          'INSERT INTO replication_libraries (library_id, sync_originals) VALUES (?, ?)',
+        ).run(libraryId, syncOriginals && !paired.read_only ? 1 : 0);
         // With the address, because this is the side that dials: everything this
         // replica ever wants from the server - a session, a photograph's original, a
         // rendition it cannot build - goes back to where it paired.

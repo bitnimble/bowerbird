@@ -19,15 +19,15 @@ export const AddReplicaStrings = {
   /** The wizard's previous step, which is not the way out of a page. */
   back: () => 'Back',
 
-  folderOnThisDevice: () => 'Folder on this device',
-  folderFor: (libraryName: string) => `Folder for "${libraryName}"`,
+  configure: () => 'Configure',
+  configured: () => 'Configured',
+  added: () => 'Added',
+
+  chooseFolder: () => 'Select a folder on your device where this library will be synced to.',
   rootPlaceholder: () => '/photos/trip',
-  folderHint: () => 'Choose a new or empty folder.',
 
-  originals: () => 'Originals',
-  readOnlyHere: () => 'Originals stay on the other device.',
-
+  save: () => 'Save',
   settingUp: () => 'Setting up…',
   add: (libraryName: string) => `Add "${libraryName}"`,
-  addLibraries: (count: number) => `Add ${count} libraries`,
+  finish: () => 'Finish',
 };

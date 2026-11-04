@@ -153,6 +153,7 @@ type SegmentedControlProps<T extends string> = {
    * unreachable by keyboard, and no arrow key ever gets past it.
    */
   focusable?: boolean;
+  disabled?: boolean;
   style?: stylex.StyleXStyles;
   itemStyle?: stylex.StyleXStyles;
 };
@@ -166,6 +167,7 @@ function Segments<T extends string>({
   stretch = false,
   as = 'toggle',
   focusable = true,
+  disabled = false,
   style,
   itemStyle,
   labelled,
@@ -202,6 +204,7 @@ function Segments<T extends string>({
         {...group}
         aria-label={label}
         value={value}
+        disabled={disabled}
         onValueChange={(next) => {
           if (typeof next === 'string') onChange(next as T);
         }}
@@ -228,6 +231,7 @@ function Segments<T extends string>({
       {...group}
       aria-label={label}
       value={value == null ? [] : [value]}
+      disabled={disabled}
       onValueChange={(next) => {
         const picked = next[next.length - 1];
         // Pressing the pressed item yields an empty array; a one-of-N control has

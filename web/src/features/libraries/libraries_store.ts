@@ -33,4 +33,12 @@ export class LibrariesStore {
   @computed get isEmpty(): boolean {
     return !this.loading && this.libraries.length === 0;
   }
+
+  /**
+   * The Rendering tab's settings: stored per library and changed for every library at once, so the
+   * first library's, or the defaults with none. Null until either arrives.
+   */
+  @computed get rendering(): Pick<LibrarySettings, 'denoiser' | 'render_skip_full'> | null {
+    return this.libraries[0] ?? this.defaults;
+  }
 }

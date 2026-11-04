@@ -23,11 +23,11 @@ Goals:
   peers, all peers replicating a library hold identical replicated state for it (values _and_
   stamps), regardless of pair order, crashes, and interleavings.
 - Catalogue state replicates **automatically** whenever a peer is reachable. Originals (RAWs)
-  move when asked for: pressed for, opened (§7.5), fetched once by a replica that keeps them as it
-  is added (§9.1), or on every session for a library set to send and fetch them (§10).
-- Per-peer storage policy for originals: the server keeps everything, a laptop keeps what it
-  imported plus what it fetched, and a laptop with a backup folder keeps what fits the ceiling it
-  was given (§14.5). The catalogue always replicates in full on every peer.
+  move when asked for (pressed for, or opened, §7.5) and on every session: each side is sent what
+  it lacks if it keeps originals (§7.10).
+- Per-peer storage policy for originals (§7.10): a device keeping them fetches every one it lacks,
+  a device on thumbnails only keeps what it imported plus what it fetched by hand, and a laptop
+  with a backup folder keeps what fits the ceiling it was given (§14.5). The catalogue always replicates in full on every peer.
 - **A peer that is only a folder** (§14): a drive or a share holding every original, one way, with
   nothing running on the other side. What makes the ceiling above safe, and what a person who
   never pairs a second device gets out of this design.
@@ -683,13 +683,12 @@ the table self-heals.
 
 ### 7.3 Transfer
 
-Explicit, both directions where topology allows (§6.4): pressed for, or queued by a session in a
-library set to send and fetch originals (§10), which asks for the same library-wide diff in each
-direction the two sides' §7.10 answers allow. **Push is defined as a diff, not a selection of
+Explicit, both directions where topology allows (§6.4): pressed for, or queued by every session,
+which asks for the same library-wide diff in each direction the two sides' §7.10 answers allow. **Push is defined as a diff, not a selection of
 files**: "send originals <peer> lacks", scoped to a selection, a shoot, or the library, computed
 from `blob_locations`. That makes it idempotent (restart recovery is
 pressing it again), makes partial completion a number rather than a mystery, and gives the
-replication strip its headline ("Macbook holds 2,000 originals Home server lacks"). The queue
+synced devices list its headline ("Macbook holds 2,000 originals Home server lacks"). The queue
 survives app restart and laptop sleep; per-item progress, pause, resume; ranged GET,
 `content_hash`-verified, staged to a temp file **on the same filesystem as the library root**
 (or the rename is a copy and §8.1's atomicity claim is false) and renamed into the tree.
@@ -817,9 +816,12 @@ nothing except browsing decides how many there are. So they are a cache with a c
 per-library byte cap, least-recently-used evicted first, "used" meaning served. A device that
 scrolls a decade of photographs gives back the ones it scrolled past first.
 
-### 7.10 "Keep originals on this device"
+### 7.10 "Sync original RAWs" or "Sync thumbnails only"
 
-Per replica, chosen when it is created and changeable afterwards. Off, the device holds the
+Per replica, chosen when it is created and changeable afterwards (`sync_originals`), shown as
+"Keep on this device". Sync original RAWs keeps the originals here. Every session that reaches a
+device queues the originals it lacks that this device holds, whichever this device chose, and on
+Sync original RAWs also fetches the ones this device lacks. Sync thumbnails only holds the
 catalogue and lives on §7.9's renditions: everything is browsable, sortable, cullable and
 rateable, and none of it costs a 50MB transfer. This is what makes a phone a peer, and it is the
 same setting on a laptop that wants the library without the terabyte. Every picture such a device
@@ -832,16 +834,17 @@ every picture of a photo whose original is not here comes from a peer.
 **Keep this setting local.** One device's storage policy must not overwrite another's.
 
 **The refusal that counts is the receiving peer's**, taken before a byte is staged: an incoming
-push and a bulk fetch are both refused where the setting is off. The handshake carries each
+push is refused on a device syncing thumbnails only. The handshake carries each
 side's answer so neither offers what the other would refuse - and that is advisory only, because
 it is minutes old by the time a transfer starts. A peer on a build that does not send it reads
 as wanting originals, which is what every peer did before the setting existed.
 
-Turning it off also cancels what is still queued to arrive, or the queue goes on delivering
-exactly what was just turned off.
+Switching to thumbnails only also cancels what is still queued to arrive, or the queue goes on
+delivering exactly what was just turned off.
 
-Turning it off retains existing originals (§7.6 frees them), allows outgoing transfers and
-still permits §7.5 manual single fetches for occasional editing.
+Switching to thumbnails only retains existing originals (§7.6 frees them), keeps sending them to
+devices that want them, and still permits fetching by hand: one photo for editing (§7.5), or every original a
+device holds from its row's Sync RAWs.
 
 ## 8. Failure modes and hygiene
 
@@ -963,15 +966,13 @@ response carries the flag, and the handshake refuses every session once the two 
 reachable only through its proxy. Peer calls use the browser address, not the hidden API port.
 Production similarly serves the client from bun so one published address answers both.
 
-On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
-that device offers; then the folder, which the picker can create, and whether to keep originals
-(§7.10) and automatically send and fetch originals. Both options start enabled and are independent.
-A read-only library offers neither: both are off, and the dialog says its originals stay on the
-other device.
-Keeping originals controls whether this device receives them, automatic transfer controls whether
-each session exchanges missing originals. The choices are saved when the replica is created,
-before its first session. A replica that keeps originals queues a fetch of every original the
-device it joined holds as soon as the catalogue has landed, including when automatic transfer is disabled.
+On the joining device: **"Connect to another Bowerbird"** asks for the address, then the list of
+what that device offers, then per library the folder, which the picker can create, and the §7.10
+choice, which starts at Sync original RAWs. A read-only library asks only for its folder and syncs
+thumbnails only. Several libraries are configured one at a time from cards and added together. The
+new library takes this device's Rendering settings (denoiser and stages), which never travel. The
+choices are saved when the replica is created, before its first session, and a replica syncing
+original RAWs exchanges them in that first session as in every later one.
 
 **Pairing exchanges no credentials** (§11.1); trust comes from the network. Listing libraries
 registers nothing on either side. Pair only on final add, together with cloning.
@@ -998,13 +999,17 @@ and this sentence is the one that belongs in the user docs in bold.
 
 ## 10. UI
 
-- **Device sync strip** per synced library: per-device last sync, in-flight state,
-  awaiting-originals counts in both directions, and errors. What is moving - a session, fetches,
+- **Synced devices list** per synced library: one row per device with its last sync, in-flight
+  state, awaiting-originals counts in both directions, and errors, plus Sync RAWs (send what it
+  lacks, fetch what this device lacks, each where §7.10 allows; greyed on the side a device dials
+  in to, which cannot reach it, §6.4) and Remove device. What is moving - a session, fetches,
   sends, a backup pass - is also said on the library's own status line beside its scan, and
   "Sync library to other devices" is a library job.
-- **"Automatically send and fetch originals"** per library, enabled by default when connecting
-  to another device. Every session that reaches a device also queues the originals either side
-  lacks, in each direction the two sides' §7.10 answers allow.
+- **Originals choice** per library (§7.10), Sync original RAWs by default when connecting to
+  another device, and the same two options in the library's synced devices panel.
+- **Connect dialog**: address, then the libraries to add. One library goes straight to its folder
+  and its originals choice; several list as cards, each configured in turn, then finished
+  together. Cards already added stay listed, unclickable, after a finish that failed part-way.
 - **Transfer manager**: the persistent queue: per-item progress, pause/resume/cancel, errors.
 - **Conflict page**: candidate cards (§5.3), fetch-to-preview when the original is remote.
 - **Remote badge** says a photo's original is on a synced device; opening fetches with
@@ -1019,7 +1024,7 @@ and this sentence is the one that belongs in the user docs in bold.
   (§2.1).
 - **Adding one** (§9.1): "Connect to another Bowerbird" takes an address, lists what that device
   offers, and takes a local folder.
-- A library with no peers renders none of this: no strip, no badges, no conflict page, zero new
+- A library with no peers renders none of this: no device list, no badges, no conflict page, zero new
   states for the single-server user.
 
 ## 11. Trust and validation

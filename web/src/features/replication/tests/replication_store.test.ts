@@ -11,6 +11,7 @@ function peer(name: string, outdated: Outdated): PairedPeer {
     last_replicated_at: null,
     last_error: null,
     wants_originals: true,
+    reachable: true,
     outdated,
   };
 }

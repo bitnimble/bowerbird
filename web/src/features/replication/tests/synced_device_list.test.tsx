@@ -32,6 +32,7 @@ const PEER: PairedPeer = {
   last_replicated_at: null,
   last_error: null,
   wants_originals: true,
+  reachable: true,
   outdated: null,
 };
 
@@ -67,7 +68,7 @@ test.each([RAW_ERROR, 'SQLITE_BUSY'])(
       last_replicated_at: new Date(Date.now() - 21 * 60 * 1000).toISOString(),
     });
 
-    const status = screen.getByText("Laptop · Synced 21 min ago · couldn't sync");
+    const status = screen.getByText("Synced 21 min ago · couldn't sync");
     expect(status.getAttribute('aria-description')).toBe(
       "We couldn't sync with this device. Try again.",
     );
@@ -78,7 +79,7 @@ test.each([RAW_ERROR, 'SQLITE_BUSY'])(
 test('a device without a sync error has no failure copy or tooltip', async () => {
   await open(PEER);
 
-  const status = screen.getByText('Laptop · Never synced');
+  const status = screen.getByText('Never synced');
   expect(status.getAttribute('aria-description')).toBeNull();
   expect(screen.queryByText("couldn't sync", { exact: false })).toBeNull();
 });
@@ -91,8 +92,23 @@ test.each([
   async (outdated, guidance) => {
     await open({ ...PEER, last_error: RAW_ERROR, outdated });
 
-    const status = screen.getByText(`Laptop · Never synced · ${guidance}`);
+    const status = screen.getByText(`Never synced · ${guidance}`);
     expect(status.getAttribute('aria-description')).toBeNull();
     expect(screen.queryByText(RAW_ERROR, { exact: false })).toBeNull();
+  },
+);
+
+test.each([
+  [true, true, null],
+  [true, false, null],
+  [false, true, 'Laptop connects to this device, so only it can sync RAWs.'],
+])(
+  'a device reachable %s, wanting originals %s, offers Sync RAWs or says why not',
+  async (reachable, wants_originals, refusal) => {
+    await open({ ...PEER, reachable, wants_originals });
+
+    const button = screen.getByRole('button', { name: 'Sync RAWs' });
+    expect(button.getAttribute('aria-disabled') === 'true').toBe(refusal != null);
+    if (refusal != null) expect(button.getAttribute('aria-description')).toBe(refusal);
   },
 );

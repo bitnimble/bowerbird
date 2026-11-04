@@ -22,13 +22,7 @@ import {
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import { collectTombstones } from './gc';
 import { drainMaterialisations, unsettled } from './materialise';
-import {
-  autoTransfersOriginals,
-  pairedPeers,
-  reachablePeers,
-  recordPeerOutcome,
-  syncsOriginals,
-} from './pairing';
+import { pairedPeers, reachablePeers, recordPeerOutcome, syncsOriginals } from './pairing';
 import { addReplica, browseRemote, peerBase, pullFromRemote, pushToRemote } from './remote';
 import type { PullResult } from './session';
 import { LibraryActivity } from '../activity/library_activity';
@@ -101,14 +95,10 @@ export class ReplicationRunner {
       request.library_id,
       request.root_path ?? defaultRoot(request.library_id),
       request.sync_originals,
-      request.auto_transfer_originals,
-      request.denoiser,
+      { denoiser: request.denoiser, renderSkipFull: request.render_skip_full },
     );
     try {
       const result = await this.replicate(cloned.libraryId);
-      if (syncsOriginals(this.db, cloned.libraryId) && !request.auto_transfer_originals) {
-        await this.queueOriginals(cloned.libraryId, cloned.peer, 'pull');
-      }
       return { library_id: cloned.libraryId, peer_id: cloned.peer, applied: result.applied };
     } finally {
       // After the clone, not before it: announcing a library starts its first
@@ -144,9 +134,7 @@ export class ReplicationRunner {
     const finish = this.activity.begin(libraryId, 'syncing');
     try {
       const { applied, peers, reached } = await this.session(libraryId);
-      if (autoTransfersOriginals(this.db, libraryId)) {
-        for (const peerId of reached) await this.exchangeOriginals(libraryId, peerId);
-      }
+      for (const peerId of reached) await this.exchangeOriginals(libraryId, peerId);
       return { applied, peers };
     } finally {
       finish();
@@ -161,8 +149,9 @@ export class ReplicationRunner {
   private async exchangeOriginals(libraryId: string, peerId: string): Promise<void> {
     const library = this.libraries.getById(libraryId);
     if (library == null) return;
-    if (!library.read_only && syncsOriginals(this.db, libraryId))
+    if (!library.read_only && syncsOriginals(this.db, libraryId)) {
       await this.queueOriginals(libraryId, peerId, 'pull');
+    }
     if (
       pairedPeers(this.db, libraryId).some(
         (peer) => peer.peer_id === peerId && peer.wants_originals,

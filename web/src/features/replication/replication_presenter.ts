@@ -1,5 +1,6 @@
 import { action, reaction, when, type IReactionDisposer } from 'mobx';
 import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
+import { type Library } from '../../../../src/schemas/libraries';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
@@ -18,7 +19,6 @@ import { describe } from '../../errors';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { PhotosPresenter } from '../photos/photos_presenter';
-import { SettingsStrings } from '../settings/settings_page.strings';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { ReplicationPresenterStrings } from './replication_presenter.strings';
 import type { ReplicationStore } from './replication_store';
@@ -130,17 +130,6 @@ export class ReplicationPresenter {
     }
     await this.loadPeers(libraryId);
     await this.refreshTransfers();
-  }
-
-  /** Whether every session also sends and fetches the originals either side lacks. */
-  async setAutoTransferOriginals(libraryId: string, value: boolean): Promise<void> {
-    try {
-      await replicationApi.setAutoTransferOriginals(libraryId, value);
-    } catch (err) {
-      this.toasts.showError(SettingsStrings.couldNotSaveSetting(), describe(err));
-      return;
-    }
-    await this.loadPeers(libraryId);
   }
 
   async loadDeviceName(): Promise<void> {
@@ -272,43 +261,26 @@ export class ReplicationPresenter {
     await this.photos.reload();
   }
 
-  /** §7.3: queue the originals `peer` lacks. The count is the server's diff, not a guess. */
-  async sendMissing(libraryId: string, peerId: string): Promise<void> {
-    const name = this.store.peerName(libraryId, peerId);
+  /** Queues the originals `peer` lacks, where it keeps them, and those this device lacks. */
+  async syncRaws(library: Library, peerId: string): Promise<void> {
+    const name = this.store.peerName(library.id, peerId);
+    const wanted = this.store
+      .peersOf(library.id)
+      .some((peer) => peer.peer_id === peerId && peer.wants_originals);
+    let queued = 0;
     try {
-      const { queued } = await blobsApi.pushOriginals(libraryId, peerId);
-      this.toasts.show(
-        queued === 0
-          ? ReplicationPresenterStrings.otherDeviceHoldsEverything(name)
-          : ReplicationPresenterStrings.queuedToSend(queued, name),
-      );
+      if (wanted) queued += (await blobsApi.pushOriginals(library.id, peerId)).queued;
+      if (!library.read_only) queued += (await blobsApi.pullOriginals(library.id, peerId)).queued;
     } catch (err) {
-      this.toasts.showError(
-        ReplicationPresenterStrings.couldNotQueueForDevice(name),
-        describe(err),
-      );
+      this.toasts.showError(ReplicationPresenterStrings.couldNotSyncRaws(name), describe(err));
+      await this.refreshTransfers();
       return;
     }
-    await this.refreshTransfers();
-  }
-
-  /** The same diff the other way: fetch what `peer` holds that this device lacks. */
-  async fetchMissing(libraryId: string, peerId: string): Promise<void> {
-    const name = this.store.peerName(libraryId, peerId);
-    try {
-      const { queued } = await blobsApi.pullOriginals(libraryId, peerId);
-      this.toasts.show(
-        queued === 0
-          ? ReplicationPresenterStrings.thisDeviceHoldsEverything(name)
-          : ReplicationPresenterStrings.queuedToFetch(queued, name),
-      );
-    } catch (err) {
-      this.toasts.showError(
-        ReplicationPresenterStrings.couldNotQueueFromDevice(name),
-        describe(err),
-      );
-      return;
-    }
+    this.toasts.show(
+      queued === 0
+        ? ReplicationPresenterStrings.rawsInSync(name)
+        : ReplicationPresenterStrings.queuedRaws(queued, name),
+    );
     await this.refreshTransfers();
   }
 
@@ -457,22 +429,18 @@ export class ReplicationPresenter {
   private putPeers(libraryId: string, answer: PeersResponse): void {
     this.store.peersByLibrary.set(libraryId, answer.peers);
     this.store.syncOriginalsByLibrary.set(libraryId, answer.sync_originals);
-    this.store.autoTransferByLibrary.set(libraryId, answer.auto_transfer_originals);
   }
 
   @action.bound
   private putAllPeers(libraries: AllPeersResponse['libraries']): void {
     // Replaced rather than merged: a library absent from the answer replicates
-    // with nobody, and left behind it would go on rendering a strip for a peer
+    // with nobody, and left behind it would go on rendering a row for a peer
     // this device has forgotten.
     this.store.peersByLibrary = new Map(
       libraries.map((library) => [library.library_id, library.peers]),
     );
     this.store.syncOriginalsByLibrary = new Map(
       libraries.map((library) => [library.library_id, library.sync_originals]),
-    );
-    this.store.autoTransferByLibrary = new Map(
-      libraries.map((library) => [library.library_id, library.auto_transfer_originals]),
     );
   }
 

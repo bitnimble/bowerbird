@@ -32,6 +32,53 @@ function beforePhotoLinks(db: Database): void {
 }
 
 describe('opening a catalogue', () => {
+  it('makes a dialling device that transferred by hand thumbnails only', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0024_originals_one_choice'");
+    db.exec(
+      'ALTER TABLE replication_libraries ADD COLUMN auto_transfer_originals INTEGER NOT NULL DEFAULT 0',
+    );
+    const library = db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)');
+    const replicated = db.query(
+      'INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)',
+    );
+    const peer = db.query(
+      "INSERT INTO replication_peers (library_id, peer_id, name, paired_at, address, kind) VALUES (?, ?, 'Peer', '2026-01-01T00:00:00.000Z', ?, ?)",
+    );
+    library.run('manual', '/manual', 'Manual');
+    replicated.run('manual', 1, 0);
+    peer.run('manual', 'origin', 'http://origin', 'active');
+    library.run('automatic', '/automatic', 'Automatic');
+    replicated.run('automatic', 1, 1);
+    peer.run('automatic', 'origin', 'http://origin', 'active');
+    library.run('dialled', '/dialled', 'Dialled');
+    replicated.run('dialled', 1, 0);
+    peer.run('dialled', 'laptop', null, 'active');
+    library.run('backed_up', '/backed_up', 'Backed up');
+    replicated.run('backed_up', 1, 0);
+    peer.run('backed_up', 'drive', '/mnt/drive', 'passive');
+    library.run('thin', '/thin', 'Thin');
+    replicated.run('thin', 0, 1);
+
+    runMigrations(db);
+
+    expect(db.query('SELECT * FROM replication_libraries ORDER BY library_id').all()).toMatchObject(
+      [
+        { library_id: 'automatic', sync_originals: 1 },
+        { library_id: 'backed_up', sync_originals: 1 },
+        { library_id: 'dialled', sync_originals: 1 },
+        { library_id: 'manual', sync_originals: 0 },
+        { library_id: 'thin', sync_originals: 0 },
+      ],
+    );
+    const columns = (
+      db.query('PRAGMA table_info(replication_libraries)').all() as { name: string }[]
+    ).map((column) => column.name);
+    expect(columns).not.toContain('auto_transfer_originals');
+    db.close();
+  });
+
   it('drops the camera match and defringe settings and keeps the rest', () => {
     const db = new Database(':memory:');
     runMigrations(db);

@@ -169,6 +169,13 @@
       "when": 1793100000000,
       "tag": "0023_drop_render_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1793200000000,
+      "tag": "0024_originals_one_choice",
+      "breakpoints": true
     }
   ]
 }

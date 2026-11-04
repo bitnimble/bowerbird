@@ -67,22 +67,6 @@ export const replicationApi = {
       ),
       SyncOriginalsRequestSchema.parse({ sync_originals: syncOriginals }),
     ),
-  setAutoTransferOriginals: (
-    libraryId: string,
-    autoTransfer: boolean,
-  ): Promise<{ cancelled: number }> =>
-    request(
-      SyncOriginalsResponseSchema,
-      'PATCH',
-      route(
-        PathSegment.api(),
-        PathSegment.replication(),
-        PathSegment.libraries(),
-        libraryId,
-        PathSegment.originals(),
-      ),
-      SyncOriginalsRequestSchema.parse({ auto_transfer_originals: autoTransfer }),
-    ),
   // This device joining somebody else's library (§9.1). Browsing registers
   // nothing on either side; adding is the pairing and the clone, and the whole
   // catalogue arrives before the request answers.

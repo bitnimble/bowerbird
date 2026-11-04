@@ -32,7 +32,6 @@ import type { BlobLocations } from '../blobs/blob_locations';
 import { DEFAULT_SKEW_MS } from './clock';
 import {
   assertPaired,
-  autoTransfersOriginals,
   deviceName,
   everyPairing,
   forgetPairedPeer,
@@ -44,7 +43,6 @@ import {
   recordPeerName,
   recordPeerVersion,
   registerPeer,
-  setAutoTransfersOriginals,
   setDeviceName,
   setSyncsOriginals,
   syncsOriginals,
@@ -305,15 +303,6 @@ export class ReplicationService {
 
   setSyncsOriginals(libraryId: string, value: boolean): void {
     setSyncsOriginals(this.db, libraryId, value);
-    this.changed(libraryId);
-  }
-
-  autoTransfersOriginals(libraryId: string): boolean {
-    return autoTransfersOriginals(this.db, libraryId);
-  }
-
-  setAutoTransfersOriginals(libraryId: string, value: boolean): void {
-    setAutoTransfersOriginals(this.db, libraryId, value);
     this.changed(libraryId);
   }
 

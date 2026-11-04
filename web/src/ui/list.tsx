@@ -99,8 +99,14 @@ export function ListRow({
 }
 
 /** The part of a row that takes the width its banner and actions leave. */
-export function ListBody({ children }: { children?: ReactNode }): JSX.Element {
-  return <div {...stylex.props(listStyles.body)}>{children}</div>;
+export function ListBody({
+  style,
+  children,
+}: {
+  style?: stylex.StyleXStyles;
+  children?: ReactNode;
+}): JSX.Element {
+  return <div {...stylex.props(listStyles.body, style)}>{children}</div>;
 }
 
 export function ListName({ children }: { children: ReactNode }): JSX.Element {

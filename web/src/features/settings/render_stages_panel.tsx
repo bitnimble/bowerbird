@@ -50,9 +50,6 @@ const RENDITION = 'full';
  * The edits import gives each new photo, stage by stage (`importedEdits`), and what each stage
  * costs a `full` render here.
  *
- * Stored per library, shown as one setting: this reads the first library, or the defaults with no
- * library to read, and a change goes to every library.
- *
  * What the stages cost is the machine's, measured once against a full-frame sensor rather than once
  * per catalogue.
  */
@@ -61,7 +58,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel(): JSX.Elem
   const store = useLibrariesStore();
   const { appSettings, libraries } = usePresenters();
   useEffect(() => void appSettings.loadRenderTimings(), [appSettings]);
-  const current = store.libraries[0] ?? store.defaults;
+  const current = store.rendering;
   if (current == null) return null;
 
   const noLibraries = store.libraries.length === 0;

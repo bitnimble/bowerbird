@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { REPLICATED_ENTITIES, type ReplicatedKind } from '../services/replication/entities';
 import { IdSchema } from './common';
 import { DenoiserSchema } from './photo_edits';
+import { OptionalStagesSchema } from './render_stages';
 
 export const PAGE_ROWS = 500;
 
@@ -351,15 +352,7 @@ export type PushPageResponse = z.infer<typeof PushPageResponseSchema>;
 export const DeviceNameSchema = z.object({ name: DeviceNameTextSchema });
 export type DeviceName = z.infer<typeof DeviceNameSchema>;
 
-export const SyncOriginalsRequestSchema = z
-  .object({
-    sync_originals: z.boolean().optional(),
-    auto_transfer_originals: z.boolean().optional(),
-  })
-  .refine(
-    (body) => body.sync_originals != null || body.auto_transfer_originals != null,
-    'nothing to change',
-  );
+export const SyncOriginalsRequestSchema = z.object({ sync_originals: z.boolean() });
 
 export const SyncOriginalsResponseSchema = z.object({ cancelled: z.number().int() });
 export type SyncOriginalsResponse = z.infer<typeof SyncOriginalsResponseSchema>;
@@ -379,6 +372,8 @@ export const PairedPeerSchema = z.object({
   // Whether that peer keeps RAW files for this library (§7.10), as of the last
   // handshake with it.
   wants_originals: z.boolean(),
+  // False for a device that only ever dials this one (§6.4): transfers start from its side.
+  reachable: z.boolean(),
   // As of the last handshake either way, refused ones included.
   outdated: OutdatedSchema,
 });
@@ -386,10 +381,8 @@ export type PairedPeer = z.infer<typeof PairedPeerSchema>;
 
 export const PeersResponseSchema = z.object({
   peers: z.array(PairedPeerSchema),
-  /** Whether this device keeps the RAW files of this library (§7.10). */
+  /** Whether this device keeps the RAW files of this library and fetches those it lacks (§7.10). */
   sync_originals: z.boolean(),
-  /** Whether every session also sends and fetches the originals either side lacks. */
-  auto_transfer_originals: z.boolean(),
 });
 export type PeersResponse = z.infer<typeof PeersResponseSchema>;
 
@@ -432,8 +425,8 @@ export const AddReplicaRequestSchema = z.object({
     .refine((path) => path.trim() !== '')
     .optional(),
   sync_originals: WantsOriginalsSchema,
-  auto_transfer_originals: z.boolean().default(true),
   denoiser: DenoiserSchema.default('galosh'),
+  render_skip_full: OptionalStagesSchema.default([]),
 });
 export type AddReplicaRequest = z.infer<typeof AddReplicaRequestSchema>;
 

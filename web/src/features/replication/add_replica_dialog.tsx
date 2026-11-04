@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
+import { Check, ChevronRight } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
-import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type BrowsedRemote, type RemoteLibrary } from '../../../../src/schemas/replication';
 import { useLibrariesStore, usePresenters, useReplicationStore } from '../../app/stores_context';
 import { isThinShell } from '../../app/thin_shell';
@@ -10,20 +10,47 @@ import { focusRing } from '../../ui/focus_ring';
 import { DialogActions, DialogBody } from '../../ui/dialog_layout';
 import { ErrorBanner } from '../../ui/error_banner';
 import { Field } from '../../ui/field';
+import { ICON } from '../../ui/icon';
+import { List, listStyles } from '../../ui/list';
 import { Modal } from '../../ui/modal';
 import { Row } from '../../ui/row';
 import { ModalStrings } from '../../ui/modal.strings';
-import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
+import { color } from '../../ui/tokens.stylex';
 import { FolderBrowser } from '../browse/folder_browser';
 import { type FolderBrowserParts, newFolderBrowser } from '../browse/folder_browser_presenter';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
-import { DENOISERS } from '../raw_edit/denoisers';
-import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { SidebarRowStrings } from '../sidebar/sidebar_row.strings';
 import { AddReplicaStrings } from './add_replica_dialog.strings';
-import { SyncedDevicesStrings } from './synced_devices_panel.strings';
+import { OriginalsChoice } from './originals_choice';
+
+const styles = stylex.create({
+  card: {
+    width: '100%',
+    borderTopWidth: 0,
+    borderInlineWidth: 0,
+    color: 'inherit',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    textAlign: 'start',
+    cursor: { default: 'pointer', ':disabled': 'default' },
+  },
+  cardBody: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  toConfigure: {
+    color: color.ochre,
+  },
+  configured: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    color: color.moss,
+  },
+});
 
 function openBrowser(): FolderBrowserParts {
   const browser = newFolderBrowser();
@@ -33,7 +60,12 @@ function openBrowser(): FolderBrowserParts {
 
 const SKEW_WORTH_MENTIONING_MS = 5 * 60 * 1000;
 
-type Step = 'address' | 'pick' | 'where';
+type Step = 'address' | 'pick' | 'cards' | 'setup';
+
+interface Setup {
+  browser: FolderBrowserParts;
+  keepsOriginals: boolean;
+}
 
 // Joining a library that already exists somewhere else (§9.1). Asking a peer what
 // it has records nothing on either side, so the first two steps are free and a
@@ -51,15 +83,14 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
   const { replication } = usePresenters();
   // Its server picks the folder, and it fetches an original only when one is opened.
   const thin = isThinShell();
-  const [browsers, setBrowsers] = useState(new Map<string, FolderBrowserParts>());
   const [step, setStep] = useState<Step>('address');
   const [address, setAddress] = useState('');
   const [remote, setRemote] = useState<BrowsedRemote | null>(null);
   const [picked, setPicked] = useState<RemoteLibrary[]>([]);
-  const [folderIndex, setFolderIndex] = useState(0);
-  const [keepOriginals, setKeepOriginals] = useState(!thin);
-  const [autoTransferOriginals, setAutoTransferOriginals] = useState(!thin);
-  const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
+  const [setups, setSetups] = useState(new Map<string, Setup>());
+  const [configured, setConfigured] = useState<ReadonlySet<string>>(new Set());
+  const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
+  const [editing, setEditing] = useState<RemoteLibrary | null>(null);
   const [busy, setBusy] = useState(false);
 
   // This dialog is always mounted and only toggled open, so nothing here unmounts
@@ -74,20 +105,16 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setStep('address');
     setRemote(null);
     setPicked([]);
-    setBrowsers(new Map());
-    setKeepOriginals(!thin);
-    setAutoTransferOriginals(!thin);
-    setDenoiser('galosh');
+    setSetups(new Map());
+    setConfigured(new Set());
+    setAdded(new Set());
+    setEditing(null);
     setBusy(false);
-  }, [open, replication, thin]);
+  }, [open, replication]);
 
-  const library = picked.at(folderIndex);
-  const browser = library && browsers.get(library.id);
-  const last = thin || folderIndex === picked.length - 1;
-  const canAdd =
-    thin || picked.every((candidate) => browsers.get(candidate.id)?.store.selectedPath !== '');
+  const single = picked.length === 1;
+  const setup = editing == null ? undefined : setups.get(editing.id);
   const canConnect = address.trim() !== '' && !busy;
-  const anyWritable = picked.some((candidate) => !candidate.read_only);
 
   async function connect(): Promise<void> {
     if (!canConnect) return;
@@ -113,57 +140,92 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
   function choose(): void {
     replication.clearError();
-    if (!thin) {
-      setBrowsers(
-        new Map(
-          picked.map((candidate) => [candidate.id, browsers.get(candidate.id) ?? openBrowser()]),
-        ),
-      );
+    if (thin) {
+      void add();
+      return;
     }
-    setFolderIndex(0);
-    setStep('where');
+    setSetups(
+      new Map(
+        picked.map((library) => [
+          library.id,
+          setups.get(library.id) ?? {
+            browser: openBrowser(),
+            keepsOriginals: !library.read_only,
+          },
+        ]),
+      ),
+    );
+    setConfigured(new Set(picked.map((library) => library.id).filter((id) => configured.has(id))));
+    const [only] = picked;
+    if (single && only != null) {
+      configure(only);
+      return;
+    }
+    setStep('cards');
+  }
+
+  function configure(library: RemoteLibrary): void {
+    replication.clearError();
+    setEditing(library);
+    setStep('setup');
+  }
+
+  function keepOriginals(keeps: boolean): void {
+    if (editing == null || setup == null) return;
+    setSetups(new Map(setups).set(editing.id, { ...setup, keepsOriginals: keeps }));
   }
 
   function back(): void {
     replication.clearError();
-    if (step === 'where' && folderIndex > 0) {
-      setFolderIndex(folderIndex - 1);
+    if (step === 'setup' && !single) {
+      setEditing(null);
+      setStep('cards');
       return;
     }
-    setStep(step === 'where' ? 'pick' : 'address');
+    setStep(step === 'pick' ? 'address' : 'pick');
   }
 
-  function forward(): void {
-    replication.clearError();
-    setFolderIndex(folderIndex + 1);
+  function save(): void {
+    if (editing == null) return;
+    if (single) {
+      void add();
+      return;
+    }
+    setConfigured(new Set(configured).add(editing.id));
+    setEditing(null);
+    setStep('cards');
   }
 
   async function add(): Promise<void> {
-    if (picked.length === 0 || remote == null) return;
+    if (remote == null) return;
+    const pending = picked.filter((library) => !added.has(library.id));
+    if (pending.length === 0) return;
     const mine = opening.current;
     setBusy(true);
-    const added = await replication.addReplicas(
-      picked.map((candidate) => ({
+    const rendering = librariesStore.rendering;
+    const done = await replication.addReplicas(
+      pending.map((library) => ({
         address: remote.address,
-        library_id: candidate.id,
-        ...(thin ? {} : { root_path: browsers.get(candidate.id)?.store.selectedPath }),
-        sync_originals: keepOriginals && !candidate.read_only,
-        auto_transfer_originals: autoTransferOriginals && !candidate.read_only,
-        denoiser,
+        library_id: library.id,
+        ...(thin ? {} : { root_path: setups.get(library.id)?.browser.store.selectedPath }),
+        sync_originals: setups.get(library.id)?.keepsOriginals ?? false,
+        denoiser: rendering?.denoiser ?? 'galosh',
+        render_skip_full: rendering?.render_skip_full ?? [],
       })),
     );
     if (mine !== opening.current) return;
     setBusy(false);
     // A clone that failed partway is still committed here, and retrying it fails `already_added`.
-    const remaining = picked.filter(
-      (candidate) => !added.includes(candidate.id) && !librariesStore.byId.has(candidate.id),
+    const nowAdded = new Set(
+      picked
+        .filter((library) => done.includes(library.id) || librariesStore.byId.has(library.id))
+        .map((library) => library.id),
     );
-    if (remaining.length === 0) {
+    if (nowAdded.size === picked.length) {
       onOpenChange(false);
       return;
     }
-    setPicked(remaining);
-    setFolderIndex(0);
+    setAdded(nowAdded);
   }
 
   function close(): void {
@@ -176,7 +238,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
       open={open}
       onOpenChange={(next) => (next ? onOpenChange(true) : close())}
       title={AddReplicaStrings.title()}
-      step={`${step}:${folderIndex}`}
+      step={`${step}:${editing?.id ?? ''}`}
     >
       <DialogBody height="capped">
         {step === 'address' && (
@@ -255,90 +317,93 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}
 
             <DialogActions>
-              <Button onClick={back}>{AddReplicaStrings.back()}</Button>
-              <Button variant="primary" disabled={picked.length === 0} onClick={choose}>
-                {AddReplicaStrings.next()}
+              <Button disabled={busy} onClick={back}>
+                {AddReplicaStrings.back()}
+              </Button>
+              <Button variant="primary" disabled={picked.length === 0 || busy} onClick={choose}>
+                {busy
+                  ? AddReplicaStrings.settingUp()
+                  : !thin
+                    ? AddReplicaStrings.next()
+                    : single && picked[0] != null
+                      ? AddReplicaStrings.add(picked[0].name)
+                      : AddReplicaStrings.finish()}
               </Button>
             </DialogActions>
           </>
         )}
 
-        {step === 'where' && library != null && (
+        {step === 'cards' && remote != null && (
           <>
-            {browser != null && (
-              <Field>
-                <Text variant="label" as="span">
-                  {picked.length > 1
-                    ? AddReplicaStrings.folderFor(library.name)
-                    : AddReplicaStrings.folderOnThisDevice()}
-                </Text>
-                <FolderBrowser
+            <List>
+              {picked.map((library) => (
+                <button
                   key={library.id}
-                  store={browser.store}
-                  presenter={browser.presenter}
-                  label={AddLibraryStrings.libraryRootPath()}
-                  placeholder={AddReplicaStrings.rootPlaceholder()}
-                  canCreate
-                />
-                <Text variant="mono" as="p">
-                  {AddReplicaStrings.folderHint()}
-                </Text>
-              </Field>
-            )}
+                  type="button"
+                  {...stylex.props(listStyles.row, styles.card, focusRing.ring)}
+                  disabled={added.has(library.id) || busy}
+                  onClick={() => configure(library)}
+                >
+                  <span {...stylex.props(listStyles.body)}>
+                    <span {...stylex.props(styles.cardBody)}>
+                      <Text as="span">{library.name}</Text>
+                      {added.has(library.id) || configured.has(library.id) ? (
+                        <Text variant="mono" as="span" style={styles.configured}>
+                          <Check size={ICON} aria-hidden />
+                          {added.has(library.id)
+                            ? AddReplicaStrings.added()
+                            : AddReplicaStrings.configured()}
+                        </Text>
+                      ) : (
+                        <Text variant="mono" as="span" style={styles.toConfigure}>
+                          {AddReplicaStrings.configure()}
+                        </Text>
+                      )}
+                    </span>
+                  </span>
+                  {!added.has(library.id) && <ChevronRight size={ICON} aria-hidden />}
+                </button>
+              ))}
+            </List>
 
-            {last && (!anyWritable || !thin) && (
-              <Field>
-                <Text variant="label" as="span">
-                  {AddReplicaStrings.originals()}
-                </Text>
-                {!anyWritable ? (
-                  <Text variant="mono" as="p">
-                    {AddReplicaStrings.readOnlyHere()}
-                  </Text>
-                ) : (
-                  <>
-                    <Row as="label">
-                      <input
-                        {...stylex.props(focusRing.ring)}
-                        type="checkbox"
-                        aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
-                        checked={keepOriginals}
-                        onChange={(e) => setKeepOriginals(e.currentTarget.checked)}
-                      />
-                      <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
-                    </Row>
-                    <Text variant="mono" as="p">
-                      {keepOriginals
-                        ? SyncedDevicesStrings.keepsOriginals()
-                        : SyncedDevicesStrings.catalogueOnly()}
-                    </Text>
-                    <Row as="label">
-                      <input
-                        {...stylex.props(focusRing.ring)}
-                        type="checkbox"
-                        aria-label={SyncedDevicesStrings.autoTransferOriginals()}
-                        checked={autoTransferOriginals}
-                        onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
-                      />
-                      <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
-                    </Row>
-                  </>
-                )}
-              </Field>
-            )}
+            {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}
 
-            {last && (
-              <Field>
-                <Text variant="label" as="span">
-                  {RawEditPanelStrings.denoiser()}
-                </Text>
-                <Select
-                  label={RawEditPanelStrings.denoiser()}
-                  options={DENOISERS}
-                  value={denoiser}
-                  onChange={setDenoiser}
-                />
-              </Field>
+            <DialogActions>
+              <Button disabled={busy || added.size > 0} onClick={back}>
+                {AddReplicaStrings.back()}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={busy || picked.some((library) => !configured.has(library.id))}
+                onClick={() => void add()}
+              >
+                {busy ? AddReplicaStrings.settingUp() : AddReplicaStrings.finish()}
+              </Button>
+            </DialogActions>
+          </>
+        )}
+
+        {step === 'setup' && editing != null && setup != null && (
+          <>
+            {!single && (
+              <Text variant="label" as="span">
+                {editing.name}
+              </Text>
+            )}
+            <Field>
+              <Text as="p">{AddReplicaStrings.chooseFolder()}</Text>
+              <FolderBrowser
+                key={editing.id}
+                store={setup.browser.store}
+                presenter={setup.browser.presenter}
+                label={AddLibraryStrings.libraryRootPath()}
+                placeholder={AddReplicaStrings.rootPlaceholder()}
+                canCreate
+              />
+            </Field>
+
+            {!editing.read_only && (
+              <OriginalsChoice keeps={setup.keepsOriginals} onChange={keepOriginals} />
             )}
 
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}
@@ -347,23 +412,17 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               <Button disabled={busy} onClick={back}>
                 {AddReplicaStrings.back()}
               </Button>
-              {last ? (
-                <Button variant="primary" disabled={!canAdd || busy} onClick={() => void add()}>
-                  {busy
-                    ? AddReplicaStrings.settingUp()
-                    : picked.length > 1
-                      ? AddReplicaStrings.addLibraries(picked.length)
-                      : AddReplicaStrings.add(library.name)}
-                </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  disabled={browser?.store.selectedPath === ''}
-                  onClick={forward}
-                >
-                  {AddReplicaStrings.next()}
-                </Button>
-              )}
+              <Button
+                variant="primary"
+                disabled={busy || setup.browser.store.selectedPath === ''}
+                onClick={save}
+              >
+                {busy
+                  ? AddReplicaStrings.settingUp()
+                  : single
+                    ? AddReplicaStrings.add(editing.name)
+                    : AddReplicaStrings.save()}
+              </Button>
             </DialogActions>
           </>
         )}

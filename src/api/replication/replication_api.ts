@@ -162,7 +162,6 @@ export class ReplicationApi {
           respond(PeersResponseSchema, {
             peers: this.replication.peers(libraryId),
             sync_originals: this.replication.syncsOriginals(libraryId),
-            auto_transfer_originals: this.replication.autoTransfersOriginals(libraryId),
           }),
         );
       },
@@ -172,13 +171,7 @@ export class ReplicationApi {
       route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.originals()),
       async (c) => {
         const libraryId = c.req.param('libraryId');
-        const { sync_originals, auto_transfer_originals } = SyncOriginalsRequestSchema.parse(
-          await c.req.json(),
-        );
-        if (auto_transfer_originals != null)
-          this.replication.setAutoTransfersOriginals(libraryId, auto_transfer_originals);
-        if (sync_originals == null)
-          return c.json(respond(SyncOriginalsResponseSchema, { cancelled: 0 }));
+        const { sync_originals } = SyncOriginalsRequestSchema.parse(await c.req.json());
         this.replication.setSyncsOriginals(libraryId, sync_originals);
         // The queue would otherwise go on delivering exactly what this turned off.
         const stopped = sync_originals ? 0 : await this.cancelIncoming(libraryId);

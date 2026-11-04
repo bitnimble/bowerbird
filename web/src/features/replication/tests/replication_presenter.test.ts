@@ -27,11 +27,12 @@ const PEER: PairedPeer = {
   last_replicated_at: null,
   last_error: null,
   wants_originals: true,
+  reachable: true,
   outdated: null,
 };
 
 function peersAnswer(peers: PairedPeer[], syncOriginals = true): Promise<PeersResponse> {
-  return Promise.resolve({ peers, sync_originals: syncOriginals, auto_transfer_originals: false });
+  return Promise.resolve({ peers, sync_originals: syncOriginals });
 }
 
 function candidate(sessionId: string, device: string): EditConflict {
@@ -103,9 +104,7 @@ beforeEach(() => {
   replicationApi.listPeers = () => peersAnswer([PEER]);
   replicationApi.listAllPeers = () =>
     Promise.resolve({
-      libraries: [
-        { library_id: 'lib', peers: [PEER], sync_originals: true, auto_transfer_originals: false },
-      ],
+      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: true }],
     });
   blobsApi.listTransfers = () => Promise.resolve([]);
   photoEditsApi.listConflicts = () => Promise.resolve([]);
@@ -291,9 +290,7 @@ test('the whole install is one request, and a library with no peers is not in it
   replicationApi.listAllPeers = () => {
     asks++;
     return Promise.resolve({
-      libraries: [
-        { library_id: 'lib', peers: [PEER], sync_originals: false, auto_transfer_originals: true },
-      ],
+      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: false }],
     });
   };
 
@@ -302,8 +299,6 @@ test('the whole install is one request, and a library with no peers is not in it
   expect(asks).toBe(1);
   expect(store.hasPeers('lib')).toBe(true);
   expect(store.syncsOriginals('lib')).toBe(false);
-  expect(store.autoTransfersOriginals('lib')).toBe(true);
-  expect(store.autoTransfersOriginals('solo')).toBe(false);
   expect(store.hasPeers('solo')).toBe(false);
   expect(store.syncsOriginals('solo')).toBe(true);
 });
@@ -461,44 +456,31 @@ test('a failure the server names reads as what to do about it', async () => {
   expect(store.linkError).toBe("We couldn't reach that device.");
 });
 
-test.each([true, false])(
-  'adding one forwards automatic transfers %s and re-reads the library list',
-  async (autoTransferOriginals) => {
-    const { presenter, toasts } = harness();
-    const asked: AddReplicaRequest[] = [];
-    replicationApi.addReplica = (request) => {
-      asked.push(request);
-      return Promise.resolve({
-        library_id: request.library_id,
-        peer_id: PEER.peer_id,
-        applied: 240,
-      });
-    };
+test('adding one forwards the request and re-reads the library list', async () => {
+  const { presenter, toasts } = harness();
+  const asked: AddReplicaRequest[] = [];
+  replicationApi.addReplica = (request) => {
+    asked.push(request);
+    return Promise.resolve({
+      library_id: request.library_id,
+      peer_id: PEER.peer_id,
+      applied: 240,
+    });
+  };
+  const request: AddReplicaRequest = {
+    address: 'http://desktop:5173',
+    library_id: 'lib',
+    root_path: '/fixture/trip',
+    sync_originals: false,
+    denoiser: 'pmrid',
+    render_skip_full: ['sharpen'],
+  };
 
-    await presenter.addReplicas([
-      {
-        address: 'http://desktop:5173',
-        library_id: 'lib',
-        root_path: '/fixture/trip',
-        sync_originals: false,
-        auto_transfer_originals: autoTransferOriginals,
-        denoiser: 'pmrid',
-      },
-    ]);
+  await presenter.addReplicas([request]);
 
-    expect(asked).toEqual([
-      {
-        address: 'http://desktop:5173',
-        library_id: 'lib',
-        root_path: '/fixture/trip',
-        sync_originals: false,
-        auto_transfer_originals: autoTransferOriginals,
-        denoiser: 'pmrid',
-      },
-    ]);
-    expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
-  },
-);
+  expect(asked).toEqual([request]);
+  expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
+});
 
 // The library is committed before its catalogue arrives, so one that failed
 // part-way has left one behind and the list has to be re-read either way.
@@ -515,8 +497,8 @@ test('an add that failed still re-reads the library list', async () => {
       library_id: 'lib',
       root_path: '/fixture/trip',
       sync_originals: true,
-      auto_transfer_originals: true,
       denoiser: 'galosh',
+      render_skip_full: [],
     },
   ]);
 
@@ -543,8 +525,8 @@ test('adding several stops at the first that fails and answers those added befor
     library_id,
     root_path: `/fixture/${library_id}`,
     sync_originals: true,
-    auto_transfer_originals: true,
     denoiser: 'galosh',
+    render_skip_full: [],
   });
 
   const added = await presenter.addReplicas([request('trip'), request('family'), request('work')]);
@@ -624,6 +606,48 @@ test('an eviction nothing survived does not claim a partial success', async () =
   await presenter.removeLocalCopies({ photo_ids: ['photo1'] }, 'lib', PEER.peer_id);
 
   expect(toasts[0]).toBe('Macbook could not confirm a copy of 1 photo.');
+});
+
+test.each([
+  [true, false, ['push', 'pull'], 'Queued 5 RAWs to sync with Macbook.'],
+  [false, false, ['pull'], 'Queued 2 RAWs to sync with Macbook.'],
+  [true, true, ['push'], 'Queued 3 RAWs to sync with Macbook.'],
+  [false, true, [], 'This device and Macbook already hold the same RAWs.'],
+])(
+  'syncing RAWs with a peer wanting them %s, read-only %s, asks for %p',
+  async (wantsOriginals, readOnly, directions, toast) => {
+    const { store, presenter, toasts } = harness();
+    store.peersByLibrary.set('lib', [{ ...PEER, wants_originals: wantsOriginals }]);
+    const asked: string[] = [];
+    blobsApi.pushOriginals = (libraryId, peerId) => {
+      asked.push('push');
+      expect([libraryId, peerId]).toEqual(['lib', PEER.peer_id]);
+      return Promise.resolve({ queued: 3 });
+    };
+    blobsApi.pullOriginals = (libraryId, peerId) => {
+      asked.push('pull');
+      expect([libraryId, peerId]).toEqual(['lib', PEER.peer_id]);
+      return Promise.resolve({ queued: 2 });
+    };
+
+    await presenter.syncRaws(
+      { id: 'lib', name: 'Trip', read_only: readOnly } as Library,
+      PEER.peer_id,
+    );
+
+    expect(asked).toEqual(directions);
+    expect(toasts).toEqual([toast]);
+  },
+);
+
+test('syncing RAWs that fails says so', async () => {
+  const { store, presenter, toasts } = harness();
+  store.peersByLibrary.set('lib', [PEER]);
+  blobsApi.pushOriginals = () => Promise.reject(new Error('peer answered 503'));
+
+  await presenter.syncRaws({ id: 'lib', name: 'Trip', read_only: false } as Library, PEER.peer_id);
+
+  expect(toasts).toEqual(["We couldn't sync RAWs with Macbook. Try again."]);
 });
 
 test("this device's name is read, and renamed only to something new that is not blank", async () => {
