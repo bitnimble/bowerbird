@@ -54,7 +54,7 @@ export const SettingsStrings = {
 
   renderStages: () => 'Automatic pre-rendering',
   renderStagesHint: () =>
-    "Select which features new RAW photos start with when they're imported, to choose a trade-off between quality and performance. You can change each one per photo in the editor.",
+    "Select which features new RAW photos start with when they're imported, to choose a trade-off between quality and performance.",
   renderStagesNeedLibrary: () => 'Add a library to change this',
   stageDenoise: () => 'Denoise',
   stageColour: () => 'Auto-detect camera colour profile',
