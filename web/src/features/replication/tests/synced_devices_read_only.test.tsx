@@ -4,7 +4,6 @@ import { afterEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Transfer } from '../../../../../src/schemas/blobs';
-import { type Library } from '../../../../../src/schemas/libraries';
 import { blobsApi } from '../../../api/blobs';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
@@ -50,7 +49,7 @@ async function openPanel(readOnly: boolean, keepsOriginals = true): Promise<void
   render(
     <StoresProvider>
       <Seed keepsOriginals={keepsOriginals} readOnly={readOnly} />
-      <SyncedDevicesPanel library={{ id: 'lib', name: 'Reef', read_only: readOnly } as Library} />
+      <SyncedDevicesPanel library={{ id: 'lib', name: 'Reef', read_only: readOnly }} />
     </StoresProvider>,
   );
   await act(async () => {});

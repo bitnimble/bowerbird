@@ -60,7 +60,7 @@ import { RenditionFetchService } from './services/blobs/rendition_fetch_service'
 import { BackupLocations } from './services/backup/backup_locations';
 import { Cull } from './services/backup/cull';
 import { Mirror } from './services/backup/mirror';
-import { PassivePeers } from './services/backup/passive_peers';
+import { PassivePeers, passivePeersOf } from './services/backup/passive_peers';
 import { HeaderPool } from './services/processing/analysis/header_pool';
 import { addressedPeers, PairedPeers, Peers } from './services/replication/peer_transport';
 import { deviceName } from './services/replication/pairing';
@@ -124,7 +124,6 @@ import { config } from './config';
 import { Logger, setLogLevel } from './logger';
 import { LibraryActivity } from './services/activity/library_activity';
 import type { Activity, ActivityKind } from './schemas/activity';
-import { passivePeersOf } from './services/backup/passive_peers';
 import { requestLogLevel } from './api/request_logging';
 import { requireToken } from './api/require_token';
 import { REQUEST_ACTIVITY_HEADER } from './schemas/request_activity';

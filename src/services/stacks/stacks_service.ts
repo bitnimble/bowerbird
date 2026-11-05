@@ -226,10 +226,9 @@ export class StacksService {
   /**
    * Re-forms this library's automatic stacks from every candidate it has.
    *
-   * Rewrites them wholesale rather than adding to them, which is what makes the
-   * similarity setting mean something after it changes: raise it and stacks
-   * split, lower it and they merge. Manual stacks and photos somebody pulled out
-   * are not candidates, so neither is touched (§19.4.2).
+   * Rewrites them wholesale rather than adding to them, so a photo arriving beside
+   * a stack joins it and a rebuilt descriptor can move one. Manual stacks and
+   * photos somebody pulled out are not candidates, so neither is touched (§19.4.2).
    *
    * Returns how many stacks the library now has by detection.
    */

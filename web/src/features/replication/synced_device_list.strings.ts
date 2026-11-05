@@ -1,3 +1,5 @@
+import { plural } from '../photos/photos_presenter.strings';
+
 export const SyncedDeviceListStrings = {
   neverSynced: () => 'Never synced',
   syncedAt: (relative: string) => `Synced ${relative}`,
@@ -21,5 +23,5 @@ export const SyncedDeviceListStrings = {
   removeDeviceWarning: (deviceName: string, sole: number) =>
     sole === 0
       ? 'Your files stay where they are. You can pair them again.'
-      : `${sole} ${sole === 1 ? 'photo exists' : 'photos exist'} only on ${deviceName}. Sync RAWs before you remove it. Your files stay where they are.`,
+      : `${plural(sole, 'photo exists', 'photos exist')} only on ${deviceName}. Sync RAWs before you remove it. Your files stay where they are.`,
 };

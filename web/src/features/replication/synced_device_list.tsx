@@ -38,7 +38,7 @@ export const SyncedDeviceList = observer(function SyncedDeviceList({
   presenter,
   confirm,
 }: {
-  library: Library;
+  library: Pick<Library, 'id' | 'name' | 'read_only'>;
   store: ReplicationStore;
   presenter: ReplicationPresenter;
   confirm: Pick<ConfirmPresenter, 'ask'>;

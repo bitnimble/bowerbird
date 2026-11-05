@@ -14,7 +14,7 @@ import { shootsApi } from '../../../api/shoots';
 import { restoreApiAfterTests } from '../../../test_api';
 import { MemoryStorage } from '../../../test_storage';
 import type { ConfirmRequest } from '../../confirm/confirm_store';
-import { buildEntries } from '../import_entries';
+import { buildEntries, filenameOf } from '../import_entries';
 import { ImportPresenter } from '../import_presenter';
 import { ImportStore } from '../import_store';
 
@@ -92,7 +92,7 @@ function storeOf(libraries: Library[]): ImportStore {
 }
 
 function tileNames(): string[][] {
-  return store.entries.map((entry) => entry.files.map((file) => file.rel_path.split('/').pop()!));
+  return store.entries.map((entry) => entry.files.map(filenameOf));
 }
 
 beforeEach(async () => {

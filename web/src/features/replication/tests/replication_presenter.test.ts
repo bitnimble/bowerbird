@@ -282,7 +282,7 @@ test('following the library list asks again only when a library came or went', a
   expect(activities).toEqual(['background', 'background']);
 });
 
-// The gate on every strip, badge and panel is "does this library have a peer",
+// The gate on every device list, badge and panel is "does this library have a peer",
 // and a library that replicates with nobody is simply absent from the answer.
 test('the whole install is one request, and a library with no peers is not in it', async () => {
   const { store, presenter } = harness();
@@ -303,7 +303,7 @@ test('the whole install is one request, and a library with no peers is not in it
   expect(store.syncsOriginals('solo')).toBe(true);
 });
 
-// A library that stops replicating leaves a strip behind if the answer is merged
+// A library that stops replicating leaves a device row behind if the answer is merged
 // into what was there rather than replacing it.
 test('a library that lost its peers stops rendering as one that has them', async () => {
   const { store, presenter } = harness();
@@ -630,10 +630,7 @@ test.each([
       return Promise.resolve({ queued: 2 });
     };
 
-    await presenter.syncRaws(
-      { id: 'lib', name: 'Trip', read_only: readOnly } as Library,
-      PEER.peer_id,
-    );
+    await presenter.syncRaws({ id: 'lib', read_only: readOnly }, PEER.peer_id);
 
     expect(asked).toEqual(directions);
     expect(toasts).toEqual([toast]);
@@ -645,7 +642,7 @@ test('syncing RAWs that fails says so', async () => {
   store.peersByLibrary.set('lib', [PEER]);
   blobsApi.pushOriginals = () => Promise.reject(new Error('peer answered 503'));
 
-  await presenter.syncRaws({ id: 'lib', name: 'Trip', read_only: false } as Library, PEER.peer_id);
+  await presenter.syncRaws({ id: 'lib', read_only: false }, PEER.peer_id);
 
   expect(toasts).toEqual(["We couldn't sync RAWs with Macbook. Try again."]);
 });

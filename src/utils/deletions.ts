@@ -343,7 +343,6 @@ export async function copyOriginal(source: string, destination: string): Promise
   }
 }
 
-// Two names for one file always hash the same, which says nothing about a second copy.
 async function proveSameBytes(source: string, destination: string, copy: Stats): Promise<void> {
   const original = await lstat(source).catch(() => null);
   if (original?.isFile() !== true) {
@@ -352,6 +351,7 @@ async function proveSameBytes(source: string, destination: string, copy: Stats):
   if (!copy.isFile()) {
     throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} is not a file`);
   }
+  // Two names for one file always hash the same, which says nothing about a second copy.
   if (isOneFile(original, copy)) {
     throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} is the same file`);
   }
@@ -420,7 +420,7 @@ export async function deleteBackedUpOriginal(
 
 // The name a move claimed with an empty file and then could not fill. Holding no
 // bytes, it cannot be an original, which is checked rather than trusted.
-export async function deleteEmptyClaim(target: string): Promise<void> {
+async function deleteEmptyClaim(target: string): Promise<void> {
   if (statSync(target).size !== 0) {
     throw new AppError('IO_ERROR', `refusing to remove ${target}: it is not empty`);
   }

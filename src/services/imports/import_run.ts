@@ -9,6 +9,7 @@ import type { Library } from '../../schemas/libraries';
 import type { PhotoFormat } from '../../schemas/photos';
 import { copyOriginal, moveOriginal } from '../../utils/deletions';
 import { numberedName } from '../../utils/files';
+import { toLibraryRelative } from '../../utils/paths';
 import type { ScanScope } from '../sync/scan/scan_evidence';
 
 const log = new Logger('import');
@@ -38,6 +39,10 @@ export interface ImportPlan {
   deleteOriginals: boolean;
 }
 
+export interface LibraryScanner {
+  scanLibrary(libraryId: string, scope: ScanScope): Promise<unknown>;
+}
+
 interface Target {
   path: string;
   identical: boolean;
@@ -55,9 +60,7 @@ export class ImportRun {
 
   constructor(
     private readonly plan: ImportPlan,
-    private readonly scans: {
-      scanLibrary(libraryId: string, scope: ScanScope): Promise<unknown>;
-    },
+    private readonly scans: LibraryScanner,
     private readonly announce: (job: ImportJob) => void,
   ) {
     this.job = {
@@ -94,9 +97,7 @@ export class ImportRun {
       if (group.some((file) => ticked.has(file))) await this.placeGroup(group);
     }
     if (this.landed.length > 0)
-      await this.scanLanded(
-        this.landed.map((abs) => path.relative(library.root_path, abs).split(path.sep).join('/')),
-      );
+      await this.scanLanded(this.landed.map((abs) => toLibraryRelative(library.root_path, abs)));
     this.update({ status: importJobDone(this.job) < this.job.total ? 'stopped' : 'finished' });
   }
 

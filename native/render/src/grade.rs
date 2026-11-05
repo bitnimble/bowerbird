@@ -4415,9 +4415,8 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     }
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
-    // the last few fields left over. Here it was implicit in the field count until a field was
-    // added, and then it was four bytes short.
-    // Stated as the rule rather than as a spare word, so the next field cannot break it.
+    // the last few fields left over. Stated as the rule rather than as a spare word, so the next
+    // field cannot break it.
     while w.len() % 4 != 0 {
         w.push(0);
     }

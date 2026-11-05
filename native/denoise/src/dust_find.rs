@@ -637,13 +637,9 @@ pub fn decoded(bits: u16) -> f32 {
 }
 
 async fn read_halves(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option<Vec<u16>> {
-    let bytes = mapped(gpu, from, (count * 2) as u64).await?;
-    Some(
-        bytes
-            .chunks_exact(2)
-            .map(|half| u16::from_ne_bytes([half[0], half[1]]))
-            .collect(),
-    )
+    Some(bytemuck::pod_collect_to_vec(
+        &mapped(gpu, from, (count * 2) as u64).await?,
+    ))
 }
 
 #[cfg(test)]

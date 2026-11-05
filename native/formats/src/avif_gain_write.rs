@@ -27,7 +27,7 @@ pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.
 pub(crate) const SDR_CICP: (u16, u16) = (1, 13);
 /// The gain map's own primaries and transfer are unspecified by the standard.
-pub const UNSPECIFIED: u16 = 2;
+pub(crate) const UNSPECIFIED: u16 = 2;
 
 /// What libavif wrote into its diagnostics, which is where a refusal explains itself.
 pub fn said(diagnostics: &raw::avifDiagnostics) -> String {

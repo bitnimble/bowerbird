@@ -1,8 +1,5 @@
 import { type LinkFailure } from '../../../../src/schemas/replication';
-
-function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
+import { plural } from '../photos/photos_presenter.strings';
 
 const LINK_FAILURES: Record<LinkFailure, () => string> = {
   invalid_address: () => "We couldn't read that address.",

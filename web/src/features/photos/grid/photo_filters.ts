@@ -49,6 +49,12 @@ export function dayDensities(days: readonly PhotoDay[]): Map<string, number> {
   return new Map(days.map((day) => [day.day, Math.log(day.count + 1) / top]));
 }
 
+export function isoDay(date: Date): string {
+  // Local parts, not toISOString: a date picked as the 3rd must not become the
+  // 2nd for anyone east of UTC.
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 /**
  * The models on one side of the pairing that were photographed with any of `partners`
  * on the other - every one of them when nothing on that side is ticked.

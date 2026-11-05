@@ -20,7 +20,7 @@ const styles = stylex.create({
 export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
   library,
 }: {
-  library: Library;
+  library: Pick<Library, 'id' | 'name' | 'read_only'>;
 }): JSX.Element {
   const store = useReplicationStore();
   const { replication, confirm } = usePresenters();

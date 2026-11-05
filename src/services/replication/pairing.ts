@@ -240,7 +240,7 @@ export function recordPeerVersion(
  * Every library that replicates, with its peers and its appetite for originals.
  *
  * A library absent from this replicates with nobody, which is the answer a page
- * needs about most of them: the sidebar, the strips and the badges are all gated on
+ * needs about most of them: the sidebar, the device lists and the badges are all gated on
  * having a peer (§10), and asking per library is one request each to be told no.
  */
 export function everyPairing(db: Database): AllPeersResponse['libraries'] {

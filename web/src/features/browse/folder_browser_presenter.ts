@@ -46,6 +46,14 @@ export class FolderBrowserPresenter {
     this.store.error = null;
   }
 
+  @action.bound
+  selected(path: string): void {
+    this.walk++;
+    this.store.loading = false;
+    this.store.selection = { path };
+    this.store.listing = null;
+  }
+
   /** Makes a folder inside the one listed and walks into it. False where it was refused. */
   async createFolder(name: string): Promise<boolean> {
     const parent = this.store.listing?.path;
@@ -95,14 +103,6 @@ export class FolderBrowserPresenter {
   private beginLoad(): void {
     this.store.loading = true;
     this.store.error = null;
-  }
-
-  @action.bound
-  selected(path: string): void {
-    this.walk++;
-    this.store.loading = false;
-    this.store.selection = { path };
-    this.store.listing = null;
   }
 
   @action.bound

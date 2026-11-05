@@ -24,6 +24,12 @@ function objectsOfType(db: Database, type: 'table' | 'index' | 'trigger'): strin
   ).map((row) => row.name);
 }
 
+function columnsOf(db: Database, table: string): string[] {
+  return (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (row) => row.name,
+  );
+}
+
 function beforePhotoLinks(db: Database): void {
   db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0020_photo_links'");
   for (const trigger of ['photos_link_ins', 'photos_link_upd', 'photos_unlink'])
@@ -72,10 +78,7 @@ describe('opening a catalogue', () => {
         { library_id: 'thin', sync_originals: 0 },
       ],
     );
-    const columns = (
-      db.query('PRAGMA table_info(replication_libraries)').all() as { name: string }[]
-    ).map((column) => column.name);
-    expect(columns).not.toContain('auto_transfer_originals');
+    expect(columnsOf(db, 'replication_libraries')).not.toContain('auto_transfer_originals');
     db.close();
   });
 
@@ -114,11 +117,9 @@ describe('opening a catalogue', () => {
       name: 'Tuned',
       auto_stack: 0,
     });
-    const columns = (db.query('PRAGMA table_info(libraries)').all() as { name: string }[]).map(
-      (column) => column.name,
-    );
-    expect(columns).not.toContain('auto_stack_similarity');
-    expect(columns).not.toContain('auto_stack_window_seconds');
+    expect(columnsOf(db, 'libraries')).not.toContain('auto_stack_similarity');
+    expect(columnsOf(db, 'libraries')).not.toContain('auto_stack_window_seconds');
+    db.close();
   });
 
   it('preserves disabled camera matching across the render-stage migration', () => {
@@ -410,6 +411,7 @@ describe('opening a catalogue', () => {
       indexes: objectsOfType(db, 'index'),
       triggers: objectsOfType(db, 'trigger'),
     }).toEqual(first);
+    db.close();
   });
 
   // Asserted against the table rather than through `SettingsRepository`, which defaults a missing
@@ -441,6 +443,7 @@ describe('opening a catalogue', () => {
     expect(settingsFor(db, ['hdr_reference_white_nits'])).toEqual({
       hdr_reference_white_nits: '250',
     });
+    db.close();
   });
 
   it('mints one replication identity and keeps it across restarts', () => {
@@ -454,5 +457,6 @@ describe('opening a catalogue', () => {
     expect(
       (db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string }).peer_id,
     ).toBe(first.peer_id);
+    db.close();
   });
 });

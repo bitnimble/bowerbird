@@ -95,7 +95,7 @@ const AddLibraryFlow = observer(function AddLibraryFlow({
   async function submit(): Promise<void> {
     setSaving(true);
     const { created, readOnlyRoot } = await libraries.create({
-      ...(preset ?? NEW_LIBRARY),
+      ...start,
       root_path: root,
       name: name.trim(),
       read_only: readOnlyLibrary,

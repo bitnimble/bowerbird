@@ -1825,7 +1825,7 @@ const BALANCE_LIMIT: f64 = 4.0;
 
 /// Levels the curve fit's pairs are counted over, and how far parity may push one, on the
 /// square root of a level's share of the ceiling (`fit_curve.slang`'s `level_of`).
-pub const LEVEL_BINS: usize = 12;
+pub(crate) const LEVEL_BINS: usize = 12;
 pub(crate) const LEVEL_BALANCE_LIMIT: f64 = 2.0;
 
 /// The same bound for the chroma lattice, which can afford far more of it.
@@ -2875,7 +2875,7 @@ const FLAT_PATCH: f64 = 0.02;
 /// Small on purpose. Correspondence is what makes a sharp read safe, so this is left with
 /// only the job a match cannot do: one pixel carries sensor noise, and a node fitted from
 /// a noisy sample lands as far from the truth as a misregistered one does.
-pub const SAMPLE: isize = 1;
+pub(crate) const SAMPLE: isize = 1;
 
 /// How far a neighbour may sit from the centre, per channel, and still be averaged into it.
 ///
@@ -6405,7 +6405,7 @@ pub fn fitted_preview_size(width: usize, height: usize) -> (usize, usize) {
 /// frame's peak, because the peak is the maximum of a strided subsample and one specular sample
 /// drags the whole render toward black by the peak/white ratio.
 #[cfg(test)]
-pub fn render_srgb8(
+pub(crate) fn render_srgb8(
     plane: &Plane,
     white: units::light::Light<units::light::Level>,
 ) -> units::rgb::Rgb {
@@ -7923,9 +7923,9 @@ mod tests {
     /// The host reserves a margin of `Reach::margin` about every point it admits and the device
     /// searches `pc.patch` and `pc.search` about that point, so the two disagreeing is a device
     /// reading outside what was reserved for it - which comes back as a border pixel rather than as
-    /// an error. They agree by construction now that the host sends the numbers, and what is left to
-    /// go wrong is *where* it sends them: the block is built by position, so these two have to be
-    /// the last fields of `Push` and in this order, on both shaders that take them.
+    /// an error. They agree by construction, the host sending the numbers, so what can go wrong is
+    /// *where* it sends them: the block is built by position, so these two have to be the last
+    /// fields of `Push` and in this order, on both shaders that take them.
     #[test]
     fn the_shader_searches_the_window_the_host_reserves() {
         let tail = |source: &str, of: &[&str]| {

@@ -264,7 +264,7 @@ fn correlation_through(matrix: [[f32; 3]; 3]) -> [[f64; 3]; 3] {
 /// deconvolves is truncated on purpose: a 3-sigma tail contributes a thousandth of the
 /// kernel and costs a third of every convolution, and this one runs forty times. Two is
 /// the 5x5 RawTherapee uses below radius 0.84.
-pub fn gaussian(sigma: f32, radius: usize) -> Vec<f32> {
+pub(crate) fn gaussian(sigma: f32, radius: usize) -> Vec<f32> {
     let taps: Vec<f32> = (0..=radius)
         .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
         .collect();
@@ -322,10 +322,9 @@ const RESIDUAL_KEEPS: f32 = 0.60;
 /// about the noise. Counting them, a frame that is half blown sky puts the median in that
 /// flat half and reports zero noise.
 ///
-/// The denoise this was written for runs on the mosaic now and fits its own model
-/// (`denoise::galosh`); what still asks is the defringe, which needs each channel's noise to
-/// debias its regression.
-pub fn sigma_from(bins: &[u32], ceiling: f32) -> f32 {
+/// Only the defringe asks, to debias its regression with each channel's noise; the denoise fits
+/// its own model on the mosaic (`denoise::galosh`).
+pub(crate) fn sigma_from(bins: &[u32], ceiling: f32) -> f32 {
     // Bin 0 is a residual under 0.008% of full scale, which is below a quantisation step
     // at any depth this runs at - so it is the "did not vary at all" bin, and the median
     // is taken over everything above it.
@@ -374,11 +373,11 @@ pub(crate) const DEFOCUS_NOISE: f32 = 0.02;
 
 /// The five-point Laplacian of a plane, clamped at the border.
 ///
-/// **A fixture's, now that the regressor and the correction are both `defocus.slang`'s.** What is
-/// left reaching this is `defocused`, which builds a frame carrying a known softness by adding a
-/// multiple of it - so the shader is asked to recover a curvature this spelled out.
+/// **A test fixture's.** `defocus.slang` holds both the regressor and the correction; `defocused`
+/// builds a frame carrying a known softness by adding a multiple of this, so the shader is asked
+/// to recover a curvature this spelled out.
 #[cfg(test)]
-pub fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub(crate) fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
     use rayon::prelude::*;
     let mut out = vec![0.0f32; width * height];
     out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {

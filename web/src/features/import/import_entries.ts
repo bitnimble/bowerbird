@@ -1,7 +1,7 @@
 import { captureKey, type ImportFile } from '../../../../src/schemas/imports';
-import type { PhotoFormat } from '../../../../src/schemas/photos';
+import { CameraFileFormatSchema, type PhotoFormat } from '../../../../src/schemas/photos';
 
-const CAMERA_FILE_FORMATS: readonly PhotoFormat[] = ['jpeg', 'heif'];
+const CAMERA_FILE_FORMATS: readonly PhotoFormat[] = CameraFileFormatSchema.options;
 const FINISHED_FORMATS: readonly PhotoFormat[] = [...CAMERA_FILE_FORMATS, 'png', 'avif'];
 
 export function isRawFormat(format: PhotoFormat): boolean {

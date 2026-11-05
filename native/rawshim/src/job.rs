@@ -447,8 +447,7 @@ impl From<formats::header::BbHeader> for HeaderFields {
 
 /// The largest size any of these targets asks for.
 ///
-/// 0 (native) beats any bounded size, being the whole frame. One number rather than one per
-/// dynamic range, now that one decode serves both.
+/// 0 (native) beats any bounded size, being the whole frame.
 fn largest_size(targets: &[&Target]) -> u32 {
     match targets.iter().any(|target| target.size == 0) {
         true => 0,

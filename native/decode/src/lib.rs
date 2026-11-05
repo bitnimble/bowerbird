@@ -338,7 +338,7 @@ pub fn set_tile_halo(halo: usize) {
 }
 
 /// The halo to use, which is the caller's unless a harness has taken the choice away.
-pub fn tile_halo(asked: usize) -> usize {
+pub(crate) fn tile_halo(asked: usize) -> usize {
     match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
         usize::MAX => asked,
         set => set,

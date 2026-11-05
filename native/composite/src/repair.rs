@@ -313,7 +313,7 @@ pub struct Params {
 
 /// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own.
 #[cfg(test)]
-pub fn params_block() -> usize {
+pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Params>()
 }
 

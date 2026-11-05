@@ -18,8 +18,7 @@ import { containsPath } from '../../utils/paths';
 import { formatOf, isRendered, originalMediaType, scanLibraryTree } from '../../utils/scan';
 import type { HeaderMetadata } from '../processing/analysis/metadata';
 import { eachInOrder } from '../sync/scan/scan_order';
-import type { ScanScope } from '../sync/scan/scan_evidence';
-import { type HeldFile, ImportRun } from './import_run';
+import { type HeldFile, ImportRun, type LibraryScanner } from './import_run';
 
 const VOLUME_SYSTEM_FOLDERS = new Set(['$RECYCLE.BIN', 'System Volume Information']);
 
@@ -44,9 +43,7 @@ export class ImportService {
     private readonly photos: {
       filesHeld(libraryId: string): { file_hash: string; file_path: string }[];
     },
-    private readonly scans: {
-      scanLibrary(libraryId: string, scope: ScanScope): Promise<unknown>;
-    },
+    private readonly scans: LibraryScanner,
     private readonly headers: {
       read(absPath: string): Promise<HeaderMetadata>;
       liftEmbedded(absPath: string): Promise<Uint8Array | null>;

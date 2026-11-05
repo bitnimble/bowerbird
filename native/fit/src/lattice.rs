@@ -298,7 +298,7 @@ fn params(pairs: usize, blocks: usize, grid: &Grid) -> Vec<u8> {
 }
 
 #[cfg(test)]
-pub fn params_block() -> usize {
+pub(crate) fn params_block() -> usize {
     let grid = Grid {
         nodes: [2; 4],
         chroma_scale: 1.0,

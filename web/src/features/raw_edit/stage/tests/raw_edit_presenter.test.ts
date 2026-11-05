@@ -71,6 +71,14 @@ function opened(overrides: Record<string, unknown> = {}): void {
  * applied twice is a *wrong value*, not a canvas that failed to change.
  */
 describe('a slider reaching the picture', () => {
+  /** Each sweep's settings, read off its first band: one entry per sweep, not per strip. */
+  const asked = (): LocalPrepare[] =>
+    decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
+  /** Long enough for a sweep of bands, or a whole prepare, to resolve, each a turn of its own. */
+  const settled = async (): Promise<void> => {
+    for (let turn = 0; turn < 16; turn++) await Promise.resolve();
+  };
+
   test('carries the exposure in stops, and asks for a frame', async () => {
     const before = await drawn();
 
@@ -381,13 +389,7 @@ describe('a slider reaching the picture', () => {
     // Neither of these is a dispatch over the frame: the denoise and the dust correction both run
     // on the mosaic, inside the open, so a settled slider re-prepares the photograph off the mosaic
     // the worker is holding and the frame arrives a band at a time. What this asks is which
-    // settings were sent, and how often - one entry per *sweep*, not per strip.
-    const asked = (): LocalPrepare[] =>
-      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
-    /** Long enough for a whole sweep of bands to resolve, each one a turn of its own. */
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
-    };
+    // settings were sent, and how often.
 
     // **Nothing while the pointer is down.** A prepare is a decode from the mosaic down, so
     // running one per position spends it on pictures nobody sees and makes the control sticky.
@@ -505,11 +507,6 @@ describe('a slider reaching the picture', () => {
   });
 
   test("an edit naming no denoiser runs its library's, until the reader picks one", async () => {
-    const asked = (): LocalPrepare[] =>
-      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
-    };
     presenter.edit.opened({
       doc: neutralEdits(),
       rev: 1,
@@ -536,12 +533,6 @@ describe('a slider reaching the picture', () => {
   });
 
   test("an unmoved sharpening follows the denoiser's default, and a moved one stays put", async () => {
-    const asked = (): LocalPrepare[] =>
-      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
-    };
-
     presenter.setDenoiser('upscaler');
     await settled();
     expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpening: 35 });
@@ -558,11 +549,6 @@ describe('a slider reaching the picture', () => {
   });
 
   test('a sensor the upscaler cannot take runs GALOSH at its sharpening under a library of Best', async () => {
-    const asked = (): LocalPrepare[] =>
-      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
-    };
     presenter.edit.opened({
       doc: neutralEdits(),
       rev: 1,
@@ -592,7 +578,7 @@ describe('a slider reaching the picture', () => {
    */
   test('fills the frame in bands and rebuilds the blur once', async () => {
     presenter.settle({ luminanceNoise: 44, colourNoise: 12 });
-    for (let turn = 0; turn < 16; turn++) await Promise.resolve();
+    await settled();
 
     // 3000 rows at 1024 to a band, and the strips meet without a gap, an overlap or a run past
     // the end of the frame.
@@ -605,9 +591,6 @@ describe('a slider reaching the picture', () => {
   });
 
   test('prepares the whole frame again for the lens or the defringe, never a band of it', async () => {
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 16; turn++) await Promise.resolve();
-    };
     presenter.settle({ defringe: 40 });
     await settled();
     presenter.settle({ lensCorrection: false });
@@ -623,9 +606,6 @@ describe('a slider reaching the picture', () => {
   });
 
   test('a whole prepare overtaken by a return to where the frame was is still undone', async () => {
-    const settled = async (): Promise<void> => {
-      for (let turn = 0; turn < 16; turn++) await Promise.resolve();
-    };
     const waiting: (() => void)[] = [];
     const prepare = decoder.prepare.bind(decoder);
     decoder.prepare = async (open, mosaic) => {

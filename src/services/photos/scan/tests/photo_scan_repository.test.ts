@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from '../../../../db/driver';
 import { runMigrations } from '../../../../db/migrate';
 import { RenditionsRepository } from '../../../processing/renditions/renditions_repository';
@@ -31,7 +31,7 @@ function insert(
     id,
     row.libraryId ?? LIB,
     recipe,
-    row.hash === undefined ? `hash-${id}` : row.hash,
+    'hash' in row ? row.hash : `hash-${id}`,
     row.isDeleted === true ? 1 : 0,
     row.isMissing === true ? 1 : 0,
   );
@@ -45,6 +45,8 @@ beforeEach(() => {
     new PhotoProcessingRepository(db, new RenditionsRepository(db)),
   );
 });
+
+afterEach(() => db.close());
 
 test('what a library holds on disk, including its Bin', () => {
   insert('live', { filePath: 'Trip/a.arw' });

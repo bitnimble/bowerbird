@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { PhotoEditsRepository } from '../photo_edits_repository';
@@ -19,6 +19,8 @@ function save(over: Partial<EditDoc>): ReturnType<PhotoEditsRepository['save']> 
   const { doc, rev } = repo.get(PHOTO);
   return repo.save(PHOTO, { ...doc, ...over }, rev);
 }
+
+afterEach(() => db.close());
 
 beforeEach(() => {
   db = new Database(':memory:');

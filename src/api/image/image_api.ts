@@ -95,7 +95,7 @@ const PrepareDevelopSchema = EditDocSchema.pick({
   reflectionRemoval: true,
   reflectionStrength: true,
   reflectionStrokes: true,
-});
+} satisfies Record<keyof PrepareDevelop, true>);
 
 /**
  * The settings a client is previewing that run before the samples cross, as a POST's JSON body, or

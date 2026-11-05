@@ -66,7 +66,7 @@ describe('the edits import starts a photo at', () => {
     expect(imported(['sharpen']).sharpen).toBe(0);
   });
 
-  it('turns the colour profile off with the lens, and leaves the lens on without it', () => {
+  it('writes the lens and its colour profile off together, and the profile off alone', () => {
     expect(importedEdits(['lens'], 'galosh')).toEqual({
       awaitsCameraMatch: true,
       denoiser: 'galosh',
@@ -167,6 +167,8 @@ describe('the column the library holds them in', () => {
     );
     libraries = new LibrariesRepository(db);
   });
+
+  afterEach(() => db.close());
 
   it('starts empty, which is every stage running', () => {
     expect(libraries.getById(LIB)?.render_skip_full).toEqual([]);

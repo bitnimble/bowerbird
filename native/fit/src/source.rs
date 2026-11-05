@@ -290,7 +290,7 @@ async fn run(
                 mapped[i + 3],
             ]))
         };
-        // The one place a level enters the host now that `fit_scan` takes the quantile: what the
+        // The one place a level enters the host, since `fit_scan` takes the quantile: what the
         // shader wrote, read back and named.
         colour::tone::Levels {
             white: units::light::Light::measured(at(0)),

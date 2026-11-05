@@ -241,7 +241,7 @@ test("1 library sets its folder and originals on one screen, and takes this devi
   await pick('Trip');
   await press('Next');
 
-  screen.getByText('Select a folder on your device where this library will be synced to.');
+  screen.getByText('Select a folder on this device where this library will be synced to.');
   expect(screen.getByRole('button', { name: 'Add "Trip"' }).matches(':disabled')).toBe(true);
   expect(chosenOriginals()).toBe('Sync original RAWs');
   expect(screen.queryByRole('combobox', { name: 'Denoiser' })).toBeNull();

@@ -23,7 +23,7 @@ export const AddReplicaStrings = {
   configured: () => 'Configured',
   added: () => 'Added',
 
-  chooseFolder: () => 'Select a folder on your device where this library will be synced to.',
+  chooseFolder: () => 'Select a folder on this device where this library will be synced to.',
   rootPlaceholder: () => '/photos/trip',
 
   save: () => 'Save',

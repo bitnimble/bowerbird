@@ -34,7 +34,6 @@ const styles = stylex.create({
   },
 });
 
-// Each stage under the name of the editor control it sets, so a reader meets one word per concept.
 const STAGE_LABELS: Record<OptionalStage, () => string> = {
   dust: RawEditPanelStrings.groupDustRemoval,
   denoise: SettingsStrings.stageDenoise,

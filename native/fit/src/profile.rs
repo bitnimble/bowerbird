@@ -38,7 +38,7 @@ const FIT_BLUR_SIGMA: f64 = 3.0;
 pub(crate) const MAX_PAIR_GRADIENT: i32 = 24;
 
 const MIN_PAIRS: usize = 2000;
-pub const MIN_BIN_SAMPLES: f64 = 8.0;
+pub(crate) const MIN_BIN_SAMPLES: f64 = 8.0;
 
 const REFINE_FLOOR: f64 = 0.0005;
 const REFINE_MARGIN: f64 = 0.002;

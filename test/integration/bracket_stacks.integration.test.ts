@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../src/db/driver';
 import { runMigrations } from '../../src/db/migrate';
 import type { CaptureSequence } from '../../src/schemas/capture_sequence';
@@ -18,6 +18,8 @@ const ORDERING = 'taken_desc' as const;
 let db: Database;
 let stacks: StacksService;
 let repo: StacksRepository;
+
+afterEach(() => db.close());
 
 beforeEach(() => {
   db = new Database(':memory:');

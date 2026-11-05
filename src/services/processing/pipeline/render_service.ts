@@ -1,8 +1,7 @@
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { ExportOptions } from '../../../schemas/export';
-import type { Job } from '../../../schemas/jobs';
+import type { AlignShape, Job } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
-import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import type { HeaderMetadata } from '../analysis/metadata';

@@ -11,7 +11,7 @@ import type { PhotoFormat } from '../../../../src/schemas/photos';
 import type { Shoot } from '../../../../src/schemas/shoots';
 import { visibleRows, type Span } from '../../ui/virtual_rows';
 import type { LibrariesStore } from '../libraries/libraries_store';
-import { dayDensities } from '../photos/grid/photo_filters';
+import { dayDensities, isoDay } from '../photos/grid/photo_filters';
 import { buildEntries, filenameOf, type ImportEntry, isRawFormat } from './import_entries';
 
 export const IMPORT_TILE = 180;
@@ -158,9 +158,7 @@ export class ImportStore {
     return Math.ceil(this.entries.length / this.columns);
   }
 
-  @computed get rowHeight(): number {
-    return IMPORT_TILE + IMPORT_TILE_GAP;
-  }
+  readonly rowHeight = IMPORT_TILE + IMPORT_TILE_GAP;
 
   @computed get visibleSpan(): Span {
     return visibleRows(this.scrollTop, this.viewportHeight, this.rowHeight, this.rowCount);
@@ -204,10 +202,6 @@ export class ImportStore {
   private dayOf(file: ImportFile): string {
     // A taken date is the camera's wall clock as a Z string, so its UTC day is the day it reads.
     const taken = this.headers.get(file.id)?.date_taken;
-    if (taken != null) return taken.slice(0, 10);
-    const modified = new Date(file.modified_at);
-    const month = String(modified.getMonth() + 1).padStart(2, '0');
-    const date = String(modified.getDate()).padStart(2, '0');
-    return `${modified.getFullYear()}-${month}-${date}`;
+    return taken != null ? taken.slice(0, 10) : isoDay(new Date(file.modified_at));
   }
 }

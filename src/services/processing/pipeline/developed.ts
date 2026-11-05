@@ -24,11 +24,14 @@ function asMetered(denoiser: Denoiser, upscalable: () => boolean): Developed {
 /**
  * The stored develop settings as the job wants them.
  *
- * **Every field passes through unchanged, and that is the point.** `EditDoc` holds Camera Raw's
- * own scales and the shaders are written against them, so there is no constant here to get
- * wrong - not even the exposure, which stays stops rather than becoming a `2^EV` gain on the way
- * past. Converting it here means converting it again in the editor, which is one rule with an
- * implementation on each path; `colour.slang` raises the stops once, for both.
+ * **The grade's sliders pass through unchanged, and that is the point.** `EditDoc` holds Camera
+ * Raw's own scales and the shaders are written against them, so not even the exposure is
+ * converted: it stays stops rather than becoming a `2^EV` gain on the way past. Converting it
+ * here means converting it again in the editor, which is one rule with an implementation on each
+ * path; `colour.slang` raises the stops once, for both. What is converted is what no shader reads
+ * as a slider: the sharpen strength (`sharpenOf`), the defringe ceiling and the reflection
+ * strength (`reflectionSettings`) as fractions, the dust fractions (`dustSettings`) and the camera
+ * match the lens and profile switches name (`cameraMatchOf`).
  *
  * A photo with no row reads as no adjustment. A document this build cannot parse reads the same
  * way rather than failing the batch: a rendition of the picture as the camera metered it is a

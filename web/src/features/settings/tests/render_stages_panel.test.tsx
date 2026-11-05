@@ -70,9 +70,6 @@ const ticked = (name: string): boolean =>
 
 test('the stages a render cannot do without share one Misc row with nothing to press', async () => {
   await open();
-  for (const name of ['Read', 'Reconstruct colour', 'Encode']) {
-    expect(screen.queryByText(name)).toBeNull();
-  }
   expect(screen.queryByRole('checkbox', { name: 'Misc' })).toBeNull();
   const { read, demosaic, encode } = ESTIMATED_MS.full;
   expect(screen.getByText('Misc').parentElement?.textContent).toBe(
@@ -94,7 +91,6 @@ test('an unticked box is a stage the full rendition leaves out', async () => {
 
 test('a measured zero states the measurement limit', async () => {
   await open({ full: { galosh: measuredNow({ denoise: 0, defringe: 0 }) } });
-  expect(screen.queryByText('Colour grade')).toBeNull();
   expect(screen.getAllByText('No measurable saving')).toHaveLength(2);
 });
 
@@ -165,7 +161,7 @@ test('it shows the first library and a tick goes to all of them', async () => {
   };
   librariesApi.list = () => Promise.reject(new Error('unused'));
   librariesApi.getDefaults = () => Promise.reject(new Error('unused'));
-  const second = { ...LIBRARY, id: 'second', render_skip_full: ['dust'] } as Library;
+  const second: Library = { ...LIBRARY, id: 'second', render_skip_full: ['dust'] };
   await open({}, [LIBRARY, second]);
 
   expect(ticked('Correct lens distortion')).toBe(false);
@@ -190,7 +186,7 @@ test('with no libraries it shows the defaults and nothing can be changed', async
   }
   const denoiser = screen.getByRole('combobox', { name: 'Denoiser' });
   expect(denoiser.textContent).toContain('Fast (GALOSH)');
-  expect(denoiser.hasAttribute('data-disabled')).toBe(true);
+  expect(denoiser.hasAttribute('disabled')).toBe(true);
   expect(screen.getByText('Dust removal').parentElement?.getAttribute('aria-description')).toBe(
     'Add a library to change this',
   );

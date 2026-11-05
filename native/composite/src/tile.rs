@@ -231,7 +231,7 @@ fn params(
 /// The block's size, for `every_uniform_is_the_size_its_shader_reads` to hold against the shader's own. Nothing above branches
 /// on a value, so any source's geometry writes the same run of words.
 #[cfg(test)]
-pub fn params_block() -> usize {
+pub(crate) fn params_block() -> usize {
     let spec = Composition::of_one([64, 64], composition::LensSpec::none());
     params(
         &spec.sources[0],

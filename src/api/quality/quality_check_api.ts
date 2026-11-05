@@ -4,7 +4,6 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import { dustSettings } from '../../schemas/dust_settings';
-import { DEFAULT_HIGHLIGHT_RECOVERY } from '../../schemas/highlight_recovery';
 import type { Job } from '../../schemas/jobs';
 import { PathSegment, route } from '../../schemas/route';
 import type { Originals } from '../../services/blobs/originals';
@@ -100,21 +99,15 @@ export class QualityCheckApi {
           // would make it a picture of something nobody ships.
           encodeMs = await this.encode(library.id, photo.id, file, {
             rawFilePath,
-            cameraMatch: metered.cameraMatch,
+            ...metered,
             // The photograph's own, which is the document's default: this page compares
             // quantizers against what the library actually ships, and a denoise named here
             // would be a strength no rendition of this photograph is ever taken at.
             denoiseLuminance: null,
             denoiseColour: null,
-            denoiser: metered.denoiser,
-            highlightRecovery: DEFAULT_HIGHLIGHT_RECOVERY,
             // Off, for the same reason: this page compares quantizers, and a correction that
             // removed a few discs from whichever photograph was chosen is a second variable.
             dust: dustSettings(undefined),
-            sharpen: metered.sharpen,
-            defringe: metered.defringe,
-            exposure: metered.exposure,
-            adjust: metered.adjust,
             geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
             grade: {
               referenceWhiteNits: settings.hdr_reference_white_nits,

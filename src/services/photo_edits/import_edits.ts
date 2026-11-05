@@ -22,8 +22,9 @@ export type ImportingLibrary = Pick<Library, 'root_path' | 'render_skip_full' | 
  * Each new photo's first document: Lightroom's develop settings where a sidecar holds them, and
  * otherwise the library's Rendering defaults (`importedEdits`).
  *
- * Only the importing device writes them, and the library's settings are read here and nowhere
- * else: changing them later leaves the photos already imported alone.
+ * Only the importing device writes them, and the library's settings reach a photo only as it
+ * arrives (here, and `CompositesService.firstFrame` for a merge): changing them later leaves the
+ * photos already imported alone.
  *
  * **No UI and no endpoint: a sidecar beside a photo is part of what the photo *is*.**
  * A reader who has spent years editing a library in Lightroom and points this at the

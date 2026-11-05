@@ -322,6 +322,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  db.close();
   globalThis.Worker = REAL_WORKER;
   rmSync(root, { recursive: true, force: true });
   rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });

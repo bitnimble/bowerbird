@@ -20,6 +20,7 @@ import { color, size } from '../../../ui/tokens.stylex';
 import { calendarSize } from './calendar.stylex';
 import { GridControlsStrings } from './grid_controls.strings';
 import { styles } from './grid_controls.stylex';
+import { isoDay } from './photo_filters';
 
 const RDP = getDefaultClassNames();
 
@@ -43,12 +44,6 @@ const CALENDAR_VARS = {
   '--rdp-range_middle-background-color': '#1a2333',
   '--rdp-range_middle-color': color.bone,
 } as CSSProperties;
-
-function isoDay(date: Date): string {
-  // Local parts, not toISOString: a date picked as the 3rd must not become the
-  // 2nd for anyone east of UTC.
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
 
 function parseDay(iso: string | undefined): Date | undefined {
   if (iso == null) return undefined;

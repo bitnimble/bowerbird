@@ -270,9 +270,9 @@ pub fn prepare_bytes(
 /// An open cannot be cancelled: a reader who opens the editor and changes their mind leaves
 /// the decode running, because neither the browser abandoning a request nor Tauri dropping an
 /// invoke reaches the thread already inside the decode. So what bounds this is how many can be
-/// *underway*, and until now nothing did. Stepping through a few photographs and opening each
-/// was that many full-sensor decodes at once, and at 61MP one of those is the decode plus an
-/// f32 buffer of the same shape, well over a gigabyte.
+/// *underway*: stepping through a few photographs and opening each would be that many full-sensor
+/// decodes at once, and at 61MP one of those is the decode plus an f32 buffer of the same shape,
+/// well over a gigabyte.
 ///
 /// Serialised rather than metered, because concurrency buys nothing here to trade away: the
 /// work inside is already spread across every core by rayon, so a second open running beside

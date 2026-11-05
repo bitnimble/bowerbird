@@ -1002,7 +1002,7 @@ describe('pairing (§6.5)', () => {
     expect(pairedPeers(origin.db, LIB)[0]!.reachable).toBe(false);
   });
 
-  // What a page opens with. The gate on every strip, badge and panel is whether a
+  // What a page opens with. The gate on every device list, badge and panel is whether a
   // library has a peer at all, and asking that per library is a request each to
   // be told no.
   it('answers for the whole install at once, leaving out libraries that replicate with nobody', async () => {

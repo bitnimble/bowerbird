@@ -333,7 +333,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
           </>
         )}
 
-        {step === 'cards' && remote != null && (
+        {step === 'cards' && (
           <>
             <List>
               {picked.map((library) => (

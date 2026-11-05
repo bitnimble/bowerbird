@@ -262,7 +262,7 @@ export class ReplicationPresenter {
   }
 
   /** Queues the originals `peer` lacks, where it keeps them, and those this device lacks. */
-  async syncRaws(library: Library, peerId: string): Promise<void> {
+  async syncRaws(library: Pick<Library, 'id' | 'read_only'>, peerId: string): Promise<void> {
     const name = this.store.peerName(library.id, peerId);
     const wanted = this.store
       .peersOf(library.id)

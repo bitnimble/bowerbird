@@ -3,8 +3,7 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { LibraryConfiguration } from '../../schemas/libraries';
-import { deleteEmptyStagingDirectory } from '../../utils/deletions';
-import { moveWithoutReplacing } from '../../utils/deletions';
+import { deleteEmptyStagingDirectory, moveWithoutReplacing } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
 

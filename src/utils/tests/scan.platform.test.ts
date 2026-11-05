@@ -3,20 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scanLibraryTree } from '../scan';
-import type { LibraryScope } from '../scope';
+import { scope } from './library_tree_test_helpers';
 
 const CAN_DENY_READS = process.platform !== 'win32' && process.getuid?.() !== 0;
 
 let root: string;
 let locked: string;
-
-const scope = (): LibraryScope => ({
-  rootPath: root,
-  includeSubfolders: true,
-  includeNonRaw: false,
-  binName: null,
-  excluded: new Set(),
-});
 
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-scan-'));
@@ -36,7 +28,7 @@ test.skipIf(!CAN_DENY_READS)(
   async () => {
     chmodSync(locked, 0o000);
 
-    await expect(scanLibraryTree(scope())).rejects.toMatchObject({ code: 'EACCES' });
+    await expect(scanLibraryTree(scope(root))).rejects.toMatchObject({ code: 'EACCES' });
   },
 );
 
@@ -45,7 +37,7 @@ test.skipIf(!CAN_DENY_READS)(
   async () => {
     chmodSync(locked, 0o000);
 
-    const walked = await scanLibraryTree(scope(), { skipUnreadable: true });
+    const walked = await scanLibraryTree(scope(root), { skipUnreadable: true });
 
     expect(walked.files.map((file) => file.relPath)).toEqual(['kept.arw']);
     expect(walked.complete).toBe(false);
@@ -55,7 +47,7 @@ test.skipIf(!CAN_DENY_READS)(
 test.skipIf(!CAN_DENY_READS)('an unreadable root fails even a walk that skips', async () => {
   chmodSync(root, 0o000);
 
-  await expect(scanLibraryTree(scope(), { skipUnreadable: true })).rejects.toMatchObject({
+  await expect(scanLibraryTree(scope(root), { skipUnreadable: true })).rejects.toMatchObject({
     code: 'EACCES',
   });
 });

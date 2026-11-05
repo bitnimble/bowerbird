@@ -248,8 +248,9 @@ function shootChoiceOf(value: string): ImportShootChoice {
 }
 
 const JobFailures = observer(function JobFailures(): JSX.Element | null {
-  const job = useImportStore().job;
-  if (job == null || job.status === 'copying') return null;
+  const store = useImportStore();
+  const job = store.job;
+  if (job == null || store.copying) return null;
   return (
     <>
       {job.failed > 0 && (
