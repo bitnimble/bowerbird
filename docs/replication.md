@@ -688,7 +688,7 @@ which asks for the same library-wide diff in each direction the two sides' §7.1
 files**: "send originals <peer> lacks", scoped to a selection, a shoot, or the library, computed
 from `blob_locations`. That makes it idempotent (restart recovery is
 pressing it again), makes partial completion a number rather than a mystery, and gives the
-synced devices list its headline ("Macbook holds 2,000 originals Home server lacks"). The queue
+synced devices list its sending and fetching counts. The queue
 survives app restart and laptop sleep; per-item progress, pause, resume; ranged GET,
 `content_hash`-verified, staged to a temp file **on the same filesystem as the library root**
 (or the rename is a copy and §8.1's atomicity claim is false) and renamed into the tree.
@@ -837,7 +837,7 @@ every picture of a photo whose original is not here comes from a peer.
 push is refused on a device syncing thumbnails only. The handshake carries each
 side's answer so neither offers what the other would refuse - and that is advisory only, because
 it is minutes old by the time a transfer starts. A peer on a build that does not send it reads
-as wanting originals, which is what every peer did before the setting existed.
+as wanting originals.
 
 Switching to thumbnails only also cancels what is still queued to arrive, or the queue goes on
 delivering exactly what was just turned off.
@@ -950,7 +950,7 @@ window.
 
 ## 9. Replica creation
 
-"Connect to another Bowerbird", alongside "Add library", takes the other device's address, lists what it
+"Connect to another device", alongside "Add library", takes the other device's address, lists what it
 offers, and takes a local root for the one picked. For a writable library it creates the bin
 folder with identity columns recorded (the same helper library creation uses, not the scan's healing path), then
 clones: the ordinary stream from an empty vector, ids preserved verbatim. The replica starts with
@@ -966,7 +966,7 @@ response carries the flag, and the handshake refuses every session once the two 
 reachable only through its proxy. Peer calls use the browser address, not the hidden API port.
 Production similarly serves the client from bun so one published address answers both.
 
-On the joining device: **"Connect to another Bowerbird"** asks for the address, then the list of
+On the joining device: **"Connect to another device"** asks for the address, then the list of
 what that device offers, then per library the folder, which the picker can create, and the §7.10
 choice, which starts at Sync original RAWs. A read-only library asks only for its folder and syncs
 thumbnails only. Several libraries are configured one at a time from cards and added together. The
@@ -994,7 +994,7 @@ to fix NTP before skew reaches the session refusal (§2.2).
 
 **Pairing requires the server reachable, so the replica must exist before the trip.** A
 standalone library created on the road can never become a replica (§1). Settings puts "Add
-library" and "Connect to another Bowerbird" side by side so the fork is visible at the moment it matters,
+library" and "Connect to another device" side by side so the fork is visible at the moment it matters,
 and this sentence is the one that belongs in the user docs in bold.
 
 ## 10. UI
@@ -1022,7 +1022,7 @@ and this sentence is the one that belongs in the user docs in bold.
   availability _sort_: sorts are collection-owned and replicated; availability is per-peer.
 - **Peer list** (§6.5): forget, holdings, last seen, each under the name the peer gave itself
   (§2.1).
-- **Adding one** (§9.1): "Connect to another Bowerbird" takes an address, lists what that device
+- **Adding one** (§9.1): "Connect to another device" takes an address, lists what that device
   offers, and takes a local folder.
 - A library with no peers renders none of this: no device list, no badges, no conflict page, zero new
   states for the single-server user.

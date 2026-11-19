@@ -13,6 +13,7 @@ import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { ORDERINGS } from '../photos/grid/grid_controls';
+import { AddShootStrings } from '../shoots/add_shoot_dialog.strings';
 import { AddAlbumStrings } from './add_album_dialog.strings';
 import { AlbumsPageStrings } from './albums_page.strings';
 
@@ -54,7 +55,7 @@ export const AddAlbumDialog = observer(function AddAlbumDialog({
       <DialogBody>
         <Field>
           <Text variant="label" as="span">
-            {AddLibraryStrings.name()}
+            {AddShootStrings.name()}
           </Text>
           <TextField
             grow

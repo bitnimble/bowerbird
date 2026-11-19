@@ -112,7 +112,7 @@ describe('ProcessingService.processUnprocessed', () => {
       repo,
       {} as unknown as PhotoPathsRepository,
       {} as unknown as PhotoListingRepository,
-      settingsWith({}),
+      settingsWith(),
       undefined,
       undefined,
       undefined,
@@ -140,7 +140,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markRenditionsBuilt,
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted).toHaveLength(0);
     expect(markRenditionsBuilt.mock.calls.map((call) => call[4])).toEqual(['full-hdr']);
@@ -160,7 +160,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     // Both jobs: the tile and the renditions are the same picture, so they cannot
     // disagree about the exposure it was taken at.
@@ -197,7 +197,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted[0]?.adjust).toEqual({
       contrast: 20,
@@ -246,7 +246,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     // Left, top, right, bottom - the order `geometry::warp::Geometry` destructures. A transposed
     // pair here is a crop of the wrong rectangle, which no type on either side would catch
@@ -273,7 +273,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted[0]?.geometry.keystone).toEqual(keystone);
   });
@@ -290,7 +290,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     // A rendition of the picture as the camera metered it is a worse rendition than the
     // reader asked for, and a far better outcome than a photo that never builds one. The
@@ -325,7 +325,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     // The untouched photo keeps its 18ms tile and builds nothing else; only the one
     // somebody worked on pays for a render.
@@ -360,7 +360,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted.map((job) => photoStage(job))).toEqual([
       'heic:grid',
@@ -391,7 +391,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
-    const service = makeProcessingService(repo, settingsWith({}));
+    const service = makeProcessingService(repo, settingsWith());
     const headers: [string, HeaderMetadata][] = [];
     service.onHeaderRead((photoId, header) => headers.push([photoId, header]));
 
@@ -415,7 +415,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
       mediaImageIdOf: jest.fn(() => 7),
     } as unknown as PhotoProcessingRepository;
-    const service = makeProcessingService(repo, settingsWith({}));
+    const service = makeProcessingService(repo, settingsWith());
     const before = path.join(dataPathForLibraryId(LIB), 'renditions', 'grid', 'thumbnailed.avif');
     mkdirSync(path.dirname(before), { recursive: true });
     writeFileSync(before, 'a render from before');
@@ -450,7 +450,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
       mediaImageIdOf: jest.fn(() => null),
     } as unknown as PhotoProcessingRepository;
-    const service = makeProcessingService(repo, settingsWith({}));
+    const service = makeProcessingService(repo, settingsWith());
 
     await service.processUnprocessed({ libraryId: 'lib' });
 
@@ -466,7 +466,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markRenditionsBuilt: jest.fn(() => written.push(committing)),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
-    const service = makeProcessingService(repo, settingsWith({}));
+    const service = makeProcessingService(repo, settingsWith());
     Object.assign(repo, {
       inOneCommit: (record: () => void): void => {
         committing = true;
@@ -502,7 +502,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(repo, settingsWith()).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted).toHaveLength(2);
     for (const job of posted) {

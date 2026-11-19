@@ -79,7 +79,7 @@ export const AddShootDialog = observer(function AddShootDialog({
       <DialogBody>
         <Field>
           <Text variant="label" as="span">
-            {AddLibraryStrings.name()}
+            {AddShootStrings.name()}
           </Text>
           <TextField
             grow

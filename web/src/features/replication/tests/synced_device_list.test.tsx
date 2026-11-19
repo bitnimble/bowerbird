@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { LibrarySchema } from '../../../../../src/schemas/libraries';
 import { type PairedPeer } from '../../../../../src/schemas/replication';
 import { registerDom } from '../../../test_dom';
+import { pairedPeer } from './peer_fixture';
 
 registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
@@ -25,16 +26,7 @@ const LIBRARY = LibrarySchema.parse({
   rendered_photo_count: 0,
 });
 
-const PEER: PairedPeer = {
-  peer_id: 'laptop',
-  name: 'Laptop',
-  paired_at: '2026-01-01T00:00:00.000Z',
-  last_replicated_at: null,
-  last_error: null,
-  wants_originals: true,
-  reachable: true,
-  outdated: null,
-};
+const PEER = pairedPeer();
 
 const RAW_ERROR =
   'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()';

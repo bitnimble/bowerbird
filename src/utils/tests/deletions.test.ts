@@ -30,12 +30,7 @@ import {
   unlinkMovedFile,
 } from '../deletions';
 import { contentHash } from '../hash';
-import type { WriteGrants } from '../../services/libraries/write_grants';
-
-/** A refused deletion must not ask the platform first, or the reader is prompted for nothing. */
-const NEVER_ASKED: WriteGrants = {
-  grant: () => Promise.reject(new Error('asked leave for a deletion it then refused')),
-};
+import { NEVER_ASKED } from './library_tree_test_helpers';
 
 function withTmp(run: (root: string) => Promise<void> | void): () => Promise<void> {
   return async () => {
@@ -46,6 +41,21 @@ function withTmp(run: (root: string) => Promise<void> | void): () => Promise<voi
       rmSync(root, { recursive: true, force: true });
     }
   };
+}
+
+const SHOT_AT = new Date('2026-03-04T05:06:07.000Z');
+
+function shaped(
+  root: string,
+  source: string | Uint8Array = 'RAW',
+  destination: string | null = null,
+): [string, string] {
+  const card = path.join(root, 'card.arw');
+  const copy = path.join(root, 'copy.arw');
+  writeFileSync(card, source);
+  utimesSync(card, SHOT_AT, SHOT_AT);
+  if (destination != null) writeFileSync(copy, destination);
+  return [card, copy];
 }
 
 describe('deleteImportStaging', () => {
@@ -217,21 +227,6 @@ describe('deleteDataDirectory', () => {
 });
 
 describe('moveOriginal', () => {
-  const SHOT_AT = new Date('2026-03-04T05:06:07.000Z');
-
-  function shaped(
-    root: string,
-    source = 'RAW',
-    destination: string | null = null,
-  ): [string, string] {
-    const card = path.join(root, 'card.arw');
-    const copy = path.join(root, 'copy.arw');
-    writeFileSync(card, source);
-    utimesSync(card, SHOT_AT, SHOT_AT);
-    if (destination != null) writeFileSync(copy, destination);
-    return [card, copy];
-  }
-
   it(
     'moves to a free name, keeping the bytes and the mtime and leaving no staging file',
     withTmp(async (root) => {
@@ -250,9 +245,7 @@ describe('moveOriginal', () => {
     'carries a file bigger than one read',
     withTmp(async (root) => {
       const bytes = randomBytes(9 * 1024 * 1024);
-      const card = path.join(root, 'card.arw');
-      const copy = path.join(root, 'copy.arw');
-      writeFileSync(card, bytes);
+      const [card, copy] = shaped(root, bytes);
 
       await moveOriginal(card, copy);
 
@@ -358,9 +351,7 @@ describe('copyOriginal', () => {
   it(
     'leaves the source, and refuses to replace what holds the name',
     withTmp(async (root) => {
-      const card = path.join(root, 'card.arw');
-      const copy = path.join(root, 'copy.arw');
-      writeFileSync(card, 'RAW');
+      const [card, copy] = shaped(root);
 
       await copyOriginal(card, copy);
       expect(readFileSync(card, 'utf8')).toBe('RAW');
@@ -375,7 +366,7 @@ describe('copyOriginal', () => {
 });
 
 describe('deleteEvictedOriginal', () => {
-  function shaped(root: string, bytes = 'RAW'): string {
+  function rawOf(root: string, bytes = 'RAW'): string {
     const raw = path.join(root, 'a.arw');
     writeFileSync(raw, bytes);
     return raw;
@@ -387,7 +378,7 @@ describe('deleteEvictedOriginal', () => {
   it(
     'deletes once the local file and a matching peer both answer',
     withTmp(async (root) => {
-      const raw = shaped(root);
+      const raw = rawOf(root);
       const hash = await contentHash(raw);
       const granted: string[] = [];
 
@@ -407,7 +398,7 @@ describe('deleteEvictedOriginal', () => {
   it(
     'refuses a local file that no longer hashes what was recorded, before asking the peer',
     withTmp(async (root) => {
-      const raw = shaped(root, 'edited');
+      const raw = rawOf(root, 'edited');
 
       await expect(
         deleteEvictedOriginal(root, raw, 'recorded', NEVER_REACHED, NEVER_ASKED),
@@ -421,7 +412,7 @@ describe('deleteEvictedOriginal', () => {
     ['holds other bytes', { held: true, content_hash: 'other' }],
   ])('refuses when the peer %s', (_, answer) =>
     withTmp(async (root) => {
-      const raw = shaped(root);
+      const raw = rawOf(root);
 
       await expect(
         deleteEvictedOriginal(root, raw, await contentHash(raw), async () => answer, NEVER_ASKED),
@@ -433,7 +424,7 @@ describe('deleteEvictedOriginal', () => {
   it(
     'keeps the file when the peer cannot be asked',
     withTmp(async (root) => {
-      const raw = shaped(root);
+      const raw = rawOf(root);
 
       await expect(
         deleteEvictedOriginal(
@@ -452,7 +443,7 @@ describe('deleteEvictedOriginal', () => {
 describe('deleteBackedUpOriginal', () => {
   // Every arm of this one: it is the only place an original a reader still has is removed on
   // purpose, and each check exists because the copy it trusts can be wrong in a different way.
-  async function shaped(
+  async function backedUp(
     root: string,
     local: string,
     onBackup: string,
@@ -469,7 +460,7 @@ describe('deleteBackedUpOriginal', () => {
   it(
     'gives up the local copy once both files hash what the catalogue recorded',
     withTmp(async (root) => {
-      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const { raw, copy } = await backedUp(root, 'RAW', 'RAW');
 
       const granted: string[] = [];
       await deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy), {
@@ -485,7 +476,7 @@ describe('deleteBackedUpOriginal', () => {
   it(
     'refuses when the backup holds nothing at the path it was told',
     withTmp(async (root) => {
-      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const { raw, copy } = await backedUp(root, 'RAW', 'RAW');
       const hash = await contentHash(copy);
       rmSync(copy);
 
@@ -499,7 +490,7 @@ describe('deleteBackedUpOriginal', () => {
   it(
     'refuses when the copy on the backup has rotted under the record of it',
     withTmp(async (root) => {
-      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const { raw, copy } = await backedUp(root, 'RAW', 'RAW');
       const hash = await contentHash(copy);
       writeFileSync(copy, 'half a RAW');
 
@@ -516,7 +507,7 @@ describe('deleteBackedUpOriginal', () => {
   it(
     'refuses when the local copy is no longer the one that was backed up',
     withTmp(async (root) => {
-      const { raw, copy } = await shaped(root, 'RAW two', 'RAW');
+      const { raw, copy } = await backedUp(root, 'RAW two', 'RAW');
 
       await expect(
         deleteBackedUpOriginal(
@@ -534,7 +525,7 @@ describe('deleteBackedUpOriginal', () => {
   it(
     'refuses a target outside the library it was given',
     withTmp(async (root) => {
-      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const { raw, copy } = await backedUp(root, 'RAW', 'RAW');
 
       await expect(
         deleteBackedUpOriginal(

@@ -339,7 +339,7 @@ export class CompositesService {
       // The framing on the row rather than only in the recipe, so every render of this
       // photograph - a rendition, an export, the editor's own tick - trims the wedges of nothing
       // a hand-held pan leaves at the corners, and the reader can move it like any other crop.
-      this.firstFrame(photoId, recipe, library);
+      this.startDocument(photoId, recipe, library);
       log.info('merged a composite', { photo: photoId, kind, sources: recipe.sources.length });
 
       const made = { ...watching, photoId };
@@ -726,7 +726,7 @@ export class CompositesService {
       reference: recipe.sources[recipe.base]?.photoId ?? sources[0]!.photoId,
     });
     try {
-      this.firstFrame(photoId, recipe, library);
+      this.startDocument(photoId, recipe, library);
       log.info('assembled a photograph', { photo: photoId, sources: recipe.sources.length });
       await this.assembled(photoId, recipe, sources, library);
       return { photoId };
@@ -766,7 +766,7 @@ export class CompositesService {
     return { photoId };
   }
 
-  private firstFrame(
+  private startDocument(
     photoId: string,
     recipe: Composition | AssemblyRecipe,
     library: Library,

@@ -300,6 +300,8 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
   const store = useImportStore();
   const { imports } = usePresenters();
   const job = store.job;
+  const done = job == null ? 0 : importJobDone(job);
+  const adding = ImportPageStrings.addingCount(done, job?.total ?? 0);
   const namesNewShoot =
     store.shootChoice.kind !== 'new' ||
     ShootNameSchema.safeParse(store.newShootName.trim()).success;
@@ -315,6 +317,7 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
       </Button>
       <CheckLabel>
         <input
+          {...stylex.props(focusRing.ring)}
           type="checkbox"
           checked={store.merge}
           onChange={(event) => imports.setMerge(event.target.checked)}
@@ -323,6 +326,7 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
       </CheckLabel>
       <CheckLabel>
         <input
+          {...stylex.props(focusRing.ring)}
           type="checkbox"
           checked={store.deleteOriginals}
           onChange={(event) => imports.setDeleteOriginals(event.target.checked)}
@@ -336,14 +340,8 @@ const ImportToolbar = observer(function ImportToolbar(): JSX.Element {
       {job != null && store.copying ? (
         <>
           <span {...stylex.props(styles.progress)}>
-            <Text variant="muted">
-              {ImportPageStrings.addingCount(importJobDone(job), job.total)}
-            </Text>
-            <ProgressBar
-              label={ImportPageStrings.addingCount(importJobDone(job), job.total)}
-              value={importJobDone(job)}
-              max={job.total}
-            />
+            <Text variant="muted">{adding}</Text>
+            <ProgressBar label={adding} value={done} max={job.total} />
           </span>
           <Button
             iconOnly

@@ -1,11 +1,15 @@
 // What the panel offers: a checkbox and a cost for each stage a `full` render can do without, and
-// one Misc row for the rest. What a stage costs is the machine's rather than a library's.
+// one Other row for the rest. What a stage costs is the machine's rather than a library's.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { DEFAULT_LIBRARY_SETTINGS, type Library } from '../../../../../src/schemas/libraries';
-import { type RenderTiming, type RenderTimings } from '../../../../../src/schemas/render_stages';
-import { ESTIMATED_MS, ESTIMATED_PMRID_DENOISE_MS } from '../../../../../src/schemas/render_stages';
+import {
+  ESTIMATED_MS,
+  ESTIMATED_PMRID_DENOISE_MS,
+  type RenderTiming,
+  type RenderTimings,
+} from '../../../../../src/schemas/render_stages';
 import { DEFAULT_SETTINGS } from '../../../../../src/schemas/settings';
 import { librariesApi } from '../../../api/libraries';
 import { settingsApi } from '../../../api/settings';
@@ -68,12 +72,12 @@ const measuredNow = (stages: RenderTiming['stages']): RenderTiming => ({
 const ticked = (name: string): boolean =>
   (screen.getByRole('checkbox', { name }) as HTMLInputElement).checked;
 
-test('the stages a render cannot do without share one Misc row with nothing to press', async () => {
+test('the stages a render cannot do without share one Other row with nothing to press', async () => {
   await open();
-  expect(screen.queryByRole('checkbox', { name: 'Misc' })).toBeNull();
+  expect(screen.queryByRole('checkbox', { name: 'Other' })).toBeNull();
   const { read, demosaic, encode } = ESTIMATED_MS.full;
-  expect(screen.getByText('Misc').parentElement?.textContent).toBe(
-    `Misc~${read + demosaic + encode} ms`,
+  expect(screen.getByText('Other').parentElement?.textContent).toBe(
+    `Other~${read + demosaic + encode} ms`,
   );
 });
 
@@ -94,12 +98,6 @@ test('a measured zero states the measurement limit', async () => {
   expect(screen.getAllByText('No measurable saving')).toHaveLength(2);
 });
 
-test('only the full rendition is offered', async () => {
-  await open();
-  expect(screen.queryByRole('radio', { name: 'Rendered RAW (max quality)' })).toBeNull();
-  expect(screen.queryByRole('radiogroup')).toBeNull();
-});
-
 test('the total is what the stages this rendition runs cost together', async () => {
   const stages = {
     read: 10,
@@ -115,7 +113,7 @@ test('the total is what the stages this rendition runs cost together', async () 
   await open({ full: { galosh: measuredNow(stages) } });
   // `full` leaves out the lens and the colour match.
   expect(screen.getByText('Total').parentElement?.textContent).toBe('Total~280 ms');
-  expect(screen.getByText('Misc').parentElement?.textContent).toBe('Misc~120 ms');
+  expect(screen.getByText('Other').parentElement?.textContent).toBe('Other~120 ms');
 });
 
 test('a stage quotes the estimate until this device has measured one', async () => {
@@ -190,7 +188,7 @@ test('with no libraries it shows the defaults and nothing can be changed', async
   expect(screen.getByText('Dust removal').parentElement?.getAttribute('aria-description')).toBe(
     'Add a library to change this',
   );
-  expect(screen.getByText('Misc').parentElement?.getAttribute('aria-description')).toBeNull();
+  expect(screen.getByText('Other').parentElement?.getAttribute('aria-description')).toBeNull();
   expect(screen.getByRole('button', { name: 'Measure' }).hasAttribute('disabled')).toBe(false);
 });
 

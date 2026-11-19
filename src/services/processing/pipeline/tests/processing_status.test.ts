@@ -92,7 +92,7 @@ describe('live library processing status', () => {
       photos,
       new PhotoPathsRepository(db, new StackMembership(db)),
       new PhotoListingRepository(db),
-      settingsWith({}),
+      settingsWith(),
       undefined,
       (id) => libraries.getById(id),
       undefined,

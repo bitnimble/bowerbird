@@ -12,7 +12,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Library } from '../../../schemas/libraries';
-import { ImportService } from '../import_service';
+import { type ImportLibrary, ImportService } from '../import_service';
+
+const WAIT_MS = 4000;
 
 let scratch: string;
 
@@ -24,7 +26,10 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-function serviceFor(library: Library, others: Library[] = []): ImportService {
+function serviceFor(
+  library: ImportLibrary,
+  others: Pick<Library, 'root_path'>[] = [],
+): ImportService {
   return new ImportService(
     { getById: () => library, list: () => [...others, library] },
     { getById: () => null },
@@ -44,7 +49,12 @@ test('a photo read-only on the card copies, and the copy can be written', async 
   const protectedPhoto = path.join(card, 'DSC1.ARW');
   writeFileSync(protectedPhoto, 'raw');
   chmodSync(protectedPhoto, 0o444);
-  const service = serviceFor({ id: 'lib00001', root_path: root, read_only: false } as Library);
+  const service = serviceFor({
+    id: 'lib00001',
+    name: 'Library',
+    root_path: root,
+    read_only: false,
+  });
   const scan = await service.scan(card);
 
   await service.start({
@@ -54,7 +64,11 @@ test('a photo read-only on the card copies, and the copy can be written', async 
     file_ids: [0],
     delete_originals: false,
   });
-  while (service.currentJob()?.status === 'copying') await Bun.sleep(1);
+  const deadline = performance.now() + WAIT_MS;
+  while (service.currentJob()?.status === 'copying') {
+    if (performance.now() > deadline) throw new Error('timed out waiting on the import');
+    await Bun.sleep(1);
+  }
 
   expect(service.currentJob()).toMatchObject({ copied: 1, failed: 0 });
   expect(statSync(path.join(root, 'DSC1.ARW')).mode & 0o200).toBe(0o200);
@@ -76,8 +90,8 @@ test.skipIf(process.platform === 'win32').each([
   mkdirSync(destination);
 
   const root_path = linked === 'root' ? link : realRoot;
-  const catalogued = { id: 'lib00001', root_path } as Library;
-  const target = { id: 'lib00002', root_path: destination, read_only: false } as Library;
+  const catalogued = { root_path };
+  const target = { id: 'lib00002', name: 'Destination', root_path: destination, read_only: false };
   const service = serviceFor(target, [catalogued]);
   const scan = await service.scan(linked === 'source' ? link : shoot);
   expect(scan.files).toHaveLength(1);

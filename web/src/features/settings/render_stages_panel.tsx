@@ -87,7 +87,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel(): JSX.Elem
                 : undefined
           }
           runs={runs(stage)}
-          onChange={(next) => void libraries.setRenderStage(RENDITION, stage, next)}
+          onChange={(next) => void libraries.setRenderStage(stage, next)}
           control={
             stage === 'denoise' ? (
               <Select
@@ -102,7 +102,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel(): JSX.Elem
         />
       ))}
 
-      <SettingRow label={SettingsStrings.stagesMisc()}>
+      <SettingRow label={SettingsStrings.stagesOther()}>
         <Text variant="muted">{SettingsStrings.stageCost(misc)}</Text>
         <span {...stylex.props(styles.noBox)} />
       </SettingRow>

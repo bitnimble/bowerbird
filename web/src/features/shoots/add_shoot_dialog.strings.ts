@@ -1,5 +1,6 @@
 export const AddShootStrings = {
   title: () => 'New shoot',
+  name: () => 'Name',
   shootName: () => 'Shoot name',
   parentShoot: () => 'Parent shoot',
   noParentShoot: () => 'None',

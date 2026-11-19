@@ -17,10 +17,6 @@ import { ImportPageStrings } from './import_page.strings';
 
 type SideList = 'format' | 'camera' | 'lens';
 
-function toggled<T>(list: readonly T[], value: T, on: boolean): T[] {
-  return on ? [...list, value] : list.filter((item) => item !== value);
-}
-
 export const ImportFilterMenu = observer(function ImportFilterMenu(): JSX.Element {
   const store = useImportStore();
   const { imports } = usePresenters();
@@ -72,9 +68,7 @@ export const ImportFilterMenu = observer(function ImportFilterMenu(): JSX.Elemen
                   label: GridControlsStrings.fileFormat(format),
                 }))}
                 selected={f.formats}
-                onToggle={(format, on) =>
-                  imports.setFilters({ formats: toggled(f.formats, format, on) })
-                }
+                onToggle={(format, on) => imports.toggleFilter('formats', format, on)}
               />
             )}
           </Section>
@@ -91,9 +85,7 @@ export const ImportFilterMenu = observer(function ImportFilterMenu(): JSX.Elemen
                     label: model,
                   }))}
                   selected={f.cameraModels}
-                  onToggle={(model, on) =>
-                    imports.setFilters({ cameraModels: toggled(f.cameraModels, model, on) })
-                  }
+                  onToggle={(model, on) => imports.toggleFilter('cameraModels', model, on)}
                 />
               )}
               {store.lensModelOptions.length > 0 && (
@@ -107,9 +99,7 @@ export const ImportFilterMenu = observer(function ImportFilterMenu(): JSX.Elemen
                     label: model,
                   }))}
                   selected={f.lensModels}
-                  onToggle={(model, on) =>
-                    imports.setFilters({ lensModels: toggled(f.lensModels, model, on) })
-                  }
+                  onToggle={(model, on) => imports.toggleFilter('lensModels', model, on)}
                 />
               )}
             </Section>

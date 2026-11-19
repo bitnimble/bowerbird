@@ -7,9 +7,6 @@ export const AddLibraryStrings = {
   libraryRootPath: () => 'Library root',
   rootPlaceholder: () => '/photos',
 
-  /** What to call the thing being created, in the new-shoot and new-album dialogs. */
-  name: () => 'Name',
-
   unwritableHint: () => "Bowerbird can't write to this folder. Choose another folder.",
 
   binExistsWarning: (rootPath: string, binName: string) =>

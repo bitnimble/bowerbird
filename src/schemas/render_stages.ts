@@ -73,7 +73,7 @@ export function isOptional(stage: RenderStage): stage is OptionalStage {
   return OPTIONAL_STAGES.some((optional) => optional === stage);
 }
 
-/** The renditions a library states stages for: the two it renders (§10.1). */
+/** The renditions a benchmark measures stages for (§10.1). */
 export const RENDERED_RENDITIONS = ['full', 'max'] as const;
 export const RenderedRenditionSchema = z.enum(RENDERED_RENDITIONS);
 export type RenderedRendition = z.infer<typeof RenderedRenditionSchema>;

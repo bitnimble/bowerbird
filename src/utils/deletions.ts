@@ -299,8 +299,7 @@ export async function deleteEvictedOriginal(
  * A deliberate deletion of an original: the import moving it into a library across filesystems,
  * with "Delete after copying" on (DESIGN §9.11).
  *
- * The copy, its proof, and the unlink are this one call, reading the source once. A destination
- * already there has to hold the same bytes instead of being copied to.
+ * A destination already there has to hold the same bytes instead of being copied to.
  *
  * Throws with the source untouched when the destination can't be shown to hold it. Returns whether
  * the source went: false means the copy stands and the source couldn't be removed, as on a card
@@ -355,7 +354,7 @@ async function proveSameBytes(source: string, destination: string, copy: Stats):
   if (isOneFile(original, copy)) {
     throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} is the same file`);
   }
-  if ((await contentHash(source)) !== (await contentHash(destination))) {
+  if (!(await sameBytes(source, destination))) {
     throw new AppError('IO_ERROR', `refusing to delete ${source}: ${destination} does not match`);
   }
   await flushFile(destination);
@@ -474,10 +473,7 @@ export async function unlinkMovedFile(from: string, movedTo: string): Promise<vo
     }
   } else if (destination.isSymbolicLink()) {
     throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} is a link, not a copy`);
-  } else if (
-    statSync(from).size !== destination.size ||
-    (await contentHash(from)) !== (await contentHash(movedTo))
-  ) {
+  } else if (statSync(from).size !== destination.size || !(await sameBytes(from, movedTo))) {
     throw new AppError('IO_ERROR', `refusing to remove ${from}: ${movedTo} does not match`);
   }
   await unlink(from);
@@ -485,4 +481,9 @@ export async function unlinkMovedFile(from: string, movedTo: string): Promise<vo
 
 async function canonicalName(file: string): Promise<string> {
   return path.join(await realpath(path.dirname(file)), path.basename(file));
+}
+
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [hashA, hashB] = await Promise.all([contentHash(a), contentHash(b)]);
+  return hashA === hashB;
 }

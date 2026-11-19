@@ -349,12 +349,20 @@ pub async fn read_words(gpu: &Gpu, staging: &wgpu::Buffer) -> Option<Vec<u32>> {
     read_back(gpu, staging, bytemuck::pod_collect_to_vec).await
 }
 
-/// The first `count` floats of a storage buffer, copied out through a readback of their own.
 pub async fn read_floats(gpu: &Gpu, buffer: &Buffer, count: usize) -> Option<Vec<f32>> {
-    let bytes = (count * 4) as u64;
+    read_pod::<f32>(gpu, buffer, count).await
+}
+
+/// The first `count` values of a storage buffer, copied out through a readback of their own.
+pub async fn read_pod<T: bytemuck::Pod>(
+    gpu: &Gpu,
+    buffer: &Buffer,
+    count: usize,
+) -> Option<Vec<T>> {
+    let bytes = (count * std::mem::size_of::<T>()) as u64;
     let mut recording = gpu.record();
     let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("float readback"),
+        label: Some("readback"),
         size: bytes,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,

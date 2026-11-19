@@ -118,6 +118,33 @@ const Group = observer(function Group({
   );
 });
 
+function EditCheck({
+  checked,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}): JSX.Element {
+  return (
+    <CheckLabel style={styles.check}>
+      <input
+        type="checkbox"
+        {...stylex.props(focusRing.ring)}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <Text as="span" style={styles.name}>
+        {label}
+      </Text>
+    </CheckLabel>
+  );
+}
+
 /**
  * Taking the sensor's dust off: a switch, and two sliders that mean nothing without it.
  *
@@ -138,18 +165,12 @@ const Dust = observer(function Dust({
   const on = doc?.dustRemoval ?? true;
   return (
     <>
-      <CheckLabel style={styles.check}>
-        <input
-          type="checkbox"
-          {...stylex.props(focusRing.ring)}
-          checked={on}
-          disabled={!stage.editable}
-          onChange={(event) => presenter.settle({ dustRemoval: event.currentTarget.checked })}
-        />
-        <Text as="span" style={styles.name}>
-          {RawEditPanelStrings.removeSensorDust()}
-        </Text>
-      </CheckLabel>
+      <EditCheck
+        checked={on}
+        disabled={!stage.editable}
+        label={RawEditPanelStrings.removeSensorDust()}
+        onChange={(dustRemoval) => presenter.settle({ dustRemoval })}
+      />
       {DUST.map((spec) => (
         <EditSlider
           key={spec.key}
@@ -304,18 +325,12 @@ const LensCorrection = observer(function LensCorrection({
   presenter: RawEditPresenter;
 }): JSX.Element {
   return (
-    <CheckLabel style={styles.check}>
-      <input
-        type="checkbox"
-        {...stylex.props(focusRing.ring)}
-        checked={edit.doc?.lensCorrection ?? true}
-        disabled={!stage.editable}
-        onChange={(event) => presenter.settle({ lensCorrection: event.currentTarget.checked })}
-      />
-      <Text as="span" style={styles.name}>
-        {RawEditPanelStrings.lensCorrection()}
-      </Text>
-    </CheckLabel>
+    <EditCheck
+      checked={edit.doc?.lensCorrection ?? true}
+      disabled={!stage.editable}
+      label={RawEditPanelStrings.lensCorrection()}
+      onChange={(lensCorrection) => presenter.settle({ lensCorrection })}
+    />
   );
 });
 

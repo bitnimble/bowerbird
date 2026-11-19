@@ -14,13 +14,9 @@ import {
 import { link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { WriteGrants } from '../../services/libraries/write_grants';
 import { deleteBackedUpOriginal, moveOriginal, unlinkMovedFile } from '../deletions';
 import { contentHash } from '../hash';
-
-const NEVER_ASKED: WriteGrants = {
-  grant: () => Promise.reject(new Error('asked leave for a deletion it then refused')),
-};
+import { NEVER_ASKED } from './library_tree_test_helpers';
 
 // Windows needs a privilege to make one.
 const withSymlinks = it.skipIf(process.platform === 'win32');

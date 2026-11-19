@@ -128,8 +128,7 @@ export class ReplicationPresenter {
     if (cancelled > 0) {
       this.toasts.show(ReplicationPresenterStrings.stoppedIncoming(cancelled));
     }
-    await this.loadPeers(libraryId);
-    await this.refreshTransfers();
+    await Promise.all([this.loadPeers(libraryId), this.refreshTransfers()]);
   }
 
   async loadDeviceName(): Promise<void> {
@@ -217,8 +216,7 @@ export class ReplicationPresenter {
     }
     // The library is committed before its catalogue arrives, so one that failed
     // partway has left one here.
-    await this.libraries.load();
-    await this.refreshTransfers();
+    await Promise.all([this.libraries.load(), this.refreshTransfers()]);
     return added;
   }
 

@@ -29,7 +29,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
     <Panel title={SyncedDevicesStrings.heading()}>
       <SyncedDeviceList library={library} store={store} presenter={replication} confirm={confirm} />
 
-      {store.peersOf(library.id).length === 0 && (
+      {!store.hasPeers(library.id) && (
         <Text variant="muted" as="p">
           {SyncedDevicesStrings.onThisDeviceOnly()}
         </Text>

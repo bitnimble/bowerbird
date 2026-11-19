@@ -172,7 +172,7 @@ describe('single-photo rendering', () => {
         {} as PhotoProcessingRepository,
         {} as PhotoPathsRepository,
         {} as PhotoListingRepository,
-        settingsWith({}),
+        settingsWith(),
       );
       const timing = await service.benchmarkRender(
         'full',
@@ -336,6 +336,6 @@ function makeService(photoProcessing: PhotoProcessingRepository): ProcessingServ
     photoProcessing,
     {} as unknown as PhotoPathsRepository,
     {} as unknown as PhotoListingRepository,
-    settingsWith({}),
+    settingsWith(),
   );
 }

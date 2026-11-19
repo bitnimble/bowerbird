@@ -25,9 +25,9 @@ describe('a change from a peer that predates a column', () => {
     const arriving = stamp(peer.db);
     applyChanges(peer.db, LIB, [
       {
-        kind: 'library' as const,
+        kind: 'library',
         rowId: LIB,
-        deleted: false as const,
+        deleted: false,
         sidecar: null,
         row: {
           id: LIB,
@@ -60,9 +60,9 @@ describe('a change from a peer that predates a column', () => {
     const arriving = stamp(peer.db);
     applyChanges(peer.db, LIB, [
       {
-        kind: 'library' as const,
+        kind: 'library',
         rowId: LIB,
-        deleted: false as const,
+        deleted: false,
         sidecar: null,
         row: { id: LIB, name: 'Trip', bin_name: null },
         stamps: { library: arriving },
@@ -75,13 +75,13 @@ describe('a change from a peer that predates a column', () => {
     expect(row.bin_name).toBeNull();
   });
 
-  it('ignores a column this peer no longer replicates', () => {
+  it('ignores a column this peer does not replicate', () => {
     const peer = makePeer('newer');
     applyChanges(peer.db, LIB, [
       {
-        kind: 'library' as const,
+        kind: 'library',
         rowId: LIB,
-        deleted: false as const,
+        deleted: false,
         sidecar: null,
         row: {
           id: LIB,

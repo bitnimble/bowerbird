@@ -240,6 +240,7 @@ const ImportLink = observer(function ImportLink(): JSX.Element | null {
   if (inMobileApp()) return null;
   const job = store.job;
   const done = job == null ? 0 : importJobDone(job);
+  const adding = ImportPageStrings.addingCount(done, job?.total ?? 0);
 
   return (
     <SidebarLink to={route(PathSegment.imports())} icon={FolderInput}>
@@ -247,12 +248,8 @@ const ImportLink = observer(function ImportLink(): JSX.Element | null {
         ImportPageStrings.importPhotos()
       ) : (
         <span {...stylex.props(styles.running)}>
-          <SidebarText>{ImportPageStrings.addingCount(done, job.total)}</SidebarText>
-          <ProgressBar
-            label={ImportPageStrings.addingCount(done, job.total)}
-            value={done}
-            max={job.total}
-          />
+          <SidebarText>{adding}</SidebarText>
+          <ProgressBar label={adding} value={done} max={job.total} />
         </span>
       )}
     </SidebarLink>

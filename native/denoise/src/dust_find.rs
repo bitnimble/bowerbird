@@ -262,7 +262,7 @@ pub struct Search {
     /// **Left encoded, because the fill only ever compares them.** A non-negative half float orders
     /// exactly as its bit pattern does, so `> 0` and a running maximum are the same answer either
     /// way - and decoding a 61MP frame's worth to find a few hundred blobs would cost more than the
-    /// readback. [`decoded`] converts the handful that turn out to be a blob's height.
+    /// readback. [`half::f16`] converts the handful that turn out to be a blob's height.
     pub masked: Vec<u16>,
     planes: Vec<gpu::Buffer>,
     uniforms: gpu::Buffer,
@@ -515,7 +515,7 @@ pub async fn sweep(
         uniforms,
         fits_slot,
     };
-    let masked = read_halves(gpu, &search.planes[MASKED], count).await;
+    let masked = gpu::read_pod::<u16>(gpu, &search.planes[MASKED], count).await;
     search.masked = masked?;
     Some(search)
 }
@@ -601,93 +601,4 @@ fn bound(
         layout,
         entries: &entries,
     })
-}
-
-async fn mapped(gpu: &gpu::Gpu, from: &gpu::Buffer, bytes: u64) -> Option<Vec<u8>> {
-    let mut recording = gpu.record();
-    let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("dust find readback"),
-        size: bytes,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    recording.copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
-    recording.submit();
-    gpu::read_back(gpu, &readback, <[u8]>::to_vec).await
-}
-
-/// One half float, as `pack2x16float` wrote it.
-///
-/// Ten lines rather than a dependency, and only ever called a few hundred times a search: the plane
-/// crosses back encoded and the fill walks it that way.
-pub fn decoded(bits: u16) -> f32 {
-    let sign = match bits & 0x8000 {
-        0 => 1.0,
-        _ => -1.0,
-    };
-    let exponent = u32::from(bits >> 10) & 0x1f;
-    let fraction = u32::from(bits & 0x3ff);
-    sign * match exponent {
-        // Zero and the subnormals, which have no implied leading one: `fraction * 2^-24`.
-        0 => fraction as f32 / 16_777_216.0,
-        31 => f32::from_bits(0x7f80_0000 | fraction << 13),
-        // 127 - 15, the two formats' exponent biases.
-        _ => f32::from_bits((exponent + 112) << 23 | fraction << 13),
-    }
-}
-
-async fn read_halves(gpu: &gpu::Gpu, from: &gpu::Buffer, count: usize) -> Option<Vec<u16>> {
-    Some(bytemuck::pod_collect_to_vec(
-        &mapped(gpu, from, (count * 2) as u64).await?,
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// [`decoded`] against every half float there is.
-    ///
-    /// **Exhaustive because it can be**: there are 65536 of them, and hand-written bit arithmetic is
-    /// exactly the kind of thing a sampled test agrees with everywhere but the corner that matters.
-    /// Held against the encoding rather than against a table, by rounding an f32 back down.
-    #[test]
-    fn a_half_float_decodes_to_what_it_encodes() {
-        for bits in 0..=u16::MAX {
-            let exponent = (bits >> 10) & 0x1f;
-            let value = decoded(bits);
-            if exponent == 31 {
-                assert!(!value.is_finite(), "{bits:#06x} decoded to {value}");
-                continue;
-            }
-            // Re-encoding is exact for anything a half float can hold, so the round trip has to
-            // land on the same bits - which pins the sign, the bias and both shifts at once.
-            let sign = u32::from(bits & 0x8000) << 16;
-            let re = value.to_bits();
-            assert_eq!(
-                re & 0x8000_0000,
-                sign,
-                "{bits:#06x} lost its sign as {value}"
-            );
-            assert!(
-                value.abs() <= 65504.0,
-                "{bits:#06x} decoded to {value}, past the format"
-            );
-            if exponent != 0 {
-                let back = (((re >> 23) & 0xff) as i32 - 112) as u16;
-                assert_eq!(back, exponent, "{bits:#06x} moved exponent");
-                assert_eq!(
-                    (re >> 13) & 0x3ff,
-                    u32::from(bits & 0x3ff),
-                    "{bits:#06x} moved mantissa"
-                );
-            }
-        }
-        assert_eq!(decoded(0), 0.0);
-        assert_eq!(decoded(0x3c00), 1.0);
-        assert_eq!(decoded(0xbc00), -1.0);
-        // The smallest subnormal, and the largest finite value.
-        assert_eq!(decoded(1), 2f32.powi(-24));
-        assert_eq!(decoded(0x7bff), 65504.0);
-    }
 }

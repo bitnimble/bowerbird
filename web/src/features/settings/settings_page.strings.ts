@@ -58,7 +58,7 @@ export const SettingsStrings = {
   renderStagesNeedLibrary: () => 'Add a library to change this',
   stageDenoise: () => 'Denoise',
   stageColour: () => 'Auto-detect camera colour profile',
-  stagesMisc: () => 'Misc',
+  stagesOther: () => 'Other',
   stageCost: (ms: number) => (ms === 0 ? 'No measurable saving' : `~${ms} ms`),
   stagesTotal: () => 'Total',
   totalCost: (ms: number) => `~${ms} ms`,

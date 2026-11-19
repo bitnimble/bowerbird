@@ -59,8 +59,8 @@ for (const entry of ['welcome', 'settings'] as const) {
         ? route(PathSegment.welcome())
         : route(PathSegment.settings(), 'libraries'),
     );
-    await page.getByRole('button', { name: 'Connect to another Bowerbird' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Connect to another Bowerbird' });
+    await page.getByRole('button', { name: 'Connect to another device' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Connect to another device' });
     await dialog.getByRole('textbox', { name: 'Device address' }).fill('http://desktop:5173');
     await dialog.getByRole('button', { name: 'Next' }).click();
     await expect(dialog.getByText('12 photos', { exact: true })).toBeVisible();

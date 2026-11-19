@@ -571,7 +571,7 @@ pub async fn detect(
             cx: blob.cx as f32,
             cy: blob.cy as f32,
             area: blob.area as f32,
-            peak: crate::dust_find::decoded(blob.peak),
+            peak: half::f16::from_bits(blob.peak).to_f32(),
         })
         .collect();
     // **Capped by height, before the fits rather than after them.** A halftone scan or a dense star

@@ -47,10 +47,12 @@ export const SyncedDeviceList = observer(function SyncedDeviceList({
 
   if (peers.length === 0) return null;
 
+  const transfersHere = store.transfersOf(library.id);
+
   return (
     <List>
       {peers.map((peer) => {
-        const transfers = store.transfersOf(library.id).filter((t) => t.peer_id === peer.peer_id);
+        const transfers = transfersHere.filter((t) => t.peer_id === peer.peer_id);
         const moving = transfers.filter((t) => t.state === 'active' || t.state === 'queued');
         const sending = moving.filter((t) => t.direction === 'push').length;
         const fetching = moving.filter((t) => t.direction === 'pull').length;
@@ -104,7 +106,7 @@ export const SyncedDeviceList = observer(function SyncedDeviceList({
               </Button>
               <Button
                 variant="ghost"
-                tooltip={SyncedDeviceListStrings.removeDeviceTitle(peer.name)}
+                tooltip={SyncedDeviceListStrings.removeDeviceTitle()}
                 onClick={() =>
                   void presenter.forget(library.id, peer.peer_id, (sole) =>
                     confirm.ask({

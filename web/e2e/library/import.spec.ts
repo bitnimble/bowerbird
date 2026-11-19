@@ -3,7 +3,13 @@ import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { test } from '../fixtures';
-import { E2E_ROOT, IMPORT_CARD_DIR, IMPORT_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
+import {
+  E2E_ROOT,
+  IMPORT_CARD_DIR,
+  IMPORT_CARD_FOLDER,
+  IMPORT_PHOTOS_DIR,
+  PHOTO_NAMES,
+} from '../fixture_library';
 import { gotoLibrary, tiles, useLibrary } from '../helpers';
 
 test.describe.configure({ mode: 'serial' });
@@ -47,7 +53,7 @@ test('a card scanned and added lands in the library, leaving what it already hel
 
   expect(existsSync(path.join(IMPORT_PHOTOS_DIR, 'card_one.arw'))).toBe(true);
   expect(existsSync(path.join(IMPORT_PHOTOS_DIR, 'alpha_1.arw'))).toBe(false);
-  expect(statSync(path.join(IMPORT_CARD_DIR, 'DCIM/100MSDCF/card_one.arw')).isFile()).toBe(true);
+  expect(statSync(path.join(IMPORT_CARD_FOLDER, 'card_one.arw')).isFile()).toBe(true);
 
   await gotoLibrary(page, IMPORT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length + 2);

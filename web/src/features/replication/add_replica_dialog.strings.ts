@@ -1,6 +1,6 @@
 export const AddReplicaStrings = {
   /** The dialog's title, and the button in Settings that opens it. */
-  title: () => 'Connect to another Bowerbird',
+  title: () => 'Connect to another device',
 
   otherDevice: () => 'Other device',
   deviceAddress: () => 'Device address',
@@ -23,7 +23,7 @@ export const AddReplicaStrings = {
   configured: () => 'Configured',
   added: () => 'Added',
 
-  chooseFolder: () => 'Select a folder on this device where this library will be synced to.',
+  chooseFolder: () => 'Select a folder on this device for this library.',
   rootPlaceholder: () => '/photos/trip',
 
   save: () => 'Save',

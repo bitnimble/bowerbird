@@ -12,11 +12,7 @@ import {
 } from '../../../../src/schemas/libraries';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
-import {
-  setStage,
-  type OptionalStage,
-  type RenderedRendition,
-} from '../../../../src/schemas/render_stages';
+import { setStage, type OptionalStage } from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
@@ -204,22 +200,16 @@ export class LibrariesPresenter {
   }
 
   /**
-   * Whether that rendition runs that stage, in every library. Not retroactive: it decides what
-   * gets built next, and rebuilding a catalogue is a job you ask for.
+   * The stage new photos import with on or off, in every library (`importedEdits`). Not
+   * retroactive: existing photos keep their documents.
    *
    * Stored as what is left *out*, so the row is empty for a library that has traded nothing away
    * and a stage added in a later version arrives switched on.
    */
-  async setRenderStage(
-    rendition: RenderedRendition,
-    stage: OptionalStage,
-    runs: boolean,
-  ): Promise<void> {
-    await this.updateAll((library) => {
-      const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-      const next = setStage(skipped, stage, runs);
-      return rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next };
-    });
+  async setRenderStage(stage: OptionalStage, runs: boolean): Promise<void> {
+    await this.updateAll((library) => ({
+      render_skip_full: setStage(library.render_skip_full, stage, runs),
+    }));
   }
 
   // Automatic photo stacking (§19.4). Not retroactive: it decides what the next

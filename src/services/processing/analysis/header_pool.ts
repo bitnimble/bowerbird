@@ -33,30 +33,31 @@ export class HeaderPool {
 
   constructor(private readonly concurrency: () => number) {}
 
-  read = (absPath: string): Promise<HeaderMetadata> =>
-    new Promise<HeaderMetadata>((resolve, reject) => {
-      this.queue.push({
-        request: { absPath, want: 'header' },
-        settle: (reply) => {
-          if ('metadata' in reply) resolve(reply.metadata);
-          else reject(new Error('error' in reply ? reply.error : 'not a header reply'));
-        },
-      });
-      this.pump();
-    });
+  read = async (absPath: string): Promise<HeaderMetadata> => {
+    const reply = await this.ask({ absPath, want: 'header' });
+    if ('metadata' in reply) return reply.metadata;
+    throw new Error('not a header reply');
+  };
 
   /** The JPEG a RAW embeds, or null where it holds none. */
-  liftEmbedded = (absPath: string): Promise<Uint8Array | null> =>
-    new Promise<Uint8Array | null>((resolve, reject) => {
+  liftEmbedded = async (absPath: string): Promise<Uint8Array | null> => {
+    const reply = await this.ask({ absPath, want: 'embedded' });
+    if ('embedded' in reply) return reply.embedded;
+    throw new Error('not an embedded reply');
+  };
+
+  private ask(request: HeaderRequest): Promise<Exclude<HeaderReply, { error: string }>> {
+    return new Promise((resolve, reject) => {
       this.queue.push({
-        request: { absPath, want: 'embedded' },
+        request,
         settle: (reply) => {
-          if ('embedded' in reply) resolve(reply.embedded);
-          else reject(new Error('error' in reply ? reply.error : 'not an embedded reply'));
+          if ('error' in reply) reject(new Error(reply.error));
+          else resolve(reply);
         },
       });
       this.pump();
     });
+  }
 
   private limit(): number {
     const asked = this.concurrency();

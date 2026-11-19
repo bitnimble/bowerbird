@@ -19,17 +19,9 @@ import { ApiError } from '../../../api/request';
 import { LibrariesStore } from '../../libraries/libraries_store';
 import { ReplicationPresenter } from '../replication_presenter';
 import { ReplicationStore } from '../replication_store';
+import { pairedPeer } from './peer_fixture';
 
-const PEER: PairedPeer = {
-  peer_id: 'peer000000000001',
-  name: 'Macbook',
-  paired_at: '2026-01-01T00:00:00.000Z',
-  last_replicated_at: null,
-  last_error: null,
-  wants_originals: true,
-  reachable: true,
-  outdated: null,
-};
+const PEER = pairedPeer({ peer_id: 'peer000000000001', name: 'Macbook' });
 
 function peersAnswer(peers: PairedPeer[], syncOriginals = true): Promise<PeersResponse> {
   return Promise.resolve({ peers, sync_originals: syncOriginals });

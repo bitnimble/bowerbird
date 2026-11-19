@@ -16,18 +16,21 @@ import { ensureDir } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { containsPath } from '../../utils/paths';
 import { formatOf, isRendered, originalMediaType, scanLibraryTree } from '../../utils/scan';
+import type { HeldFileRow } from '../photos/scan/photo_scan_repository';
 import type { HeaderMetadata } from '../processing/analysis/metadata';
 import { eachInOrder } from '../sync/scan/scan_order';
 import { type HeldFile, ImportRun, type LibraryScanner } from './import_run';
 
 const VOLUME_SYSTEM_FOLDERS = new Set(['$RECYCLE.BIN', 'System Volume Information']);
 
+export type ImportLibrary = Pick<Library, 'id' | 'name' | 'root_path' | 'read_only'>;
+
 interface HeldScan {
   id: string;
   files: HeldFile[];
 }
 
-export interface ImportPicture {
+interface ImportPicture {
   body: Blob;
   mediaType: string;
 }
@@ -38,14 +41,19 @@ export class ImportService {
   private starting = false;
 
   constructor(
-    private readonly libraries: { getById(id: string): Library | null; list(): Library[] },
-    private readonly shoots: { getById(id: string): Shoot | null },
-    private readonly photos: {
-      filesHeld(libraryId: string): { file_hash: string; file_path: string }[];
+    private readonly libraries: {
+      getById(id: string): ImportLibrary | null;
+      list(): Pick<Library, 'root_path'>[];
     },
+    private readonly shoots: {
+      getById(id: string): Pick<Shoot, 'id' | 'library_id' | 'folder_path'> | null;
+    },
+    private readonly photos: { filesHeld(libraryId: string): HeldFileRow[] },
     private readonly scans: LibraryScanner,
     private readonly headers: {
-      read(absPath: string): Promise<HeaderMetadata>;
+      read(
+        absPath: string,
+      ): Promise<Pick<HeaderMetadata, 'dateTaken' | 'cameraModel' | 'lensModel'>>;
       liftEmbedded(absPath: string): Promise<Uint8Array | null>;
     },
     private readonly concurrency: () => number,
@@ -201,20 +209,20 @@ export class ImportService {
         .list()
         .map((library) => realpath(library.root_path).catch(() => library.root_path)),
     );
-    for (const file of files) {
-      const real = await realpath(file.absPath).catch(() => file.absPath);
-      if (roots.some((root) => containsPath(root, real)))
-        throw new AppError(
-          'VALIDATION_ERROR',
-          "These originals are in a library, so we can't delete them.",
-        );
-    }
+    const reals = await Promise.all(
+      files.map((file) => realpath(file.absPath).catch(() => file.absPath)),
+    );
+    if (reals.some((real) => roots.some((root) => containsPath(root, real))))
+      throw new AppError(
+        'VALIDATION_ERROR',
+        "These originals are in a library, so we can't delete them.",
+      );
   }
 
   private async destination(
     request: StartImportRequest,
     files: HeldFile[],
-  ): Promise<{ library: Library; dir: string }> {
+  ): Promise<{ library: ImportLibrary; dir: string }> {
     const library = this.libraries.getById(request.library_id);
     if (library == null)
       throw new AppError('NOT_FOUND', `library not found: ${request.library_id}`);
@@ -237,7 +245,7 @@ export class ImportService {
 
     const { bavail, bsize } = await statfs(dir);
     const needed = files.reduce((sum, file) => sum + file.size, 0);
-    if (Number(bavail) * Number(bsize) < needed)
+    if (bavail * bsize < needed)
       throw new AppError('VALIDATION_ERROR', `There isn't enough free space for ${library.name}.`);
     await sweepImportStaging(dir);
     return { library, dir };

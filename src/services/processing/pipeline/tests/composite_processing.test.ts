@@ -1,86 +1,27 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { describe, it, expect, jest } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_SETTINGS, type Settings } from '../../../../schemas/settings';
+import type { Settings } from '../../../../schemas/settings';
 import { canvasLongEdgeFor } from '../../../../schemas/composition';
 import { RecipeSchema } from '../../../../schemas/recipes';
 import type { PhotoListingRepository } from '../../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../../photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../../photos/renditions/photo_processing_repository';
-import type { SettingsRepository } from '../../../settings/settings_repository';
 import { ProcessingService } from '../processing_service';
 import { JOB_CANCELLED } from '../../rawshim/rawshim_job';
-import type { CompositeJob, RenditionJob, ProcessingResult } from '../../workers/processing_types';
+import type { CompositeJob, RenditionJob } from '../../workers/processing_types';
 import { toCompositeCommand } from '../../rawshim/worker_command';
 import type { CameraMatch } from '../../../../schemas/render_stages';
-
-const CRASH = 'crash-photo';
-// This file's own library id, because the data directory is keyed by one (§6)
-// and two test files sharing a directory would race each other's cleanup.
-const LIB = 'processing-service-test';
-
-/** Every job the service handed to a worker, so its shape can be asserted. */
-const posted: (RenditionJob | CompositeJob)[] = [];
-
-/** Every worker the service constructed, so "one worker" can be asserted rather than assumed. */
-const built: MockWorker[] = [];
-
-const DESCRIPTOR = new Uint8Array([1, 2, 3]);
-
-// Fake Worker: a job for CRASH fires onerror (a native-crash-like event, which
-// skips the worker's own catch); everything else reports success.
-class MockWorker {
-  onmessage: ((event: { data: ProcessingResult }) => void) | null = null;
-  onerror: ((event: { message: string }) => void) | null = null;
-  constructor(_url: string) {
-    built.push(this);
-  }
-  postMessage(job: RenditionJob | CompositeJob): void {
-    posted.push(job);
-    queueMicrotask(() => {
-      // A panorama is keyed by its stack rather than a photograph, and an align answers a recipe.
-      if (job.kind === 'composite') {
-        if (job.photoId === CRASH || (job.want === 'seams' && job.volumePath === CRASH)) {
-          return this.onerror?.({ message: 'segfault' });
-        }
-        return this.onmessage?.({
-          data: { photoId: job.photoId, success: true, composite: '{}' },
-        });
-      }
-      if (job.photoId === CRASH) return this.onerror?.({ message: 'segfault' });
-      // As the real worker does: a descriptor rides back with a grid tile and with
-      // nothing else, since that is the one pass computing it (§19.3).
-      const tile = job.targets.every((target) => target.rendition === 'grid');
-      this.onmessage?.({
-        data: { photoId: job.photoId, success: true, ...(tile ? { descriptor: DESCRIPTOR } : {}) },
-      });
-    });
-  }
-
-  terminate(): void {}
-}
-
-// Put back rather than `delete`d, so what the runtime hands the next reader of this global is
-// the builtin it started with rather than nothing.
-const REAL_WORKER = globalThis.Worker;
-
-function settingsWith(overrides: Partial<Settings> = {}): SettingsRepository {
-  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 2, ...overrides };
-  return { get: () => settings } as SettingsRepository;
-}
-
-const settings = settingsWith();
-
-function usingMockWorker(): void {
-  beforeEach(() => {
-    posted.length = 0;
-    built.length = 0;
-    (globalThis as { Worker?: unknown }).Worker = MockWorker;
-  });
-  afterEach(() => {
-    globalThis.Worker = REAL_WORKER;
-  });
-}
+import {
+  built,
+  CRASH,
+  LIB,
+  MockWorker,
+  posted,
+  settings,
+  settingsWith,
+  usingMockWorker,
+} from './processing_test_helpers';
 
 describe('ProcessingService.openComposite', () => {
   usingMockWorker();
@@ -307,7 +248,7 @@ describe('the composites a batch finds owed', () => {
       {} as PhotoProcessingRepository,
       NO_PATHS,
       NO_LISTING,
-      settingsWith({}),
+      settingsWith(),
     );
     const library = {
       id: LIB,
@@ -397,7 +338,7 @@ describe('the sizes a composite is framed to', () => {
         {} as PhotoProcessingRepository,
         NO_PATHS,
         NO_LISTING,
-        settingsWith({}),
+        settingsWith(),
         () => ({ doc: JSON.stringify(doc), stamp: null }),
       );
       const on = service.openComposite();

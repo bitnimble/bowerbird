@@ -169,6 +169,19 @@ export class ImportPresenter {
   }
 
   @action.bound
+  toggleFilter<K extends 'formats' | 'cameraModels' | 'lensModels'>(
+    key: K,
+    value: ImportFilters[K][number],
+    on: boolean,
+  ): void {
+    const list = this.store.filters[key];
+    this.store.filters = {
+      ...this.store.filters,
+      [key]: on ? [...list, value] : list.filter((item) => item !== value),
+    };
+  }
+
+  @action.bound
   resetFilters(): void {
     this.store.filters = NO_IMPORT_FILTERS;
   }

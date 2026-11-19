@@ -89,24 +89,26 @@ function listing(path: string): BrowseResponse {
   return { path, parent: '/', directories: [], writable: true };
 }
 
-async function start(
-  get: typeof browseApi.get = async (path) => listing(path ?? '/pictures/Autumn trip'),
-): Promise<boolean[]> {
+async function start({
+  get = async (path) => listing(path ?? '/pictures/Autumn trip'),
+  strict = false,
+}: { get?: typeof browseApi.get; strict?: boolean } = {}): Promise<boolean[]> {
   const changes: boolean[] = [];
   librariesApi.list = () => Promise.resolve([]);
   browseApi.get = get;
-  render(
+  const tree = (
     <StoresProvider>
       <AddLibraryDialog open onOpenChange={(open) => changes.push(open)} />
-    </StoresProvider>,
+    </StoresProvider>
   );
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   await act(async () => {});
   return changes;
 }
 
-function nativePicker(answer: unknown): void {
+function nativePicker(invoke: () => Promise<unknown>): void {
   Object.defineProperty(globalThis, '__TAURI__', {
-    value: { core: { invoke: async () => answer } },
+    value: { core: { invoke } },
     configurable: true,
   });
 }
@@ -210,7 +212,7 @@ test('a later folder tree cancelled keeps the settings and the chosen folder', a
 });
 
 test('the native picker opens by itself and a pick moves on to the settings', async () => {
-  nativePicker({ kind: 'picked', path: '/pictures' });
+  nativePicker(async () => ({ kind: 'picked', path: '/pictures' }));
   await start();
 
   const dialog = await screen.findByRole('dialog', { name: 'Add library' });
@@ -220,30 +222,13 @@ test('the native picker opens by itself and a pick moves on to the settings', as
 test('StrictMode asks the native picker once and waits for its answer', async () => {
   let picks = 0;
   let answer: (value: unknown) => void = () => {};
-  Object.defineProperty(globalThis, '__TAURI__', {
-    value: {
-      core: {
-        invoke: () => {
-          picks++;
-          return new Promise((resolve) => {
-            answer = resolve;
-          });
-        },
-      },
-    },
-    configurable: true,
+  nativePicker(() => {
+    picks++;
+    return new Promise((resolve) => {
+      answer = resolve;
+    });
   });
-  const changes: boolean[] = [];
-  librariesApi.list = () => Promise.resolve([]);
-  browseApi.get = async (path) => listing(path ?? '/pictures');
-  render(
-    <StrictMode>
-      <StoresProvider>
-        <AddLibraryDialog open onOpenChange={(open) => changes.push(open)} />
-      </StoresProvider>
-    </StrictMode>,
-  );
-  await act(async () => {});
+  const changes = await start({ strict: true });
 
   expect(picks).toBe(1);
   expect(changes).toEqual([]);
@@ -259,7 +244,7 @@ test('StrictMode asks the native picker once and waits for its answer', async ()
 });
 
 test('dismissing the native picker closes the whole flow', async () => {
-  nativePicker({ kind: 'dismissed' });
+  nativePicker(async () => ({ kind: 'dismissed' }));
   const changes = await start();
 
   await waitFor(() => expect(changes).toEqual([false]));
@@ -267,7 +252,7 @@ test('dismissing the native picker closes the whole flow', async () => {
 });
 
 test('a native picker that fails says why from the settings', async () => {
-  nativePicker({ kind: 'unsupported' });
+  nativePicker(async () => ({ kind: 'unsupported' }));
   await start();
 
   const dialog = await screen.findByRole('dialog', { name: 'Add library' });
@@ -277,7 +262,7 @@ test('a native picker that fails says why from the settings', async () => {
 });
 
 test('a folder the server cannot write in says so outside Advanced settings', async () => {
-  await start(async (path) => ({ ...listing(path ?? '/locked'), writable: false }));
+  await start({ get: async (path) => ({ ...listing(path ?? '/locked'), writable: false }) });
   await chooseInTree();
 
   const dialog = screen.getByRole('dialog', { name: 'Add library' });

@@ -116,7 +116,7 @@ const DETAIL_LONG: u32 = 512;
 /// *window* carried in the uniform (`edit.detail_long`), because the two are separate facts: how
 /// much of the photograph this texture holds, and how far across the photograph the filter
 /// reaches.
-pub fn detail_within(width: usize, height: usize, photograph_long: usize) -> DetailSize {
+fn detail_within(width: usize, height: usize, photograph_long: usize) -> DetailSize {
     let step = detail_step(photograph_long) as usize;
     DetailSize {
         width: width.div_ceil(step).max(1) as u32,
@@ -167,7 +167,7 @@ pub fn detail_reach_texels(detail_long: u32) -> units::px::Span<units::px::Texel
     units::px::Span::measured(detail_reach(detail_long))
 }
 
-pub fn detail_reach(detail_long: u32) -> usize {
+fn detail_reach(detail_long: u32) -> usize {
     let long = f64::from(detail_long);
     let guide = (long * GUIDE_RADIUS).round().max(1.0);
     let fine = (3.0 * (long * FINE_SIGMA).max(0.5)).ceil();
@@ -6135,12 +6135,6 @@ mod tests {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let readback = gpu.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("probe_xy"),
-            size: 8,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
 
         let colour = colour::matched::HdrColour::identity();
         let mut worst_temperature = 0.0f64;
@@ -6195,24 +6189,10 @@ mod tests {
                     pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
                 });
-                recording.copy_buffer_to_buffer(&out, 0, &readback, 0, 8);
                 recording.submit();
-                let slice = readback.slice(..);
-                slice.map_async(wgpu::MapMode::Read, |_| {});
-                gpu.block_until_done();
-                let (x, y) = {
-                    let mapped = slice.get_mapped_range().expect("the readback mapped");
-                    let read = |at: usize| {
-                        f64::from(f32::from_le_bytes([
-                            mapped[at],
-                            mapped[at + 1],
-                            mapped[at + 2],
-                            mapped[at + 3],
-                        ]))
-                    };
-                    (read(0), read(4))
-                };
-                readback.unmap();
+                let xy = pollster::block_on(gpu::read_floats(gpu, &out, 2))
+                    .expect("the readback mapped");
+                let (x, y) = (f64::from(xy[0]), f64::from(xy[1]));
 
                 // The camera that reports the probed chromaticity outright: multipliers of one,
                 // and a matrix whose inverse is that chromaticity's tristimulus values. Diagonal
@@ -6353,12 +6333,6 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
-            let readback = gpu.own_buffer(&wgpu::BufferDescriptor {
-                label: Some("probe_geometry"),
-                size: bytes,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
 
             let windowed = origin != (0, 0);
             let grade = super::Grade {
@@ -6425,19 +6399,9 @@ mod tests {
                     pass.set_bind_group(0, &group, &[]);
                 },
             );
-            recording.copy_buffer_to_buffer(&probe, 0, &readback, 0, bytes);
             recording.submit();
-            let slice = readback.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |_| {});
-            gpu.block_until_done();
-            let got: Vec<f32> = {
-                let mapped = slice.get_mapped_range().expect("the readback mapped");
-                mapped
-                    .chunks_exact(4)
-                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                    .collect()
-            };
-            readback.unmap();
+            let got = pollster::block_on(gpu::read_floats(gpu, &probe, pixels * 2))
+                .expect("the readback mapped");
 
             for y in 0..out.1 {
                 for x in 0..out.0 {

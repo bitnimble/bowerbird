@@ -29,8 +29,8 @@ export interface HeldFile {
   deleted: boolean;
 }
 
-export interface ImportPlan {
-  library: Library;
+interface ImportPlan {
+  library: Pick<Library, 'id' | 'root_path'>;
   shootId: string | null;
   dir: string;
   /** The whole scan, ticked or not: an unticked file still holds its group's name. */

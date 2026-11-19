@@ -16,7 +16,7 @@ export const SyncedDeviceListStrings = {
   cannotReach: (name: string) => `${name} connects to this device, so only it can sync RAWs.`,
 
   removeDevice: () => 'Remove device',
-  removeDeviceTitle: (name: string) => `Stop syncing with ${name}. Your files stay where they are.`,
+  removeDeviceTitle: () => 'Your files stay where they are.',
   removeDeviceQuestion: (libraryName: string, deviceName: string) =>
     `Remove ${deviceName} from "${libraryName}"?`,
   remove: () => 'Remove',

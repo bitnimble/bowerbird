@@ -26,7 +26,7 @@ export const ReplicationPresenterStrings = {
   couldNotRenameThisDevice: () => "We couldn't rename this device. Try again.",
   couldNotWorkOutSoleHoldings: (name: string) =>
     `We couldn't check which originals ${name} holds. Try again.`,
-  couldNotForget: (name: string) => `We couldn't stop syncing with ${name}. Try again.`,
+  couldNotForget: (name: string) => `We couldn't remove ${name}. Try again.`,
   syncedLibraryAdded: (applied: number) =>
     `Synced library added with ${plural(applied, 'change', 'changes')} so far.`,
   noDeviceReachable: () => "We couldn't reach another device. Check its network connection.",

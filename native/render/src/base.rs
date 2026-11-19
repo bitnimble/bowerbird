@@ -1343,7 +1343,7 @@ fn defringe_into(
 }
 
 /// A frame with no room for the deconvolution's stencil has nothing to sharpen.
-pub fn sharpens(samples: usize, width: usize, height: usize, amount: f64) -> bool {
+fn sharpens(samples: usize, width: usize, height: usize, amount: f64) -> bool {
     amount > 0.0 && width >= 3 && height >= 3 && samples >= width * height * 3
 }
 

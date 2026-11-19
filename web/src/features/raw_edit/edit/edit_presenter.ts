@@ -13,6 +13,7 @@ import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
 import { cameraMatchReset, withCameraMatch } from '../../../../../src/schemas/edit_adjust';
+import { cameraMatchOf } from '../../../../../src/schemas/render_stages';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import type { EditStore, SaveStatus } from './edit_store';
@@ -211,7 +212,7 @@ export class EditPresenter {
     const doc = this.store.doc;
     if (photoId == null || doc == null) return;
     if (this.openedAt?.rev !== 0 && !doc.awaitsCameraMatch) return;
-    if (!doc.lensCorrection || doc.colourProfile !== 'matched') return;
+    if (cameraMatchOf(doc) !== 'lensAndColour') return;
     // Locally first, or a slider moved during the write is saved over the unmatched document.
     this.adopt(withCameraMatch(doc, tone));
     await this.exclusively(async () => {

@@ -3,10 +3,7 @@
 // a list of what runs - an upgrade would silently turn the new stage off for every library.
 import { expect, test } from 'bun:test';
 import { type Library, type UpdateLibraryRequest } from '../../../../../src/schemas/libraries';
-import {
-  type OptionalStage,
-  type RenderedRendition,
-} from '../../../../../src/schemas/render_stages';
+import { type OptionalStage } from '../../../../../src/schemas/render_stages';
 import { librariesApi } from '../../../api/libraries';
 import { restoreApiAfterTests } from '../../../test_api';
 import { LibrariesPresenter } from '../libraries_presenter';
@@ -42,7 +39,6 @@ function presenterOver(
 
 async function sentToEach(
   libraries: Library[],
-  rendition: RenderedRendition,
   stage: OptionalStage,
   runs: boolean,
 ): Promise<Record<string, UpdateLibraryRequest>> {
@@ -51,50 +47,48 @@ async function sentToEach(
     asked[id] = body;
     return Promise.resolve(LIBRARY);
   });
-  await presenter.setRenderStage(rendition, stage, runs);
+  await presenter.setRenderStage(stage, runs);
   return asked;
 }
 
 async function sent(
   library: Library,
-  rendition: RenderedRendition,
   stage: OptionalStage,
   runs: boolean,
 ): Promise<UpdateLibraryRequest | undefined> {
-  return (await sentToEach([library], rendition, stage, runs))[library.id];
+  return (await sentToEach([library], stage, runs))[library.id];
 }
 
-test('unticking a stage adds it to that rendition alone', async () => {
-  expect(await sent(LIBRARY, 'max', 'denoise', false)).toEqual({ render_skip_max: ['denoise'] });
-  expect(await sent(LIBRARY, 'full', 'denoise', false)).toEqual({
+test('unticking a stage adds it to what the library leaves out', async () => {
+  expect(await sent(LIBRARY, 'denoise', false)).toEqual({
     render_skip_full: ['denoise', 'lens', 'colour'],
   });
 });
 
 test('ticking the lens leaves colour off until explicitly enabled', async () => {
-  expect(await sent(LIBRARY, 'full', 'lens', true)).toEqual({ render_skip_full: ['colour'] });
-  expect(await sent({ ...LIBRARY, render_skip_full: ['colour'] }, 'full', 'colour', true)).toEqual({
+  expect(await sent(LIBRARY, 'lens', true)).toEqual({ render_skip_full: ['colour'] });
+  expect(await sent({ ...LIBRARY, render_skip_full: ['colour'] }, 'colour', true)).toEqual({
     render_skip_full: [],
   });
 });
 
 test('unticking a stage that is already out sends the same list rather than two of it', async () => {
-  expect(await sent(LIBRARY, 'full', 'lens', false)).toEqual({
+  expect(await sent(LIBRARY, 'lens', false)).toEqual({
     render_skip_full: ['lens', 'colour'],
   });
 });
 
 test('disabling lens also disables colour and colour cannot enable it', async () => {
-  expect(await sent(LIBRARY, 'max', 'lens', false)).toEqual({
-    render_skip_max: ['lens', 'colour'],
+  expect(await sent({ ...LIBRARY, render_skip_full: [] }, 'lens', false)).toEqual({
+    render_skip_full: ['lens', 'colour'],
   });
-  expect(await sent(LIBRARY, 'full', 'colour', true)).toEqual({
+  expect(await sent(LIBRARY, 'colour', true)).toEqual({
     render_skip_full: ['lens', 'colour'],
   });
 });
 
 test('a stage change reaches every library and leaves the stages each already differs on', async () => {
-  expect(await sentToEach([LIBRARY, PHONE], 'full', 'sharpen', false)).toEqual({
+  expect(await sentToEach([LIBRARY, PHONE], 'sharpen', false)).toEqual({
     lib: { render_skip_full: ['lens', 'colour', 'sharpen'] },
     phone: { render_skip_full: ['dust', 'sharpen'] },
   });
@@ -109,11 +103,11 @@ test('a second tick before the first has saved keeps both', async () => {
   librariesApi.list = () => Promise.resolve([held]);
 
   await Promise.all([
-    presenter.setRenderStage('max', 'denoise', false),
-    presenter.setRenderStage('max', 'sharpen', false),
+    presenter.setRenderStage('denoise', false),
+    presenter.setRenderStage('sharpen', false),
   ]);
 
-  expect(held.render_skip_max).toEqual(['denoise', 'sharpen']);
+  expect(held.render_skip_full).toEqual(['denoise', 'lens', 'colour', 'sharpen']);
 });
 
 test('a denoiser change reaches every library', async () => {

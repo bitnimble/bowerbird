@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { Check, ChevronRight } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
+import { DEFAULT_LIBRARY_SETTINGS } from '../../../../src/schemas/libraries';
 import { type BrowsedRemote, type RemoteLibrary } from '../../../../src/schemas/replication';
 import { useLibrariesStore, usePresenters, useReplicationStore } from '../../app/stores_context';
 import { isThinShell } from '../../app/thin_shell';
@@ -202,15 +203,15 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     if (pending.length === 0) return;
     const mine = opening.current;
     setBusy(true);
-    const rendering = librariesStore.rendering;
+    const rendering = librariesStore.rendering ?? DEFAULT_LIBRARY_SETTINGS;
     const done = await replication.addReplicas(
       pending.map((library) => ({
         address: remote.address,
         library_id: library.id,
         ...(thin ? {} : { root_path: setups.get(library.id)?.browser.store.selectedPath }),
         sync_originals: setups.get(library.id)?.keepsOriginals ?? false,
-        denoiser: rendering?.denoiser ?? 'galosh',
-        render_skip_full: rendering?.render_skip_full ?? [],
+        denoiser: rendering.denoiser,
+        render_skip_full: rendering.render_skip_full,
       })),
     );
     if (mine !== opening.current) return;
@@ -344,22 +345,20 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                   disabled={added.has(library.id) || busy}
                   onClick={() => configure(library)}
                 >
-                  <span {...stylex.props(listStyles.body)}>
-                    <span {...stylex.props(styles.cardBody)}>
-                      <Text as="span">{library.name}</Text>
-                      {added.has(library.id) || configured.has(library.id) ? (
-                        <Text variant="mono" as="span" style={styles.configured}>
-                          <Check size={ICON} aria-hidden />
-                          {added.has(library.id)
-                            ? AddReplicaStrings.added()
-                            : AddReplicaStrings.configured()}
-                        </Text>
-                      ) : (
-                        <Text variant="mono" as="span" style={styles.toConfigure}>
-                          {AddReplicaStrings.configure()}
-                        </Text>
-                      )}
-                    </span>
+                  <span {...stylex.props(listStyles.body, styles.cardBody)}>
+                    <Text as="span">{library.name}</Text>
+                    {added.has(library.id) || configured.has(library.id) ? (
+                      <Text variant="mono" as="span" style={styles.configured}>
+                        <Check size={ICON} aria-hidden />
+                        {added.has(library.id)
+                          ? AddReplicaStrings.added()
+                          : AddReplicaStrings.configured()}
+                      </Text>
+                    ) : (
+                      <Text variant="mono" as="span" style={styles.toConfigure}>
+                        {AddReplicaStrings.configure()}
+                      </Text>
+                    )}
                   </span>
                   {!added.has(library.id) && <ChevronRight size={ICON} aria-hidden />}
                 </button>

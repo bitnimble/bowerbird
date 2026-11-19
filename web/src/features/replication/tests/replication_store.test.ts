@@ -2,18 +2,10 @@ import { expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { type Outdated, type PairedPeer } from '../../../../../src/schemas/replication';
 import { ReplicationStore } from '../replication_store';
+import { pairedPeer } from './peer_fixture';
 
 function peer(name: string, outdated: Outdated): PairedPeer {
-  return {
-    peer_id: `${name.toLowerCase().padEnd(16, '0')}`,
-    name,
-    paired_at: '2026-01-01T00:00:00.000Z',
-    last_replicated_at: null,
-    last_error: null,
-    wants_originals: true,
-    reachable: true,
-    outdated,
-  };
+  return pairedPeer({ peer_id: name.toLowerCase().padEnd(16, '0'), name, outdated });
 }
 
 function storeWith(peers: PairedPeer[]): ReplicationStore {

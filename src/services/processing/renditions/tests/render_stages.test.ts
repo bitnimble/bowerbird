@@ -24,7 +24,7 @@ import { RenderTimingsFile } from '../render_timings_file';
 const LIB = 'lib';
 
 describe('the stages a library starts new photos without', () => {
-  it('drops a name this build does not know, rather than refusing the render', () => {
+  it('drops a name this build does not know, rather than failing the import', () => {
     expect(readStages('denoise,warp,sharpen')).toEqual(['denoise', 'sharpen']);
     expect(readStages('')).toEqual([]);
   });

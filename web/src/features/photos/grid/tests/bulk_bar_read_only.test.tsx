@@ -5,9 +5,9 @@ import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Library } from '../../../../../../src/schemas/libraries';
 import { type PhotoSummary } from '../../../../../../src/schemas/photos';
-import { type PairedPeer } from '../../../../../../src/schemas/replication';
 import { type Shoot } from '../../../../../../src/schemas/shoots';
 import { registerDom } from '../../../../test_dom';
+import { pairedPeer } from '../../../replication/tests/peer_fixture';
 
 registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
@@ -60,10 +60,7 @@ function Seed({
   const replication = useReplicationStore();
   useEffect(() => {
     runInAction(() => {
-      if (synced)
-        replication.peersByLibrary = new Map([
-          ['lib', [{ peer_id: 'laptop', name: 'Laptop' } as PairedPeer]],
-        ]);
+      if (synced) replication.peersByLibrary = new Map([['lib', [pairedPeer()]]]);
       libraries.libraries = [{ id: 'lib', name: 'Reef', read_only: readOnly } as Library];
       shoots.shoots = [shoot('dawn', 'Dawn'), shoot('dusk', 'Dusk')];
       listing.source = { kind: 'shoot', shootId: DAWN.id };

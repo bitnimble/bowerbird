@@ -13,6 +13,7 @@ import { shootsApi } from '../../../api/shoots';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
 import { MemoryStorage } from '../../../test_storage';
+import { pairedPeer } from '../../replication/tests/peer_fixture';
 
 registerDom();
 const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
@@ -55,16 +56,7 @@ const ALBUMS: Album[] = [
 shootsApi.list = (): Promise<Shoot[]> => Promise.resolve(SHOOTS);
 albumsApi.list = (): Promise<Album[]> => Promise.resolve(ALBUMS);
 
-const PEER: PairedPeer = {
-  peer_id: 'nas',
-  name: 'NAS',
-  paired_at: '2026-01-01T00:00:00.000Z',
-  last_replicated_at: null,
-  last_error: null,
-  wants_originals: true,
-  reachable: true,
-  outdated: null,
-};
+const PEER = pairedPeer({ peer_id: 'nas', name: 'NAS' });
 
 // The stores belong to the provider, so the one library these rows are of is
 // written from inside it rather than handed in.

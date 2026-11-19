@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { beforeEach, expect, mock, test } from 'bun:test';
 import type {
   ImportFile,
   ImportFileStates,
@@ -91,6 +91,15 @@ function storeOf(libraries: Library[]): ImportStore {
   });
 }
 
+function idlePresenter(importStore: ImportStore): ImportPresenter {
+  return new ImportPresenter(
+    importStore,
+    { create: async () => null },
+    { show: () => {}, showError: () => {} },
+    { ask: async () => false },
+  );
+}
+
 function tileNames(): string[][] {
   return store.entries.map((entry) => entry.files.map(filenameOf));
 }
@@ -131,10 +140,6 @@ beforeEach(async () => {
     return job();
   });
   await presenter.setLibrary(FIRST_LIBRARY.id);
-});
-
-afterEach(() => {
-  mock.restore();
 });
 
 test('merging puts a RAW and its camera file on 1 tile drawn from the JPEG', () => {
@@ -232,6 +237,17 @@ test('filtering out JPEG leaves the RAW alone, with no pair badge', async () => 
   expect(tileNames()).toEqual([['DSC2.ARW'], ['DSC1.ARW']]);
   expect(store.entries.every((entry) => entry.mergedFormats.length === 0)).toBe(true);
   expect(store.selectedFileIds.sort()).toEqual([0, 2]);
+});
+
+test('a toggled filter changes only its own list', () => {
+  presenter.toggleFilter('cameraModels', 'R5', true);
+  presenter.toggleFilter('cameraModels', 'A7 IV', true);
+  presenter.toggleFilter('cameraModels', 'R5', false);
+  presenter.toggleFilter('formats', 'arw', true);
+
+  expect(store.filters.cameraModels).toEqual(['A7 IV']);
+  expect(store.filters.formats).toEqual(['arw']);
+  expect(store.filters.lensModels).toEqual([]);
 });
 
 test('the merge option keeps each file ticked as it was', async () => {
@@ -367,12 +383,7 @@ test('opening the page picks the first library that can take photos', async () =
     RAW_ONLY,
   ] as Library[];
   const fresh = storeOf(libraries);
-  const page = new ImportPresenter(
-    fresh,
-    { create: async () => null },
-    { show: () => {}, showError: () => {} },
-    { ask: async () => false },
-  );
+  const page = idlePresenter(fresh);
 
   await page.chooseLibrary();
 
@@ -382,12 +393,7 @@ test('opening the page picks the first library that can take photos', async () =
 test('reopening the page moves off a library gone, and off a shoot gone', async () => {
   const libraries = [RAW_ONLY] as Library[];
   const fresh = storeOf(libraries);
-  const page = new ImportPresenter(
-    fresh,
-    { create: async () => null },
-    { show: () => {}, showError: () => {} },
-    { ask: async () => false },
-  );
+  const page = idlePresenter(fresh);
   await page.setLibrary(FIRST_LIBRARY.id);
   await page.chooseLibrary();
   expect(fresh.libraryId).toBe(RAW_ONLY.id);
@@ -580,12 +586,7 @@ test('delete after copying is off until asked for, then stays on', async () => {
   expect(store.deleteOriginals).toBe(true);
 
   const reopened = storeOf([]);
-  new ImportPresenter(
-    reopened,
-    { create: async () => null },
-    { show: () => {}, showError: () => {} },
-    { ask: async () => false },
-  );
+  idlePresenter(reopened);
   expect(reopened.deleteOriginals).toBe(true);
 });
 

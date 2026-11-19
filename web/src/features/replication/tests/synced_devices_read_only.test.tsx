@@ -7,6 +7,7 @@ import { type Transfer } from '../../../../../src/schemas/blobs';
 import { blobsApi } from '../../../api/blobs';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
+import { pairedPeer } from './peer_fixture';
 
 registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
@@ -23,23 +24,7 @@ function Seed({ keepsOriginals, readOnly }: { keepsOriginals: boolean; readOnly:
   useEffect(() => {
     runInAction(() => {
       replication.syncOriginalsByLibrary = new Map([['lib', keepsOriginals]]);
-      replication.peersByLibrary = new Map([
-        [
-          'lib',
-          [
-            {
-              peer_id: 'laptop',
-              name: 'Laptop',
-              paired_at: '2026-01-01T00:00:00.000Z',
-              last_replicated_at: null,
-              last_error: null,
-              wants_originals: !readOnly,
-              reachable: true,
-              outdated: null,
-            },
-          ],
-        ],
-      ]);
+      replication.peersByLibrary = new Map([['lib', [pairedPeer({ wants_originals: !readOnly })]]]);
     });
   }, [replication, keepsOriginals, readOnly]);
   return null;

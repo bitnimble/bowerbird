@@ -284,7 +284,7 @@ so they travel as the app's assets and `android.rs` unpacks them into the data d
 build, keyed by the `payload-id` hash `build-sidecar.ts` writes beside them. The bundle loads each
 addon through a loader that opens it from `BOWERBIRD_ADDON_DIR`.
 
-**The mobile app holds the phone's own photos and libraries synced from another Bowerbird.** It
+**The mobile app holds the phone's own photos and libraries synced from another device.** It
 has no folder to pick (`isThinShell`), so it offers those two. **Add phone photos** asks Android to
 read images, then opens the Add library dialog on the camera folder, `DCIM`, fixed, with its non-RAW
 files as well as its RAWs, newest first, no pre-render, and dust removal off in each imported photo's

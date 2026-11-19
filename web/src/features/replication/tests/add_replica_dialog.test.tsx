@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { useEffect } from 'react';
-import { DEFAULT_LIBRARY_SETTINGS, type Library } from '../../../../../src/schemas/libraries';
+import {
+  DEFAULT_LIBRARY_SETTINGS,
+  type Library,
+  LibrarySchema,
+} from '../../../../../src/schemas/libraries';
 import { type AddReplicaRequest, type RemoteLibrary } from '../../../../../src/schemas/replication';
 import { blobsApi } from '../../../api/blobs';
 import { browseApi } from '../../../api/browse';
@@ -20,28 +24,19 @@ afterEach(cleanup);
 let here: Library[] = [];
 
 function libraryHere(id: string, over: Partial<Library> = {}): Library {
-  return {
+  return LibrarySchema.parse({
     id,
+    name: id,
     root_path: `/fixture/${id}`,
     bin_name: 'Bin',
-    read_only: false,
-    name: id,
     ordering: 'taken_asc',
-    rendition_source: 'render',
-    rendition_hdr: true,
-    render_skip_full: [],
-    render_skip_max: [],
-    denoiser: 'galosh',
-    include_subfolders: true,
-    include_non_raw: false,
-    auto_stack: true,
     last_synced_at: null,
     photo_count: 0,
     missing_photo_count: 0,
     unavailable_photo_count: 0,
     rendered_photo_count: 0,
     ...over,
-  };
+  });
 }
 
 const TRIP: RemoteLibrary = {
@@ -187,6 +182,12 @@ function card(name: string): HTMLElement {
   return screen.getByRole('button', { name: new RegExp(`^${name}`) });
 }
 
+async function openCard(name: string): Promise<void> {
+  await act(async () => {
+    fireEvent.click(card(name));
+  });
+}
+
 const request = (over: Partial<AddReplicaRequest>): AddReplicaRequest => ({
   address: 'http://desktop:5173',
   library_id: 'library1',
@@ -235,16 +236,15 @@ test('reconnecting to another device drops the library picked on the first', asy
 });
 
 test("1 library sets its folder and originals on one screen, and takes this device's Rendering settings", async () => {
-  here = [libraryHere('home', { denoiser: 'pmrid', render_skip_full: ['sharpen'] })];
+  here = [libraryHere('library0', { denoiser: 'pmrid', render_skip_full: ['sharpen'] })];
   const requests = recordAdds();
   await open();
   await pick('Trip');
   await press('Next');
 
-  screen.getByText('Select a folder on this device where this library will be synced to.');
+  screen.getByText('Select a folder on this device for this library.');
   expect(screen.getByRole('button', { name: 'Add "Trip"' }).matches(':disabled')).toBe(true);
   expect(chosenOriginals()).toBe('Sync original RAWs');
-  expect(screen.queryByRole('combobox', { name: 'Denoiser' })).toBeNull();
   await chooseFolder('/fixture/trip');
   await chooseOriginals('Sync thumbnails only');
   await press('Add "Trip"');
@@ -270,9 +270,7 @@ test('a library picked again after being dropped has to be configured again', as
   await open();
   await pick('Archive, read-only', 'Trip');
   await press('Next');
-  await act(async () => {
-    fireEvent.click(card('Trip'));
-  });
+  await openCard('Trip');
   await chooseFolder('/fixture/trip');
   await press('Save');
   const toggleTrip = (): Promise<void> =>
@@ -317,9 +315,7 @@ test('several libraries are configured one at a time from their cards, then fini
   expect(card('Archive').textContent).toContain('Configure');
   expect(screen.getByRole('button', { name: 'Finish' }).matches(':disabled')).toBe(true);
 
-  await act(async () => {
-    fireEvent.click(card('Trip'));
-  });
+  await openCard('Trip');
   screen.getByText('Trip');
   await chooseFolder('/fixture/trip');
   await chooseOriginals('Sync thumbnails only');
@@ -328,9 +324,7 @@ test('several libraries are configured one at a time from their cards, then fini
   expect(card('Trip').textContent).toBe('TripConfigured');
   expect(screen.getByRole('button', { name: 'Finish' }).matches(':disabled')).toBe(true);
 
-  await act(async () => {
-    fireEvent.click(card('Archive'));
-  });
+  await openCard('Archive');
   await chooseFolder('/fixture/archive');
   await press('Save');
   await press('Finish');
@@ -347,16 +341,12 @@ test('backing out of a library leaves it to configure, and reopening it shows it
   await open();
   await pick('Archive, read-only', 'Trip');
   await press('Next');
-  await act(async () => {
-    fireEvent.click(card('Trip'));
-  });
+  await openCard('Trip');
   await chooseFolder('/fixture/trip');
   await press('Back');
 
   expect(card('Trip').textContent).toBe('TripConfigure');
-  await act(async () => {
-    fireEvent.click(card('Trip'));
-  });
+  await openCard('Trip');
   screen.getByText('/fixture/trip');
 });
 
@@ -374,14 +364,10 @@ async function finishBothFailingOnArchive(committed: boolean): Promise<{
   await open((open) => (closed = !open));
   await pick('Archive, read-only', 'Trip');
   await press('Next');
-  await act(async () => {
-    fireEvent.click(card('Trip'));
-  });
+  await openCard('Trip');
   await chooseFolder('/fixture/trip');
   await press('Save');
-  await act(async () => {
-    fireEvent.click(card('Archive'));
-  });
+  await openCard('Archive');
   await chooseFolder('/fixture/archive');
   await press('Save');
   await press('Finish');
