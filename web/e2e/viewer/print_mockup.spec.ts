@@ -77,7 +77,7 @@ test('the viewer prints the camera JPEG it shows, and comes back to the photogra
   expect(drawn.others()).toEqual([]);
 
   await softProof(page, 'SDR (sRGB)');
-  await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'Edited photo' })).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe(photoPath);
   expect(await savedRev(page, photoId)).toBe(revision);
 });
@@ -130,7 +130,7 @@ test('the mockup opens on its own address, and escape leaves it', async ({ page 
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
 
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'Edited photo' })).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe(photoPath);
 });
 

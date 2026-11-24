@@ -2,7 +2,7 @@ import { PhotoStageStrings } from '../../photos/viewer/photo_stage.strings';
 import type { OpenStep } from './stage_store';
 
 export const RawEditStageStrings = {
-  picture: () => 'Edit preview',
+  picture: () => 'Edited photo',
 
   step: (step: OpenStep): string => {
     switch (step) {

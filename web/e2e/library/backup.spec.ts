@@ -52,17 +52,17 @@ test('backup status loads on the library, updates after a run, survives reload a
   await expect(issues.getByText('alpha.arw', { exact: true })).toBeVisible();
   await expect(
     issues.getByText(
-      'Compare both files before choosing which to keep, move, or replace, then retry.',
+      'Compare both files before choosing which to keep, move, or replace, then retry',
       { exact: true },
     ),
   ).toBeVisible();
   rmSync(conflict);
   await panel.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(
-    panel.getByText('No originals are waiting to back up.', { exact: true }),
+    panel.getByText('No originals are waiting to back up', { exact: true }),
   ).toBeVisible();
   await expect(panel.getByText(/^Current backup issues \(/)).toHaveCount(0);
   await expect(
-    panel.getByText('2 of 2 originals were last recorded on this backup.', { exact: true }),
+    panel.getByText('2 of 2 originals were on this backup at the last check', { exact: true }),
   ).toBeVisible();
 });

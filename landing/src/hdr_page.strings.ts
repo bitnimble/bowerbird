@@ -13,8 +13,8 @@ export const HdrPageStrings = {
   axisTick: (stops: number) => `${stops > 0 ? '+' : ''}${stops}`,
 
   swapLabel: (label: string, showingHdr: boolean) =>
-    `${label}. Showing the ${showingHdr ? 'HDR' : '8-bit'} version. Activate to see the other one.`,
-  sdrAlt: (alt: string) => `${alt}, as 8 bits holds it`,
+    `${label}. Showing the ${showingHdr ? 'HDR' : '8-bit'} version. Select to see the other one.`,
+  sdrAlt: (alt: string) => `${alt}, in 8-bit`,
   hdrAlt: (alt: string) => `${alt}, in HDR`,
   eightBit: () => '8-bit',
   hdr: () => 'HDR',

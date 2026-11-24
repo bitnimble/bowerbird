@@ -17,19 +17,17 @@ export const ExportStrings = {
   qualityValue: (quality: number) => `${quality}`,
 
   includeEdits: () => 'Include edits',
-  includeEditsHint: () => 'Turn off to export the photo as your camera rendered it.',
 
   halfSize: () => 'Half-size RAW',
-  halfSizeHint: () => 'Exports with 25% of the pixels at about twice the speed',
+  halfSizeHint: () => 'Export with 25% of the pixels, about 2× faster',
 
   exportHdr: () => 'Export as HDR',
-  exportHdrHint: () => 'Keeps highlights brighter than white',
   exportHdrUnavailable: (format: string) => `${format} can't store HDR. Choose another file type.`,
   exportHdrNeedsGainMap: (format: string) => `${format} needs a gain map for HDR. Add one below.`,
 
   gainMap: () => 'Add a gain map for SDR compatibility',
   gainMapHint: () =>
-    'Shows HDR on supported displays and SDR elsewhere in a file about a third larger',
+    'Show HDR on supported displays and SDR elsewhere, in a file about a third larger',
 
   estimate: (size: string) => `About ${size}`,
   estimateUnknown: () => 'Size unknown',

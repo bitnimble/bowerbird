@@ -266,9 +266,7 @@ test('a folder the server cannot write in says so outside Advanced settings', as
   await chooseInTree();
 
   const dialog = screen.getByRole('dialog', { name: 'Add library' });
-  const hint = within(dialog).getByText(
-    "Bowerbird can't write to this folder. Choose another folder.",
-  );
+  const hint = within(dialog).getByText("We can't write to this folder. Choose another folder.");
   expect(hint.closest('details')).toBeNull();
   expect(within(dialog).queryByRole('textbox', { name: 'Bin folder name' })).toBeNull();
 });

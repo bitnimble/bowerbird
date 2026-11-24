@@ -1,3 +1,3 @@
 export const AppSettingsPresenterStrings = {
-  couldNotBenchmark: () => "Couldn't measure this rendition.",
+  couldNotBenchmark: () => "We couldn't measure this rendition. Try again.",
 };

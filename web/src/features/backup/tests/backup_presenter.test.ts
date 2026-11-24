@@ -58,9 +58,7 @@ test.each(['partial', 'blocked'] as const)(
     await presenter.runNow('lib');
     expect(success).toEqual([]);
     expect(errors).toEqual([
-      outcome === 'partial'
-        ? 'The backup completed with unresolved issues.'
-        : "The backup couldn't complete.",
+      outcome === 'partial' ? 'The backup finished with issues' : "The backup couldn't finish",
     ]);
     expect(store.statusOf('lib')).toEqual(server);
   },
@@ -73,7 +71,7 @@ test.each(['waiting', 'paused', 'unavailable', 'working'] as const)(
     server = backupStatus({ status });
     await presenter.runNow('lib');
     expect(success).toEqual([]);
-    expect(errors).toEqual(['The backup still has work remaining.']);
+    expect(errors).toEqual(["The backup isn't finished yet"]);
   },
 );
 
@@ -83,7 +81,7 @@ test('a run without a configured target is blocked in the UI', async () => {
   backupApi.run = async () => ({ status: server, report: backupReport({ outcome: 'blocked' }) });
   await presenter.runNow('lib');
   expect(success).toEqual([]);
-  expect(errors).toEqual(["The backup couldn't complete."]);
+  expect(errors).toEqual(["The backup couldn't finish"]);
 });
 
 test('a run on one library leaves another library free to change its backup', async () => {
@@ -116,7 +114,7 @@ test('a completed run reports confirmed originals and refreshes changed local av
     report: backupReport({ copied: 3, offloaded: 2 }),
   });
   await presenter.runNow('lib');
-  expect(success).toEqual(['Backed up 3 originals and removed 2 checked local copies.']);
+  expect(success).toEqual(['Backed up 3 originals and removed 2 checked local copies']);
   expect(reloads()).toBe(1);
 });
 
@@ -136,7 +134,7 @@ test('failed restoration preserves the configured backup and returns false', asy
   expect(await presenter.remove('lib', true)).toBe(false);
   expect(store.statusOf('lib')).toEqual(server);
   expect(store.errorsByLibrary.get('lib')).toBe(
-    "Couldn't remove the backup. Check the connection and backup folder, then retry.",
+    "We couldn't remove the backup. Check the connection and backup folder, then retry.",
   );
   expect(store.fetchingBack).toBeNull();
   expect(reloads()).toBe(1);

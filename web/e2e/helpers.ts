@@ -577,7 +577,7 @@ export function renditionDetails(page: Page): Locator {
 }
 
 export function editPreview(page: Page): Locator {
-  return photoStage(page).getByRole('img', { name: 'Edit preview' });
+  return photoStage(page).getByRole('img', { name: 'Edited photo' });
 }
 
 /**
@@ -641,7 +641,7 @@ export function editorFailure(page: Page): Locator {
 /** Waits for the editor's picture to be live, throwing the reason the stage gives if the open failed. */
 export async function waitForEditorLive(page: Page, timeout = 170_000): Promise<void> {
   // `has` resolves relative to the stage, so the preview is named from the page, not via `editPreview`.
-  const stage = photoStage(page).filter({ has: page.getByRole('img', { name: 'Edit preview' }) });
+  const stage = photoStage(page).filter({ has: page.getByRole('img', { name: 'Edited photo' }) });
   const failure = editorFailure(page);
   await expect
     .poll(

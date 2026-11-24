@@ -103,7 +103,7 @@ test('filing into and out of a shoot is greyed on a read-only library, and says 
     const item = screen.getByRole('menuitem', { name });
     expect(item.getAttribute('aria-disabled')).toBe('true');
     expect(item.getAttribute('aria-description')).toBe(
-      'Turn off read-only mode to use this action.',
+      'Turn off read-only mode to use this action',
     );
   }
 });
@@ -115,7 +115,7 @@ test('one photo is not a panorama, and the row says so', async () => {
   });
   const item = screen.getByRole('menuitem', { name: 'To panorama' });
   expect(item.getAttribute('aria-disabled')).toBe('true');
-  expect(item.getAttribute('aria-description')).toBe('Select at least 2 photos.');
+  expect(item.getAttribute('aria-description')).toBe('Select at least 2 photos');
 });
 
 test('one photo is no burst to merge', async () => {

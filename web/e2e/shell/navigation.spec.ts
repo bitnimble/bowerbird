@@ -22,7 +22,7 @@ test.beforeAll(async ({ browser }) => {
 test('System settings shows persistent disk usage in Maintenance', async ({ page }) => {
   await page.goto(route(PathSegment.settings(), 'system'));
   await expect(page.getByText('Maintenance', { exact: true })).toBeVisible();
-  const usage = page.getByRole('status', { name: 'Bowerbird disk usage' });
+  const usage = page.getByRole('status', { name: 'App disk usage' });
   await expect(usage).toHaveAttribute('aria-busy', 'false');
   await expect(usage).toHaveText(/^\d+(?:\.\d+)? (?:KB|MB|GB|TB)$/);
   await expect(page.getByText('Excludes your originals', { exact: true })).toBeVisible();
@@ -38,7 +38,7 @@ test('disk usage failure stays in the status region and can be retried', async (
   await expect(
     page.getByText("We couldn't measure disk usage. Try again.", { exact: true }),
   ).toBeVisible();
-  const usage = page.getByRole('status', { name: 'Bowerbird disk usage' });
+  const usage = page.getByRole('status', { name: 'App disk usage' });
   await expect(usage).toHaveText("We couldn't measure disk usage. Try again.");
   await expect(usage).toHaveAttribute('aria-busy', 'false');
 

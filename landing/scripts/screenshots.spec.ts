@@ -76,7 +76,7 @@ async function stageReady(page: Page): Promise<void> {
 
 async function openEditor(page: Page, photoId: string): Promise<void> {
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
-  await expect(stage(page).getByRole('img', { name: 'Edit preview' })).toBeVisible({
+  await expect(stage(page).getByRole('img', { name: 'Edited photo' })).toBeVisible({
     timeout: 300_000,
   });
   // Not busy is live or failed, and a failed open is no picture to take.

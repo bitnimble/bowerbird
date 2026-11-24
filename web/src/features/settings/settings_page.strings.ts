@@ -31,18 +31,15 @@ export const SettingsStrings = {
 
   folders: () => 'Folders',
   libraryFolder: () => 'Library folder',
-  libraryFolderHint: () => "Bowerbird doesn't move any files when you change this.",
+  libraryFolderHint: () => "Changing this won't move any files",
   includeSubfolders: () => 'Include subfolders',
   includeNonRaw: () => 'Import JPEG, PNG, HEIC, and AVIF too',
-  includeNonRawHint: () => 'RAW+JPEG pairs are deduplicated automatically.',
+  includeNonRawHint: () => 'Show RAW+JPEG pairs as 1 photo',
   /** The flag and its one line, here and in the add-library dialog. */
   readOnly: () => 'Read-only mode',
-  readOnlyHint: () => "When enabled, Bowerbird doesn't change your photo files on disk",
+  readOnlyHint: () => "Don't change any photo files on disk",
 
   binFolderName: () => 'Bin folder name',
-  binNameHintNoBin: () => 'Bowerbird creates this folder when you turn off read-only mode.',
-  binNameHint: () => 'Binned photos are moved to this subfolder',
-  binNameLocked: () => 'Turn off read-only mode to rename the Bin folder.',
 
   foldersSetAside: () => 'Folders set aside',
   ruleExcluded: () => 'Excluded from this library',
@@ -54,10 +51,10 @@ export const SettingsStrings = {
 
   renderStages: () => 'Automatic pre-rendering',
   renderStagesHint: () =>
-    "Select which features new RAW photos start with when they're imported, to choose a trade-off between quality and performance.",
+    'Choose which edits run when you import a RAW to balance quality and speed',
   renderStagesNeedLibrary: () => 'Add a library to change this',
   stageDenoise: () => 'Denoise',
-  stageColour: () => 'Auto-detect camera colour profile',
+  stageColour: () => 'Match camera colour',
   stagesOther: () => 'Other',
   stageCost: (ms: number) => (ms === 0 ? 'No measurable saving' : `~${ms} ms`),
   stagesTotal: () => 'Total',
@@ -78,14 +75,11 @@ export const SettingsStrings = {
   syncLibrary: () => 'Sync library to other devices',
   backUpOriginals: () => 'Back up originals',
   scanLibrary: () => 'Scan library',
-  scanLibraryHint: () => 'Finds files you added, moved, changed, or removed',
   rebuildThumbnails: () => 'Rebuild all library thumbnails',
   rebuildRenditions: () => 'Rebuild all viewer renditions',
-  rebuildRenditionsHint: () => 'Use after changing rendition settings',
   noRenditionsToRebuild: () => 'This library uses embedded JPEGs. No renditions to rebuild.',
   // The job, not the setting above it, which is why this says nothing about scanning.
   groupSimilarPhotos: () => 'Group similar photos into stacks',
-  groupSimilarPhotosHint: () => 'Regroups similar photos now',
   autoStackOff: () => 'Automatic grouping is off for this library',
 
   renditionModeLastUsed: () => 'Last used',
@@ -96,8 +90,6 @@ export const SettingsStrings = {
   defaultRendition: () => 'Default rendition to show',
   hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
   frameTvEnabled: () => 'Enable Samsung Frame TV integration',
-  frameTvEnabledHint: () =>
-    'When enabled, shows menu options to send photos to a Samsung Frame TV on your local network.',
 
   couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
   couldNotOpenAppDataFolder: () =>
@@ -110,37 +102,34 @@ export const SettingsStrings = {
 
   groupThisDevice: () => 'This device',
   deviceName: () => 'Device name',
-  deviceNameHint: () => 'Shown on your synced devices',
   groupThisApp: () => 'This app',
   uiScale: () => 'Interface scale',
   uiScalePercent: (percent: number) => `${percent}%`,
   couldNotSetUiScale: () => "We couldn't change the interface scale. Try again.",
 
   renderOnThisDevice: () => 'Render on this device',
-  renderOnThisDeviceHint: () => 'Builds photo viewer renditions on this device',
 
   groupWatching: () => 'File watching',
   groupSchedule: () => 'Schedule',
   watchEnabled: () => 'Watch library folders for changes',
   dailyFullScanAt: () => 'Daily full scan at',
   dailyFullScanAtPlaceholder: () => '03:00',
-  dailyFullScanAtHint: () => 'Leave empty to turn it off.',
+  dailyFullScanAtHint: () => 'Leave empty to turn it off',
 
   hdrOff: () => 'No library builds HDR renditions',
 
   groupWorkers: () => 'Workers',
   scanConcurrency: () => 'Scanning threads',
   processingConcurrency: () => 'Rendition threads',
-  processingConcurrencyHint: () => 'Each thread holds 1 RAW file in memory.',
+  processingConcurrencyHint: () => 'Each thread holds 1 RAW file in memory',
 
   groupHdr: () => 'HDR',
   hdrReferenceWhite: () => 'HDR reference white',
-  hdrReferenceWhiteHint: () => 'How bright plain white is rendered',
+  hdrReferenceWhiteHint: () => 'How bright plain white will appear',
   hdrWhiteQuantile: () => 'HDR white threshold',
-  hdrWhiteQuantileHint: () => 'Lower renders brighter',
+  hdrWhiteQuantileHint: () => 'Lower values make photos brighter',
   displayPeakNits: () => 'Display peak brightness',
-  displayPeakNitsHint: () =>
-    "Applies to this device only. Set this to your device display's peak brightness. If you don't know it, you can search online.",
+  displayPeakNitsHint: () => "Applies to this device only. Match your display's peak brightness.",
   hdrWhite: () => 'HDR brightness',
   hdrWhiteScale: (scale: number) => `${scale.toFixed(1)}×`,
   calibrateHdr: () => 'Calibrate HDR',
@@ -152,33 +141,29 @@ export const SettingsStrings = {
   gridRenditionSize: () => 'Grid thumbnail longest edge',
   fullRenditionSize: () => 'Viewer rendition longest edge',
   panoramaFullRenditionSize: () => 'Panorama rendition longest edge',
-  panoramaFullRenditionSizeHint: () => 'A panorama is several frames wide',
 
   groupQuality: () => 'Quality',
   gridRenditionQuality: () => 'Grid thumbnail quality',
   fullRenditionQuality: () => 'Viewer rendition quality',
   maxRenditionQuality: () => 'Full-resolution quality',
-  qualityRange: () => '0 to 100',
 
   groupEncoding: () => 'Encoding',
   sdrFullChroma: () => 'Always encode SDR in 4:4:4',
   hdrFullChroma: () => 'Always encode HDR in 4:4:4',
-  hdrFullChromaHint: () => 'When disabled, Bowerbird uses 4:4:4 if colour loss would be visible.',
+  hdrFullChromaHint: () => 'When off, we use 4:4:4 only if colour loss would be visible',
   avifSpeed: () => 'Encoder speed',
   avifSpeedHint: () => '10 is fastest',
 
   groupMaintenance: () => 'Maintenance',
-  diskUsage: () => 'Bowerbird disk usage',
+  diskUsage: () => 'App disk usage',
   diskUsageHint: () => 'Excludes your originals',
   calculatingDiskUsage: () => 'Calculating…',
   couldNotMeasureDiskUsage: () => "We couldn't measure disk usage. Try again.",
   retryDiskUsage: () => 'Try again',
   diskSpaceLimit: () => 'Disk space limit',
-  diskSpaceLimitHint: () =>
-    'Bowerbird deletes the least recently viewed renditions above this limit.',
+  diskSpaceLimitHint: () => 'Delete the least recently viewed renditions above this limit',
   watchDebounce: () => 'Scan delay after a change',
   watchPollInterval: () => 'Network library scan interval',
-  watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',
   pruneEveryDays: () => 'Delete unused renditions every',
   backupEveryDays: () => 'Back up the catalogue every',
   /** One line under every schedule a zero disables. */
@@ -186,7 +171,7 @@ export const SettingsStrings = {
   backupKeep: () => 'Backups to keep',
   backupsOff: () => 'Backups are off',
   exportHistoryLimit: () => 'Export history entries to keep',
-  exportHistoryLimitHint: () => 'Your exported files stay on disk.',
+  exportHistoryLimitHint: () => 'Your exported files stay on disk',
   appDataFolder: () => 'App data folder',
   openFolder: () => 'Open folder',
 
@@ -195,7 +180,7 @@ export const SettingsStrings = {
   corsOrigins: () => 'Allowed CORS origins',
   corsOriginsPlaceholder: () => 'any origin on this host',
   corsOriginsHint: () => 'Comma-separated, or * for any',
-  environmentNote: () => 'HOST, PORT and DB_PATH are set in the environment',
+  environmentNote: () => 'HOST, PORT, and DB_PATH are set in the environment',
 
   /** Names the page wherever it is met: this heading and the sidebar. */
   settings: () => 'Settings',
@@ -203,9 +188,9 @@ export const SettingsStrings = {
   /** The set of libraries, named here and in the sidebar. */
   libraries: () => 'Libraries',
   noLibrariesYet: () => 'No libraries yet',
-  noLibrariesHint: () => 'Add a folder of RAW files to start your library.',
+  noLibrariesHint: () => 'Add a folder of RAW files to start your library',
   /** The mobile app's, which has no folder to pick. */
-  noPhoneLibrariesHint: () => "Add your phone's photos, or sync a library from another device.",
+  noPhoneLibrariesHint: () => "Add your phone's photos, or sync a library from another device",
   groupGeneral: () => 'General',
   groupRendering: () => 'Rendering',
   groupAdvanced: () => 'Advanced',

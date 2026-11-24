@@ -152,7 +152,7 @@ test('a preset filter arrives with its options already ticked, and wears no badg
   // rather than looking as though no filter were applied.
   await page.getByRole('button', { name: 'Active', exact: true }).click();
   await openFilters(page);
-  await expect(page.getByRole('checkbox', { name: 'Untriaged', checked: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Undecided', checked: true })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Picks', checked: true })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Rejects', checked: true })).toHaveCount(0);
   await page.keyboard.press('Escape');

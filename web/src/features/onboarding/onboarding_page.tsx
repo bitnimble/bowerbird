@@ -154,11 +154,7 @@ function PreferencesStep(): JSX.Element {
         {!isThinShell() && (
           <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
         )}
-        <ToggleSetting
-          field="frame_tv_enabled"
-          label={SettingsStrings.frameTvEnabled()}
-          hint={SettingsStrings.frameTvEnabledHint()}
-        />
+        <ToggleSetting field="frame_tv_enabled" label={SettingsStrings.frameTvEnabled()} />
         <NumberSetting
           field="disk_space_limit_gb"
           label={SettingsStrings.diskSpaceLimit()}

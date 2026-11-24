@@ -10,8 +10,9 @@ This guide governs visible text ("copy"); a "string" is 1 piece.
 2. **Use sentence case everywhere.** Headings, buttons, labels, tabs, and menu items all take
    sentence case. Proper nouns and the capitalised terms in the [glossary](#glossary) keep
    their capitals, and nothing else does.
-3. **Talk to the reader.** Write "you" and "your". Write "we" only when Bowerbird itself did
-   or will do something.
+3. **Talk to the reader.** Write "you" and "your". Write "we" only when the app itself did or
+   will do something. Avoid naming "Bowerbird" inside the app itself: it's redundant when the
+   reader is already using it, except when distinguishing it from another app or device.
 4. **Lead with the verb.** Buttons, steps, and feature descriptions start with what happens.
 5. **Keep the reader calm.** Name what went wrong and what to do. Never blame the reader, and
    never use an exclamation mark.
@@ -21,10 +22,10 @@ This guide governs visible text ("copy"); a "string" is 1 piece.
 Every string states a fact or names an action.
 
 - **Use contractions.** Write "you're", "we'll", "can't", "doesn't". "We'll look for photos in
-  this folder and any inside it."
+  this folder and any inside it"
 - **No jokes or colloquialisms.** "Oops" on a failed export tells the reader the failure is
   funny. Describe the failure.
-- **Reassure with a fact.** "Your edits are in the catalogue." tells the reader something.
+- **Reassure with a fact.** "Your edits are in the catalogue" tells the reader something.
   "Don't worry" tells them there was something to worry about.
 - **Use only words the reader knows, plus the glossary.** A photographer knows _exposure_,
   _white balance_, _RAW_, _crop_, _HDR_. The [glossary](#glossary) holds the few Bowerbird
@@ -34,19 +35,19 @@ Every string states a fact or names an action.
 
 ## Length by type
 
-| Copy                              | Length                                          | Example                                                              |
-| --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
-| Button or link                    | 1 to 3 words, verb and object                   | "Add library", "Merge photos", "Show less"                           |
-| Navigation link to a page         | the page's name                                 | "Home", "Features", "Settings"                                       |
-| Page subtitle or meta description | 1 phrase, no full stop                          | "A free, fast tool for triaging RAW photos"                          |
-| Item in a "coming soon" list      | the feature's name, no full stop                | "Exposure and focus bracket merging"                                 |
-| Menu item, tab, label             | 1 to 3 words                                    | "Keyboard shortcuts", "Hide sidebar", "White balance"                |
-| Heading                           | 1 to 4 words                                    | "Dust removal", "Synced devices"                                     |
-| Tooltip or helper text            | 1 clause                                        | "Rating from 0 to 5"                                                 |
-| Toast or status                   | 1 sentence                                      | "All changes saved."                                                 |
-| Error or validation               | 1 or 2 sentences, what happened then what to do | "This folder has moved. Choose where it is now."                     |
-| Empty state                       | a headline, 1 or 2 sentences, 1 button          | "No photos yet" / "Add a folder of photos to start." / "Add library" |
-| Step in instructions              | 1 imperative clause                             | "From the toolbar, select **Crop**."                                 |
+| Copy                              | Length                                          | Example                                                             |
+| --------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
+| Button or link                    | 1 to 3 words, verb and object                   | "Add library", "Merge photos", "Show less"                          |
+| Navigation link to a page         | the page's name                                 | "Home", "Features", "Settings"                                      |
+| Page subtitle or meta description | 1 phrase, no full stop                          | "A free, fast tool for triaging RAW photos"                         |
+| Item in a "coming soon" list      | the feature's name, no full stop                | "Exposure and focus bracket merging"                                |
+| Menu item, tab, label             | 1 to 3 words                                    | "Keyboard shortcuts", "Hide sidebar", "White balance"               |
+| Heading                           | 1 to 4 words                                    | "Dust removal", "Synced devices"                                    |
+| Tooltip or helper text            | 1 clause                                        | "Rating from 0 to 5"                                                |
+| Toast or status                   | 1 sentence, no full stop                        | "All changes saved"                                                 |
+| Error or validation               | 1 or 2 sentences, what happened then what to do | "This folder has moved. Choose where it is now."                    |
+| Empty state                       | a headline, 1 or 2 sentences, 1 button          | "No photos yet" / "Add a folder of photos to start" / "Add library" |
+| Step in instructions              | 1 imperative clause                             | "From the toolbar, select **Crop**"                                 |
 
 In the app, aim for 10 words or fewer per string. An obvious label gets no sublabel. Ranges
 and units go on the field as its min, max, and suffix, and stay out of the label.
@@ -93,8 +94,8 @@ If two controls on a screen have sublabels, at least one is unnecessary.
 
 1. **Say what went wrong, as specifically as helps.** "Something went wrong" says too little
    and "SQLITE_BUSY" says too much. When the cause is unknown, say what is known: "We couldn't
-   load this photo."
-2. **Say what to do next.** "Try again in a moment." "Check the drive is connected."
+   load this photo"
+2. **Say what to do next.** "Try again in a moment", "Check the drive is connected"
 3. **Describe, and leave blame out.** Write "We couldn't find that folder. Check the path?"
    and avoid "Invalid path". Headlines avoid "error", "problem", "invalid", and "failed" when
    a plain description exists.
@@ -114,30 +115,29 @@ data. Keep the words calm at every level.
 **An empty state** has a headline naming what's empty, 1 or 2 sentences on how to fill it,
 and 1 primary action. It needs no illustration.
 
-**A toast** is 1 sentence. Skip the toast when the UI already changed visibly.
+**A toast** is 1 sentence, with no full stop. Skip the toast when the UI already changed visibly.
 
 ## Limitations and "not yet"
 
 State the limit as a fact about the feature, then say what the reader can do instead.
 
-- "Panoramas aren't available on mobile."
+- "Panoramas aren't available on mobile"
 - "HDR export isn't supported for JPEG yet. Export AVIF to keep the HDR."
-- "You can merge up to 12 photos at a time."
+- "You can merge up to 12 photos at a time"
 
 "Yet" and "currently" are fine when true. Never promise a date.
 
 ## Instructions and help text
 
-- **1 action per step.** Each step is imperative and ends in a full stop. "Select the photo
-  you want to edit."
-- **Say where to look before what to do.** "From the toolbar, select **Crop**."
+- **1 action per step.** Each step is imperative. "Select the photo you want to edit"
+- **Say where to look before what to do.** "From the toolbar, select **Crop**"
 - **Write UI names in bold, exactly as they appear in the UI,** with no quotes around them.
   Text the reader types goes in italics, as in _Holiday 2026_.
 - **Use "select" as the verb.** It works on every device. Use "click" and "hover" only in
   desktop-only text, and "tap" only in touch-only text.
 - **Name the key, then the platform in parentheses.** "Command + Z (Mac) or Ctrl + Z
   (Windows)". A shortcut sheet can use symbols alone.
-- **Say what the reader sees after the step.** "The photo moves to the Bin."
+- **Say what the reader sees after the step.** "The photo appears in the Bin"
 
 ## Banned structures
 
@@ -173,8 +173,11 @@ These read as written by a machine or a marketer. None of them appear in copy.
   "numerous", "if" for "in the event that", "to" for "in order to", "because" for "due to the
   fact that".
 - **"Is" and "has".** Avoid "serves as", "stands as", "boasts", "features", "offers".
-- **Active voice.** Write "Bowerbird exports the photo". Avoid "The photo is exported".
-  Passive is fine only when the actor doesn't matter.
+- **Natural active voice, no faux-active middle voice.** Don't turn transitive verbs
+  intransitive on inanimate subjects to dodge passive voice: avoid "RAW+JPEG pairs show as 1
+  photo" or "Deleted photos move to this subfolder". For setting sublabels, lead with what the
+  setting does: "Show RAW+JPEG pairs as 1 photo", "Move deleted photos to this subfolder".
+  In prose, write naturally ("photos will appear at a lower quality").
 - **Strong verbs over adverbs.** Cut "quickly", "easily", "seamlessly", "instantly". Give the
   number if speed matters.
 - **Literal words.** No metaphors, personified software ("the editor wants a photo"), or
@@ -196,10 +199,10 @@ These read as written by a machine or a marketer. None of them appear in copy.
   either. End the sentence or use a comma. Ranges in prose are "0 to 5". A shortcut sheet can
   show "0–5".
 - **Colons only before a list or an example**, never to join 2 halves of a sentence.
-- **Full stops** end sentences, steps, errors and toasts. None on headings, buttons, labels,
-  list fragments or 1-clause tooltips. Judge grammar, not placement: "The grid on a phone"
-  and "Groups similar photos into 1 thumbnail" are fragments; "Open a stack, and its photos
-  appear in a row below." is a sentence.
+- **Full stops** end sentences in prose and multi-sentence copy. Single-sentence UI strings
+  (toasts, single-sentence errors, hints, empty states, notices, tooltips) and headings,
+  buttons, labels, and list fragments take no full stop. When an error, warning, or notice has
+  2 or more sentences, each sentence ends in a full stop.
 - **Strings shown side by side share 1 shape.** A row of cards, a list, or a set of tabs is
   all sentences or all fragments. 5 sentences and 3 fragments in 1 grid read as 2 authors.
 - **Straight apostrophes and quotes**, as nearly every string in `web/src` already has them.
@@ -224,7 +227,7 @@ These read as written by a machine or a marketer. None of them appear in copy.
 ## Glossary
 
 Use 1 term per concept; replace its "Avoid" synonyms. Capitalised terms name features and
-keep capitals mid-sentence: "Deleted photos move to the Bin." Generic uses (bin, pick, light,
+keep capitals mid-sentence: "Move deleted photos to the Bin". Generic uses (bin, pick, light,
 stack) stay lower case, as do other terms except at the start of a string.
 
 ### The library
@@ -237,7 +240,7 @@ stack) stay lower case, as do other terms except at the start of a string.
 | catalogue     | Everything Bowerbird records about a library's photos, apart from the files themselves | database, index                           |
 | shoot         | A folder inside a library, holding the photos from 1 outing                            | folder (in the app), event, session, roll |
 | album         | A set of photos you choose, from any shoots and libraries                              | collection, set, gallery                  |
-| stack         | Similar photos grouped so they show as 1                                               | group, burst, cluster                     |
+| stack         | Similar photos grouped so they appear as 1                                             | group, burst, cluster                     |
 | unstack       | Split a stack back into single photos                                                  | ungroup                                   |
 | original      | The RAW file as the camera wrote it                                                    | source, master, negative                  |
 | local copy    | An original stored on this device                                                      | cached copy, download                     |
@@ -276,21 +279,21 @@ stack) stay lower case, as do other terms except at the start of a string.
 
 ### Editing and making photos
 
-| Term                                                                  | What it is                                                                           | Avoid                                |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
-| edit                                                                  | A change to how a photo looks, made in the editor                                    | adjustment, develop, tweak           |
+| Term                                                                 | What it is                                                                           | Avoid                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
+| edit                                                                 | A change to how a photo looks, made in the editor                                    | adjustment, develop, tweak           |
 | Tone, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels                 |
-| crop, straighten, perspective                                         | Geometry tools                                                                       | trim, level, keystone                |
-| guide                                                                 | A line drawn to straighten or correct perspective against                            | helper line                          |
-| dust removal                                                          | Removing spots left by sensor dust                                                   | spot healing, clean up               |
-| colour fringe removal                                                 | Removing purple and green rims along hard edges                                      | defringe, chromatic aberration, CA   |
-| soft proof                                                            | Showing the photo as it looks in HDR, in sRGB or printed                             | preview, simulate, mockup            |
-| merge                                                                 | Combining several photos into 1                                                      | composite, stitch, combine, assembly |
-| panorama                                                              | A merge of overlapping frames into 1 larger photo                                    | pano, stitch                         |
-| Take best parts                                                       | A merge that builds 1 photo from the best part of each frame                         | composite, blend, best take          |
-| frame                                                                 | 1 of the photos going into a merge                                                   | source, input, layer                 |
-| export                                                                | Writing photos out as files in a chosen format                                       | render, save as, output              |
-| HDR, SDR                                                              | High and standard dynamic range. Write the abbreviation                              | high dynamic range (in labels)       |
+| crop, straighten, perspective                                        | Geometry tools                                                                       | trim, level, keystone                |
+| guide                                                                | A line drawn to straighten or correct perspective against                            | helper line                          |
+| dust removal                                                         | Removing spots left by sensor dust                                                   | spot healing, clean up               |
+| colour fringe removal                                                | Removing purple and green rims along hard edges                                      | defringe, chromatic aberration, CA   |
+| soft proof                                                           | Showing the photo as it looks in HDR, in sRGB, or printed                            | preview, simulate, mockup            |
+| merge                                                                | Combining several photos into 1                                                      | composite, stitch, combine, assembly |
+| panorama                                                             | A merge of overlapping frames into 1 larger photo                                    | pano, stitch                         |
+| Take best parts                                                      | A merge that builds 1 photo from the best part of each frame                         | composite, blend, best take          |
+| frame                                                                | 1 of the photos going into a merge                                                   | source, input, layer                 |
+| export                                                               | Writing photos out as files in a chosen format                                       | render, save as, output              |
+| HDR, SDR                                                             | High and standard dynamic range. Write the abbreviation                              | high dynamic range (in labels)       |
 
 ### Devices
 
@@ -316,7 +319,7 @@ Before a string ships, check each of these:
 - [ ] If it's an error, does it say what happened and what to do, with no blame and no "!"?
 - [ ] Does it use the glossary's term for every concept it names?
 - [ ] If it describes a feature, does it start with a present-tense verb and no subject?
-- [ ] Is it a sentence or a fragment, and does its full stop match? Do the strings beside it
-      have the same shape?
+- [ ] Does its full stop match the rule (only prose and multi-sentence copy take full stops)?
+      Do the strings beside it have the same shape?
 - [ ] Is it free of every banned structure and word above?
 - [ ] Are the spelling, numerals, units, and punctuation right?

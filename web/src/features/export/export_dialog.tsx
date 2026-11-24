@@ -114,8 +114,12 @@ const INTENTS: Option<RenderingIntent>[] = RenderingIntentSchema.options.map((in
   label: IntentChoiceStrings[intent](),
 }));
 
-function hdrHint(unavailable: boolean, gainMappable: boolean, format: ExportFormat): string {
-  if (!unavailable) return ExportStrings.exportHdrHint();
+function hdrHint(
+  unavailable: boolean,
+  gainMappable: boolean,
+  format: ExportFormat,
+): string | undefined {
+  if (!unavailable) return undefined;
   const named = FORMAT_LABELS[format];
   return gainMappable
     ? ExportStrings.exportHdrNeedsGainMap(named)
@@ -227,7 +231,6 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
 
         <Toggle
           label={ExportStrings.includeEdits()}
-          hint={ExportStrings.includeEditsHint()}
           checked={options.includeEdits}
           onChange={(value) => presenter.set('includeEdits', value)}
         />

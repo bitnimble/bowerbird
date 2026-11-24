@@ -34,13 +34,13 @@ export const RawEditPanelStrings = {
   removeSensorDust: () => 'Remove sensor dust',
 
   noWhiteBalanceMode: () => '-',
-  noCameraNeutral: () => 'Camera white balance unavailable for this file',
+  noCameraNeutral: () => "Camera white balance isn't available for this photo",
   noMosaic: () =>
-    'Denoise, highlight recovery, and colour fringe removal unavailable for developed photos',
-  noReflectionRemoval: () => 'Reflection removal unavailable for merged or developed photos',
+    "Denoise, highlight recovery, and colour fringe removal aren't available for non-RAW photos",
+  noReflectionRemoval: () => "Reflection removal isn't available for merged or non-RAW photos",
   // Said of the sensor rather than of the photograph: every frame from this body answers the same
   // way, and a reader who has just watched two sliders disappear wants to know it is the camera.
-  noDenoise: () => "Denoise unavailable for this camera's sensor",
+  noDenoise: () => "Denoise isn't available for this camera's sensor",
   temperature: () => 'Temperature',
   kelvin: (temperature: number) => `${temperature} K`,
   tint: () => 'Tint',
@@ -77,9 +77,9 @@ export const RawEditPanelStrings = {
   editRepair: (index: number) => `Edit removal ${index}`,
   deleteRepair: (index: number) => `Delete removal ${index}`,
   showOutlines: () => 'Show outlines',
-  expandToHideSeam: () => 'Expand selection to hide seam better',
+  expandToHideSeam: () => 'Expand selection to blend edge',
 
-  editedElsewhere: () => 'These edits changed on another device. Reopen this photo to see them.',
+  editedElsewhere: () => 'This photo was edited on another device. Reopen it to see the changes.',
   couldNotSave: () => "We couldn't save your edits. Try again.",
 
   groupTone: () => 'Tone',

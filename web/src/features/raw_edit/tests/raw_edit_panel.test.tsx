@@ -312,7 +312,7 @@ describe('the edit panel', () => {
     showTab('Detail');
     expect(screen.queryByRole('slider', { name: 'Luminance' })).toBeNull();
     expect(screen.queryByRole('slider', { name: 'Colour' })).toBeNull();
-    expect(screen.getByText("Denoise unavailable for this camera's sensor")).not.toBeNull();
+    expect(screen.getByText("Denoise isn't available for this camera's sensor")).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Highlight recovery' })).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Sharpening' })).not.toBeNull();
   });
@@ -325,7 +325,7 @@ describe('the edit panel', () => {
     expect(screen.queryByRole('slider', { name: 'Colour fringe removal' })).toBeNull();
     expect(
       screen.getByText(
-        'Denoise, highlight recovery, and colour fringe removal unavailable for developed photos',
+        "Denoise, highlight recovery, and colour fringe removal aren't available for non-RAW photos",
       ),
     ).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Sharpening' })).not.toBeNull();
@@ -336,7 +336,7 @@ describe('the edit panel', () => {
     showTab('Detail');
     expect(screen.getByRole('slider', { name: 'Luminance' })).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Colour' })).not.toBeNull();
-    expect(screen.queryByText("Denoise unavailable for this camera's sensor")).toBeNull();
+    expect(screen.queryByText("Denoise isn't available for this camera's sensor")).toBeNull();
   });
 
   // Nothing has been measured before the open finishes, which is not the same as nothing being
@@ -345,7 +345,7 @@ describe('the edit panel', () => {
     open({}, null, false, 'opening', null);
     showTab('Detail');
     expect(screen.getByRole('slider', { name: 'Luminance' })).not.toBeNull();
-    expect(screen.queryByText("Denoise unavailable for this camera's sensor")).toBeNull();
+    expect(screen.queryByText("Denoise isn't available for this camera's sensor")).toBeNull();
   });
 
   test('shows the exposure in the document own unit', () => {
@@ -368,7 +368,7 @@ describe('the edit panel', () => {
     open();
     expect(screen.queryByRole('slider', { name: RawEditPanelStrings.temperature() })).toBeNull();
     expect(screen.getByRole('group', { name: 'White balance' }).textContent).toContain(
-      'Camera white balance unavailable for this file',
+      "Camera white balance isn't available for this photo",
     );
   });
 
@@ -665,7 +665,7 @@ describe('the edit panel', () => {
       open({}, null, false, 'live', undefined, false);
       showTab('Retouch');
       expect(
-        screen.getByText('Reflection removal unavailable for merged or developed photos'),
+        screen.getByText("Reflection removal isn't available for merged or non-RAW photos"),
       ).not.toBeNull();
       expect(screen.queryByRole('checkbox', { name: 'Remove reflections' })).toBeNull();
     });
@@ -698,7 +698,7 @@ describe('the edit panel', () => {
     // And nothing claiming the file has no neutral: the illuminant is off a header that has
     // not arrived, which is not the same as a camera that recorded none.
     expect(screen.getByRole('group', { name: 'White balance' })).not.toBeNull();
-    expect(screen.queryByText('Camera white balance unavailable for this file')).toBeNull();
+    expect(screen.queryByText("Camera white balance isn't available for this photo")).toBeNull();
   });
 
   // The three are separate: the bar runs from the zero point, the tick marks what a drag lands

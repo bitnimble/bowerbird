@@ -50,7 +50,7 @@ function syncRaws(): { greyed: boolean; description: string | null } {
 
 test('a read-only library greys syncing RAWs, and says why', async () => {
   await openPanel(true);
-  expect(syncRaws()).toEqual({ greyed: true, description: 'This library is read-only.' });
+  expect(syncRaws()).toEqual({ greyed: true, description: 'This library is read-only' });
 });
 
 test.each([true, false])(

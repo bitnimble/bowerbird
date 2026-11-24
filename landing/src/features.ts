@@ -1,14 +1,7 @@
 import type { MDXContent } from 'mdx/types';
 
 export type DemoId =
-  | 'hdr'
-  | 'colour'
-  | 'dust'
-  | 'denoise'
-  | 'stacks'
-  | 'triage'
-  | 'merge'
-  | 'panorama';
+  'hdr' | 'colour' | 'dust' | 'denoise' | 'stacks' | 'triage' | 'merge' | 'panorama';
 
 export type ShotFrame = 'desktop' | 'phone';
 
@@ -70,7 +63,7 @@ export const RELEASES_URL = `${REPO_URL}/releases`;
 export const SITE = {
   name: 'Bowerbird',
   nav: { home: 'Home', features: 'Features', download: 'Download' },
-  footer: 'Bowerbird is free and open source.',
+  footer: 'Bowerbird is free and open source',
   sourceCode: 'Source code',
 };
 
@@ -85,7 +78,7 @@ export const DEMO = {
     divider: 'Divider between the SDR and HDR renditions',
     sdrAlt: (scene: string) => `${scene}, as an ordinary JPEG`,
     hdrAlt: (scene: string) => `${scene}, in HDR`,
-    noHdrDisplay: "We didn't detect an HDR display, so HDR may look wrong.",
+    noHdrDisplay: "We didn't detect an HDR display, so HDR may look wrong",
   },
   colour: {
     label: 'Colour profile',
@@ -97,7 +90,7 @@ export const DEMO = {
   dust: {
     before: 'Before',
     after: 'After',
-    divider: 'Divider between the photo before and after spot removal',
+    divider: 'Divider between the photo before and after dust removal',
     alt: 'A dusk sky with sensor dust spots across it',
   },
   denoise: {
@@ -105,7 +98,7 @@ export const DEMO = {
     original: 'Original',
     fast: 'Fast',
     best: 'Best',
-    alt: 'Cars and people on a shoreline after sunset, shot at ISO 40000',
+    alt: 'Cars and people on a shoreline after sunset, taken at ISO 40000',
   },
   stacks: {
     toggle: (count: number, open: boolean) =>

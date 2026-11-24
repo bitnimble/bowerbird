@@ -248,7 +248,7 @@ test('opening a missing library folder reports the native error', async () => {
     {
       id: 1,
       tone: 'error',
-      message: "Couldn't open the library folder",
+      message: "We couldn't open the library folder",
       detail: '/srv/reef is not a folder on this device',
     },
   ]);

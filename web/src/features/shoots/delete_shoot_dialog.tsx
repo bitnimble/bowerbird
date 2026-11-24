@@ -68,7 +68,7 @@ export function DeleteShootDialog({
         </Text>
 
         {/* A radiogroup rather than two loose radios, so the question is read out
-            with the answers, and each answer is read with what it costs. */}
+            with the answers. */}
         <Field role="radiogroup" aria-label={DeleteShootStrings.question()}>
           <CheckLabel>
             <input
@@ -76,14 +76,10 @@ export function DeleteShootDialog({
               type="radio"
               name="photos"
               checked={photos === 'keep'}
-              aria-describedby="delete-shoot-keep"
               onChange={() => setPhotos('keep')}
             />
             {DeleteShootStrings.keep()}
           </CheckLabel>
-          <Text variant="mono" as="p" id="delete-shoot-keep">
-            {DeleteShootStrings.keepHint()}
-          </Text>
 
           <CheckLabel>
             <input

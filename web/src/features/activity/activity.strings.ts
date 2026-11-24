@@ -22,9 +22,9 @@ const labels: Record<ActivityKind, (count: number) => string> = {
   reconciling: () => 'checking local copies',
   offloading: () => 'removing local copies',
   catalogue_backup: () => 'backing up catalogue',
-  pruning: () => 'cleaning up generated files',
+  pruning: () => 'removing unused files',
   measuring: () => 'measuring rendition stages',
-  checking_quality: () => 'checking image quality',
+  checking_quality: () => 'checking photo quality',
 };
 
 export const ActivityStrings = {

@@ -16,13 +16,13 @@ export const ImportPageStrings = {
   scan: () => 'Scan',
   scanning: () => 'Scanning',
   noWritableLibrary: () => 'No library to add to',
-  noWritableLibraryHint: () => 'Add a library you can write to first.',
+  noWritableLibraryHint: () => 'Add a library you can write to first',
 
-  someFoldersUnread: () => "Some folders couldn't be read.",
+  someFoldersUnread: () => "We couldn't read some folders. Check their permissions.",
   unlisted: (count: number) =>
     `This library only takes RAW files. ${plural(count, 'other file', 'other files')} ${count === 1 ? "isn't" : "aren't"} listed.`,
   nothingFound: () => 'No photos found',
-  nothingFoundHint: () => 'This folder and the ones inside it hold no photos.',
+  nothingFoundHint: () => 'No photos in this folder or its subfolders',
   nothingMatches: () => 'No photos match these filters',
 
   selectedCount: (selected: number, total: number) => `${selected} of ${total} selected`,
@@ -46,7 +46,7 @@ export const ImportPageStrings = {
   confirmDeleteTitle: (count: number) =>
     `Copy and delete ${plural(count, 'original', 'originals')}?`,
   confirmDeleteBody: () =>
-    "We compare each copy with its original before deleting it. You can't undo this.",
+    "We'll check each copy against its original before deleting it. You can't undo this.",
   confirmDeleteAction: () => 'Copy and delete',
   addedAndDeleted: (added: number, deleted: number) =>
     `Added ${plural(added, 'file', 'files')} to the library and deleted ${plural(deleted, 'original', 'originals')}.`,

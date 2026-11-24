@@ -135,11 +135,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
 
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
           <Panel flush>
-            <ToggleSetting
-              field="frame_tv_enabled"
-              label={SettingsStrings.frameTvEnabled()}
-              hint={SettingsStrings.frameTvEnabledHint()}
-            />
+            <ToggleSetting field="frame_tv_enabled" label={SettingsStrings.frameTvEnabled()} />
           </Panel>
         </>
       }
@@ -160,7 +156,6 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
                 field="watch_poll_interval_ms"
                 label={SettingsStrings.watchPollInterval()}
                 suffix="s"
-                hint={SettingsStrings.watchPollIntervalHint()}
                 scale={1000}
                 min={1}
               />
@@ -194,7 +189,6 @@ const RenderOnThisDevice = observer(function RenderOnThisDevice(): JSX.Element {
   return (
     <SettingRow
       label={label}
-      hint={SettingsStrings.renderOnThisDeviceHint()}
       onReset={resetTo(device.renderOnThisDevice, false, deviceSettings.setRenderOnThisDevice)}
     >
       <input
@@ -359,7 +353,6 @@ const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
               field="panorama_full_rendition_size"
               label={SettingsStrings.panoramaFullRenditionSize()}
               suffix="px"
-              hint={SettingsStrings.panoramaFullRenditionSizeHint()}
               min={1}
             />
           </Panel>
@@ -369,21 +362,18 @@ const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
             <NumberSetting
               field="grid_rendition_quality"
               label={SettingsStrings.gridRenditionQuality()}
-              hint={SettingsStrings.qualityRange()}
               min={0}
               max={100}
             />
             <NumberSetting
               field="full_rendition_quality"
               label={SettingsStrings.fullRenditionQuality()}
-              hint={SettingsStrings.qualityRange()}
               min={0}
               max={100}
             />
             <NumberSetting
               field="max_rendition_quality"
               label={SettingsStrings.maxRenditionQuality()}
-              hint={SettingsStrings.qualityRange()}
               min={0}
               max={100}
             />
@@ -602,7 +592,7 @@ const DeviceName = observer(function DeviceName(): JSX.Element | null {
     setDraft(store.deviceName ?? '');
   };
   return (
-    <SettingRow label={SettingsStrings.deviceName()} hint={SettingsStrings.deviceNameHint()}>
+    <SettingRow label={SettingsStrings.deviceName()}>
       <TextField
         style={settingStyles.field}
         label={SettingsStrings.deviceName()}

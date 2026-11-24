@@ -328,35 +328,27 @@ const LibraryPanels = observer(function LibraryPanels({
   library: Library;
   thin: boolean;
 }): JSX.Element {
-  // Held here rather than in the field, because the read-only checkbox sends it too.
-  const [binDraft, setBinDraft] = useState(library.bin_name ?? 'Bin');
-  useEffect(() => setBinDraft(library.bin_name ?? 'Bin'), [library.bin_name]);
-
   return (
     <>
-      {!thin && <FolderSettings library={library} binDraft={binDraft} onBinDraft={setBinDraft} />}
+      {!thin && <FolderSettings library={library} />}
       <RenditionSettings library={library} />
       {!thin && <StackSettings library={library} />}
-      <AdvancedLibrarySettings library={library} thin={thin} binDraft={binDraft} />
+      <AdvancedLibrarySettings library={library} thin={thin} />
     </>
   );
 });
 
 const FolderSettings = observer(function FolderSettings({
   library,
-  binDraft,
-  onBinDraft,
 }: {
   library: Library;
-  binDraft: string;
-  onBinDraft: (value: string) => void;
 }): JSX.Element {
   const hasRules = (useLibrariesStore().folderRules.get(library.id) ?? []).length > 0;
 
   return (
     <Panel title={SettingsStrings.folders()} flush={!hasRules}>
       <RootPathField key={library.root_path} library={library} />
-      <BinNameField library={library} draft={binDraft} onDraft={onBinDraft} />
+      {!library.read_only && <BinNameField library={library} />}
       <FolderRuleList library={library} />
     </Panel>
   );
@@ -365,11 +357,9 @@ const FolderSettings = observer(function FolderSettings({
 const AdvancedLibrarySettings = observer(function AdvancedLibrarySettings({
   library,
   thin,
-  binDraft,
 }: {
   library: Library;
   thin: boolean;
-  binDraft: string;
 }): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
@@ -384,14 +374,11 @@ const AdvancedLibrarySettings = observer(function AdvancedLibrarySettings({
               type="checkbox"
               aria-label={SettingsStrings.readOnly()}
               checked={library.read_only}
-              // Letting the app write again means making a bin, so the name goes with
-              // the request - whatever is in the bin folder name field, which is where
-              // the reader picks another when the root already holds one of that name.
               onChange={(e) =>
                 void libraries.setReadOnly(
                   library.id,
                   e.currentTarget.checked,
-                  binDraft.trim() || 'Bin',
+                  library.bin_name ?? 'Bin',
                 )
               }
             />
@@ -505,45 +492,29 @@ const RootPathField = observer(function RootPathField({
 // walks straight back in.
 const BinNameField = observer(function BinNameField({
   library,
-  draft,
-  onDraft,
 }: {
   library: Library;
-  draft: string;
-  onDraft: (value: string) => void;
 }): JSX.Element {
   const { libraries } = usePresenters();
-
-  // Editable for a library that has no bin, even while it is read-only: clearing
-  // that flag has to name the folder it is about to make, and the root may
-  // already hold one called `Bin` - which is refused. Left disabled, the only way
-  // out of that would be to remove the library and add it again.
-  const noBinYet = library.bin_name == null;
-  const locked = library.read_only && !noBinYet;
+  const [draft, setDraft] = useState(library.bin_name ?? 'Bin');
+  useEffect(() => setDraft(library.bin_name ?? 'Bin'), [library.bin_name]);
 
   function commit(): void {
     const next = draft.trim();
-    // Nothing to rename while there is no folder: the name is only a choice for
-    // the read-only checkbox to send when it makes one.
-    if (next === '' || next === library.bin_name || noBinYet) {
-      if (next === '') onDraft(library.bin_name ?? 'Bin');
+    if (next === '' || next === library.bin_name) {
+      if (next === '') setDraft(library.bin_name ?? 'Bin');
       return;
     }
     void libraries.setBinName(library.id, next);
   }
 
   return (
-    <SettingRow
-      label={SettingsStrings.binFolderName()}
-      hint={noBinYet ? SettingsStrings.binNameHintNoBin() : SettingsStrings.binNameHint()}
-      disabledReason={locked ? SettingsStrings.binNameLocked() : undefined}
-    >
+    <SettingRow label={SettingsStrings.binFolderName()}>
       <TextField
         style={settingStyles.field}
         label={SettingsStrings.binFolderName()}
         value={draft}
-        disabled={locked}
-        onChange={onDraft}
+        onChange={setDraft}
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
       />
@@ -726,7 +697,6 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
         {!thin && (
           <SettingRow
             label={SettingsStrings.scanLibrary()}
-            hint={SettingsStrings.scanLibraryHint()}
             disabledReason={busy ? SettingsStrings.jobBusy() : undefined}
           >
             <Button disabled={busy} onClick={() => void scanPresenter.scanLibrary(library.id)}>
@@ -748,7 +718,6 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
 
         <SettingRow
           label={SettingsStrings.rebuildRenditions()}
-          hint={SettingsStrings.rebuildRenditionsHint()}
           disabledReason={
             busy
               ? SettingsStrings.jobBusy()
@@ -769,7 +738,6 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
         {!thin && (
           <SettingRow
             label={SettingsStrings.groupSimilarPhotos()}
-            hint={SettingsStrings.groupSimilarPhotosHint()}
             disabledReason={
               busy
                 ? SettingsStrings.jobBusy()

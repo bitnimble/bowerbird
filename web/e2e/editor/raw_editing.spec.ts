@@ -1078,7 +1078,7 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
     body: JSON.stringify(rendered),
     contentType: 'application/json',
   });
-  const compositing = await print.getByRole('img', { name: 'Edit preview' }).evaluate((canvas) => {
+  const compositing = await print.getByRole('img', { name: 'Edited photo' }).evaluate((canvas) => {
     const layers = [];
     for (let element: Element | null = canvas; element != null; element = element.parentElement) {
       const style = getComputedStyle(element);

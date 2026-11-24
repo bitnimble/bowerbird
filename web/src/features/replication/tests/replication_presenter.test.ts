@@ -445,7 +445,7 @@ test('a failure the server names reads as what to do about it', async () => {
 
   await presenter.browse('nowhere:5173');
 
-  expect(store.linkError).toBe("We couldn't reach that device.");
+  expect(store.linkError).toBe("We couldn't reach that device");
 });
 
 test('adding one forwards the request and re-reads the library list', async () => {
@@ -471,7 +471,7 @@ test('adding one forwards the request and re-reads the library list', async () =
   await presenter.addReplicas([request]);
 
   expect(asked).toEqual([request]);
-  expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
+  expect(toasts[0]).toBe('Synced library added with 240 changes so far');
 });
 
 // The library is committed before its catalogue arrives, so one that failed
@@ -494,7 +494,7 @@ test('an add that failed still re-reads the library list', async () => {
     },
   ]);
 
-  expect(store.linkError).toBe("That folder isn't empty.");
+  expect(store.linkError).toBe("That folder isn't empty");
   expect(libraryLoads()).toBe(1);
 });
 
@@ -525,8 +525,8 @@ test('adding several stops at the first that fails and answers those added befor
 
   expect(added).toEqual(['trip']);
   expect(asked).toEqual(['trip', 'family']);
-  expect(toasts).toEqual(['Synced library added with 2 changes so far.']);
-  expect(store.linkError).toBe("That folder isn't empty.");
+  expect(toasts).toEqual(['Synced library added with 2 changes so far']);
+  expect(store.linkError).toBe("That folder isn't empty");
   expect(libraryLoads()).toBe(1);
 });
 
@@ -563,7 +563,7 @@ test('turning it off says what it stopped, because those transfers were the reas
 
   await presenter.setSyncOriginals('lib', false);
 
-  expect(toasts[0]).toBe('Stopped 12 originals that were still on their way here.');
+  expect(toasts[0]).toBe('Stopped 12 originals that were still on their way here');
 });
 
 test('an eviction the peer would not confirm reports what was kept, not just what went', async () => {
@@ -580,7 +580,7 @@ test('an eviction the peer would not confirm reports what was kept, not just wha
   await presenter.removeLocalCopies({ photo_ids: ['photo1', 'photo2'] }, 'lib', PEER.peer_id);
 
   expect(toasts[0]).toBe(
-    "Removed 1 local copy; kept 1 local copy because Macbook couldn't confirm a matching copy.",
+    "Removed 1 local copy. Kept 1 local copy because Macbook couldn't confirm a matching copy.",
   );
   // The rows that lost their file are `is_missing` now, so the grid is stale.
   expect(reloads()).toBe(1);
@@ -597,14 +597,14 @@ test('an eviction nothing survived does not claim a partial success', async () =
 
   await presenter.removeLocalCopies({ photo_ids: ['photo1'] }, 'lib', PEER.peer_id);
 
-  expect(toasts[0]).toBe('Macbook could not confirm a copy of 1 photo.');
+  expect(toasts[0]).toBe("Macbook couldn't confirm a copy of 1 photo");
 });
 
 test.each([
-  [true, false, ['push', 'pull'], 'Queued 5 RAWs to sync with Macbook.'],
-  [false, false, ['pull'], 'Queued 2 RAWs to sync with Macbook.'],
-  [true, true, ['push'], 'Queued 3 RAWs to sync with Macbook.'],
-  [false, true, [], 'This device and Macbook already hold the same RAWs.'],
+  [true, false, ['push', 'pull'], 'Queued 5 RAWs to sync with Macbook'],
+  [false, false, ['pull'], 'Queued 2 RAWs to sync with Macbook'],
+  [true, true, ['push'], 'Queued 3 RAWs to sync with Macbook'],
+  [false, true, [], 'This device and Macbook already hold the same RAWs'],
 ])(
   'syncing RAWs with a peer wanting them %s, read-only %s, asks for %p',
   async (wantsOriginals, readOnly, directions, toast) => {

@@ -28,8 +28,8 @@ export const BulkBarStrings = {
   // What each refusal wants instead, since the row is greyed rather than gone and
   // the reader is holding a selection that nearly works.
   selectAStack: () => 'Select a stack first',
-  selectOneStack: () => 'Select 1 whole stack.',
-  selectWholeStack: () => 'Select every photo in the stack.',
+  selectOneStack: () => 'Select 1 whole stack',
+  selectWholeStack: () => 'Select every photo in the stack',
 
   setShootThumbnail: () => 'Set as shoot thumbnail',
   setAlbumThumbnail: () => 'Set as album thumbnail',
@@ -37,10 +37,10 @@ export const BulkBarStrings = {
   setFirstAsAlbumThumbnail: () => 'Set first photo as album thumbnail',
 
   /** Every action a read-only library refuses, wherever it is offered. */
-  notOnReadOnlyLibrary: () => 'Turn off read-only mode to use this action.',
+  notOnReadOnlyLibrary: () => 'Turn off read-only mode to use this action',
   /** Why a library takes no originals, where turning read-only off would stop it syncing. */
-  libraryIsReadOnly: () => 'This library is read-only.',
-  restoreRefused: () => 'Turn off read-only mode to restore photos.',
+  libraryIsReadOnly: () => 'This library is read-only',
+  restoreRefused: () => 'Turn off read-only mode to restore photos',
   restoreToOriginalLocation: () => 'Restore to original location',
 
   // A shoot is a folder, so a photograph already in one leaves it.

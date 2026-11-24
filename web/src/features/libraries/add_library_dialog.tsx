@@ -193,11 +193,11 @@ const AddLibraryFlow = observer(function AddLibraryFlow({
               value={binName}
               onChange={setBinName}
             />
-            <Text variant="mono" as="p" tone={binExists ? 'warning' : undefined}>
-              {binExists
-                ? AddLibraryStrings.binExistsWarning(root, bin)
-                : SettingsStrings.binNameHint()}
-            </Text>
+            {binExists && (
+              <Text variant="mono" as="p" tone="warning">
+                {AddLibraryStrings.binExistsWarning(root, bin)}
+              </Text>
+            )}
           </Field>
         )}
 

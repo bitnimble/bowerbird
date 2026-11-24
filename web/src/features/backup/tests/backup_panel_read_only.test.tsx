@@ -90,7 +90,7 @@ test('a read-only library disables its storage limit and says why', async () => 
   const field = screen.getByRole('spinbutton', { name: 'Local storage limit (GB)' });
   expect(field.matches(':disabled')).toBe(true);
   expect(field.closest('[aria-description]')?.getAttribute('aria-description')).toBe(
-    "Read-only libraries can't remove local originals.",
+    "Read-only libraries can't remove local copies",
   );
 });
 
@@ -149,7 +149,7 @@ test('fetching back shows how far it has got and which file it is on', async () 
 });
 
 test.each([
-  ['current', 'No originals are waiting to back up.', 'Back up now'],
+  ['current', 'No originals are waiting to back up', 'Back up now'],
   ['waiting', 'Waiting to back up 3 originals', 'Back up now'],
   ['paused', 'Backup paused with 3 originals remaining', 'Resume'],
   ['unavailable', 'Backup folder is missing.', 'Retry'],
@@ -230,7 +230,7 @@ test('current conflicts show file paths and recovery separately from historical 
   expect(within(details).getByText('trip/conflict.arw')).toBeTruthy();
   expect(
     within(details).getByText(
-      'Compare both files before choosing which to keep, move, or replace, then retry.',
+      'Compare both files before choosing which to keep, move, or replace, then retry',
     ),
   ).toBeTruthy();
   expect(screen.getByText('Last backup report')).toBeTruthy();
@@ -255,7 +255,7 @@ test('missing copies recommend another surviving copy without claiming global lo
       "We couldn't find 2 originals on this device or this backup. Look for another copy before making changes.",
     ),
   ).toBeTruthy();
-  expect(screen.getByText('2 originals have no local copy on this device.')).toBeTruthy();
+  expect(screen.getByText('2 originals have no local copy on this device')).toBeTruthy();
 });
 
 test('a failed fetch keeps the removal dialog open and shows successful and failed counts', async () => {
@@ -287,7 +287,7 @@ test('a failed fetch keeps the removal dialog open and shows successful and fail
   expect(within(dialog).getByText("We couldn't restore 2 originals.")).toBeTruthy();
   expect(
     within(dialog).getByText(
-      "Couldn't remove the backup. Check the connection and backup folder, then retry.",
+      "We couldn't remove the backup. Check the connection and backup folder, then retry.",
     ),
   ).toBeTruthy();
   expect(
@@ -336,7 +336,7 @@ test('historical backup issues do not become the current status', async () => {
     }),
     true,
   );
-  expect(screen.getAllByText('No originals are waiting to back up.')).toHaveLength(2);
+  expect(screen.getAllByText('No originals are waiting to back up')).toHaveLength(2);
   expect(screen.queryByText(/^Current backup issues/)).toBeNull();
   expect(screen.getByText('Last backup report')).toBeTruthy();
 });
@@ -392,8 +392,8 @@ test('a failed backup status load shows Retry without suggesting a new folder', 
 test('the backup keeps its last checked count, local storage and folder visible', async () => {
   await open(false);
 
-  expect(screen.getByText('12 of 12 originals were last recorded on this backup.')).toBeTruthy();
-  expect(screen.getByText('This device uses 3.0 GB for originals.')).toBeTruthy();
+  expect(screen.getByText('12 of 12 originals were on this backup at the last check')).toBeTruthy();
+  expect(screen.getByText('This device uses 3.0 GB for originals')).toBeTruthy();
   expect(screen.getByText('/backup')).toBeTruthy();
 });
 

@@ -7,5 +7,7 @@ export const AlbumsPageStrings = {
   noAlbumsHint: () => 'Create an album to collect photos from any shoot or library.',
   deleteQuestion: (albumName: string) => `Delete the album "${albumName}"?`,
   deleteWarning: (memberships: number) =>
-    `Your ${memberships} ${memberships === 1 ? 'photo stays' : 'photos stay'} in their libraries. You can't recover this album.`,
+    memberships === 0
+      ? "You can't recover this album"
+      : `${memberships === 1 ? 'Your photo stays in its library' : `Your ${memberships} photos stay in their libraries`}. You can't recover this album.`,
 };

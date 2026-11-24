@@ -22,7 +22,7 @@ export const UpdatesStrings = {
   neverChecked: () => 'Not checked yet',
   // The one thing the page can say when the new version has not come back: everything
   // is installed, and the reader has to start the app again themselves.
-  restartTookTooLong: () => "Bowerbird was updated but didn't restart. Open it again.",
+  restartTookTooLong: () => "The update finished, but the app didn't restart. Open it again.",
 
   version: () => 'Version',
   updates: () => 'Updates',

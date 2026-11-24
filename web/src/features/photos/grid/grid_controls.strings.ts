@@ -13,14 +13,14 @@ export const GridControlsStrings = {
     })[ordering],
 
   viewActive: () => 'Active',
-  viewUntriaged: () => 'Untriaged',
+  viewUntriaged: () => 'Undecided',
   viewPicks: () => 'Picks',
   viewRejects: () => 'Rejects',
   viewAll: () => 'All',
 
-  sectionTriageStatus: () => 'Triage status',
+  sectionTriageStatus: () => 'Verdict',
   sectionCamera: () => 'Camera',
-  sectionShotDate: () => 'Shot date',
+  sectionShotDate: () => 'Date taken',
 
   customUnrated: () => 'Unrated',
   customRated: () => 'Rated',

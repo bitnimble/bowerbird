@@ -37,11 +37,11 @@ export const PhotoDetailStrings = {
   // Drawn as a snowflake on a tile, where this is the whole of what says so to a screen reader.
   stateOnBackup: () => 'on the backup',
   /** Why an edit or an export of this photo takes longer than it used to. */
-  stateOnBackupHint: () => 'No local copy. Opening this photo fetches it from the backup.',
+  stateOnBackupHint: () => 'No local copy. Opening this photo will fetch it from the backup.',
   // Drawn as a network glyph on a tile, where this is the whole of what says so to a screen reader.
   stateOnSyncedDevice: () => 'on a synced device',
   stateOnSyncedDeviceHint: () =>
-    'No local copy. Editing this photo fetches it from a synced device.',
+    'No local copy. Editing this photo will fetch it from a synced device.',
   stateOnUnreachableDevice: () => 'on a synced device (unreachable)',
   stateOnUnreachableDeviceHint: () =>
     "No local copy. The device holding it can't be reached from here.",
@@ -57,7 +57,7 @@ export const PhotoDetailStrings = {
   fetchingOriginal: () => 'Fetching original…',
   rebuildingRendition: () => 'Rebuilding rendition…',
   rebuildRendition: () => 'Rebuild rendition',
-  renditionBehindEdits: () => 'Rendition needs your latest edits',
+  renditionBehindEdits: () => "Rendition doesn't have your latest edits",
 
   finishCrop: () => 'Finish crop',
   finishPerspective: () => 'Finish perspective',
@@ -71,13 +71,13 @@ export const PhotoDetailStrings = {
   resetToCameraMatch: () => 'Reset edits to camera match',
   resetToCameraMatchQuestion: () => 'Reset edits to camera match?',
   resetToCameraMatchWarning: () =>
-    'We match the camera again and replace your exposure, white balance, saturation, tone curve, and colour profile edits.',
-  rematchFailed: () => "We couldn't match the camera again.",
+    "We'll match the camera again and replace your exposure, white balance, saturation, tone curve, and colour profile edits",
+  rematchFailed: () => "We couldn't match the camera again. Try again.",
   /** Wherever it is offered: the viewer's Edits panel and the editor's menu. */
   resetAllEdits: () => 'Reset all edits',
   resetAllEditsQuestion: () => 'Reset all edits?',
   resetAllEditsWarning: () =>
-    'Every edit goes back to neutral, including the crop. You can undo this in the editor.',
+    'This resets every edit, including the crop. You can undo this in the editor.',
   reset: () => 'Reset',
   previousPhoto: () => 'Previous photo',
   nextPhoto: () => 'Next photo',

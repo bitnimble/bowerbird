@@ -84,11 +84,9 @@ test('the stages a render cannot do without share one Other row with nothing to 
 test('an unticked box is a stage the full rendition leaves out', async () => {
   await open();
   expect(ticked('Correct lens distortion')).toBe(false);
-  expect(ticked('Auto-detect camera colour profile')).toBe(false);
+  expect(ticked('Match camera colour')).toBe(false);
   expect(
-    screen
-      .getByRole('checkbox', { name: 'Auto-detect camera colour profile' })
-      .hasAttribute('disabled'),
+    screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled'),
   ).toBe(true);
   expect(ticked('Denoise')).toBe(true);
 });

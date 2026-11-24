@@ -33,7 +33,7 @@ test('fetches the original first where it is elsewhere, holding the menu open wh
 test('says why an original cannot be fetched', () => {
   expect(editOption({ ...base, editable: false, readOnly: true })).toMatchObject({
     disabled: true,
-    tooltip: 'This library is read-only.',
+    tooltip: 'This library is read-only',
   });
   expect(editOption({ ...base, editable: false, unreachable: true })).toMatchObject({
     disabled: true,

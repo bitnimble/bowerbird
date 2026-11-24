@@ -93,8 +93,8 @@ test('a writable library creates a shoot at the root from the header', async () 
 test("a read-only library greys a shoot's rename and its new subfolder", async () => {
   await openPage(true);
   await press('Actions for Dawn');
-  expect(refusal('Rename')).toBe('Turn off read-only mode to use this action.');
-  expect(refusal('Create shoot in subfolder')).toBe('Turn off read-only mode to use this action.');
+  expect(refusal('Rename')).toBe('Turn off read-only mode to use this action');
+  expect(refusal('Create shoot in subfolder')).toBe('Turn off read-only mode to use this action');
 });
 
 test('a writable library offers both', async () => {

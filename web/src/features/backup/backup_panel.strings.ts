@@ -8,12 +8,12 @@ export const BackupStrings = {
     `Confirm that ${path} is the backup folder you want to use for this library.`,
   useFolder: () => 'Use folder',
   backingUp: () => 'Backing up…',
-  operationBusy: () => 'Wait for the backup operation to finish.',
+  operationBusy: () => 'Wait for the current backup to finish',
   remove: () => 'Remove backup',
   removeTitle: (name: string) => `Remove backup folder "${name}"?`,
   removeKeepsFiles: () => 'Every file already on the backup stays there.',
   removeStrandsPhotos: (count: number) =>
-    `${count} ${count === 1 ? 'original has' : 'originals have'} no local copy on this device. Restore ${count === 1 ? 'it' : 'them'} before removing this backup, or keep access to another surviving copy.`,
+    `${count} ${count === 1 ? 'original has' : 'originals have'} no local copy on this device. Restore ${count === 1 ? 'it' : 'them'} before removing this backup, or keep access to another copy.`,
   removeMissingOriginals: (count: number) =>
     `We couldn't find ${count} ${count === 1 ? 'original' : 'originals'} on this device or this backup. Removing the backup doesn't restore ${count === 1 ? 'it' : 'them'}. Look for another copy before removing it.`,
   fetchAndRemove: () => 'Fetch and remove',
@@ -32,6 +32,6 @@ export const BackupStrings = {
   storageLimit: () => 'Local storage limit',
   gigabytes: () => 'GB',
   storageLimitHint: () =>
-    'Above this limit, local copies used least recently can be removed after their backup copies are checked.',
-  storageLimitReadOnly: () => "Read-only libraries can't remove local originals.",
+    'Remove the oldest local copies above this limit after checking their backup',
+  storageLimitReadOnly: () => "Read-only libraries can't remove local copies",
 };

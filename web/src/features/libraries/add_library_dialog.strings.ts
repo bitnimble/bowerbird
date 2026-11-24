@@ -7,7 +7,7 @@ export const AddLibraryStrings = {
   libraryRootPath: () => 'Library root',
   rootPlaceholder: () => '/photos',
 
-  unwritableHint: () => "Bowerbird can't write to this folder. Choose another folder.",
+  unwritableHint: () => "We can't write to this folder. Choose another folder.",
 
   binExistsWarning: (rootPath: string, binName: string) =>
     `${rootPath} already has a folder called "${binName}". Its photos will appear in the Bin.`,

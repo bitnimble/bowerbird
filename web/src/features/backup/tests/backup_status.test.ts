@@ -40,15 +40,15 @@ test('backup attention names originals missing everywhere before any other issue
 
 test('backup storage and permission advice names the drive involved in the operation', () => {
   expect(BackupStatusStrings.advice('no_space', 'restoring')).toBe(
-    'Free storage on this device, then retry restoring the originals.',
+    'Free storage on this device, then retry restoring the originals',
   );
   expect(BackupStatusStrings.advice('no_space', 'copying')).toBe(
-    'Free storage on the backup drive, then retry.',
+    'Free storage on the backup drive, then retry',
   );
   expect(BackupStatusStrings.advice('read_only', 'copying')).toBe(
-    'Check that the backup drive and folder allow changes, then retry.',
+    'Check that the backup drive and folder allow changes, then retry',
   );
   expect(BackupStatusStrings.advice('read_only', 'offloading')).toBe(
-    'Check the library read-only setting and folder permissions on this device, then retry.',
+    'Check the library read-only setting and folder permissions on this device, then retry',
   );
 });
