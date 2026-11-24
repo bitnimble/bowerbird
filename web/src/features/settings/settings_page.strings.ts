@@ -171,7 +171,6 @@ export const SettingsStrings = {
   backupKeep: () => 'Backups to keep',
   backupsOff: () => 'Backups are off',
   exportHistoryLimit: () => 'Export history entries to keep',
-  exportHistoryLimitHint: () => 'Your exported files stay on disk',
   appDataFolder: () => 'App data folder',
   openFolder: () => 'Open folder',
 

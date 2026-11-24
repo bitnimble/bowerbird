@@ -237,7 +237,6 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
 
         <Toggle
           label={ExportStrings.halfSize()}
-          hint={ExportStrings.halfSizeHint()}
           checked={options.halfSize}
           onChange={(value) => presenter.set('halfSize', value)}
         />

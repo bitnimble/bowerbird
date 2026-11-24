@@ -19,15 +19,14 @@ export const ExportStrings = {
   includeEdits: () => 'Include edits',
 
   halfSize: () => 'Half-size RAW',
-  halfSizeHint: () => 'Export with 25% of the pixels, about 2× faster',
 
   exportHdr: () => 'Export as HDR',
   exportHdrUnavailable: (format: string) => `${format} can't store HDR. Choose another file type.`,
   exportHdrNeedsGainMap: (format: string) => `${format} needs a gain map for HDR. Add one below.`,
 
-  gainMap: () => 'Add a gain map for SDR compatibility',
+  gainMap: () => 'Enable gain map',
   gainMapHint: () =>
-    'Show HDR on supported displays and SDR elsewhere, in a file about a third larger',
+    'Gain maps allow a photo to be rendered as HDR on HDR-compatible displays, and fall back to SDR on SDR displays. This increases the file size by approximately 30%.',
 
   estimate: (size: string) => `About ${size}`,
   estimateUnknown: () => 'Size unknown',

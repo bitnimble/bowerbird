@@ -697,7 +697,6 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
                 <NumberSetting
                   field="export_history_limit"
                   label={SettingsStrings.exportHistoryLimit()}
-                  hint={SettingsStrings.exportHistoryLimitHint()}
                   min={1}
                 />
               </>
